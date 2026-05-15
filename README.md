@@ -17,6 +17,7 @@ The current prototype combines:
 ## Repository Structure
 
 - [compose.yml](./compose.yml): Docker Compose entry point for local end-to-end runs.
+- [.env.example](./.env.example): Example runtime configuration; copy this to `.env` before running Docker Compose.
 - [docs/architecture.md](./docs/architecture.md): End-to-end flow diagram and component responsibilities.
 - [data](./data): Shared local input artifacts, including MNIST data, RSA worker keys, and the TDX quote used by the prototype.
 - [observability](./observability): Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector configuration.
@@ -31,11 +32,14 @@ The current prototype combines:
 For a clean local demo, start from a fresh stack and use Docker Compose as the single entry point:
 
 ```bash
+cp .env.example .env
 docker compose down --volumes --remove-orphans
 KEEP_ALIVE=0 docker compose up --build --force-recreate
 ```
 
-This is the recommended "one-command demo run" for the thesis prototype. It rebuilds the active services, launches the local infrastructure, deploys the contracts, runs the DFL flow, stores the new global model in IPFS, and updates the on-chain metadata.
+The `.env` file is intentionally ignored by Git. Start from `.env.example`, review the values for your local setup, and keep machine-specific changes in `.env`.
+
+This is the recommended demo run for the thesis prototype. It rebuilds the active services, launches the local infrastructure, deploys the contracts, runs the DFL flow, stores the new global model in IPFS, and updates the on-chain metadata.
 
 ## Demo Outcome
 
@@ -59,8 +63,9 @@ The most important generated outputs are:
 The Docker setup is the primary way to run the DFL prototype:
 
 ```bash
-docker compose down --volumes --remove-orphans 
-KEEP_ALIVE=0 docker compose up --build --force-recreate 
+cp .env.example .env
+docker compose down --volumes --remove-orphans
+KEEP_ALIVE=0 docker compose up --build --force-recreate
 ```
 
 This starts Anvil, Kubo/IPFS, observability services, deploys the smart contracts, registers workers through TDX quote verification, runs training, aggregates local models, stores the new global model and signature in IPFS, and updates the on-chain model metadata.
@@ -75,7 +80,7 @@ The local stack starts:
 - three DFL worker containers,
 - Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector.
 
-The root `.env` file provides the local timing, account, contract, and IPFS configuration. The local Docker flow also uses RSA keys from `data/rsa_keys`, MNIST data from `data/mnist`, and the TDX quote from `data/phala_tdx_quote`.
+The root `.env` file provides the local timing, account, contract, and IPFS configuration. Use `.env.example` as the tracked template and keep local edits in `.env`. The local Docker flow also uses RSA keys from `data/rsa_keys`, MNIST data from `data/mnist`, and the TDX quote from `data/phala_tdx_quote`.
 
 ## Quick Verification
 
