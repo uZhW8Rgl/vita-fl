@@ -30,8 +30,7 @@ x-worker-env: &worker-env
   TDX_QUOTE_PATH: ${TDX_QUOTE_PATH:-./attestation/phala_tdx_quote}
 
 x-worker-common: &worker-common
-  image: sonak53/dfl:latest
-  pull_policy: never
+  image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker:latest
   platform: linux/amd64
   depends_on:
     smart-contracts:
@@ -183,7 +182,7 @@ services:
       dockerfile: smart_contracts/Dockerfile
       args:
         FOUNDRY_VERSION: ${FOUNDRY_IMAGE_TAG:-nightly-dd0a687aa36ec731b6ea2cda2aa4f32e192814fa}
-    image: sonak53/dfl-master:latest
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts:latest
     container_name: smart-contracts
     platform: linux/amd64
     depends_on:
@@ -216,8 +215,7 @@ services:
     build:
       context: .
       dockerfile: agent/Dockerfile
-    image: sonak53/agent:latest
-    pull_policy: never
+    image: ghcr.io/uzhw8rgl/master-thesis-agent:latest
     platform: linux/amd64
     container_name: agent
     restart: "no"
@@ -266,8 +264,7 @@ services:
     build:
       context: .
       dockerfile: zk_inference/Dockerfile
-    image: sonak53/zk-inference:latest
-    pull_policy: never
+    image: ghcr.io/uzhw8rgl/master-thesis-zk-inference:latest
     platform: linux/amd64
     container_name: zk-inference
     restart: unless-stopped

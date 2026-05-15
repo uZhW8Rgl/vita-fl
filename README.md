@@ -220,6 +220,17 @@ The repository now includes a GitHub Actions CI pipeline for:
 - Docker image builds,
 - and a runtime smoke test for the core containerized stack.
 
+On pushes to `main`, the Docker build job publishes the project images to GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/uzhw8rgl/master-thesis-agent:latest
+docker pull ghcr.io/uzhw8rgl/master-thesis-zk-inference:latest
+docker pull ghcr.io/uzhw8rgl/master-thesis-dfl-worker:latest
+docker pull ghcr.io/uzhw8rgl/master-thesis-smart-contracts:latest
+```
+
+Each image is also tagged with the commit SHA, for example `ghcr.io/uzhw8rgl/master-thesis-agent:<commit-sha>`.
+
 Recommended repository settings for `main` are documented in [`.github/BRANCH_PROTECTION.md`](./.github/BRANCH_PROTECTION.md).
 
 ## Notes
