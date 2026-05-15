@@ -17,6 +17,7 @@ The current prototype combines:
 ## Repository Structure
 
 - [compose.yml](./compose.yml): Docker Compose entry point for local end-to-end runs.
+- [docs/architecture.md](./docs/architecture.md): End-to-end flow diagram and component responsibilities.
 - [data](./data): Shared local input artifacts, including MNIST data, RSA worker keys, and the TDX quote used by the prototype.
 - [observability](./observability): Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector configuration.
 - [smart_contracts](./smart_contracts/README.md): Focused Foundry project with DFL contracts and TDX/DCAP attestation deployment logic.
@@ -114,6 +115,8 @@ ls -lah zk_inference/single_query
 ```
 
 ## Stack Flow
+
+The sequence diagram in [docs/architecture.md](./docs/architecture.md) visualizes this flow.
 
 1. Starts Anvil and Kubo.
 2. Deploys core DFL contracts from `smart_contracts`.
