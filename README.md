@@ -18,7 +18,6 @@ The current prototype combines:
 
 - [compose.yml](./compose.yml): Docker Compose entry point for local end-to-end runs.
 - [.env.example](./.env.example): Example runtime configuration; copy this to `.env` before running Docker Compose.
-- [docs/architecture.md](./docs/architecture.md): End-to-end flow diagram and component responsibilities.
 - [data](./data): Shared local input artifacts, including MNIST data, RSA worker keys, and the TDX quote used by the prototype.
 - [observability](./observability): Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector configuration.
 - [smart_contracts](./smart_contracts/README.md): Focused Foundry project with DFL contracts and TDX/DCAP attestation deployment logic.
@@ -26,6 +25,68 @@ The current prototype combines:
 - [dfl/neural_network](./dfl/neural_network/README.md): Python/PyTorch MNIST training, transfer, aggregation, and model serialization.
 - [zk_inference](./zk_inference/README.md): ONNX export, single-image query creation, EZKL proof generation, and proof verification.
 - [agent](./agent/README.md): Local LangChain/MCP agent for contract-based model retrieval, signature verification, and ZK inference.
+
+## Architecture
+
+The prototype is organized around a Docker Compose runtime. The sequence below shows the main execution path from local infrastructure startup to verifiable inference.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant Compose as Docker Compose
+  participant Anvil as Anvil
+  participant SC as Smart Contracts
+  participant IPFS as Kubo / IPFS
+  participant W as Worker Nodes
+  participant A as Agent
+  participant ZK as ZK Inference
+
+  Compose->>Anvil: Start local chain
+  Compose->>IPFS: Start local IPFS node
+  Compose->>SC: Deploy DeviceRegistry, AggregatorSelection, GMStorage
+  SC->>SC: Deploy/configure TDX/DCAP attestation contracts
+  SC->>IPFS: Pin initial global model metadata
+  SC->>SC: Store initial model CID and signature CID
+
+  Compose->>W: Start worker containers
+  W->>SC: Register device with quote/public key context
+  SC->>SC: Verify TDX/DCAP quote path
+  W->>W: Train local MNIST model
+  W->>W: Transfer local model artifacts
+  W->>W: Aggregate submitted local models
+  W->>IPFS: Upload aggregated model and RSA signature
+  W->>SC: Update GMStorage with model CID and signature CID
+
+  Compose->>A: Start agent after workers complete
+  A->>SC: Read current model CID, signature CID, last aggregator
+  A->>SC: Read aggregator public key from DeviceRegistry
+  A->>IPFS: Fetch model and signature
+  A->>A: Verify RSA signature over model artifact
+  A->>ZK: Request single-image inference proof
+  ZK->>ZK: Export model to ONNX and run EZKL
+  ZK-->>A: Return prediction, witness, proof, verification status
+```
+
+## Component Responsibilities
+
+| Component | Responsibility | Main entry point |
+| --- | --- | --- |
+| `compose.yml` | Local orchestration for infrastructure, contracts, workers, agent, and proof service | `docker compose up --build` |
+| `smart_contracts` | DFL coordination, device registry, model metadata, and TDX/DCAP deployment scripts | `smart_contracts/starter_docker.sh` |
+| `dfl/node_server` | Worker orchestration, contract interaction, timing logic, and tracing | `dfl/start_node_neural_network.sh` |
+| `dfl/neural_network` | PyTorch training, local model transfer, aggregation, and serialization | `dfl/neural_network/cli.py` |
+| `ipfs` | Local content-addressed storage for global model artifacts | Kubo API on `127.0.0.1:5001` |
+| `agent` | Contract-based model retrieval, artifact fetching, signature verification, and proof orchestration | `agent/run_agent.py` |
+| `zk_inference` | ONNX export, single-query generation, EZKL witness/proof generation, and verification | `zk_inference/server.py` |
+| `observability` | Local logs, traces, metrics, and dashboarding | Grafana on `127.0.0.1:3000` |
+
+## Design Notes
+
+- `GMStorage` is treated as the source of truth for the active global model and signature CIDs.
+- IPFS stores bytes, but authenticity is checked through on-chain metadata and the aggregator's registered public key.
+- TDX/DCAP verification is represented by the on-chain attestation deployment and quote verification flow used during worker registration.
+- The ZK inference path proves one selected MNIST inference over the exported model artifacts; it complements, but does not replace, model provenance checks.
+- The local runtime is intended as a reproducible research prototype rather than a production deployment.
 
 ## Reproducible Demo
 
@@ -121,7 +182,7 @@ ls -lah zk_inference/single_query
 
 ## Stack Flow
 
-The sequence diagram in [docs/architecture.md](./docs/architecture.md) visualizes this flow.
+The sequence diagram above visualizes this flow.
 
 1. Starts Anvil and Kubo.
 2. Deploys core DFL contracts from `smart_contracts`.
@@ -230,8 +291,6 @@ docker pull ghcr.io/uzhw8rgl/master-thesis-smart-contracts:latest
 ```
 
 Each image is also tagged with the commit SHA, for example `ghcr.io/uzhw8rgl/master-thesis-agent:<commit-sha>`.
-
-Recommended repository settings for `main` are documented in [`.github/BRANCH_PROTECTION.md`](./.github/BRANCH_PROTECTION.md).
 
 ## Notes
 
