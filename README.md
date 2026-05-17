@@ -28,7 +28,94 @@ The current prototype combines:
 
 ## Architecture
 
-The prototype is organized around a Docker Compose runtime. The sequence below shows the main execution path from local infrastructure startup to verifiable inference.
+The prototype is organized around a Docker Compose runtime. The diagrams below show the main runtime components and the end-to-end execution path from local infrastructure startup to verifiable inference.
+
+### Runtime Component Overview
+
+```mermaid
+flowchart TB
+  subgraph Compose["Docker Components"]
+    direction TB
+
+    subgraph Coordination["Coordination and Storage Layer"]
+      subgraph Anvil["anvil (local Ethereum chain)"]
+        direction LR
+      
+        AggregatorSelection["Aggregator Selection"]
+        DeviceRegistry["Device Registry"]
+        GMStorage["General Model Storage"]
+        AutomataDcapTdxV4Attestation["TDX/DCAP V4 Attestation"]
+      end
+      IPFS["ipfs\nmodel + signature artifacts"]
+    end
+
+    subgraph AgentLayer["Agent Layer"]
+      direction LR
+      AgentMain["run_agent.py\nworkflow orchestration"]
+      IPFSRAG["RAG \nartifact search"]
+      Verify["artifact verification\nCID + RSA signature"]
+      MCP["MCP / tool interface"]
+    end
+
+    subgraph Inference["Verifiable Inference Layer"]
+      direction LR
+      ZK["zk-inference\nHTTP service"]
+      Pipeline[".bin -> PyTorch \n -> ONNX -> EZKL"]
+      Artifacts["input.json\nwitness\nproof\nvk"]
+    end
+
+    subgraph Workers["DFL Worker Layer"]
+      direction LR
+      VM0["VM-0"]
+      VM1["VM-1\nselected aggregator"]
+      VM2["VM-..."]
+    end
+
+    subgraph Observability["Observability Layer"]
+      direction LR
+      OTel["otel-collector"]
+      Stores["Tempo / Loki / Prometheus"]
+      Grafana["Grafana"]
+    end
+  end
+
+
+  GMStorage --> IPFS
+  IPFS --> Pipeline
+
+  VM1 <--> AggregatorSelection
+
+  VM0 --> |"local model"| VM1
+  VM2 --> |"local model"| VM1
+
+  VM0 --> GMStorage
+  VM2 --> GMStorage
+
+  VM0 --> DeviceRegistry
+  VM1 --> DeviceRegistry
+  VM2 --> DeviceRegistry
+
+  DeviceRegistry <--> AutomataDcapTdxV4Attestation
+
+  IPFSRAG --> Verify
+  AgentMain --> IPFSRAG
+  IPFSRAG <--> GMStorage
+  Verify --> MCP
+  MCP --> ZK
+  MCP --> AgentMain 
+
+  ZK --> Pipeline
+
+  Pipeline --> Artifacts
+
+  Workers --> OTel
+  OTel --> Stores
+  Stores --> Grafana
+
+  Artifacts --> MCP
+```
+
+### End-to-End Sequence
 
 ```mermaid
 sequenceDiagram
