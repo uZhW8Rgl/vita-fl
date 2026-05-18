@@ -228,6 +228,17 @@ if [ "$ENABLE_DCAP" = "1" ]; then
 	        echo "$TDX_CREATE_JSON"
 	        export DCAP_TDX_V4_ADDRESS=$(printf '%s' "$TDX_CREATE_JSON" | jq -re '.deployedTo // .deployed_to')
 	        echo "AutomataDcapTdxV4Attestation: $DCAP_TDX_V4_ADDRESS"
+            if [ -n "${EXPECTED_TDX_RTMR3:-}" ]; then
+                EXPECTED_TDX_RTMR3_HEX=${EXPECTED_TDX_RTMR3#0x}
+                EXPECTED_TDX_RTMR3_HEX=${EXPECTED_TDX_RTMR3_HEX#0X}
+                if [ ${#EXPECTED_TDX_RTMR3_HEX} -ne 96 ]; then
+                    echo "EXPECTED_TDX_RTMR3 must be 48 bytes / 96 hex chars"
+                    exit 1
+                fi
+                echo "Configuring expected RTMR3 policy on TDX verifier"
+                cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
+                    $DCAP_TDX_V4_ADDRESS "setExpectedRtmr3(bytes)" "0x$EXPECTED_TDX_RTMR3_HEX"
+            fi
             authorize_pccs_reader "$DCAP_TDX_V4_ADDRESS"
             cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
                 $DEVICE_REGISTRY_ADDRESS "setTdxV4Attestation(address)" $DCAP_TDX_V4_ADDRESS

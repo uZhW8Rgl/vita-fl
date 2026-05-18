@@ -70,6 +70,18 @@ docker compose -f compose.yml down --volumes --remove-orphans
 KEEP_ALIVE=0 docker compose -f compose.yml up --build --force-recreate
 ```
 
+## Optional RTMR3 Workload Policy
+
+By default, the local prototype verifies the TDX/DCAP quote, certificate chain, QE identity, and TCB status while keeping the worker registration flow usable with the checked-in local quote at `data/phala_tdx_quote`.
+
+For a stricter Phala/dstack workload policy, set `EXPECTED_TDX_RTMR3` to the 48-byte RTMR3 value from the intended deployment quote:
+
+```bash
+EXPECTED_TDX_RTMR3=0x<96 hex chars>
+```
+
+When this value is set, `AutomataDcapTdxV4Attestation` rejects every quote whose extracted RTMR3 does not match the configured value. This allows the local flow to keep using mock/demo quotes when the value is empty, while a real Phala deployment can bind worker registration to the expected application measurement. Docker image verification is therefore represented through the expected RTMR3 policy: the deployed compose file should pin images by immutable `sha256` digests, and the resulting Phala/dstack RTMR3 value should be configured as `EXPECTED_TDX_RTMR3`.
+
 ## Generated Artifacts
 
 Foundry generates build outputs in:

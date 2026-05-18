@@ -25,6 +25,15 @@ contract VerifyTDXV4Quote is Script, P256Probe {
 
         (bool parsedSuccessfully, V4Struct.ParsedV4Quote memory parsedQuote) = V4Parser.parseInput(quoteBytes);
         if (parsedSuccessfully) {
+            bytes memory expectedRtmr3 = AutomataDcapTdxV4Attestation(dcapAddr).expectedRtmr3();
+            console2.log("Quote RTMR3:");
+            console2.logBytes(parsedQuote.body.rtmr3);
+            if (expectedRtmr3.length > 0) {
+                console2.log("Expected RTMR3 policy:");
+                console2.logBytes(expectedRtmr3);
+            } else {
+                console2.log("Expected RTMR3 policy: disabled");
+            }
             try AutomataDcapTdxV4Attestation(dcapAddr).verifyParsedQuoteAndAttestOnChain(parsedQuote) returns (
                 bytes memory output
             ) {

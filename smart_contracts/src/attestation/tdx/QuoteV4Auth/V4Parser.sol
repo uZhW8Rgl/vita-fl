@@ -82,6 +82,7 @@ library V4Parser {
         require(parsedQuote.signedData.length == HEADER_SIZE + BODY_SIZE, "invalid signed data length");
         require(parsedQuote.rawQeReport.length == 384, "invalid QE report length");
         require(parsedQuote.body.mrtd.length == 48, "invalid mrtd length");
+        require(parsedQuote.body.rtmr3.length == 48, "invalid rtmr3 length");
         require(parsedQuote.body.reportData.length == 64, "invalid report data length");
         require(
             parsedQuote.quoteSignature.length == 64 && parsedQuote.attestationKey.length == 64
@@ -112,6 +113,7 @@ library V4Parser {
         require(signedData.equals(0, headerBytes), "header mismatch");
         require(signedData.equals(HEADER_SIZE, abi.encodePacked(parsedQuote.body.teeTcbSvn)), "teeTcbSvn mismatch");
         require(signedData.equals(HEADER_SIZE + 136, parsedQuote.body.mrtd), "mrtd mismatch");
+        require(signedData.equals(HEADER_SIZE + 472, parsedQuote.body.rtmr3), "rtmr3 mismatch");
         require(signedData.equals(HEADER_SIZE + 520, parsedQuote.body.reportData), "report data mismatch");
 
         V3Struct.EnclaveReport memory qeReport = parsedQuote.qeReportCertificationData.qeReport;
@@ -133,6 +135,7 @@ library V4Parser {
     function parseBody(bytes memory rawBody) internal pure returns (V4Struct.Body memory body) {
         body.teeTcbSvn = bytes16(rawBody.substring(0, 16));
         body.mrtd = rawBody.substring(136, 48);
+        body.rtmr3 = rawBody.substring(472, 48);
         body.reportData = rawBody.substring(520, 64);
     }
 
