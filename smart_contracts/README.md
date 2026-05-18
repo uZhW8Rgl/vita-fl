@@ -56,12 +56,13 @@ The normal deployment path is `starter_docker.sh`, executed by the Docker Compos
 
 It performs:
 
-1. deployment of `DeviceRegistry`, `AggregatorSelection`, and `GMStorage`,
-2. deployment/configuration of the Automata PCCS helper and DAO contracts,
-3. deployment of `AutomataDcapTdxV4Attestation`,
-4. authorization of the attestation contract as PCCS reader,
-5. upload of PCCS collateral,
-6. registration of initial global model metadata.
+1. local signing and Kubo import of the initial global model and signature,
+2. deployment of `DeviceRegistry`, `AggregatorSelection`, and `GMStorage` with the locally imported model CIDs,
+3. deployment/configuration of the Automata PCCS helper and DAO contracts,
+4. deployment of `AutomataDcapTdxV4Attestation`,
+5. authorization of the attestation contract as PCCS reader,
+6. upload of PCCS collateral,
+7. registration of initial global model metadata.
 
 The tested local entry point is:
 
@@ -70,17 +71,21 @@ docker compose -f compose.yml down --volumes --remove-orphans
 KEEP_ALIVE=0 docker compose -f compose.yml up --build --force-recreate
 ```
 
-## Optional RTMR3 Workload Policy
+## RTMR3 Workload Policy
 
-By default, the local prototype verifies the TDX/DCAP quote, certificate chain, QE identity, and TCB status while keeping the worker registration flow usable with the checked-in local quote at `data/phala_tdx_quote`.
+The local prototype verifies the TDX/DCAP quote, certificate chain, QE identity, and TCB status. In addition, the deployment script configures a workload policy from the checked-in reference quote at `data/phala_tdx_quote`.
 
-For a stricter Phala/dstack workload policy, set `EXPECTED_TDX_RTMR3` to the 48-byte RTMR3 value from the intended deployment quote:
+During deployment, `starter_docker.sh` calls:
 
-```bash
-EXPECTED_TDX_RTMR3=0x<96 hex chars>
+```text
+setExpectedRtmr3FromQuote(bytes referenceQuote)
 ```
 
-When this value is set, `AutomataDcapTdxV4Attestation` rejects every quote whose extracted RTMR3 does not match the configured value. This allows the local flow to keep using mock/demo quotes when the value is empty, while a real Phala deployment can bind worker registration to the expected application measurement. Docker image verification is therefore represented through the expected RTMR3 policy: the deployed compose file should pin images by immutable `sha256` digests, and the resulting Phala/dstack RTMR3 value should be configured as `EXPECTED_TDX_RTMR3`.
+The contract parses the reference quote on-chain, extracts RTMR3, and rejects every later worker registration quote whose extracted RTMR3 does not match. `starter_docker.sh` also checks that `phala/dstack-compose.template.yml` pins the worker image by immutable `sha256` digest and records the hash of that compose policy on-chain as `expectedComposeHash`.
+
+The compose file is the replaceable workload policy input. If the worker image changes, update the digest-pinned image reference in `phala/dstack-compose.template.yml`, deploy that exact file on Phala/dstack, fetch the new quote, and rerun the local deployment.
+
+A complete image-to-RTMR3 verification additionally requires the Phala/dstack RTMR3 event log. With that log, a verifier can replay the RTMR3 measurement chain, compare the measured compose hash with `expectedComposeHash`, and then compare the replayed RTMR3 with the signed RTMR3 in the quote.
 
 ## Generated Artifacts
 

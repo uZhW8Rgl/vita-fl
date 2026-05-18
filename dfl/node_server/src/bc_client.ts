@@ -1,20 +1,17 @@
+// @ts-nocheck
 import Web3 from "web3";
 import fs from "fs";
-import 'dotenv/config'
-
+import 'dotenv/config';
 // setup client´
 //const web3 = new Web3("https://eth-sepolia.g.alchemy.com/v2/pFowzUSGYob62Q7i2YVsF0LFUX3WiCT2");
 const web3 = new Web3(process.env.SEPOLIA_RPC_URL);
-
-
 // define smart contract addresses
-const gm_storage_address: string = process.env.GM_STORAGE_ADDRESS as string;
-const aggregator_address: string = process.env.AGGREGATOR_ADDRESS as string;
-const device_registry_address: string = process.env.REGISTRY_ADDRESS as string;
+const gm_storage_address = process.env.GM_STORAGE_ADDRESS;
+const aggregator_address = process.env.AGGREGATOR_ADDRESS;
+const device_registry_address = process.env.REGISTRY_ADDRESS;
+const privateKey = process.env.PRIVATE_KEY;
 
-const privateKey: string = process.env.PRIVATE_KEY as string;
-
-const addAccountToWallet = (account: ReturnType<typeof web3.eth.accounts.privateKeyToAccount>) => {
+const addAccountToWallet = (account) => {
     const address = account.address.toLowerCase();
     for (let i = 0; i < web3.eth.accounts.wallet.length; i++) {
         const walletAccount = web3.eth.accounts.wallet[i];
@@ -23,53 +20,133 @@ const addAccountToWallet = (account: ReturnType<typeof web3.eth.accounts.private
         }
     }
     web3.eth.accounts.wallet.add(account);
-}
+};
+
+const jsonReplacer = (_key, value) => {
+    if (typeof value === "bigint") {
+        return value.toString();
+    }
+    return value;
+};
+
+const serializeError = (error) => ({
+    name: error?.name,
+    message: error?.message,
+    code: error?.code,
+    reason: error?.reason,
+    data: error?.data,
+    cause: error?.cause?.message || error?.cause,
+    receipt: error?.receipt
+        ? {
+            status: error.receipt.status?.toString?.() ?? error.receipt.status,
+            transactionHash: error.receipt.transactionHash,
+            blockNumber: error.receipt.blockNumber?.toString?.() ?? error.receipt.blockNumber,
+            gasUsed: error.receipt.gasUsed?.toString?.() ?? error.receipt.gasUsed,
+            from: error.receipt.from,
+            to: error.receipt.to,
+        }
+        : undefined,
+});
+
+const logJson = (label, payload) => {
+    console.log(label, JSON.stringify(payload, jsonReplacer));
+};
+
+const withGasBuffer = (gasEstimate, percent = 30n) => {
+    const estimate = BigInt(gasEstimate);
+    return ((estimate * (100n + percent)) + 99n) / 100n;
+};
 
 const getGMStorageContract = () => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
-    return new web3.eth.Contract(abi, gm_storage_address);
-}
+    const address = gm_storage_address;
+    return new web3.eth.Contract(abi, address);
+};
 
+const getAggregatorSelectionContract = () => {
+    const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
+    return new web3.eth.Contract(abi, aggregator_address);
+};
 
+const getAggregatorSelectionDiagnostics = async (contract, caller) => {
+    const [state, round, lastRoundAggregator, topContributor, authorizedDevices, latestBlock] =
+        await Promise.all([
+            contract.methods.getSystemState().call().catch((error) => ({ error: serializeError(error) })),
+            getRound().catch((error) => ({ error: serializeError(error) })),
+            getLastRoundsAggregator().catch((error) => ({ error: serializeError(error) })),
+            getTopContributor().catch((error) => ({ error: serializeError(error) })),
+            getAuthorizedDevices().catch((error) => ({ error: serializeError(error) })),
+            web3.eth.getBlock("latest").catch((error) => ({ error: serializeError(error) })),
+        ]);
 
+    const stateHasError = Boolean(state?.error);
+    const blockHasError = Boolean(latestBlock?.error);
+    return {
+        caller,
+        contract: aggregator_address,
+        gmStorage: gm_storage_address,
+        deviceRegistry: device_registry_address,
+        state: stateHasError ? state : {
+            systemState: state?.[0],
+            currentAggregator: state?.[1],
+            brokerEndpoint: state?.[2],
+            timeToAggregate: state?.[3]?.toString?.() ?? state?.[3],
+            timeToSelect: state?.[4]?.toString?.() ?? state?.[4],
+        },
+        round,
+        lastRoundAggregator,
+        topContributor,
+        authorizedDeviceCount: Array.isArray(authorizedDevices) ? authorizedDevices.length : undefined,
+        authorizedDevices,
+        latestBlock: blockHasError ? latestBlock : {
+            number: latestBlock?.number?.toString?.() ?? latestBlock?.number,
+            timestamp: latestBlock?.timestamp?.toString?.() ?? latestBlock?.timestamp,
+            prevrandao: latestBlock?.prevrandao,
+            hash: latestBlock?.hash,
+        },
+    };
+};
 // send contract call to blockchain
-export const getCurrentGM = async (): Promise<string> => {
+export const getCurrentGM = async () => {
     const contract = getGMStorageContract();
     // call method of contract
-    const ipfsAddress = await contract.methods.getGlobalModel().call();
-    return String(ipfsAddress);
-}
+    let ipfs_address = await contract.methods.getGlobalModel().call().then((result) => {
+        return result;
+    });
+    return ipfs_address;
+};
 
-export const getCurrentGMSignature = async (): Promise<string> => {
+export const getCurrentGMSignature = async () => {
     const contract = getGMStorageContract();
-    const sig = await contract.methods.getGlobalModelSignature().call();
-    return String(sig);
-}
+    let sig = await contract.methods.getGlobalModelSignature().call().then((result) => {
+        return result;
+    });
+    return sig;
+};
 
-export const getLastRoundsAggregator = async (): Promise<string> => {
+export const getLastRoundsAggregator = async () => {
     const contract = getGMStorageContract();
-    const agg = await contract.methods.getLastRoundsAggregator().call();
-    return String(agg);
-}
+    let agg = await contract.methods.getLastRoundsAggregator().call().then((result) => {
+        return result;
+    });
+    return agg;
+};
 
 // Backwards-compatible alias used by server.js
 export const getPreviousAggregatorFromGMStorage = async () => {
     return await getLastRoundsAggregator();
-}
+};
 
 
 // function to set global model
-export const setGlobalModel = async (newIpfsAddress: string) => {
+export const setGlobalModel = async (newIpfsAddress) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
     const contract = new web3.eth.Contract(abi, address);
-
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
     const gasPrice = await web3.eth.getGasPrice();
     const gasEstimate = await contract.methods.setGlobalModel(newIpfsAddress).estimateGas({ from: account.address });
-
     const tx = {
         from: account.address,
         to: address,
@@ -77,29 +154,26 @@ export const setGlobalModel = async (newIpfsAddress: string) => {
         gasPrice: gasPrice,
         data: contract.methods.setGlobalModel(newIpfsAddress).encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
+};
 
-export const setGlobalModelSignature = async (newSigIpfsAddress: string) => {
+export const setGlobalModelSignature = async (newSigIpfsAddress) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
     const contract = new web3.eth.Contract(abi, address);
-
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
     const gasPrice = await web3.eth.getGasPrice();
     const gasEstimate = await contract.methods.setGlobalModelSignature(newSigIpfsAddress).estimateGas({ from: account.address });
-
     const tx = {
         from: account.address,
         to: address,
@@ -107,29 +181,26 @@ export const setGlobalModelSignature = async (newSigIpfsAddress: string) => {
         gasPrice: gasPrice,
         data: contract.methods.setGlobalModelSignature(newSigIpfsAddress).encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
+};
 
-export const setGlobalModelAndSignature = async (newModelIpfsAddress: string, newSigIpfsAddress: string) => {
+export const setGlobalModelAndSignature = async (newModelIpfsAddress, newSigIpfsAddress) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
     const contract = new web3.eth.Contract(abi, address);
-
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
     const gasPrice = await web3.eth.getGasPrice();
     const gasEstimate = await contract.methods.setGlobalModelAndSignature(newModelIpfsAddress, newSigIpfsAddress).estimateGas({ from: account.address });
-
     const tx = {
         from: account.address,
         to: address,
@@ -137,29 +208,26 @@ export const setGlobalModelAndSignature = async (newModelIpfsAddress: string, ne
         gasPrice: gasPrice,
         data: contract.methods.setGlobalModelAndSignature(newModelIpfsAddress, newSigIpfsAddress).encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
+};
 
 export const setLastRoundAggregator = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
     const contract = new web3.eth.Contract(abi, address);
-
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
     const gasPrice = await web3.eth.getGasPrice();
     const gasEstimate = await contract.methods.setLastRoundAggregator().estimateGas({ from: account.address });
-
     const tx = {
         from: account.address,
         to: address,
@@ -167,30 +235,26 @@ export const setLastRoundAggregator = async () => {
         gasPrice: gasPrice,
         data: contract.methods.setLastRoundAggregator().encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
-
+};
 // set the contribution of the devices
-export const setContribution = async (deviceID: string[]) => {
+export const setContribution = async (deviceID) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
     const contract = new web3.eth.Contract(abi, address);
-
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
     const gasPrice = await web3.eth.getGasPrice();
     const gasEstimate = await contract.methods.incrementContribution(deviceID).estimateGas({ from: account.address });
-
     const tx = {
         from: account.address,
         to: address,
@@ -198,17 +262,78 @@ export const setContribution = async (deviceID: string[]) => {
         gasPrice: gasPrice,
         data: contract.methods.incrementContribution(deviceID).encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
+};
+
+export const penalizeContribution = async (deviceIDs, reason) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
+    const address = gm_storage_address;
+    const contract = new web3.eth.Contract(abi, address);
+    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+    addAccountToWallet(account);
+    const gasPrice = await web3.eth.getGasPrice();
+    const gasEstimate = await contract.methods.penalizeContribution(deviceIDs, reason).estimateGas({ from: account.address });
+    const tx = {
+        from: account.address,
+        to: address,
+        gas: gasEstimate,
+        gasPrice: gasPrice,
+        data: contract.methods.penalizeContribution(deviceIDs, reason).encodeABI(),
+    };
+    try {
+        const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        console.log("Transaction receipt: ", receipt);
+        return receipt;
+    }
+    catch (error) {
+        console.error("Error sending transaction: ", error);
+        throw error;
+    }
+};
+
+export const submitModel = async (modelHash) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
+    const address = gm_storage_address;
+    const contract = new web3.eth.Contract(abi, address);
+    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+    addAccountToWallet(account);
+    const gasPrice = await web3.eth.getGasPrice();
+    const gasEstimate = await contract.methods.submitModel(modelHash).estimateGas({ from: account.address });
+    const tx = {
+        from: account.address,
+        to: address,
+        gas: gasEstimate,
+        gasPrice: gasPrice,
+        data: contract.methods.submitModel(modelHash).encodeABI(),
+    };
+    try {
+        const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        console.log("Transaction receipt: ", receipt);
+        return receipt;
+    }
+    catch (error) {
+        console.error("Error sending transaction: ", error);
+        throw error;
+    }
+};
+
+export const hasSubmittedModel = async (round, address) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, gm_storage_address);
+    const result = await contract.methods.hasSubmittedModel(round, address).call();
+    return result;
+};
 
 export const getTopContributor = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
@@ -218,8 +343,7 @@ export const getTopContributor = async () => {
         return result;
     });
     return topContributor;
-}
-
+};
 export const getRound = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
@@ -228,19 +352,15 @@ export const getRound = async () => {
         return result;
     });
     return round;
-}
-
+};
 export const incrementRound = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
     const contract = new web3.eth.Contract(abi, address);
-
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
     const gasPrice = await web3.eth.getGasPrice();
     const gasEstimate = await contract.methods.incrementRound().estimateGas({ from: account.address });
-
     const tx = {
         from: account.address,
         to: address,
@@ -248,18 +368,17 @@ export const incrementRound = async () => {
         gasPrice: gasPrice,
         data: contract.methods.incrementRound().encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
-
+};
 // get current state from aggregator
 export const getCurrentState = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
@@ -269,19 +388,15 @@ export const getCurrentState = async () => {
         return result;
     });
     return state;
-}
-
-export const setCurrentState = async (newState: string) => {
+};
+export const setCurrentState = async (newState) => {
     const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
     const address = aggregator_address;
     const contract = new web3.eth.Contract(abi, address);
-
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
     const gasPrice = await web3.eth.getGasPrice();
     const gasEstimate = await contract.methods.setSystemState(newState).estimateGas({ from: account.address });
-
     const tx = {
         from: account.address,
         to: address,
@@ -289,20 +404,18 @@ export const setCurrentState = async (newState: string) => {
         gasPrice: gasPrice,
         data: contract.methods.setSystemState(newState).encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
-
+};
 /* ------------------- Helper functions for state contract ------------------ */
-
 export const getAggregatorEndpoint = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
     const address = aggregator_address;
@@ -311,19 +424,15 @@ export const getAggregatorEndpoint = async () => {
         return result;
     });
     return endpoint;
-}
-
-export const setAggregatorEndpoint = async (newEndpoint: string) => {
+};
+export const setAggregatorEndpoint = async (newEndpoint) => {
     const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
     const address = aggregator_address;
     const contract = new web3.eth.Contract(abi, address);
-
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
     const gasPrice = await web3.eth.getGasPrice();
     const gasEstimate = await contract.methods.setBrokerEndpoint(newEndpoint).estimateGas({ from: account.address });
-
     const tx = {
         from: account.address,
         to: address,
@@ -331,59 +440,75 @@ export const setAggregatorEndpoint = async (newEndpoint: string) => {
         gasPrice: gasPrice,
         data: contract.methods.setBrokerEndpoint(newEndpoint).encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
-
+};
 export const triggerAggregatorSelection = async () => {
-    const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
     const address = aggregator_address;
-    const contract = new web3.eth.Contract(abi, address);
-
+    const contract = getAggregatorSelectionContract();
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
+    logJson("[aggregator-selection] preflight diagnostics", await getAggregatorSelectionDiagnostics(contract, account.address));
+    const method = contract.methods.triggerAggregatorSelection();
+    try {
+        await method.call({ from: account.address });
+        console.log("[aggregator-selection] eth_call simulation succeeded");
+    }
+    catch (error) {
+        console.error("[aggregator-selection] eth_call simulation failed:", serializeError(error));
+        throw error;
+    }
     const gasPrice = await web3.eth.getGasPrice();
-    const gasEstimate = await contract.methods.triggerAggregatorSelection().estimateGas({ from: account.address });
-
+    let gasEstimate;
+    try {
+        gasEstimate = await method.estimateGas({ from: account.address });
+        console.log("[aggregator-selection] gas estimate:", gasEstimate.toString(), "gasPrice:", gasPrice.toString());
+    }
+    catch (error) {
+        console.error("[aggregator-selection] gas estimate failed:", serializeError(error));
+        throw error;
+    }
+    const gasLimit = withGasBuffer(gasEstimate);
+    console.log("[aggregator-selection] gas limit with buffer:", gasLimit.toString());
     const tx = {
         from: account.address,
         to: address,
-        gas: gasEstimate,
+        gas: gasLimit.toString(),
         gasPrice: gasPrice,
-        data: contract.methods.triggerAggregatorSelection().encodeABI(),
+        data: method.encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
+        logJson("[aggregator-selection] post-transaction diagnostics", await getAggregatorSelectionDiagnostics(contract, account.address));
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
+        console.error("[aggregator-selection] transaction failed:", serializeError(error));
+        logJson("[aggregator-selection] failed-transaction diagnostics", await getAggregatorSelectionDiagnostics(contract, account.address));
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
+    
+};
 
 export const reportAggregatorTimeout = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
     const address = aggregator_address;
     const contract = new web3.eth.Contract(abi, address);
-
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
     const gasPrice = await web3.eth.getGasPrice();
     const gasEstimate = await contract.methods.reportAggregatorTimeout().estimateGas({ from: account.address });
-
     const tx = {
         from: account.address,
         to: address,
@@ -391,28 +516,117 @@ export const reportAggregatorTimeout = async () => {
         gasPrice: gasPrice,
         data: contract.methods.reportAggregatorTimeout().encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
+};
+
+// check if an address is authorized
+export const isAuthorized = async (address) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    const result = await contract.methods.isAuthorized(address).call();
+    return result;
+};
+
+export const getAuthorizedDevices = async () => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    const result = await contract.methods.getAuthorizedDevices().call();
+    return Array.from(result || []);
+};
+
+// get device public key (bytes) from registry by device address
+export const getDevicePublicKey = async (address) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    const result = await contract.methods.getDevice(address).call();
+    // web3 may return both array indices and named fields
+    const publicKey = (result && (result.public_key ?? result[3])) ?? "0x";
+    return publicKey;
+};
+
+export const registerDeviceWithTeeQuote = async (quoteHex, address, publicIp, brokerIp, publicKeyBytesHex) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+    addAccountToWallet(account);
+    const gasPrice = await web3.eth.getGasPrice();
+    const gasEstimate = await contract.methods
+        .registerDevice(quoteHex, address, publicIp, brokerIp, publicKeyBytesHex)
+        .estimateGas({ from: account.address });
+    const tx = {
+        from: account.address,
+        to: device_registry_address,
+        gas: gasEstimate,
+        gasPrice: gasPrice,
+        data: contract.methods
+            .registerDevice(quoteHex, address, publicIp, brokerIp, publicKeyBytesHex)
+            .encodeABI(),
+    };
+    try {
+        const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        console.log("Transaction receipt: ", receipt);
+        return receipt;
+    }
+    catch (error) {
+        console.error("Error sending transaction: ", error);
+        throw error;
+    }
+};
+
+export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
+    quoteHex,
+    rtmr3EventDigests,
+    address,
+    publicIp,
+    brokerIp,
+    publicKeyBytesHex
+) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+    addAccountToWallet(account);
+    const gasPrice = await web3.eth.getGasPrice();
+    const gasEstimate = await contract.methods
+        .registerDeviceWithRtmr3Events(quoteHex, rtmr3EventDigests, address, publicIp, brokerIp, publicKeyBytesHex)
+        .estimateGas({ from: account.address });
+    const tx = {
+        from: account.address,
+        to: device_registry_address,
+        gas: gasEstimate,
+        gasPrice: gasPrice,
+        data: contract.methods
+            .registerDeviceWithRtmr3Events(quoteHex, rtmr3EventDigests, address, publicIp, brokerIp, publicKeyBytesHex)
+            .encodeABI(),
+    };
+    try {
+        const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        console.log("Transaction receipt: ", receipt);
+        return receipt;
+    }
+    catch (error) {
+        console.error("Error sending TDX RTMR3 registration transaction: ", error);
+        throw error;
+    }
+};
 
 export const leaveDeviceRegistry = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
-
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
-
     const gasPrice = await web3.eth.getGasPrice();
     const gasEstimate = await contract.methods.leaveNetwork().estimateGas({ from: account.address });
-
     const tx = {
         from: account.address,
         to: device_registry_address,
@@ -420,14 +634,14 @@ export const leaveDeviceRegistry = async () => {
         gasPrice: gasPrice,
         data: contract.methods.leaveNetwork().encodeABI(),
     };
-
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction as string);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         console.log("Transaction receipt: ", receipt);
         return receipt;
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-}
+};

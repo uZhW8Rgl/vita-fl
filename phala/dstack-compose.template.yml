@@ -3,7 +3,7 @@ services:
     # Replace the digest after running the "Publish DFL Worker Image" workflow.
     # The digest-pinned image reference is what becomes part of the measured
     # Phala/dstack application configuration.
-    image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:REPLACE_WITH_PUBLISHED_DIGEST
+    image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:8d730338ae80a57da47b4d246910b90ad72f9ef48ccd361cf8d9f305626942de
     restart: unless-stopped
     environment:
       DOCKER: phala

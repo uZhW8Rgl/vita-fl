@@ -1,3 +1,4 @@
+// @ts-nocheck
 import Web3 from "web3";
 import fs from "fs";
 import 'dotenv/config';
@@ -9,7 +10,6 @@ const gm_storage_address = process.env.GM_STORAGE_ADDRESS;
 const aggregator_address = process.env.AGGREGATOR_ADDRESS;
 const device_registry_address = process.env.REGISTRY_ADDRESS;
 const privateKey = process.env.PRIVATE_KEY;
-
 const addAccountToWallet = (account) => {
     const address = account.address.toLowerCase();
     for (let i = 0; i < web3.eth.accounts.wallet.length; i++) {
@@ -20,14 +20,12 @@ const addAccountToWallet = (account) => {
     }
     web3.eth.accounts.wallet.add(account);
 };
-
 const jsonReplacer = (_key, value) => {
     if (typeof value === "bigint") {
         return value.toString();
     }
     return value;
 };
-
 const serializeError = (error) => ({
     name: error?.name,
     message: error?.message,
@@ -46,38 +44,31 @@ const serializeError = (error) => ({
         }
         : undefined,
 });
-
 const logJson = (label, payload) => {
     console.log(label, JSON.stringify(payload, jsonReplacer));
 };
-
 const withGasBuffer = (gasEstimate, percent = 30n) => {
     const estimate = BigInt(gasEstimate);
     return ((estimate * (100n + percent)) + 99n) / 100n;
 };
-
 const getGMStorageContract = () => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
     return new web3.eth.Contract(abi, address);
 };
-
 const getAggregatorSelectionContract = () => {
     const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
     return new web3.eth.Contract(abi, aggregator_address);
 };
-
 const getAggregatorSelectionDiagnostics = async (contract, caller) => {
-    const [state, round, lastRoundAggregator, topContributor, authorizedDevices, latestBlock] =
-        await Promise.all([
-            contract.methods.getSystemState().call().catch((error) => ({ error: serializeError(error) })),
-            getRound().catch((error) => ({ error: serializeError(error) })),
-            getLastRoundsAggregator().catch((error) => ({ error: serializeError(error) })),
-            getTopContributor().catch((error) => ({ error: serializeError(error) })),
-            getAuthorizedDevices().catch((error) => ({ error: serializeError(error) })),
-            web3.eth.getBlock("latest").catch((error) => ({ error: serializeError(error) })),
-        ]);
-
+    const [state, round, lastRoundAggregator, topContributor, authorizedDevices, latestBlock] = await Promise.all([
+        contract.methods.getSystemState().call().catch((error) => ({ error: serializeError(error) })),
+        getRound().catch((error) => ({ error: serializeError(error) })),
+        getLastRoundsAggregator().catch((error) => ({ error: serializeError(error) })),
+        getTopContributor().catch((error) => ({ error: serializeError(error) })),
+        getAuthorizedDevices().catch((error) => ({ error: serializeError(error) })),
+        web3.eth.getBlock("latest").catch((error) => ({ error: serializeError(error) })),
+    ]);
     const stateHasError = Boolean(state?.error);
     const blockHasError = Boolean(latestBlock?.error);
     return {
@@ -114,7 +105,6 @@ export const getCurrentGM = async () => {
     });
     return ipfs_address;
 };
-
 export const getCurrentGMSignature = async () => {
     const contract = getGMStorageContract();
     let sig = await contract.methods.getGlobalModelSignature().call().then((result) => {
@@ -122,7 +112,6 @@ export const getCurrentGMSignature = async () => {
     });
     return sig;
 };
-
 export const getLastRoundsAggregator = async () => {
     const contract = getGMStorageContract();
     let agg = await contract.methods.getLastRoundsAggregator().call().then((result) => {
@@ -130,13 +119,10 @@ export const getLastRoundsAggregator = async () => {
     });
     return agg;
 };
-
 // Backwards-compatible alias used by server.js
 export const getPreviousAggregatorFromGMStorage = async () => {
     return await getLastRoundsAggregator();
 };
-
-
 // function to set global model
 export const setGlobalModel = async (newIpfsAddress) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
@@ -164,7 +150,6 @@ export const setGlobalModel = async (newIpfsAddress) => {
         throw error;
     }
 };
-
 export const setGlobalModelSignature = async (newSigIpfsAddress) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
@@ -191,7 +176,6 @@ export const setGlobalModelSignature = async (newSigIpfsAddress) => {
         throw error;
     }
 };
-
 export const setGlobalModelAndSignature = async (newModelIpfsAddress, newSigIpfsAddress) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
@@ -218,7 +202,6 @@ export const setGlobalModelAndSignature = async (newModelIpfsAddress, newSigIpfs
         throw error;
     }
 };
-
 export const setLastRoundAggregator = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
@@ -272,7 +255,6 @@ export const setContribution = async (deviceID) => {
         throw error;
     }
 };
-
 export const penalizeContribution = async (deviceIDs, reason) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
@@ -299,7 +281,6 @@ export const penalizeContribution = async (deviceIDs, reason) => {
         throw error;
     }
 };
-
 export const submitModel = async (modelHash) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
@@ -326,14 +307,12 @@ export const submitModel = async (modelHash) => {
         throw error;
     }
 };
-
 export const hasSubmittedModel = async (round, address) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, gm_storage_address);
     const result = await contract.methods.hasSubmittedModel(round, address).call();
     return result;
 };
-
 export const getTopContributor = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
@@ -497,9 +476,7 @@ export const triggerAggregatorSelection = async () => {
         console.error("Error sending transaction: ", error);
         throw error;
     }
-    
 };
-
 export const reportAggregatorTimeout = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
     const address = aggregator_address;
@@ -526,7 +503,6 @@ export const reportAggregatorTimeout = async () => {
         throw error;
     }
 };
-
 // check if an address is authorized
 export const isAuthorized = async (address) => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
@@ -534,14 +510,12 @@ export const isAuthorized = async (address) => {
     const result = await contract.methods.isAuthorized(address).call();
     return result;
 };
-
 export const getAuthorizedDevices = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
     const result = await contract.methods.getAuthorizedDevices().call();
     return Array.from(result || []);
 };
-
 // get device public key (bytes) from registry by device address
 export const getDevicePublicKey = async (address) => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
@@ -551,7 +525,6 @@ export const getDevicePublicKey = async (address) => {
     const publicKey = (result && (result.public_key ?? result[3])) ?? "0x";
     return publicKey;
 };
-
 export const registerDeviceWithTeeQuote = async (quoteHex, address, publicIp, brokerIp, publicKeyBytesHex) => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
@@ -581,7 +554,35 @@ export const registerDeviceWithTeeQuote = async (quoteHex, address, publicIp, br
         throw error;
     }
 };
-
+export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3EventDigests, address, publicIp, brokerIp, publicKeyBytesHex) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+    addAccountToWallet(account);
+    const gasPrice = await web3.eth.getGasPrice();
+    const gasEstimate = await contract.methods
+        .registerDeviceWithRtmr3Events(quoteHex, rtmr3EventDigests, address, publicIp, brokerIp, publicKeyBytesHex)
+        .estimateGas({ from: account.address });
+    const tx = {
+        from: account.address,
+        to: device_registry_address,
+        gas: gasEstimate,
+        gasPrice: gasPrice,
+        data: contract.methods
+            .registerDeviceWithRtmr3Events(quoteHex, rtmr3EventDigests, address, publicIp, brokerIp, publicKeyBytesHex)
+            .encodeABI(),
+    };
+    try {
+        const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        console.log("Transaction receipt: ", receipt);
+        return receipt;
+    }
+    catch (error) {
+        console.error("Error sending TDX RTMR3 registration transaction: ", error);
+        throw error;
+    }
+};
 export const leaveDeviceRegistry = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
