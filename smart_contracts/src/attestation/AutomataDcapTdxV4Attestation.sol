@@ -45,6 +45,11 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
     uint8 internal constant DEBUG_STAGE_QE_IDENTITY_FAILED = 6;
     uint8 internal constant DEBUG_STAGE_TCB_INFO_MISSING = 7;
     uint8 internal constant DEBUG_STAGE_TCB_LEVEL_FAILED = 8;
+    uint8 internal constant DEBUG_STAGE_RTMR3_POLICY_FAILED = 9;
+
+    bytes public expectedRtmr3;
+
+    event ExpectedRtmr3Updated(bytes expectedRtmr3);
 
     constructor(
         address enclaveIdDaoAddr,
@@ -70,6 +75,12 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         enclaveIdDao = EnclaveIdentityDao(enclaveIdDaoAddr);
         tcbDao = FmspcTcbDao(tcbDaoAddr);
         _setCertBaseConfig(pckHelperAddr, crlHelperAddr, pcsDaoAddr, p256VerifierAddr);
+    }
+
+    function setExpectedRtmr3(bytes calldata _expectedRtmr3) external onlyOwner {
+        require(_expectedRtmr3.length == 0 || _expectedRtmr3.length == 48, "expected RTMR3 must be 48 bytes");
+        expectedRtmr3 = _expectedRtmr3;
+        emit ExpectedRtmr3Updated(_expectedRtmr3);
     }
 
     function verifyAndAttestOnChain(bytes calldata input) external view override returns (bytes memory output) {
@@ -308,7 +319,27 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
             );
         }
 
+        if (!_rtmr3PolicySatisfied(parsedQuote.body.rtmr3)) {
+            return (
+                DEBUG_STAGE_RTMR3_POLICY_FAILED,
+                qeTcbStatusCode,
+                tcbStatusCode,
+                pcesvn,
+                fmspc,
+                teeTcbSvn,
+                qeIsvProdId,
+                qeIsvSvn
+            );
+        }
+
         return (DEBUG_STAGE_OK, qeTcbStatusCode, tcbStatusCode, pcesvn, fmspc, teeTcbSvn, qeIsvProdId, qeIsvSvn);
+    }
+
+    function _rtmr3PolicySatisfied(bytes memory rtmr3) private view returns (bool) {
+        if (expectedRtmr3.length == 0) {
+            return true;
+        }
+        return keccak256(rtmr3) == keccak256(expectedRtmr3);
     }
 
     function _verifyQeReportWithTdIdentity(

@@ -264,7 +264,29 @@ async function verifyDownloadedGlobalModelSignature({ publicKeyDerHex, modelPath
 }
 
 const stateMachine = async () => {
-    if (process.env.DOCKER !== "phala") {
+    if (process.env.DOCKER === "phala") {
+        console.log("Fetching TDX Quote ...");
+        const client = new DstackClient();
+        const devClient = new DstackClient('http://localhost:8090');
+
+        // Get TEE instance information
+        const info = await client.info();
+        console.log('App ID:', info.app_id);
+        console.log('Instance ID:', info.instance_id);
+        console.log('App Name:', info.app_name);
+        console.log('TCB Info:', info.tcb_info);
+
+        // Generate remote attestation quote
+        const applicationData = JSON.stringify({
+        version: '1.0.0',
+        timestamp: Date.now(),
+        user_id: process.env.ACCOUNT_ADDRESS,
+        });
+
+        const quote = await client.getQuote(applicationData);
+            console.log('TDX Quote:', quote.quote);
+    }
+    else {
         await registerWithLocalTdxQuote();
     }
     while (Number(await getRound()) < Number(process.env.ROUND)) {
@@ -348,29 +370,6 @@ const stateMachine = async () => {
                     console.log("Local training complete.");
                     await traceEvent("worker.training.finished", { role: "worker" });
 
-                    if (process.env.DOCKER === "phala") {
-                        console.log("Fetching TDX Quote ...");
-                        const client = new DstackClient();
-                        const devClient = new DstackClient('http://localhost:8090');
-
-                        // Get TEE instance information
-                        const info = await client.info();
-                        console.log('App ID:', info.app_id);
-                        console.log('Instance ID:', info.instance_id);
-                        console.log('App Name:', info.app_name);
-                        console.log('TCB Info:', info.tcb_info);
-
-                        // Generate remote attestation quote
-                        const applicationData = JSON.stringify({
-                            version: '1.0.0',
-                            timestamp: Date.now(),
-                            user_id: 'alice'
-                        });
-
-                        const quote = await client.getQuote(applicationData);
-                        console.log('TDX Quote:', quote.quote);
-
-                    }
                     console.log("Is the device authorized? ", await isAuthorized(process.env.ACCOUNT_ADDRESS));
                     console.log("Starting the zerompq client ...");
                     await traceEvent("worker.model_transfer.started", { role: "worker", aggregator: String(state["1"]) });

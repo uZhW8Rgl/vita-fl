@@ -6,6 +6,12 @@
 node_modules/
 .env
 cache/
+smart_contracts/out/
+smart_contracts/cache/
+smart_contracts/broadcast/
+smart_contracts/lib/automata-dcap-v3-attestation/lib/automata-on-chain-pccs/out/
+smart_contracts/lib/automata-dcap-v3-attestation/lib/automata-on-chain-pccs/cache/
+smart_contracts/lib/automata-dcap-v3-attestation/lib/automata-on-chain-pccs/broadcast/
 dfl/node_server/.env
 remote_attestation/target/
 remote_attestation/methods/guest/target/
