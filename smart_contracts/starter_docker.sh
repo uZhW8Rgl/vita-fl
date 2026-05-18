@@ -20,6 +20,7 @@ export RPC_URL=$rpc_url
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
 CHAIN_ID=$(cast chain-id --rpc-url $rpc_url)
+ETH_EUR_PRICE=${ETH_EUR_PRICE:-3000}
 
 require_address() {
     local name=$1
@@ -52,6 +53,59 @@ authorize_pccs_reader() {
         exit 1
     fi
     popd >/dev/null
+}
+
+log_broadcast_gas_cost() {
+    local phase=$1
+    local broadcast_file=$2
+
+    if [ ! -f "$broadcast_file" ]; then
+        return 0
+    fi
+
+    ETH_EUR_PRICE="$ETH_EUR_PRICE" PHASE="$phase" python3 - "$broadcast_file" <<'PY' || true
+import json
+import os
+import sys
+
+
+def to_int(value):
+    if value is None:
+        return 0
+    if isinstance(value, int):
+        return value
+    text = str(value)
+    return int(text, 16) if text.startswith(("0x", "0X")) else int(text)
+
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    data = json.load(fh)
+
+eth_eur_price = float(os.environ.get("ETH_EUR_PRICE", "3000"))
+phase = os.environ["PHASE"]
+
+for receipt in data.get("receipts", []):
+    gas_used = to_int(receipt.get("gasUsed"))
+    gas_price = to_int(receipt.get("effectiveGasPrice"))
+    cost_eth = gas_used * gas_price / 10**18
+    print(json.dumps({
+        "kind": "gas_cost",
+        "scope": "smart_contracts_init",
+        "phase": phase,
+        "operation": "contract_deploy" if receipt.get("contractAddress") else "transaction",
+        "gasUsed": gas_used,
+        "effectiveGasPriceWei": gas_price,
+        "effectiveGasPriceGwei": gas_price / 10**9,
+        "costEth": cost_eth,
+        "costEur": cost_eth * eth_eur_price,
+        "ethEurPrice": eth_eur_price,
+        "transactionHash": receipt.get("transactionHash"),
+        "blockNumber": to_int(receipt.get("blockNumber")),
+        "from": receipt.get("from"),
+        "to": receipt.get("to"),
+        "contractAddress": receipt.get("contractAddress"),
+    }, separators=(",", ":")))
+PY
 }
 
 KUBO_API_URL=${KUBO_API_URL:-http://ipfs:5001}
@@ -98,6 +152,7 @@ prepare_local_initial_gm() {
 
 prepare_local_initial_gm
 forge script --rpc-url $rpc_url --broadcast script/Deploy.s.sol
+log_broadcast_gas_cost "deploy_core_contracts" "./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json"
 
 export DEVICE_REGISTRY_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "DeviceRegistry") | .contractAddress' ./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json)
 
@@ -212,15 +267,19 @@ if [ "$ENABLE_DCAP" = "1" ]; then
     require_address OWNER "$OWNER"
 
     forge script script/helper/DeployHelpers.s.sol --sig "deployEnclaveIdentityHelper()" --broadcast --rpc-url $rpc_url --ffi
+    log_broadcast_gas_cost "deploy_enclave_identity_helper" "./broadcast/DeployHelpers.s.sol/$CHAIN_ID/deployEnclaveIdentityHelper-latest.json"
     export ENCLAVE_IDENTITY_HELPER=$(jq -re '.transactions[] | select(.contractName == "EnclaveIdentityHelper") | .contractAddress' ./broadcast/DeployHelpers.s.sol/$CHAIN_ID/deployEnclaveIdentityHelper-latest.json)
 
     forge script script/helper/DeployHelpers.s.sol --sig "deployFmspcTcbHelper()" --broadcast --rpc-url $rpc_url
+    log_broadcast_gas_cost "deploy_fmspc_tcb_helper" "./broadcast/DeployHelpers.s.sol/$CHAIN_ID/deployFmspcTcbHelper-latest.json"
     export FMSPC_TCB_HELPER=$(jq -re '.transactions[] | select(.contractName == "FmspcTcbHelper") | .contractAddress' ./broadcast/DeployHelpers.s.sol/$CHAIN_ID/deployFmspcTcbHelper-latest.json)
 
     forge script script/helper/DeployHelpers.s.sol --sig "deployPckHelper()" --broadcast --rpc-url $rpc_url
+    log_broadcast_gas_cost "deploy_pck_helper" "./broadcast/DeployHelpers.s.sol/$CHAIN_ID/deployPckHelper-latest.json"
     export X509_HELPER=$(jq -re '.transactions[] | select(.contractName == "PCKHelper") | .contractAddress' ./broadcast/DeployHelpers.s.sol/$CHAIN_ID/deployPckHelper-latest.json)
 
     forge script script/helper/DeployHelpers.s.sol --sig "deployX509CrlHelper()" --broadcast --rpc-url $rpc_url
+    log_broadcast_gas_cost "deploy_x509_crl_helper" "./broadcast/DeployHelpers.s.sol/$CHAIN_ID/deployX509CrlHelper-latest.json"
     export X509_CRL_HELPER=$(jq -re '.transactions[] | select(.contractName == "X509CRLHelper") | .contractAddress' ./broadcast/DeployHelpers.s.sol/$CHAIN_ID/deployX509CrlHelper-latest.json)
 
     PCCS_DEPLOYMENT_FILE="./deployment/$CHAIN_ID.json"
@@ -236,6 +295,7 @@ if [ "$ENABLE_DCAP" = "1" ]; then
         echo "Failed to deploy Automata PCCS DAO suite"
         exit 1
     fi
+    log_broadcast_gas_cost "deploy_automata_dao" "./broadcast/DeployAutomataDao.s.sol/$CHAIN_ID/run-latest.json"
 
     if [ ! -f "$PCCS_DEPLOYMENT_FILE" ]; then
         echo "Missing PCCS deployment file: $PCCS_DEPLOYMENT_FILE"
@@ -538,6 +598,7 @@ PY
 	            echo "PCCS collateral upload failed"
 	            exit 1
 	        fi
+	        log_broadcast_gas_cost "upload_pccs_collaterals" "./broadcast/UploadPccsCollaterals.s.sol/$CHAIN_ID/run-latest.json"
 	        echo "PCCS Collaterals uploaded successfully"
 
 	        # Hardcoded startup quote verification is disabled here on purpose.
