@@ -1,15 +1,15 @@
+// @ts-nocheck
 // code adapted from pinata docs https://docs.pinata.cloud/quickstart/node-js
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getCurrentGM, setGlobalModel, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getPreviousAggregatorFromGMStorage, getLastRoundsAggregator, registerDeviceWithTeeQuote, submitModel, penalizeContribution } from "./bc_client.js";
-import { getCurrentModel, pinFile, getFileFromIPFS, updateGM } from "./ipfs.js";
+import { getCurrentGM, getCurrentState, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getLastRoundsAggregator, registerDeviceWithTeeQuote, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, penalizeContribution } from "./bc_client.js";
+import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
 import { recordRoundEvent, recordRoundSpan } from "./telemetry.js";
 import fs from 'fs/promises';
 import { DstackClient } from '@phala/dstack-sdk';
 import crypto from 'crypto';
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const deviceID = process.env.DEVICE_ID;
@@ -27,7 +27,6 @@ for (const warning of validateTimingConfig(timingConfig)) {
     console.warn("Timing config warning:", warning);
 }
 let missedGMUpdateLoops = 0;
-
 async function traceEvent(name, attributes = {}) {
     const round = Number(await getRound().catch(() => 0));
     await recordRoundEvent(name, {
@@ -36,7 +35,6 @@ async function traceEvent(name, attributes = {}) {
         attributes,
     });
 }
-
 async function traceOperation(name, attributes, operation) {
     const round = Number(await getRound().catch(() => 0));
     const startTimeMs = Date.now();
@@ -51,7 +49,8 @@ async function traceOperation(name, attributes, operation) {
             attributes,
         });
         return result;
-    } catch (error) {
+    }
+    catch (error) {
         await recordRoundSpan(name, {
             round,
             role: attributes.role || "",
@@ -66,7 +65,6 @@ async function traceOperation(name, attributes, operation) {
         throw error;
     }
 }
-
 async function callPythonService(endpoint, payload = {}, { timeoutMs = 0 } = {}) {
     const controller = timeoutMs > 0 ? new AbortController() : null;
     const timeout = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
@@ -80,61 +78,66 @@ async function callPythonService(endpoint, payload = {}, { timeoutMs = 0 } = {})
         const text = await res.text();
         let data = {};
         if (text) {
-            try { data = JSON.parse(text); } catch { data = { raw: text }; }
+            try {
+                data = JSON.parse(text);
+            }
+            catch {
+                data = { raw: text };
+            }
         }
         if (!res.ok || data.ok === false) {
             throw new Error(`Python service ${endpoint} failed (${res.status}): ${text}`);
         }
         return data;
-    } finally {
-        if (timeout) clearTimeout(timeout);
+    }
+    finally {
+        if (timeout)
+            clearTimeout(timeout);
     }
 }
-
 async function stopAggregatorServer() {
-    if (!aggregatorServerRunning) return;
+    if (!aggregatorServerRunning)
+        return;
     await callPythonService('/server/stop');
     aggregatorServerRunning = false;
 }
-
 function normalizeHexBytes(input) {
     let hex = Buffer.isBuffer(input) ? input.toString('utf8') : String(input || '');
     hex = hex.trim();
-    if (hex.startsWith('0x') || hex.startsWith('0X')) hex = hex.slice(2);
+    if (hex.startsWith('0x') || hex.startsWith('0X'))
+        hex = hex.slice(2);
     hex = hex.replace(/\s+/g, '');
     if (!/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2 !== 0) {
         throw new Error('TDX quote file must contain hex-encoded bytes');
     }
     return `0x${hex}`;
 }
-
 function rsaPublicKeyDerHex() {
     const key = crypto.createPublicKey(rsaPublicKey);
     const der = key.export({ format: 'der', type: 'spki' });
     return `0x${Buffer.from(der).toString('hex')}`;
 }
-
 async function localModelPackageHash() {
     const data = await fs.readFile('./data/lm.bin.enc');
     return `0x${crypto.createHash('sha256').update(data).digest('hex')}`;
 }
-
 async function expectedWorkerAddresses() {
     const own = String(process.env.ACCOUNT_ADDRESS || '').toLowerCase();
     const authorizedDevices = await getAuthorizedDevices();
     return authorizedDevices
         .filter(address => address.toLowerCase() !== own);
 }
-
 async function receivedWorkerModelFiles() {
     const expected = new Set((await expectedWorkerAddresses()).map(address => address.toLowerCase()));
     const entries = await fs.readdir(srcModelsDir, { withFileTypes: true }).catch(err => {
-        if (err && err.code === 'ENOENT') return [];
+        if (err && err.code === 'ENOENT')
+            return [];
         throw err;
     });
     const files = [];
     for (const entry of entries) {
-        if (!entry.isFile() || !entry.name.endsWith('.bin')) continue;
+        if (!entry.isFile() || !entry.name.endsWith('.bin'))
+            continue;
         const filePath = path.join(srcModelsDir, entry.name);
         const match = entry.name.match(/^wb_client_(.+)\.bin$/);
         if (!match) {
@@ -161,16 +164,12 @@ async function receivedWorkerModelFiles() {
     }
     return files.sort((a, b) => a.name.localeCompare(b.name));
 }
-
 async function receivedWorkerAddresses() {
     const files = await receivedWorkerModelFiles();
-    return new Set(
-        files
-            .filter(file => file.authorized && file.address)
-            .map(file => file.address.toLowerCase())
-    );
+    return new Set(files
+        .filter(file => file.authorized && file.address)
+        .map(file => file.address.toLowerCase()));
 }
-
 async function getMissingAuthorizedWorkers() {
     const expected = await expectedWorkerAddresses();
     if (expected.length === 0) {
@@ -180,59 +179,78 @@ async function getMissingAuthorizedWorkers() {
     const received = await receivedWorkerAddresses();
     const missing = [];
     for (const address of expected) {
-        if (received.has(address.toLowerCase())) continue;
+        if (received.has(address.toLowerCase()))
+            continue;
         if (await isAuthorized(address)) {
             missing.push(address);
         }
     }
     return missing;
 }
-
 async function registerWithLocalTdxQuote() {
-    if (localTdxRegistrationDone || process.env.DOCKER === "phala") return;
+    if (localTdxRegistrationDone || process.env.DOCKER === "phala")
+        return;
     localTdxRegistrationDone = true;
-
     const quotePath = process.env.TDX_QUOTE_PATH || './attestation/phala_tdx_quote';
     console.log(`Registering with local TDX quote from ${quotePath} ...`);
     const quoteHex = normalizeHexBytes(await fs.readFile(quotePath));
-
-    await registerDeviceWithTeeQuote(
-        quoteHex,
-        process.env.ACCOUNT_ADDRESS,
-        process.env.PUBLIC_IP || "",
-        process.env.MSG_BROKER_IP || "",
-        rsaPublicKeyDerHex(),
-    );
+    await registerDeviceWithTeeQuote(quoteHex, process.env.ACCOUNT_ADDRESS, process.env.PUBLIC_IP || "", process.env.MSG_BROKER_IP || "", rsaPublicKeyDerHex());
     console.log("Device registered with onchain TDX quote verification.");
 }
-
+function normalizeRtmr3EventDigests(eventLog) {
+    let events = eventLog;
+    if (typeof events === 'string') {
+        events = JSON.parse(events);
+    }
+    if (!Array.isArray(events)) {
+        throw new Error('Phala quote response did not include an RTMR event log array');
+    }
+    const digests = events
+        .filter(event => Number(event?.imr) === 3)
+        .map(event => {
+        let digest = String(event?.digest || '').trim();
+        if (digest.startsWith('0x') || digest.startsWith('0X'))
+            digest = digest.slice(2);
+        if (!/^[0-9a-fA-F]{96}$/.test(digest)) {
+            throw new Error(`Invalid RTMR3 event digest for event ${event?.event || '<unknown>'}`);
+        }
+        return `0x${digest}`;
+    });
+    if (digests.length === 0) {
+        throw new Error('Phala quote response did not include RTMR3 event digests');
+    }
+    return digests;
+}
 function derHexToBuffer(derHex) {
-    if (typeof derHex !== 'string') return Buffer.alloc(0);
+    if (typeof derHex !== 'string')
+        return Buffer.alloc(0);
     let hex = derHex.trim();
-    if (hex.startsWith('0x') || hex.startsWith('0X')) hex = hex.slice(2);
+    if (hex.startsWith('0x') || hex.startsWith('0X'))
+        hex = hex.slice(2);
     hex = hex.replace(/\s+/g, '');
-    if (hex.length === 0 || (hex.length % 2) !== 0) return Buffer.alloc(0);
+    if (hex.length === 0 || (hex.length % 2) !== 0)
+        return Buffer.alloc(0);
     return Buffer.from(hex, 'hex');
 }
-
 async function verifyDownloadedGlobalModelSignature({ publicKeyDerHex, modelPath = './data/gm.bin', sigPath = './data/gm.bin.sig' } = {}) {
     const pubDer = derHexToBuffer(publicKeyDerHex);
     if (!pubDer.length) {
         console.error('Signature verification: invalid public key DER-hex');
         return false;
     }
-
     let modelBytes;
     let sigBytes;
     try {
         modelBytes = await fs.readFile(modelPath);
-    } catch (e) {
+    }
+    catch (e) {
         console.error(`Signature verification: cannot read model file ${modelPath}`, e);
         return false;
     }
     try {
         sigBytes = await fs.readFile(sigPath);
-    } catch (e) {
+    }
+    catch (e) {
         console.error(`Signature verification: cannot read signature file ${sigPath}`, e);
         return false;
     }
@@ -240,58 +258,53 @@ async function verifyDownloadedGlobalModelSignature({ publicKeyDerHex, modelPath
         console.error('Signature verification: signature file empty');
         return false;
     }
-
     let keyObject;
     try {
         keyObject = crypto.createPublicKey({ key: pubDer, format: 'der', type: 'spki' });
-    } catch (e) {
+    }
+    catch (e) {
         console.error('Signature verification: failed to parse public key (DER/SPKI)', e);
         return false;
     }
-
     try {
-        const ok = crypto.verify(
-            'RSA-SHA256',
-            modelBytes,
-            { key: keyObject, padding: crypto.constants.RSA_PKCS1_PADDING },
-            sigBytes
-        );
+        const ok = crypto.verify('RSA-SHA256', modelBytes, { key: keyObject, padding: crypto.constants.RSA_PKCS1_PADDING }, sigBytes);
         return !!ok;
-    } catch (e) {
+    }
+    catch (e) {
         console.error('Signature verification: crypto.verify failed', e);
         return false;
     }
 }
-
 const stateMachine = async () => {
     if (process.env.DOCKER === "phala") {
         console.log("Fetching TDX Quote ...");
         const client = new DstackClient();
-        const devClient = new DstackClient('http://localhost:8090');
-
         // Get TEE instance information
         const info = await client.info();
         console.log('App ID:', info.app_id);
         console.log('Instance ID:', info.instance_id);
         console.log('App Name:', info.app_name);
         console.log('TCB Info:', info.tcb_info);
-
         // Generate remote attestation quote
         const applicationData = JSON.stringify({
-        version: '1.0.0',
-        timestamp: Date.now(),
-        user_id: process.env.ACCOUNT_ADDRESS,
+            version: '1.0.0',
+            timestamp: Date.now(),
+            user_id: process.env.ACCOUNT_ADDRESS,
         });
-
-        const quote = await client.getQuote(applicationData);
-            console.log('TDX Quote:', quote.quote);
+        const reportData = crypto.createHash('sha256').update(applicationData).digest();
+        const quote = await client.getQuote(reportData);
+        const quoteHex = normalizeHexBytes(quote.quote);
+        const rtmr3EventDigests = normalizeRtmr3EventDigests(quote.event_log);
+        console.log('TDX Quote:', quote.quote);
+        console.log(`Registering with live Phala TDX quote and ${rtmr3EventDigests.length} RTMR3 event digests ...`);
+        await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventDigests, process.env.ACCOUNT_ADDRESS, process.env.PUBLIC_IP || "", process.env.MSG_BROKER_IP || "", rsaPublicKeyDerHex());
+        console.log("Device registered with onchain TDX quote and RTMR3 event replay verification.");
     }
     else {
         await registerWithLocalTdxQuote();
     }
     while (Number(await getRound()) < Number(process.env.ROUND)) {
         let state = await getCurrentState();
-
         switch (state["0"]) {
             case "TRAINING":
                 if (state[1] === process.env.ACCOUNT_ADDRESS) {
@@ -328,11 +341,13 @@ const stateMachine = async () => {
                         });
                         await setCurrentState("AGGREGATING");
                         continue;
-                    } catch (e) {
+                    }
+                    catch (e) {
                         console.error("Error during starting the aggregator server:", e);
                         return;
                     }
-                } else {
+                }
+                else {
                     console.log("I am not the aggregator");
                     await traceEvent("state.training.worker", { role: "worker", aggregator: String(state["1"]) });
                     console.log("Round %d.", Number(await getRound()));
@@ -340,9 +355,7 @@ const stateMachine = async () => {
                     await traceEvent("worker.fetch_global_model.started", { role: "worker" });
                     await traceOperation("worker.fetch_global_model", { role: "worker" }, () => getCurrentModel());
                     await traceEvent("worker.fetch_global_model.finished", { role: "worker" });
-
                     const prevGM = await getCurrentGM();
-
                     const lastSignerAddress = await getLastRoundsAggregator();
                     const lastSignersPubKey = await getDevicePublicKey(lastSignerAddress);
                     const sigOk = await verifyDownloadedGlobalModelSignature({
@@ -355,7 +368,6 @@ const stateMachine = async () => {
                         return;
                     }
                     console.log("Global model signature verification successful.");
-
                     console.log("Starting local training ...");
                     await traceEvent("worker.training.started", { role: "worker" });
                     try {
@@ -363,13 +375,13 @@ const stateMachine = async () => {
                             epochs: Number(process.env.EPOCH),
                             aggregator_public_key_der_hex: await getDevicePublicKey(state[1]),
                         }));
-                    } catch (e) {
+                    }
+                    catch (e) {
                         console.error("Error during local training:", e);
                         return;
                     }
                     console.log("Local training complete.");
                     await traceEvent("worker.training.finished", { role: "worker" });
-
                     console.log("Is the device authorized? ", await isAuthorized(process.env.ACCOUNT_ADDRESS));
                     console.log("Starting the zerompq client ...");
                     await traceEvent("worker.model_transfer.started", { role: "worker", aggregator: String(state["1"]) });
@@ -384,7 +396,8 @@ const stateMachine = async () => {
                         await submitModel(await localModelPackageHash());
                         await setContribution([process.env.ACCOUNT_ADDRESS]);
                         await traceEvent("worker.model_transfer.finished", { role: "worker", aggregator: String(state["1"]) });
-                    } catch (e) {
+                    }
+                    catch (e) {
                         console.error("Error during model transfer:", e);
                         await traceEvent("worker.model_transfer.failed", {
                             role: "worker",
@@ -401,7 +414,8 @@ const stateMachine = async () => {
                         const newGM = await waitForGMUpdate(prevGM, { pollMs: 5000, timeoutMs: gmUpdateTimeoutMs });
                         missedGMUpdateLoops = 0;
                         console.log("New Global Model detected:", newGM);
-                    } catch (e) {
+                    }
+                    catch (e) {
                         missedGMUpdateLoops++;
                         console.warn(`No new GM within timeout. Missed update loop ${missedGMUpdateLoops}/${gmUpdateTimeoutLoops}.`);
                         if (missedGMUpdateLoops >= gmUpdateTimeoutLoops) {
@@ -412,7 +426,8 @@ const stateMachine = async () => {
                             });
                             try {
                                 await reportAggregatorTimeout();
-                            } catch (reportError) {
+                            }
+                            catch (reportError) {
                                 console.error("Error reporting aggregator timeout:", reportError);
                             }
                             missedGMUpdateLoops = 0;
@@ -421,7 +436,6 @@ const stateMachine = async () => {
                     await sleep(2000);
                     continue;
                 }
-
             case "AGGREGATING":
                 if (state[1] === process.env.ACCOUNT_ADDRESS) {
                     currentState = "AGGREGATING";
@@ -436,12 +450,10 @@ const stateMachine = async () => {
                             timeoutMs: 1,
                         });
                         console.log(`Models present before aggregation: ${present}/${expected}`);
-
                         if (aggregatorServerRunning) {
                             console.log("Stopping aggregator server before aggregation...");
                             await stopAggregatorServer();
                         }
-
                         const count = await stageAggregation();
                         console.log(`Staged ${count} model file(s) for aggregation.`);
                         await traceEvent("aggregator.models.staged", {
@@ -467,7 +479,6 @@ const stateMachine = async () => {
                         if (count < expected) {
                             console.log(`Aggregating with ${count}/${expected} models.`);
                         }
-
                         await traceOperation("aggregator.aggregation", {
                             role: "aggregator",
                             model_count: count,
@@ -475,7 +486,8 @@ const stateMachine = async () => {
                         }, () => callPythonService('/aggregate', {
                             num_files: Number(count),
                         }, { timeoutMs: 3 * 60 * 1000 }));
-                    } catch (e) {
+                    }
+                    catch (e) {
                         console.error("Error during aggregation:", e);
                         await sleep(2000);
                         continue;
@@ -486,7 +498,6 @@ const stateMachine = async () => {
                     continue;
                 }
                 break;
-
             case "UPDATING":
                 if (state[1] === process.env.ACCOUNT_ADDRESS) {
                     currentState = "UPDATING";
@@ -495,7 +506,8 @@ const stateMachine = async () => {
                     await traceEvent("aggregator.update.started", { role: "aggregator" });
                     try {
                         await traceOperation("aggregator.update_global_model", { role: "aggregator" }, () => updateGM());
-                    } catch (e) {
+                    }
+                    catch (e) {
                         console.error("Error during updating the global model:", e);
                         return;
                     }
@@ -512,7 +524,8 @@ const stateMachine = async () => {
                         await traceOperation("aggregator.selection", { role: "aggregator" }, () => triggerAggregatorSelection());
                         console.log("Triggered new aggregator selection");
                         await traceEvent("aggregator.selection.triggered", { role: "aggregator" });
-                    } catch (e) {
+                    }
+                    catch (e) {
                         console.error("Aggregator selection failed; keeping current aggregator alive for retry:", e);
                         await traceEvent("aggregator.selection.failed", {
                             role: "aggregator",
@@ -520,12 +533,10 @@ const stateMachine = async () => {
                         });
                         await sleep(2000);
                     }
-
                     continue;
                 }
                 //return;
                 break;
-
             default:
                 console.log("Unknown state:", state);
                 currentState = "IDLE";
@@ -534,62 +545,52 @@ const stateMachine = async () => {
         }
     }
 };
-
 const srcModelsDir = path.join(__dirname, '../received_models');
 const resultsIIDDir = path.join(__dirname, '../data/results_iid');
 async function stageAggregation() {
     await fs.mkdir(resultsIIDDir, { recursive: true });
-
     try {
         const destEntries = await fs.readdir(resultsIIDDir);
-        await Promise.all(
-            destEntries
-                .filter(n => n.endsWith('.bin'))
-                .map(n => fs.unlink(path.join(resultsIIDDir, n)).catch(() => {}))
-        );
-    } catch {}
-
+        await Promise.all(destEntries
+            .filter(n => n.endsWith('.bin'))
+            .map(n => fs.unlink(path.join(resultsIIDDir, n)).catch(() => { })));
+    }
+    catch { }
     const modelFiles = await receivedWorkerModelFiles();
     const acceptedFiles = modelFiles.filter(file => file.authorized);
     const rejectedFiles = modelFiles.filter(file => !file.authorized);
-
     for (const file of rejectedFiles) {
         console.warn("Ignoring received model %s (%s)", file.path, file.reason);
-        await fs.unlink(file.path).catch(() => {});
+        await fs.unlink(file.path).catch(() => { });
     }
-
     if (acceptedFiles.length === 0) {
         console.log("No .bin files found in %s", srcModelsDir);
         return 0;
     }
-
     console.log("Received TEE-authorized model files:");
     for (const file of acceptedFiles) {
         console.log(" - %s (%s)", file.path, file.address);
     }
-
     return acceptedFiles.length;
 }
-
 async function sleep(ms) {
     return new Promise(r => setTimeout(r, ms));
 }
-
 async function countBinFiles(dir) {
     try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
         return entries.filter(e => e.isFile() && e.name.endsWith('.bin')).length;
-    } catch (e) {
-        if (e && e.code === 'ENOENT') return 0;
+    }
+    catch (e) {
+        if (e && e.code === 'ENOENT')
+            return 0;
         throw e;
     }
 }
-
 async function countAuthorizedModelFiles() {
     const files = await receivedWorkerModelFiles();
     return files.filter(file => file.authorized).length;
 }
-
 async function waitForModels(expected, { dir, pollMs = 2000, timeoutMs = 10 * 60 * 1000 } = {}) {
     const start = Date.now();
     while (true) {
@@ -605,41 +606,37 @@ async function waitForModels(expected, { dir, pollMs = 2000, timeoutMs = 10 * 60
         await sleep(pollMs);
     }
 }
-
 async function waitForGMUpdate(prevCid, { pollMs = 3000, timeoutMs = 10 * 60 * 1000 } = {}) {
     const start = Date.now();
     while (true) {
         const cid = await getCurrentGM();
-        if (cid && cid !== prevCid) return cid;
+        if (cid && cid !== prevCid)
+            return cid;
         if (Date.now() - start > timeoutMs) {
             throw new Error("Timeout waiting for aggregator signal (new Global Model).");
         }
         await sleep(pollMs);
     }
 }
-
 async function runService() {
     try {
         await stateMachine();
-    } catch (e) {
+    }
+    catch (e) {
         console.error('stateMachine error:', e);
     }
 }
-
 runService();
-
-
 process.on('SIGINT', () => {
     console.log('SIGINT received. Exiting.');
-    stopAggregatorServer().catch(() => {});
+    stopAggregatorServer().catch(() => { });
     process.exit(0);
 });
 process.on('SIGTERM', () => {
     console.log('SIGTERM received. Exiting.');
-    stopAggregatorServer().catch(() => {});
+    stopAggregatorServer().catch(() => { });
     process.exit(0);
 });
-
 async function stageCleaning() {
     await Promise.all([
         cleanFilesInDir(srcModelsDir),
@@ -647,18 +644,19 @@ async function stageCleaning() {
     ]);
     console.log("Cleaned files in %s and %s", srcModelsDir, resultsIIDDir);
 }
-
 async function cleanFilesInDir(dir) {
     try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
         await Promise.all(entries.map(async (e) => {
             const full = path.join(dir, e.name);
             if (e.isFile() || e.isSymbolicLink()) {
-                await fs.unlink(full).catch(() => {});
+                await fs.unlink(full).catch(() => { });
             }
         }));
-    } catch (err) {
-        if (err && err.code === 'ENOENT') return;
+    }
+    catch (err) {
+        if (err && err.code === 'ENOENT')
+            return;
         throw err;
     }
 }

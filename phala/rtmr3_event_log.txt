@@ -1,0 +1,110 @@
+pp
+Event Logs for RTMR3
+
+Event log entries associated with RTMR3, capturing application and runtime system measurements.
+Fields
+
+System-preparing
+
+{
+  "imr": 3,
+  "event_type": 134217729,
+  "digest": "f9974020ef507068183313d0ca808e0d1ca9b2d1ad0c61f5784e7157c362c06536f5ddacdad4451693f48fcc72fff624",
+  "event": "system-preparing",
+  "event_payload": ""
+}
+
+app-id
+
+{
+  "imr": 3,
+  "event_type": 134217729,
+  "digest": "1b1e28e631176be7ebd94abcb25c70ed8e5d0048afc5bb6016f5ee55a8b9dde87856a6b75c2fc5911914388e2378f08c",
+  "event": "app-id",
+  "event_payload": "817059cadcf6f310bb612087078e85b6e1b9f3d1"
+}
+
+compose-hash
+
+{
+  "imr": 3,
+  "event_type": 134217729,
+  "digest": "d57fe9bbd83b260e5ad6fd1f61f052214730c530b82132808c7a3c19ca57c6c2ce4592b791d94946f70dfe6733868048",
+  "event": "compose-hash",
+  "event_payload": "238a81c68fe53b6a5cce0ac325324e7386714dc8748423229a6582f73885fecf"
+}
+
+instance-id
+
+{
+  "imr": 3,
+  "event_type": 134217729,
+  "digest": "3a17929fd376a99b9a199ac88ede28937b22f44ab36a0b6f22eaea724dbf2d0b4d7518b63326a3a6118961f5a28046e1",
+  "event": "instance-id",
+  "event_payload": "2479921b5147b4f55ed2e20c6b50e5423cc72510"
+}
+
+boot-mr-done
+
+{
+  "imr": 3,
+  "event_type": 134217729,
+  "digest": "98bd7e6bd3952720b65027fd494834045d06b4a714bf737a06b874638b3ea00ff402f7f583e3e3b05e921c8570433ac6",
+  "event": "boot-mr-done",
+  "event_payload": ""
+}
+
+mr-kms
+
+{
+  "imr": 3,
+  "event_type": 134217729,
+  "digest": "f90478ca858afb60d2b963a882e7508d2a88cbd348ed63a0de303bc59c82c2dfb14c3677e8ff00cc2ffeb84603e2f413",
+  "event": "mr-kms",
+  "event_payload": "7eb8f89cf5067da82fe5a8321dd6dbd08681c25165dbd0ab3cefc26bbd028855"
+}
+
+os-image-hash
+
+{
+  "imr": 3,
+  "event_type": 134217729,
+  "digest": "ce4d96a1544f2f558070c691b7911370690ea3f7f6cd41e67dbd0a30a9f745ff72b1a4f6ccdc3cbfe6d0e794b72d66eb",
+  "event": "os-image-hash",
+  "event_payload": "de9c74f0c85d0820ce075cb4a99f8e39f7b681be632907c5bf8bdc95ea72feb9"
+}
+
+key-provider
+
+{
+  "imr": 3,
+  "event_type": 134217729,
+  "digest": "83368b43a0fc6f824f5a9220592df85fd30e2d405ecbd253a5c6354af63e6c9b41aec557c38a38e348ab87f9ac8fc68c",
+  "event": "key-provider",
+  "event_payload": "7b226e616d65223a226b6d73222c226964223a223330353933303133303630373261383634386365336430323031303630383261383634386365336430333031303730333432303030343838343465623432636364663863353266643466313734663336326663623962626431396334356664343866316564656332643866316361323335333665633161373430323162346365653631306330373466383239346434333162326237666565326333396535333333666461663061343532326434336662313539643966227d"
+}
+
+torage-fs
+
+{
+  "imr": 3,
+  "event_type": 134217729,
+  "digest": "ba51104636900268b0e059fa3d266419d079d1e94aea26fb9fcbb8d764bf4c89a67ac271b8a0d1a3989945132a111fc7",
+  "event": "storage-fs",
+  "event_payload": "7a6673"
+}
+
+ystem-ready
+
+{
+  "imr": 3,
+  "event_type": 134217729,
+  "digest": "1a76b2a80a0be71eae59f80945d876351a7a3fb8e9fd1ff1cede5734aa84ea11fd72b4edfbb6f04e5a85edd114c751bd",
+  "event": "system-ready",
+  "event_payload": ""
+}
+
+Calculations
+rtmr3
+Inputs: *
+Function: replay_rtmr

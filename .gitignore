@@ -19,3 +19,5 @@ remote_attestation/out/
 remote_attestation/broadcast/
 remote_attestation/cache/
 zk_inference/out/
+zk_inference/single_query/
+agent/downloads/

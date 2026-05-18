@@ -3,6 +3,10 @@ pragma solidity ^0.8.20;
 
 interface ITdxV4Attestation {
     function verifyAndAttestOnChain(bytes calldata input) external view returns (bytes memory output);
+    function verifyAndAttestOnChainWithRtmr3Events(bytes calldata input, bytes[] calldata rtmr3EventDigests)
+        external
+        view
+        returns (bytes memory output);
 }
 
 contract DeviceRegistry {
@@ -108,6 +112,28 @@ contract DeviceRegistry {
     ) public {
         require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
         tdxV4Attestation.verifyAndAttestOnChain(quote);
+        _registerVerifiedDevice(_address, _public_ip, _msg_broker_ip, _public_key);
+    }
+
+    function registerDeviceWithRtmr3Events(
+        bytes calldata quote,
+        bytes[] calldata rtmr3EventDigests,
+        address _address,
+        string memory _public_ip,
+        string memory _msg_broker_ip,
+        bytes memory _public_key
+    ) public {
+        require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
+        tdxV4Attestation.verifyAndAttestOnChainWithRtmr3Events(quote, rtmr3EventDigests);
+        _registerVerifiedDevice(_address, _public_ip, _msg_broker_ip, _public_key);
+    }
+
+    function _registerVerifiedDevice(
+        address _address,
+        string memory _public_ip,
+        string memory _msg_broker_ip,
+        bytes memory _public_key
+    ) internal {
         addKnownDevice(_address);
         devices[_address] = Device(
             true,

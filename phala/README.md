@@ -11,26 +11,29 @@ This directory contains the deployment template for generating a Phala/dstack TD
 ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:<digest>
 ```
 
-3. Replace `REPLACE_WITH_PUBLISHED_DIGEST` in `dstack-compose.template.yml`.
+3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned image.
 4. Deploy the digest-pinned compose file on Phala/dstack.
 5. Fetch the TDX quote emitted by the worker.
 6. Store the quote as `data/phala_tdx_quote`.
-7. Extract its RTMR3:
+7. Optionally inspect its RTMR3:
 
 ```bash
 scripts/extract_tdx_rtmr3.py data/phala_tdx_quote
 ```
 
-8. Set the extracted value in `.env`:
+8. Start the local stack.
 
 ```bash
-EXPECTED_TDX_RTMR3=0x<96 hex chars>
+docker compose down --volumes --remove-orphans
+KEEP_ALIVE=0 docker compose up --build --force-recreate
 ```
 
-With `EXPECTED_TDX_RTMR3` set, the local smart-contract verifier accepts only quotes whose RTMR3 matches the expected Phala/dstack application measurement.
+During deployment, `starter_docker.sh` sends `data/phala_tdx_quote` to `AutomataDcapTdxV4Attestation`. The contract parses the reference quote on-chain, extracts its signed RTMR3 value, and stores it as the expected workload measurement. The script also checks that `dstack-compose.template.yml` pins the worker image by immutable `sha256` digest and records the hash of this compose policy on-chain as `expectedComposeHash`.
+
+The compose file is intentionally the replaceable policy input. When the worker image changes, update `dstack-compose.template.yml`, deploy that exact file on Phala/dstack, fetch the new quote, and rerun the local deployment. The local deployment will derive the new `expectedComposeHash` from the current file.
 
 ## What This Verifies
 
-The on-chain contract verifies the TDX quote and checks that the signed RTMR3 value equals `EXPECTED_TDX_RTMR3`.
+The on-chain contract verifies the TDX quote and checks that the signed RTMR3 value of registering workers equals the RTMR3 extracted from the reference quote.
 
-The Docker image digest is verified indirectly through the Phala/dstack measurement chain: the compose file must pin the image by digest, Phala/dstack measures the application configuration into RTMR3, and the contract checks that RTMR3.
+The compose hash is represented on-chain as policy metadata through `expectedComposeHash`. A complete image-to-RTMR3 verification additionally requires the Phala/dstack RTMR3 event log: the verifier must replay the RTMR3 measurement chain and confirm that the measured compose hash matches the expected compose policy hash.

@@ -34,6 +34,11 @@ contract VerifyTDXV4Quote is Script, P256Probe {
             } else {
                 console2.log("Expected RTMR3 policy: disabled");
             }
+            bytes32 expectedComposeHash = AutomataDcapTdxV4Attestation(dcapAddr).expectedComposeHash();
+            if (expectedComposeHash != bytes32(0)) {
+                console2.log("Expected Phala compose policy hash:");
+                console2.logBytes32(expectedComposeHash);
+            }
             try AutomataDcapTdxV4Attestation(dcapAddr).verifyParsedQuoteAndAttestOnChain(parsedQuote) returns (
                 bytes memory output
             ) {

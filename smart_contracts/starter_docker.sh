@@ -54,8 +54,49 @@ authorize_pccs_reader() {
     popd >/dev/null
 }
 
+KUBO_API_URL=${KUBO_API_URL:-http://ipfs:5001}
 
+add_file_to_kubo() {
+    local file_path=$1
+    local response
 
+    response=$(curl --connect-timeout 5 --max-time 60 -sSf -X POST \
+        -F "file=@${file_path}" \
+        "${KUBO_API_URL}/api/v0/add?pin=true&cid-version=1&wrap-with-directory=false")
+    printf '%s' "$response" | jq -re '.Hash'
+}
+
+prepare_local_initial_gm() {
+    if [ "${DOCKER:-}" = "phala" ] || [ "${IPFS_PROVIDER:-}" = "pinata" ]; then
+        return 0
+    fi
+
+    local model_path=${INITIAL_GM_MODEL_PATH:-../data/initial_gm/aggregated.bin}
+    local signing_key_path=${INITIAL_GM_SIGNING_KEY_PATH:-../data/initial_gm/private_key.pem}
+    local signature_path=${INITIAL_GM_SIGNATURE_PATH:-/tmp/initial-gm.sig}
+
+    if [ ! -f "$model_path" ]; then
+        echo "Missing initial GM model file: $model_path"
+        exit 1
+    fi
+    if [ ! -f "$signing_key_path" ]; then
+        echo "Missing initial GM signing key: $signing_key_path"
+        exit 1
+    fi
+
+    echo "Signing and importing the initial GM into the local IPFS node"
+    openssl dgst -sha256 -sign "$signing_key_path" -out "$signature_path" "$model_path"
+
+    export INITIAL_GM_CID
+    export INITIAL_GM_SIG_CID
+    INITIAL_GM_CID=$(add_file_to_kubo "$model_path")
+    INITIAL_GM_SIG_CID=$(add_file_to_kubo "$signature_path")
+
+    echo "Local initial GM CID: $INITIAL_GM_CID"
+    echo "Local initial GM signature CID: $INITIAL_GM_SIG_CID"
+}
+
+prepare_local_initial_gm
 forge script --rpc-url $rpc_url --broadcast script/Deploy.s.sol
 
 export DEVICE_REGISTRY_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "DeviceRegistry") | .contractAddress' ./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json)
@@ -228,16 +269,54 @@ if [ "$ENABLE_DCAP" = "1" ]; then
 	        echo "$TDX_CREATE_JSON"
 	        export DCAP_TDX_V4_ADDRESS=$(printf '%s' "$TDX_CREATE_JSON" | jq -re '.deployedTo // .deployed_to')
 	        echo "AutomataDcapTdxV4Attestation: $DCAP_TDX_V4_ADDRESS"
-            if [ -n "${EXPECTED_TDX_RTMR3:-}" ]; then
-                EXPECTED_TDX_RTMR3_HEX=${EXPECTED_TDX_RTMR3#0x}
-                EXPECTED_TDX_RTMR3_HEX=${EXPECTED_TDX_RTMR3_HEX#0X}
-                if [ ${#EXPECTED_TDX_RTMR3_HEX} -ne 96 ]; then
-                    echo "EXPECTED_TDX_RTMR3 must be 48 bytes / 96 hex chars"
+            TDX_REFERENCE_QUOTE_PATH=${TDX_REFERENCE_QUOTE_PATH:-../data/phala_tdx_quote}
+            if [ -f "$TDX_REFERENCE_QUOTE_PATH" ]; then
+                TDX_REFERENCE_QUOTE_HEX=$(tr -d '[:space:]' < "$TDX_REFERENCE_QUOTE_PATH")
+                TDX_REFERENCE_QUOTE_HEX=${TDX_REFERENCE_QUOTE_HEX#0x}
+                TDX_REFERENCE_QUOTE_HEX=${TDX_REFERENCE_QUOTE_HEX#0X}
+                echo "Configuring expected RTMR3 policy from reference quote: $TDX_REFERENCE_QUOTE_PATH"
+                cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
+                    $DCAP_TDX_V4_ADDRESS "setExpectedRtmr3FromQuote(bytes)" "0x$TDX_REFERENCE_QUOTE_HEX"
+            fi
+            PHALA_COMPOSE_PATH=${PHALA_COMPOSE_PATH:-../phala/dstack-compose.template.yml}
+            if [ -f "$PHALA_COMPOSE_PATH" ]; then
+                if ! grep -Eq 'image:[[:space:]]*[^[:space:]]+@sha256:[0-9a-fA-F]{64}' "$PHALA_COMPOSE_PATH"; then
+                    echo "Phala compose policy must pin the worker image by immutable sha256 digest: $PHALA_COMPOSE_PATH"
                     exit 1
                 fi
-                echo "Configuring expected RTMR3 policy on TDX verifier"
+                PHALA_APP_CODE_PATH=${PHALA_APP_CODE_PATH:-../phala/app_code.txt}
+                if [ -f "$PHALA_APP_CODE_PATH" ]; then
+                    EXPECTED_COMPOSE_HASH=$(python3 -c 'import hashlib,json,sys
+text=open(sys.argv[1], encoding="utf-8").read()
+start=text.index("{")
+marker="\n\nis_registered"
+end=text.index(marker) if marker in text else text.rindex("}") + 1
+obj=json.loads(text[start:end])
+print(hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()).hexdigest())' "$PHALA_APP_CODE_PATH")
+                else
+                    EXPECTED_COMPOSE_HASH=$(sha256sum "$PHALA_COMPOSE_PATH" | awk '{print $1}')
+                fi
+                echo "Recording expected Phala compose policy hash on TDX verifier: sha256:$EXPECTED_COMPOSE_HASH"
                 cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
-                    $DCAP_TDX_V4_ADDRESS "setExpectedRtmr3(bytes)" "0x$EXPECTED_TDX_RTMR3_HEX"
+                    $DCAP_TDX_V4_ADDRESS "setExpectedComposeHash(bytes32)" "0x$EXPECTED_COMPOSE_HASH"
+            fi
+            PHALA_RTMR3_EVENT_LOG_PATH=${PHALA_RTMR3_EVENT_LOG_PATH:-../phala/rtmr3_event_log.txt}
+            if [ -f "$PHALA_RTMR3_EVENT_LOG_PATH" ]; then
+                EXPECTED_COMPOSE_EVENT_DIGEST=$(python3 -c 'import json,re,sys
+text=open(sys.argv[1], encoding="utf-8").read()
+for match in re.finditer(r"\{[^{}]*\}", text, flags=re.S):
+    try:
+        obj=json.loads(match.group(0))
+    except json.JSONDecodeError:
+        continue
+    if obj.get("imr") == 3 and obj.get("event") == "compose-hash":
+        print(obj["digest"])
+        break' "$PHALA_RTMR3_EVENT_LOG_PATH")
+                if [ -n "$EXPECTED_COMPOSE_EVENT_DIGEST" ]; then
+                    echo "Recording expected Phala compose RTMR3 event digest on TDX verifier: sha384:$EXPECTED_COMPOSE_EVENT_DIGEST"
+                    cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
+                        $DCAP_TDX_V4_ADDRESS "setExpectedComposeEventDigest(bytes)" "0x$EXPECTED_COMPOSE_EVENT_DIGEST"
+                fi
             fi
             authorize_pccs_reader "$DCAP_TDX_V4_ADDRESS"
             cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
@@ -676,9 +755,15 @@ if [ "${DOCKER:-}" = "phala" ]; then
     fi
 else
     if [ "${IPFS_PROVIDER:-}" != "pinata" ]; then
-        echo "Pinning the initial GM to the local IPFS node"
-        curl --connect-timeout 5 --max-time 60 -sSf -X POST "http://ipfs:5001/api/v0/pin/add?arg=${INITIAL_GM_CID}"
-        curl --connect-timeout 5 --max-time 60 -sSf -X POST "http://ipfs:5001/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start"
+        echo "Copying the locally imported initial GM into IPFS MFS"
+        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+            "${KUBO_API_URL}/api/v0/files/rm?arg=/start&force=true" >/dev/null || true
+        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+            "${KUBO_API_URL}/api/v0/files/rm?arg=/start.sig&force=true" >/dev/null || true
+        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+            "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start&parents=true"
+        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+            "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_SIG_CID}&arg=/start.sig&parents=true"
     fi
 fi
 

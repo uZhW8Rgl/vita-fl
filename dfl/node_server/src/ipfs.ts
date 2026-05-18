@@ -68,15 +68,15 @@ export const pinFile = async (filePath: string) => {
   }
   
   export const getCurrentModel = async () => {
-    const modelCid = await getCurrentGM();
-    const sigCid = await getCurrentGMSignature();
+    const modelCid = String(await getCurrentGM() || "");
+    const sigCid = String(await getCurrentGMSignature() || "");
     console.log("Model CID:", modelCid);
     console.log("Sig CID:", sigCid);
 
-    if (typeof modelCid === 'string' && modelCid.length > 0) {
+    if (modelCid.length > 0) {
       await getFileFromIPFS(modelCid, "./data/gm.bin");
     }
-    if (typeof sigCid === 'string' && sigCid.length > 0) {
+    if (sigCid.length > 0) {
       await getFileFromIPFS(sigCid, "./data/gm.bin.sig");
     }
     console.log("Global model fetched" + (sigCid ? " + signature" : ""));
