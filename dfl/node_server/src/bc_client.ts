@@ -52,6 +52,32 @@ const logJson = (label, payload) => {
     console.log(label, JSON.stringify(payload, jsonReplacer));
 };
 
+const ethEurPrice = Number(process.env.ETH_EUR_PRICE || "3000");
+
+const logTransactionCost = (scope, operation, receipt, fallbackGasPriceWei) => {
+    const gasUsed = BigInt(receipt?.gasUsed?.toString?.() ?? receipt?.gasUsed ?? 0);
+    const effectiveGasPriceWei = BigInt(
+        receipt?.effectiveGasPrice?.toString?.() ?? receipt?.effectiveGasPrice ?? fallbackGasPriceWei ?? 0
+    );
+    const costWei = gasUsed * effectiveGasPriceWei;
+    const costEth = Number(costWei) / 1e18;
+    console.log(JSON.stringify({
+        kind: "gas_cost",
+        scope,
+        operation,
+        gasUsed: Number(gasUsed),
+        effectiveGasPriceWei: Number(effectiveGasPriceWei),
+        effectiveGasPriceGwei: Number(effectiveGasPriceWei) / 1e9,
+        costEth,
+        costEur: costEth * ethEurPrice,
+        ethEurPrice,
+        transactionHash: receipt?.transactionHash,
+        blockNumber: Number(receipt?.blockNumber?.toString?.() ?? receipt?.blockNumber ?? 0),
+        from: receipt?.from,
+        to: receipt?.to,
+    }, jsonReplacer));
+};
+
 const withGasBuffer = (gasEstimate, percent = 30n) => {
     const estimate = BigInt(gasEstimate);
     return ((estimate * (100n + percent)) + 99n) / 100n;
@@ -157,6 +183,7 @@ export const setGlobalModel = async (newIpfsAddress) => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -184,6 +211,7 @@ export const setGlobalModelSignature = async (newSigIpfsAddress) => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -211,6 +239,7 @@ export const setGlobalModelAndSignature = async (newModelIpfsAddress, newSigIpfs
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -238,6 +267,7 @@ export const setLastRoundAggregator = async () => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -265,6 +295,7 @@ export const setContribution = async (deviceID) => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -292,6 +323,7 @@ export const penalizeContribution = async (deviceIDs, reason) => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -319,6 +351,7 @@ export const submitModel = async (modelHash) => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -371,6 +404,7 @@ export const incrementRound = async () => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -407,6 +441,7 @@ export const setCurrentState = async (newState) => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -443,6 +478,7 @@ export const setAggregatorEndpoint = async (newEndpoint) => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -488,6 +524,7 @@ export const triggerAggregatorSelection = async () => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         logJson("[aggregator-selection] post-transaction diagnostics", await getAggregatorSelectionDiagnostics(contract, account.address));
         return receipt;
@@ -519,6 +556,7 @@ export const reportAggregatorTimeout = async () => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -574,6 +612,7 @@ export const registerDeviceWithTeeQuote = async (quoteHex, address, publicIp, br
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -611,6 +650,7 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -637,6 +677,7 @@ export const leaveDeviceRegistry = async () => {
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }

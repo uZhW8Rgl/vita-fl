@@ -10,6 +10,7 @@ x-worker-env: &worker-env
   IPFS_GATEWAY: ${IPFS_GATEWAY}
   KUBO_API: ${KUBO_API}
   KUBO_GATEWAY: ${KUBO_GATEWAY}
+  IPFS_FETCH_TIMEOUT_MS: ${IPFS_FETCH_TIMEOUT_MS:-30000}
   IPFS_PROVIDER: ${IPFS_PROVIDER}
   DOCKER: ${DOCKER}
   REGISTRY_ADDRESS: ${REGISTRY_ADDRESS}
@@ -26,6 +27,7 @@ x-worker-env: &worker-env
   OTEL_SERVICE_NAME: dfl-node-worker
   EPOCH: ${EPOCH}
   ROUND: ${ROUND}
+  ETH_EUR_PRICE: ${ETH_EUR_PRICE:-3000}
   PYTHON_SERVICE_URL: http://127.0.0.1:8000
   TDX_QUOTE_PATH: ${TDX_QUOTE_PATH:-./attestation/phala_tdx_quote}
 
@@ -204,9 +206,14 @@ services:
       VERIFY_TDX_QUOTE_ONCHAIN: ${VERIFY_TDX_QUOTE_ONCHAIN:-1}
       AGGREGATOR_TIMEOUT_REPORT_PERCENT: ${AGGREGATOR_TIMEOUT_REPORT_PERCENT:-50}
       PCCS_QUOTE_PATH: ${PCCS_QUOTE_PATH:-../data/phala_tdx_quote}
+      TDX_REFERENCE_QUOTE_PATH: ${TDX_REFERENCE_QUOTE_PATH:-../data/phala_tdx_quote}
+      PHALA_COMPOSE_PATH: ${PHALA_COMPOSE_PATH:-../phala/dstack-compose.template.yml}
+      PHALA_APP_CODE_PATH: ${PHALA_APP_CODE_PATH:-../phala/app_code.txt}
+      PHALA_RTMR3_EVENT_LOG_PATH: ${PHALA_RTMR3_EVENT_LOG_PATH:-../phala/rtmr3_event_log.txt}
       INITIAL_GM_CID: ${INITIAL_GM_CID}
       INITIAL_GM_SIG_CID: ${INITIAL_GM_SIG_CID}
       INITIAL_GM_SIGNER_ADDRESS: ${INITIAL_GM_SIGNER_ADDRESS}
+      ETH_EUR_PRICE: ${ETH_EUR_PRICE:-3000}
     command: ["/dfl/smart_contracts/starter_docker.sh"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

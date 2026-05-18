@@ -326,7 +326,7 @@ const stateMachine = async () => {
                             expected_models: expected,
                             deadline_ms: modelSubmissionDeadlineMs,
                         });
-                        await traceOperation("aggregator.wait_for_models", {
+                        const present = await traceOperation("aggregator.wait_for_models", {
                             role: "aggregator",
                             expected_models: expected,
                             deadline_ms: modelSubmissionDeadlineMs,
@@ -338,7 +338,13 @@ const stateMachine = async () => {
                         await traceEvent("aggregator.wait_for_models.finished", {
                             role: "aggregator",
                             expected_models: expected,
+                            present_models: present,
                         });
+                        if (present <= 0) {
+                            console.log("No model submissions yet. Keeping aggregator server open and waiting before retry.");
+                            await sleep(5000);
+                            continue;
+                        }
                         await setCurrentState("AGGREGATING");
                         continue;
                     }
@@ -461,6 +467,11 @@ const stateMachine = async () => {
                             model_count: count,
                             expected_models: expected,
                         });
+                        if (count <= 0) {
+                            console.log("No models to aggregate (count=0). Keeping round open and waiting for workers.");
+                            await sleep(5000);
+                            continue;
+                        }
                         const missingWorkers = await getMissingAuthorizedWorkers();
                         if (missingWorkers.length > 0) {
                             console.log("Penalizing missing model submissions:", missingWorkers);
@@ -470,11 +481,6 @@ const stateMachine = async () => {
                                 reason: "missed_model_deadline",
                                 count: missingWorkers.length,
                             });
-                        }
-                        if (count <= 0) {
-                            console.log("No models to aggregate (count=0). Waiting for next loop.");
-                            await sleep(2000);
-                            continue;
                         }
                         if (count < expected) {
                             console.log(`Aggregating with ${count}/${expected} models.`);
