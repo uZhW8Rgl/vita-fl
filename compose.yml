@@ -43,7 +43,7 @@ x-worker-common: &worker-common
 
 services:
   grafana:
-    image: grafana/grafana:10.4.3
+    image: grafana/grafana:11.6.0
     container_name: grafana
     restart: unless-stopped
     environment:
@@ -107,9 +107,10 @@ services:
         condition: service_started
 
   tempo:
-    image: grafana/tempo:2.4.1
+    image: grafana/tempo:2.6.1
     container_name: tempo
     restart: unless-stopped
+    user: "0"
     command: ["-config.file=/etc/tempo/tempo.yml", "-log.level=warn"]
     ports:
       - "127.0.0.1:3200:3200"

@@ -81,9 +81,9 @@ jobs:
             agent/blockchain_source.py \
             agent/ipfs_rag.py \
             agent/zk_mcp_server.py \
+            data/mnist_tools.py \
             zk_inference/create_single_mnist_query.py \
             zk_inference/export_model.py \
-            zk_inference/prepare_mnist_input.py \
             zk_inference/run_ezkl.py \
             zk_inference/server.py \
             zk_inference/service_tools.py \

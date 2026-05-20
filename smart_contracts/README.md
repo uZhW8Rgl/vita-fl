@@ -56,13 +56,15 @@ The normal deployment path is `starter_docker.sh`, executed by the Docker Compos
 
 It performs:
 
-1. local signing and Kubo import of the initial global model and signature,
+1. provider-specific initialization of the initial global model and signature,
 2. deployment of `DeviceRegistry`, `AggregatorSelection`, and `GMStorage` with the locally imported model CIDs,
 3. deployment/configuration of the Automata PCCS helper and DAO contracts,
 4. deployment of `AutomataDcapTdxV4Attestation`,
 5. authorization of the attestation contract as PCCS reader,
 6. upload of PCCS collateral,
 7. registration of initial global model metadata.
+
+For the local Docker flow, `IPFS_PROVIDER` controls the bootstrap mode. With `IPFS_PROVIDER=kubo`, the deployment script signs `data/initial_gm/aggregated.bin`, imports model and signature into the local Kubo node, and writes those resulting CIDs into `GMStorage`. With `IPFS_PROVIDER=pinata`, the script does not touch Kubo during initialization and instead expects `INITIAL_GM_CID` and `INITIAL_GM_SIG_CID` to already point to Pinata-hosted content.
 
 The tested local entry point is:
 

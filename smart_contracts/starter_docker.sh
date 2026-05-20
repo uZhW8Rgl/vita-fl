@@ -109,6 +109,12 @@ PY
 }
 
 KUBO_API_URL=${KUBO_API_URL:-http://ipfs:5001}
+IPFS_PROVIDER=${IPFS_PROVIDER:-kubo}
+
+if [ "$IPFS_PROVIDER" != "kubo" ] && [ "$IPFS_PROVIDER" != "pinata" ]; then
+    echo "Unsupported IPFS_PROVIDER: $IPFS_PROVIDER"
+    exit 1
+fi
 
 add_file_to_kubo() {
     local file_path=$1
@@ -121,7 +127,12 @@ add_file_to_kubo() {
 }
 
 prepare_local_initial_gm() {
-    if [ "${DOCKER:-}" = "phala" ] || [ "${IPFS_PROVIDER:-}" = "pinata" ]; then
+    if [ "${DOCKER:-}" = "phala" ]; then
+        return 0
+    fi
+
+    if [ "$IPFS_PROVIDER" = "pinata" ]; then
+        echo "IPFS_PROVIDER=pinata: expecting INITIAL_GM_CID and INITIAL_GM_SIG_CID from the environment"
         return 0
     fi
 
@@ -809,13 +820,13 @@ echo "Authorization Status:"
 # [ "$(cast call --rpc-url $rpc_url $DEVICE_REGISTRY_ADDRESS "isAuthorized(address)" $ADDRESS_19)" = "0x$(printf '%063d1')" ] && echo $ADDRESS_19: yes || echo $ADDRESS_19: no
 
 if [ "${DOCKER:-}" = "phala" ]; then
-    if [ "${IPFS_PROVIDER:-}" != "pinata" ]; then
+    if [ "$IPFS_PROVIDER" = "kubo" ]; then
         echo "Pinning the initial GM to the IPFS node"
         curl --connect-timeout 5 --max-time 60 -sSf -X POST "https://61ecc557e3b36593390057d322d46e9488032c34-5001.dstack-prod5.phala.network/api/v0/pin/add?arg=${INITIAL_GM_CID}"
         curl --connect-timeout 5 --max-time 60 -sSf -X POST "https://61ecc557e3b36593390057d322d46e9488032c34-5001.dstack-prod5.phala.network/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start"
     fi
 else
-    if [ "${IPFS_PROVIDER:-}" != "pinata" ]; then
+    if [ "$IPFS_PROVIDER" = "kubo" ]; then
         echo "Copying the locally imported initial GM into IPFS MFS"
         curl --connect-timeout 5 --max-time 15 -sSf -X POST \
             "${KUBO_API_URL}/api/v0/files/rm?arg=/start&force=true" >/dev/null || true

@@ -46,6 +46,18 @@ Export PyTorch and ONNX artifacts:
 
 If no explicit model is given, the exporter tries the active aggregated model path first and then falls back to the newest `*-aggregated.bin` in `IPFS output`.
 
+## Prepare a Random MNIST Sample
+
+```bash
+.venv/bin/python data/mnist_tools.py \
+  --images data/mnist/data/t10k-images.idx3-ubyte \
+  --labels data/mnist/data/t10k-labels.idx1-ubyte \
+  --out-dir zk_inference/single_query \
+  --input-json zk_inference/out/input.json
+```
+
+Without `--index`, the helper picks a fresh random MNIST image on each run and writes `zk_inference/single_query/selection.json`.
+
 ## Create a Single-Image Query
 
 ```bash
@@ -57,7 +69,7 @@ If no explicit model is given, the exporter tries the active aggregated model pa
   --input-json zk_inference/out/input.json
 ```
 
-This creates:
+When `--index` is omitted, the query helper now chooses a random correctly classified MNIST test image from the search range. This creates:
 
 - `zk_inference/single_query/single-image.idx3-ubyte`
 - `zk_inference/single_query/single-label.idx1-ubyte`
