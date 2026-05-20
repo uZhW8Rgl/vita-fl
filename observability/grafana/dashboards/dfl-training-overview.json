@@ -248,12 +248,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "lineWidth": 1,
-            "showPoints": "never"
-          }
+          "decimals": 0,
+          "unit": "short"
         },
         "overrides": []
       },
@@ -265,15 +261,26 @@
       },
       "id": 6,
       "options": {
+        "displayMode": "gradient",
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
       },
       "targets": [
         {
@@ -282,14 +289,15 @@
             "uid": "Prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (span_name) (rate({__name__=~\".*calls.*\"}[1m]))",
+          "expr": "sum by (span_name) (calls_total{service_name=\"dfl-node-worker\"})",
+          "instant": true,
           "legendFormat": "{{span_name}}",
-          "range": true,
+          "range": false,
           "refId": "A"
         }
       ],
-      "title": "OTel Span Events",
-      "type": "timeseries"
+      "title": "OTel Span Counts",
+      "type": "bargauge"
     },
     {
       "datasource": {
@@ -665,7 +673,7 @@
       "type": "logs"
     }
   ],
-  "refresh": "5s",
+  "refresh": "30s",
   "schemaVersion": 39,
   "tags": ["dfl", "training", "observability"],
   "templating": {
