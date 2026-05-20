@@ -193,9 +193,9 @@ async def langchain_agent(args: argparse.Namespace) -> dict[str, Any]:
         "Use the GMStorage smart contract as the source of truth for the current model CID and signature CID. "
         "Read the last aggregator from GMStorage, get its public key from DeviceRegistry, "
         "and verify the downloaded model signature. "
-        "Only if verification succeeds, use the MCP zk_inference tools to create a single-image prediction and proof. "
+        "Only if verification succeeds, use the MCP zk_inference tools to prepare an MNIST sample, create a single-image prediction, and generate a proof. "
         "Only use local IPFS metadata search as a debug fallback if the contract source fails. "
-        f"Use MNIST index {args.index} if it is not null, otherwise let the tool select a correctly classified image. "
+        f"Use MNIST index {args.index} if it is not null, otherwise let the tool select a random correctly classified image. "
         "Return the prediction label, true label if available, model path, signature path, and proof path."
     )
     response = await agent.ainvoke({"messages": [("user", prompt)]})

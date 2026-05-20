@@ -51,6 +51,41 @@ def export_model(model_path: str, out_dir: str = "zk_inference/out") -> dict[str
     return result
 
 
+def prepare_mnist_sample(
+    index: int | None = None,
+    images: str = "data/mnist/data/t10k-images.idx3-ubyte",
+    labels: str = "data/mnist/data/t10k-labels.idx1-ubyte",
+    out_dir: str = "zk_inference/single_query",
+    input_json: str = "zk_inference/out/input.json",
+    metadata_out: str = "zk_inference/single_query/selection.json",
+    seed: int | None = None,
+) -> dict[str, Any]:
+    args = [
+        str(PYTHON),
+        "data/mnist_tools.py",
+        "--images",
+        str(repo_path(images)),
+        "--labels",
+        str(repo_path(labels)),
+        "--out-dir",
+        str(repo_path(out_dir)),
+        "--input-json",
+        str(repo_path(input_json)),
+        "--metadata-out",
+        str(repo_path(metadata_out)),
+    ]
+    if index is not None:
+        args.extend(["--index", str(index)])
+    if seed is not None:
+        args.extend(["--seed", str(seed)])
+    result = run_subprocess(args)
+    metadata_path = repo_path(metadata_out)
+    result["selection_metadata"] = str(metadata_path)
+    if metadata_path.exists():
+        result["selection"] = json.loads(metadata_path.read_text(encoding="utf-8"))
+    return result
+
+
 def create_single_image_query(
     model_path: str,
     index: int | None = None,

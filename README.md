@@ -18,7 +18,7 @@ The current prototype combines:
 
 - [compose.yml](./compose.yml): Docker Compose entry point for local end-to-end runs.
 - [.env.example](./.env.example): Example runtime configuration; copy this to `.env` before running Docker Compose.
-- [data](./data): Shared local input artifacts, including MNIST data, RSA worker keys, and the TDX quote used by the prototype.
+- [data](./data): Shared local input artifacts and helpers, including MNIST data, RSA worker keys, the TDX quote, and MNIST sample extraction utilities.
 - [observability](./observability): Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector configuration.
 - [smart_contracts](./smart_contracts/README.md): Focused Foundry project with DFL contracts and TDX/DCAP attestation deployment logic.
 - [dfl/node_server](./dfl/node_server/README.md): Node.js orchestration layer used by each worker.
@@ -228,7 +228,7 @@ The local stack starts:
 - three DFL worker containers,
 - Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector.
 
-The root `.env` file provides the local timing, account, contract, and IPFS configuration. Use `.env.example` as the tracked template and keep local edits in `.env`. The local Docker flow also uses RSA keys from `data/rsa_keys`, MNIST data from `data/mnist`, and the TDX quote from `data/phala_tdx_quote`.
+The root `.env` file provides the local timing, account, contract, and IPFS configuration. Use `.env.example` as the tracked template and keep local edits in `.env`. `IPFS_PROVIDER` is a strict switch: `kubo` uses only the local Kubo API/gateway, while `pinata` uses only the configured Pinata gateway/JWT path. The local Docker flow also uses RSA keys from `data/rsa_keys`, MNIST data from `data/mnist`, and the TDX quote from `data/phala_tdx_quote`.
 
 ## Quick Verification
 

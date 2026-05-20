@@ -8,6 +8,7 @@ from typing import Any
 from zk_inference.service_tools import (
     create_single_image_query as create_single_image_query_impl,
     export_model as export_model_impl,
+    prepare_mnist_sample as prepare_mnist_sample_impl,
     prove_single_image as prove_single_image_impl,
     run_ezkl as run_ezkl_impl,
 )
@@ -33,6 +34,28 @@ mcp = FastMCP("master-thesis-zk-inference") if FastMCP is not None else _NoMCP()
 def export_model(model_path: str, out_dir: str = "zk_inference/out") -> dict[str, Any]:
     """Export an aggregated .bin model into ONNX/EZKL artifacts."""
     return export_model_impl(model_path, out_dir)
+
+
+@mcp.tool()
+def prepare_mnist_sample(
+    index: int | None = None,
+    images: str = "data/mnist/data/t10k-images.idx3-ubyte",
+    labels: str = "data/mnist/data/t10k-labels.idx1-ubyte",
+    out_dir: str = "zk_inference/single_query",
+    input_json: str = "zk_inference/out/input.json",
+    metadata_out: str = "zk_inference/single_query/selection.json",
+    seed: int | None = None,
+) -> dict[str, Any]:
+    """Extract one MNIST sample, defaulting to a fresh random image on each run."""
+    return prepare_mnist_sample_impl(
+        index=index,
+        images=images,
+        labels=labels,
+        out_dir=out_dir,
+        input_json=input_json,
+        metadata_out=metadata_out,
+        seed=seed,
+    )
 
 
 @mcp.tool()

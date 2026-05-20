@@ -129,6 +129,8 @@ Run the MCP server directly:
 
 The MCP server does not reimplement proof logic. It wraps the existing scripts in `zk_inference`.
 
+The exposed tools include `prepare_mnist_sample`, which extracts a fresh random MNIST input by default before the inference/proof flow continues.
+
 ## Debug IPFS Scan
 
 For debugging old local artifacts, use:
