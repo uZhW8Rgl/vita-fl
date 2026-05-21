@@ -349,7 +349,7 @@
             "type": "loki",
             "uid": "Loki"
           },
-          "expr": "avg by (compose_service) (avg_over_time({compose_service=~\"VM-.*\"} |= \"Accuracy:\" | regexp \"Accuracy: (?P<accuracy>[0-9]+)/10000\" | unwrap accuracy [1m])) / 100",
+          "expr": "avg by (compose_service) (avg_over_time({compose_service=~\"VM-.*\"} |= \"Accuracy:\" | regexp \"Accuracy: (?P<accuracy>[0-9.]+)%\" | unwrap accuracy [1m]))",
           "legendFormat": "{{compose_service}}",
           "queryType": "range",
           "refId": "A"
@@ -413,7 +413,7 @@
             "type": "loki",
             "uid": "Loki"
           },
-          "expr": "avg by (compose_service) (last_over_time({compose_service=~\"VM-.*\"} |= \"Accuracy:\" | regexp \"Accuracy: (?P<accuracy>[0-9]+)/10000\" | unwrap accuracy [$__range])) / 100",
+          "expr": "avg by (compose_service) (last_over_time({compose_service=~\"VM-.*\"} |= \"Accuracy:\" | regexp \"Accuracy: (?P<accuracy>[0-9.]+)%\" | unwrap accuracy [$__range]))",
           "legendFormat": "{{compose_service}}",
           "queryType": "range",
           "refId": "A"

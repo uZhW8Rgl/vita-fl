@@ -33,7 +33,7 @@ try:
         BATCH_SIZE,
         INPUT_SIZE,
         MODEL_LAYOUT,
-        FederatedMLP,
+        FederatedCNN,
         read_model_bin,
     )
 except ImportError as exc:  # pragma: no cover - handled at runtime
@@ -84,7 +84,7 @@ def latest_ipfs_output_model() -> Path | None:
 
 
 class SoftmaxWrapper(nn.Module):
-    def __init__(self, model: FederatedMLP) -> None:
+    def __init__(self, model: FederatedCNN) -> None:
         super().__init__()
         self.model = model
 
@@ -93,7 +93,7 @@ class SoftmaxWrapper(nn.Module):
 
 
 class LogitsWrapper(nn.Module):
-    def __init__(self, model: FederatedMLP) -> None:
+    def __init__(self, model: FederatedCNN) -> None:
         super().__init__()
         self.model = model
 
@@ -101,14 +101,14 @@ class LogitsWrapper(nn.Module):
         return self.model(x)
 
 
-def load_worker_model(model_path: Path) -> FederatedMLP:
+def load_worker_model(model_path: Path) -> FederatedCNN:
     ensure_torch()
     model = read_model_bin(model_path).eval()
     return model
 
 
-def clone_as_float32(model: FederatedMLP) -> FederatedMLP:
-    cloned = FederatedMLP()
+def clone_as_float32(model: FederatedCNN) -> FederatedCNN:
+    cloned = FederatedCNN()
     cloned.load_state_dict({key: value.detach().to(torch.float32) for key, value in model.state_dict().items()})
     cloned.eval()
     return cloned
@@ -119,7 +119,7 @@ def generate_sample_inputs(batch_size: int, seed: int) -> "torch.Tensor":
     return (torch.rand((batch_size, INPUT_SIZE), generator=generator, dtype=torch.float64) * 2.0) - 1.0
 
 
-def check_float_export_parity(model_fp64: FederatedMLP, model_fp32: FederatedMLP, batch_size: int, seed: int) -> dict:
+def check_float_export_parity(model_fp64: FederatedCNN, model_fp32: FederatedCNN, batch_size: int, seed: int) -> dict:
     inputs_fp64 = generate_sample_inputs(batch_size=batch_size, seed=seed)
     with torch.no_grad():
         expected_logits = model_fp64(inputs_fp64)
@@ -155,7 +155,7 @@ def write_manifest(
     manifest_path: Path,
     model_path: Path,
     export_dir: Path,
-    model: FederatedMLP,
+    model: FederatedCNN,
     parity: dict,
     export_onnx: bool,
     export_batch_size: int,
@@ -165,11 +165,12 @@ def write_manifest(
         "source_implementation": "dfl/neural_network/cli.py",
         "export_dir": metadata_path(export_dir),
         "model": {
-            "class": "FederatedMLP",
+            "class": "FederatedCNN",
             "input_size": INPUT_SIZE,
             "batch_size_training": BATCH_SIZE,
-            "layout": [{"name": name, "rows": rows, "cols": cols} for name, rows, cols in MODEL_LAYOUT],
+            "layout": [{"name": name, "shape": list(shape)} for name, shape in MODEL_LAYOUT],
             "hidden_activations": "tanh",
+            "architecture": "conv(1->8, k=3, s=2, p=1) -> tanh -> conv(8->16, k=3, s=2, p=1) -> tanh -> flatten -> linear(784->32) -> tanh -> linear(32->10)",
             "native_output": "logits",
         },
         "files": {

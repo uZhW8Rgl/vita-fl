@@ -29,33 +29,61 @@ except ImportError:  # pragma: no cover - handled at runtime
 
 
 INPUT_SIZE = 784
-L1_SIZE = 200
-L2_SIZE = 50
+IMAGE_HEIGHT = 28
+IMAGE_WIDTH = 28
+IMAGE_CHANNELS = 1
+CONV1_OUT_CHANNELS = 8
+CONV2_OUT_CHANNELS = 16
+CONV_KERNEL_SIZE = 3
+CONV_STRIDE = 2
+CONV_PADDING = 1
+FC_HIDDEN_SIZE = 32
 OUTPUT_SIZE = 10
 BATCH_SIZE = 32
 NUM_TRAIN_IMAGES = 10_000
 LEARNING_RATE = 0.1
 MODEL_LAYOUT = (
-    ("fc1.weight", L1_SIZE, INPUT_SIZE),
-    ("fc1.bias", L1_SIZE, 1),
-    ("fc2.weight", L2_SIZE, L1_SIZE),
-    ("fc2.bias", L2_SIZE, 1),
-    ("fc3.weight", OUTPUT_SIZE, L2_SIZE),
-    ("fc3.bias", OUTPUT_SIZE, 1),
+    ("conv1.weight", (CONV1_OUT_CHANNELS, IMAGE_CHANNELS, CONV_KERNEL_SIZE, CONV_KERNEL_SIZE)),
+    ("conv1.bias", (CONV1_OUT_CHANNELS,)),
+    ("conv2.weight", (CONV2_OUT_CHANNELS, CONV1_OUT_CHANNELS, CONV_KERNEL_SIZE, CONV_KERNEL_SIZE)),
+    ("conv2.bias", (CONV2_OUT_CHANNELS,)),
+    ("fc1.weight", (FC_HIDDEN_SIZE, CONV2_OUT_CHANNELS * 7 * 7)),
+    ("fc1.bias", (FC_HIDDEN_SIZE,)),
+    ("fc2.weight", (OUTPUT_SIZE, FC_HIDDEN_SIZE)),
+    ("fc2.bias", (OUTPUT_SIZE,)),
 )
 
 
-class FederatedMLP(nn.Module):
+class FederatedCNN(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.fc1 = nn.Linear(INPUT_SIZE, L1_SIZE)
-        self.fc2 = nn.Linear(L1_SIZE, L2_SIZE)
-        self.fc3 = nn.Linear(L2_SIZE, OUTPUT_SIZE)
+        self.conv1 = nn.Conv2d(
+            IMAGE_CHANNELS,
+            CONV1_OUT_CHANNELS,
+            kernel_size=CONV_KERNEL_SIZE,
+            stride=CONV_STRIDE,
+            padding=CONV_PADDING,
+        )
+        self.conv2 = nn.Conv2d(
+            CONV1_OUT_CHANNELS,
+            CONV2_OUT_CHANNELS,
+            kernel_size=CONV_KERNEL_SIZE,
+            stride=CONV_STRIDE,
+            padding=CONV_PADDING,
+        )
+        self.fc1 = nn.Linear(CONV2_OUT_CHANNELS * 7 * 7, FC_HIDDEN_SIZE)
+        self.fc2 = nn.Linear(FC_HIDDEN_SIZE, OUTPUT_SIZE)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.reshape(-1, IMAGE_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH)
+        x = torch.tanh(self.conv1(x))
+        x = torch.tanh(self.conv2(x))
+        x = x.reshape(x.shape[0], -1)
         x = torch.tanh(self.fc1(x))
-        x = torch.tanh(self.fc2(x))
-        return self.fc3(x)
+        return self.fc2(x)
+
+
+FederatedMLP = FederatedCNN
 
 
 def ensure_crypto() -> None:
@@ -129,7 +157,7 @@ def initial_model_file() -> Path:
 
 
 def model_byte_size() -> int:
-    return sum(rows * cols * 8 for _, rows, cols in MODEL_LAYOUT)
+    return sum(shape_numel(shape) * 8 for _, shape in MODEL_LAYOUT)
 
 
 def read_idx_image_count(path: Path) -> int:
@@ -146,27 +174,31 @@ def read_idx_label_count(path: Path) -> int:
     return len(blob) - 8
 
 
-def _read_matrix(blob: bytes, offset: int, rows: int, cols: int) -> tuple[torch.Tensor, int]:
-    count = rows * cols
+def shape_numel(shape: tuple[int, ...]) -> int:
+    count = 1
+    for dim in shape:
+        count *= dim
+    return count
+
+
+def _read_tensor(blob: bytes, offset: int, shape: tuple[int, ...]) -> tuple[torch.Tensor, int]:
+    count = shape_numel(shape)
     byte_count = count * 8
     chunk = blob[offset : offset + byte_count]
     if len(chunk) != byte_count:
         raise ValueError("Unexpected end of model file")
     values = torch.tensor(struct.unpack("<" + "d" * count, chunk), dtype=torch.float64)
-    matrix = values.reshape(cols, rows).t().contiguous()
-    return matrix, offset + byte_count
+    return values.reshape(shape).contiguous(), offset + byte_count
 
 
-def read_model_bin(path: Path) -> FederatedMLP:
-    model = FederatedMLP().double()
+def read_model_bin(path: Path) -> FederatedCNN:
+    model = FederatedCNN().double()
     blob = path.read_bytes()
     offset = 0
     state = {}
-    for name, rows, cols in MODEL_LAYOUT:
-        matrix, offset = _read_matrix(blob, offset, rows, cols)
-        if cols == 1:
-            matrix = matrix.reshape(rows)
-        state[name] = matrix
+    for name, shape in MODEL_LAYOUT:
+        tensor, offset = _read_tensor(blob, offset, shape)
+        state[name] = tensor
     if offset != len(blob):
         raise ValueError(f"{path} contains {len(blob) - offset} trailing bytes")
     model.load_state_dict(state)
@@ -174,36 +206,33 @@ def read_model_bin(path: Path) -> FederatedMLP:
     return model
 
 
-def matrix_to_save_bytes(tensor: torch.Tensor, rows: int, cols: int) -> bytes:
-    matrix = tensor.detach().cpu().to(torch.float64)
-    if cols == 1:
-        matrix = matrix.reshape(rows, 1)
-    out = bytearray()
-    for j in range(cols):
-        for i in range(rows):
-            out += struct.pack("<d", float(matrix[i, j]))
-    return bytes(out)
+def tensor_to_save_bytes(tensor: torch.Tensor, shape: tuple[int, ...]) -> bytes:
+    values = tensor.detach().cpu().to(torch.float64)
+    if tuple(values.shape) != shape:
+        raise ValueError(f"Tensor shape mismatch: got {tuple(values.shape)}, expected {shape}")
+    flat = values.reshape(-1).tolist()
+    return struct.pack("<" + "d" * len(flat), *flat)
 
 
-def model_to_bytes(model: FederatedMLP) -> bytes:
+def model_to_bytes(model: FederatedCNN) -> bytes:
     state = model.state_dict()
-    return b"".join(matrix_to_save_bytes(state[name], rows, cols) for name, rows, cols in MODEL_LAYOUT)
+    return b"".join(tensor_to_save_bytes(state[name], shape) for name, shape in MODEL_LAYOUT)
 
 
-def write_model_bin(model: FederatedMLP, path: Path) -> None:
+def write_model_bin(model: FederatedCNN, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(model_to_bytes(model))
 
 
-def random_model() -> FederatedMLP:
-    model = FederatedMLP().double()
+def random_model() -> FederatedCNN:
+    model = FederatedCNN().double()
     with torch.no_grad():
         for param in model.parameters():
             param.uniform_(-0.5, 0.5)
     return model
 
 
-def load_or_random(path: Path) -> FederatedMLP:
+def load_or_random(path: Path) -> FederatedCNN:
     if path.exists() and path.stat().st_size == model_byte_size():
         return read_model_bin(path)
     if path.exists():
@@ -258,8 +287,9 @@ def train_model(epochs: int, aggregator_public_key_der_hex: str) -> None:
             loss.backward()
             optimizer.step()
             correct += int((logits.argmax(dim=1) == y).sum().item())
+        accuracy_percent = (correct / num_images) * 100 if num_images else 0.0
         print(f"Epoch: {epoch}/{epochs}")
-        print(f"Accuracy: {correct}/{num_images}")
+        print(f"Accuracy: {accuracy_percent:.2f}% ({correct}/{num_images})")
         print()
 
     lm_path = data_dir() / "lm.bin"
@@ -434,10 +464,10 @@ def aggregate(num_files: int | None = None) -> None:
     else:
         print(f"Aggregating {len(model_paths)} received model file(s).")
 
-    models: List[FederatedMLP] = [read_model_bin(path) for path in model_paths]
+    models: List[FederatedCNN] = [read_model_bin(path) for path in model_paths]
     if not models:
         raise ValueError("aggregate requires at least one model")
-    avg_model = FederatedMLP().double()
+    avg_model = FederatedCNN().double()
     avg_state = {}
     for key in avg_model.state_dict().keys():
         avg_state[key] = torch.stack([m.state_dict()[key] for m in models]).mean(dim=0)

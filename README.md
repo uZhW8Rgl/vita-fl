@@ -22,7 +22,7 @@ The current prototype combines:
 - [observability](./observability): Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector configuration.
 - [smart_contracts](./smart_contracts/README.md): Focused Foundry project with DFL contracts and TDX/DCAP attestation deployment logic.
 - [dfl/node_server](./dfl/node_server/README.md): Node.js orchestration layer used by each worker.
-- [dfl/neural_network](./dfl/neural_network/README.md): Python/PyTorch MNIST training, transfer, aggregation, and model serialization.
+- [dfl/neural_network](./dfl/neural_network/README.md): Python/PyTorch MNIST CNN training, transfer, aggregation, and model serialization.
 - [zk_inference](./zk_inference/README.md): ONNX export, single-image query creation, EZKL proof generation, and proof verification.
 - [agent](./agent/README.md): Local LangChain/MCP agent for contract-based model retrieval, signature verification, and ZK inference.
 
@@ -389,4 +389,4 @@ Each image is also tagged with the commit SHA, for example `ghcr.io/uzhw8rgl/mas
 
 - The active neural-network implementation is Python/PyTorch in `dfl/neural_network`.
 - `smart_contracts` is the active contract and attestation project.
-- The healthcare setting is the motivating scenario. The concrete prototype uses MNIST as a reproducible proof-of-concept workload.
+- The healthcare setting is the motivating scenario. The concrete prototype uses a compact CNN on MNIST as a reproducible proof-of-concept workload.
