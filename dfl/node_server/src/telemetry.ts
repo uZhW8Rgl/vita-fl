@@ -7,13 +7,13 @@ const SpanKind = {
     INTERNAL: 1,
     SERVER: 2,
     CLIENT: 3,
-};
+} as const;
 
 function nowUnixNano() {
     return String(BigInt(Date.now()) * 1000000n);
 }
 
-function traceIdForRound(round) {
+function traceIdForRound(round: number) {
     return crypto
         .createHash('sha256')
         .update(`dfl-round:${round}`)
@@ -30,13 +30,13 @@ function workerServiceName() {
     return deviceId ? `dfl-worker-${deviceId}` : "dfl-worker";
 }
 
-function serviceNameForRole(role) {
+function serviceNameForRole(role: string) {
     if (role === "aggregator") return "dfl-aggregator";
     if (role === "worker") return workerServiceName();
     return process.env.OTEL_SERVICE_NAME || "dfl-node";
 }
 
-function attributeValue(value) {
+function attributeValue(value: unknown) {
     if (typeof value === 'number' && Number.isFinite(value)) {
         return Number.isInteger(value)
             ? { intValue: String(value) }
@@ -46,7 +46,7 @@ function attributeValue(value) {
     return { stringValue: String(value ?? "") };
 }
 
-function attributes(values) {
+function attributes(values: Record<string, unknown>) {
     return Object.entries(values)
         .filter(([, value]) => value !== undefined && value !== null)
         .map(([key, value]) => ({
@@ -55,7 +55,7 @@ function attributes(values) {
         }));
 }
 
-async function exportSpan(span, resourceAttributes = {}) {
+async function exportSpan(span: Record<string, unknown>, resourceAttributes: Record<string, unknown> = {}) {
     if (!endpoint) return;
 
     const payload = {
@@ -105,6 +105,17 @@ async function exportSpan(span, resourceAttributes = {}) {
     }
 }
 
+type EdgeOptions = {
+    round: number;
+    source: string;
+    target: string;
+    name: string;
+    startTimeMs?: number;
+    endTimeMs?: number;
+    status?: string;
+    spanAttributes?: Record<string, unknown>;
+};
+
 async function exportPairedServiceEdge({
     round,
     source,
@@ -114,9 +125,9 @@ async function exportPairedServiceEdge({
     endTimeMs,
     status = "OK",
     spanAttributes = {},
-}) {
-    const start = Number.isFinite(startTimeMs) ? startTimeMs : Date.now();
-    const end = Number.isFinite(endTimeMs) ? endTimeMs : Date.now();
+}: EdgeOptions) {
+    const start = Number.isFinite(startTimeMs) ? Number(startTimeMs) : Date.now();
+    const end = Number.isFinite(endTimeMs) ? Number(endTimeMs) : Date.now();
     const traceId = traceIdForRound(round);
     const clientSpanId = spanId();
     const serverSpanId = spanId();
@@ -164,9 +175,18 @@ async function exportPairedServiceEdge({
     });
 }
 
-async function recordWorkflowEdge(name, options) {
+async function recordWorkflowEdge(
+    name: string,
+    options: {
+        round: number;
+        startTimeMs: number;
+        endTimeMs: number;
+        status: string;
+        attributes: Record<string, unknown>;
+    },
+) {
     const worker = workerServiceName();
-    const edges = {
+    const edges: Record<string, string[][]> = {
         "worker.fetch_global_model": [
             [worker, "smart-contracts"],
             [worker, "ipfs-kubo"],
@@ -199,7 +219,10 @@ async function recordWorkflowEdge(name, options) {
     }
 }
 
-export async function recordRoundEvent(name, { round = 0, role = "", attributes: eventAttributes = {} } = {}) {
+export async function recordRoundEvent(
+    name: string,
+    { round = 0, role = "", attributes: eventAttributes = {} } = {},
+) {
     const timestamp = nowUnixNano();
     await exportSpan({
         traceId: traceIdForRound(round),
@@ -218,16 +241,19 @@ export async function recordRoundEvent(name, { round = 0, role = "", attributes:
     });
 }
 
-export async function recordRoundSpan(name, {
-    round = 0,
-    role = "",
-    startTimeMs,
-    endTimeMs,
-    status = "OK",
-    attributes: spanAttributes = {},
-} = {}) {
-    const start = Number.isFinite(startTimeMs) ? startTimeMs : Date.now();
-    const end = Number.isFinite(endTimeMs) ? endTimeMs : Date.now();
+export async function recordRoundSpan(
+    name: string,
+    {
+        round = 0,
+        role = "",
+        startTimeMs,
+        endTimeMs,
+        status = "OK",
+        attributes: spanAttributes = {},
+    } = {},
+) {
+    const start = Number.isFinite(startTimeMs) ? Number(startTimeMs) : Date.now();
+    const end = Number.isFinite(endTimeMs) ? Number(endTimeMs) : Date.now();
     await exportSpan({
         traceId: traceIdForRound(round),
         spanId: spanId(),

@@ -3,6 +3,8 @@
 .terraform
 .idea
 !lib/**
+__pycache__/
+*.pyc
 node_modules/
 .env
 cache/
@@ -21,3 +23,4 @@ remote_attestation/cache/
 zk_inference/out/
 zk_inference/single_query/
 agent/downloads/
+ollama-data/

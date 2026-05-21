@@ -9,7 +9,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from zk_inference.service_tools import prove_single_image
+from zk_inference.service_tools import prepare_mnist_sample, prove_single_image
 
 
 HOST = os.environ.get("ZK_INFERENCE_HOST", "0.0.0.0")
@@ -26,20 +26,31 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.OK, {"ok": True})
 
     def do_POST(self) -> None:
-        if self.path != "/prove-single-image":
+        if self.path not in {"/prove-single-image", "/prepare-mnist-sample"}:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
-            result = prove_single_image(
-                model_path=payload["model_path"],
-                signature_path=payload["signature_path"],
-                index=payload.get("index"),
-                workdir=payload.get("workdir", "zk_inference/out"),
-                query_dir=payload.get("query_dir", "zk_inference/single_query"),
-                skip_calibration=bool(payload.get("skip_calibration", True)),
-            )
+            if self.path == "/prepare-mnist-sample":
+                result = prepare_mnist_sample(
+                    index=payload.get("index"),
+                    images=payload.get("images", "data/mnist/data/t10k-images.idx3-ubyte"),
+                    labels=payload.get("labels", "data/mnist/data/t10k-labels.idx1-ubyte"),
+                    out_dir=payload.get("out_dir", "zk_inference/single_query"),
+                    input_json=payload.get("input_json", "zk_inference/out/input.json"),
+                    metadata_out=payload.get("metadata_out", "zk_inference/single_query/selection.json"),
+                    seed=payload.get("seed"),
+                )
+            else:
+                result = prove_single_image(
+                    model_path=payload["model_path"],
+                    signature_path=payload["signature_path"],
+                    index=payload.get("index"),
+                    workdir=payload.get("workdir", "zk_inference/out"),
+                    query_dir=payload.get("query_dir", "zk_inference/single_query"),
+                    skip_calibration=bool(payload.get("skip_calibration", True)),
+                )
             status = HTTPStatus.OK if result.get("ok", False) else HTTPStatus.BAD_GATEWAY
             self._send_json(status, result)
         except KeyError as exc:

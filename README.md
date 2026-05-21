@@ -189,6 +189,11 @@ The `.env` file is intentionally ignored by Git. Start from `.env.example`, revi
 
 This is the recommended demo run for the thesis prototype. It rebuilds the active services, launches the local infrastructure, deploys the contracts, runs the DFL flow, stores the new global model in IPFS, and updates the on-chain metadata.
 
+After the stack is up, the browser frontend is available at:
+
+- `http://127.0.0.1:8089` for the thesis agent website with the chat UI and embedded Grafana dashboard
+- `http://127.0.0.1:3000` for the standalone Grafana instance
+
 ## Demo Outcome
 
 When the run completes successfully, you should have:
@@ -197,6 +202,7 @@ When the run completes successfully, you should have:
 - a local IPFS node with the global model and signature pinned,
 - completed worker runs for training and aggregation,
 - observability data in Grafana, Prometheus, Loki, and Tempo,
+- the website at `http://127.0.0.1:8089` with the agent chat and dashboard view,
 - and a ready-to-run verifiable inference path through `agent/run_agent.py`.
 
 The most important generated outputs are:

@@ -399,8 +399,14 @@ const stateMachine = async () => {
                             server_ip: String(state["1"]),
                             device_id: String(process.env.ACCOUNT_ADDRESS),
                         }));
-                        await submitModel(await localModelPackageHash());
-                        await setContribution([process.env.ACCOUNT_ADDRESS]);
+                        await traceOperation("worker.submit_model", {
+                            role: "worker",
+                            aggregator: String(state["1"]),
+                        }, async () => submitModel(await localModelPackageHash()));
+                        await traceOperation("worker.set_contribution", {
+                            role: "worker",
+                            aggregator: String(state["1"]),
+                        }, () => setContribution([process.env.ACCOUNT_ADDRESS]));
                         await traceEvent("worker.model_transfer.finished", { role: "worker", aggregator: String(state["1"]) });
                     }
                     catch (e) {

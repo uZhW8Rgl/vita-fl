@@ -135,6 +135,43 @@ def _model_sort_key(entry: IpfsEntry) -> tuple[str, int, str]:
     return stamp, entry.mtime or 0, entry.path
 
 
+def _candidate_model_entries(entries: Iterable[IpfsEntry]) -> list[IpfsEntry]:
+    entries_list = list(entries)
+    strict_models = [entry for entry in entries_list if entry.is_model]
+    if strict_models:
+        return strict_models
+
+    signature_names = {
+        entry.name
+        for entry in entries_list
+        if _artifact_kind(entry, entries_list) == "signature"
+    }
+    fallback_models = [
+        entry
+        for entry in entries_list
+        if _artifact_kind(entry, entries_list) == "model" and f"{entry.name}.sig" in signature_names
+    ]
+    return fallback_models
+
+
+def _artifact_kind(entry: IpfsEntry, entries: Iterable[IpfsEntry]) -> str | None:
+    if entry.is_model:
+        return "model"
+    if entry.is_signature:
+        return "signature"
+    entries_list = list(entries)
+    if entry.type != "file":
+        return None
+    if entry.name.endswith(".sig"):
+        sibling_name = entry.name.removesuffix(".sig")
+        if any(candidate.name == sibling_name for candidate in entries_list):
+            return "signature"
+        return None
+    if any(candidate.name == f"{entry.name}.sig" for candidate in entries_list):
+        return "model"
+    return None
+
+
 def _parse_artifact_timestamp(name: str) -> dt.datetime | None:
     match = MODEL_RE.search(name) or SIGNATURE_RE.search(name)
     if match is None:
@@ -187,11 +224,11 @@ def select_latest_bundle(
     pair_window_seconds: int = DEFAULT_PAIR_WINDOW_SECONDS,
 ) -> dict:
     entries_list = list(entries)
-    models = sorted((entry for entry in entries_list if entry.is_model), key=_model_sort_key)
+    models = sorted(_candidate_model_entries(entries_list), key=_model_sort_key)
     if not models:
-        raise RuntimeError("No '*-aggregated.bin' model found in the selected IPFS path.")
+        raise RuntimeError("No model/signature bundle candidates were found in the selected IPFS path.")
 
-    signatures = list(entry for entry in entries_list if entry.is_signature)
+    signatures = [entry for entry in entries_list if _artifact_kind(entry, entries_list) == "signature"]
     newest_model = models[-1]
     skipped_unsigned: list[str] = []
 
@@ -227,16 +264,20 @@ def select_latest_bundle(
 
 
 def build_retrieval_docs(entries: Iterable[IpfsEntry]) -> list[dict]:
+    entries_list = list(entries)
     docs = []
-    for entry in entries:
-        if not (entry.is_model or entry.is_signature):
+    for entry in entries_list:
+        kind = _artifact_kind(entry, entries_list)
+        if kind is None:
             continue
-        kind = "model" if entry.is_model else "signature"
         stamp_match = MODEL_RE.search(entry.name.removesuffix(".sig"))
         stamp = stamp_match.group("stamp") if stamp_match else "unknown"
+        localized_kind = "Modell" if kind == "model" else "Signatur"
         text = (
-            f"{kind} artifact {entry.name} timestamp {stamp} path {entry.path} "
-            f"size {entry.size or 'unknown'} cid {entry.hash or 'unknown'}"
+            f"{kind} artifact {entry.name} {localized_kind} Artefakt "
+            f"timestamp {stamp} zeitstempel {stamp} path {entry.path} "
+            f"size {entry.size or 'unknown'} groesse {entry.size or 'unknown'} "
+            f"cid {entry.hash or 'unknown'} ipfs"
         )
         docs.append(
             {
@@ -253,7 +294,7 @@ def rag_search(query: str, entries: Iterable[IpfsEntry], limit: int = 5) -> list
     for doc in build_retrieval_docs(entries):
         haystack = doc["page_content"].lower()
         score = sum(1 for term in terms if term in haystack)
-        if "latest" in terms or "letzte" in terms:
+        if "latest" in terms or "letzte" in terms or "neueste" in terms or "neustes" in terms:
             score += 1 if doc["metadata"].get("kind") == "model" else 0
         scored.append((score, doc))
     scored.sort(key=lambda item: (item[0], item[1]["metadata"].get("timestamp", "")), reverse=True)

@@ -246,13 +246,6 @@
         "type": "prometheus",
         "uid": "Prometheus"
       },
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 0,
-          "unit": "short"
-        },
-        "overrides": []
-      },
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -261,26 +254,15 @@
       },
       "id": 6,
       "options": {
-        "displayMode": "gradient",
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+        "edges": {
+          "mainStatUnit": "short",
+          "secondaryStatUnit": "ms"
         },
-        "maxVizHeight": 300,
-        "minVizHeight": 16,
-        "minVizWidth": 8,
-        "namePlacement": "auto",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
+        "nodes": {
+          "mainStatUnit": "ms",
+          "secondaryStatUnit": "reqps"
         },
-        "showUnfilled": true,
-        "sizing": "auto",
-        "valueMode": "color"
+        "zoomMode": "cooperative"
       },
       "targets": [
         {
@@ -289,15 +271,41 @@
             "uid": "Prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (span_name) (calls_total{service_name=\"dfl-node-worker\"})",
+          "expr": "label_join(label_replace(label_replace(sum by (client, server) (increase(traces_service_graph_request_total[2m])) > 0, \"source\", \"$1\", \"client\", \"(.*)\"), \"target\", \"$1\", \"server\", \"(.*)\"), \"id\", \" -> \", \"source\", \"target\")",
+          "format": "table",
           "instant": true,
-          "legendFormat": "{{span_name}}",
+          "legendFormat": "{{source}} -> {{target}}",
           "range": false,
-          "refId": "A"
+          "refId": "A",
+          "queryType": "instant"
         }
       ],
-      "title": "OTel Span Counts",
-      "type": "bargauge"
+      "pluginVersion": "11.6.0",
+      "title": "OTel Live Service Graph",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": false,
+              "__name__": true,
+              "client": true,
+              "server": true
+            },
+            "indexByName": {
+              "Value": 3,
+              "id": 0,
+              "source": 1,
+              "target": 2
+            },
+            "renameByName": {
+              "Value": "mainStat"
+            }
+          }
+        }
+      ],
+      "type": "nodeGraph"
     },
     {
       "datasource": {
@@ -673,7 +681,7 @@
       "type": "logs"
     }
   ],
-  "refresh": "30s",
+  "refresh": "5s",
   "schemaVersion": 39,
   "tags": ["dfl", "training", "observability"],
   "templating": {

@@ -104,7 +104,7 @@ The output includes:
 The current LLM mode uses local Ollama, not an OpenAI API key:
 
 ```bash
-ollama pull gemma4:e2b
+ollama pull qwen3:0.6b
 ollama serve
 ```
 
@@ -112,12 +112,71 @@ Then:
 
 ```bash
 export OLLAMA_BASE_URL=http://127.0.0.1:11434
-export OLLAMA_MODEL=gemma4:e2b
+export OLLAMA_MODEL=qwen3:0.6b
 
 .venv/bin/python agent/run_agent.py --llm --source contract --skip-calibration
 ```
 
 In this mode LangChain can use local IPFS/RAG helpers and ZK tools exposed through MCP.
+
+## Persistent Chat Service
+
+The Compose stack now includes:
+
+- `ollama`: the Ollama API server on the internal Docker network
+- `ollama-init`: a one-shot initializer that automatically pulls `qwen3:0.6b`
+- `agent`: the persistent API/session backend
+- `ui`: a separate frontend container that talks to the agent API and embeds Grafana
+
+So other services can use the same model through `http://ollama:11434` without a manual `ollama pull`.
+The model cache is stored in the repository folder `./ollama-data`, so it survives
+`docker compose down --volumes`.
+
+Start the complete chat agent with:
+
+```bash
+KEEP_ALIVE=0 docker compose up --build agent ui
+```
+
+Then open:
+
+```bash
+http://127.0.0.1:8089
+```
+
+The running `agent` stays alive and keeps chat sessions in memory, while the
+separate `ui` container serves the browser frontend and waits for Grafana so the
+embedded dashboard is available from the start. The agent can:
+
+For the embedded Grafana panel, use Grafana's **Share externally** feature and
+set the generated link as `GRAFANA_EXTERNAL_DASHBOARD_URL` for the `ui` service.
+This is separate from Grafana's generic embedding setting.
+
+- answer directly through Ollama,
+- inspect local IPFS metadata through the lightweight RAG helper,
+- call MCP tools for model export, MNIST query preparation, and proof generation.
+
+Inside Compose, the agent automatically uses `OLLAMA_BASE_URL=http://ollama:11434`.
+
+## Terminal Modes
+
+You can still use the same code without the UI.
+
+Interactive terminal chat:
+
+```bash
+docker compose run --rm agent python agent/run_agent.py --llm --interactive --source contract --skip-calibration
+```
+
+Single custom prompt:
+
+```bash
+docker compose run --rm agent python agent/run_agent.py \
+  --llm \
+  --prompt "Explain the latest verified model bundle and then run one proof." \
+  --source contract \
+  --skip-calibration
+```
 
 ## MCP Server
 

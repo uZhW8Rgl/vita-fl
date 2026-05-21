@@ -19,6 +19,25 @@ compactor:
   compaction:
     block_retention: 24h
 
+metrics_generator:
+  processor:
+    service_graphs:
+      wait: 2s
+      max_items: 10000
+    span_metrics:
+      histogram_buckets: [0.1, 0.5, 1, 5, 10, 30, 60]
+  storage:
+    path: /tmp/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+  traces_storage:
+    path: /tmp/tempo/generator/traces
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]
+
 storage:
   trace:
     backend: local

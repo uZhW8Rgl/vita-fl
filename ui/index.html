@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>!!! THESIS AGENT 2000 !!!</title>
+  <style>
+    body {
+      margin: 0;
+      background: #000080;
+      color: #ffff00;
+      font-family: "Comic Sans MS", "Trebuchet MS", cursive, sans-serif;
+      background-image:
+        repeating-linear-gradient(45deg, rgba(255, 0, 255, 0.12) 0 14px, rgba(0, 255, 255, 0.12) 14px 28px),
+        radial-gradient(circle at top left, #ff00ff 0, transparent 20%),
+        radial-gradient(circle at top right, #00ffff 0, transparent 18%);
+    }
+    a {
+      color: #00ff00;
+      font-weight: bold;
+    }
+    .page {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 12px;
+    }
+    .banner {
+      border: 6px ridge #c0c0c0;
+      background: linear-gradient(180deg, #ff0000 0%, #000000 100%);
+      padding: 10px;
+      text-align: center;
+      box-shadow: 0 0 0 6px #000, 0 0 30px #00ffff;
+    }
+    .blink {
+      animation: blink 1s steps(2, start) infinite;
+    }
+    @keyframes blink {
+      to { visibility: hidden; }
+    }
+    .marquee {
+      display: block;
+      background: #000;
+      color: #00ff00;
+      border: 4px groove #c0c0c0;
+      padding: 6px;
+      margin-top: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      position: relative;
+    }
+    .marquee span {
+      display: inline-block;
+      padding-left: 100%;
+      animation: scroll 12s linear infinite;
+    }
+    @keyframes scroll {
+      from { transform: translateX(0); }
+      to { transform: translateX(-100%); }
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .panel {
+      border: 5px ridge #c0c0c0;
+      background: #000;
+      padding: 10px;
+      box-shadow: inset 0 0 0 2px #ffff00;
+    }
+    .sidebar h2,
+    .chat h2 {
+      margin: 0 0 10px;
+      font-size: 1.4rem;
+      color: #00ffff;
+      text-shadow: 2px 2px #ff00ff;
+    }
+    .counter,
+    .statusbar,
+    .tip {
+      background: #202020;
+      border: 3px inset #c0c0c0;
+      padding: 8px;
+      margin-bottom: 10px;
+      color: #fff;
+    }
+    .new-session {
+      width: 100%;
+      font: inherit;
+      font-weight: bold;
+      color: #000;
+      background: linear-gradient(180deg, #ffff00 0%, #ff9900 100%);
+      border: 4px outset #ffffff;
+      padding: 10px;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    .new-session:active,
+    .send:active {
+      border-style: inset;
+    }
+    .session-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 60vh;
+      overflow: auto;
+    }
+    .session {
+      border: 3px outset #c0c0c0;
+      background: #1d1d1d;
+      color: #fff;
+      padding: 8px;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+    }
+    .session.active {
+      background: #330066;
+      color: #00ff00;
+      border-color: #ffff00;
+    }
+    .chat-window {
+      min-height: 58vh;
+      max-height: 58vh;
+      overflow: auto;
+      background:
+        linear-gradient(180deg, rgba(0, 0, 0, 0.88) 0%, rgba(32, 0, 64, 0.9) 100%);
+      border: 4px inset #c0c0c0;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .message {
+      margin-bottom: 12px;
+      padding: 10px;
+      border: 3px ridge #c0c0c0;
+      white-space: pre-wrap;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+    .message.user {
+      background: #330000;
+      color: #ffcc00;
+    }
+    .message.assistant {
+      background: #001133;
+      color: #99ffff;
+    }
+    .tool-trace {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 2px dashed #ff66ff;
+    }
+    .tool-event {
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: #111;
+      border: 2px groove #c0c0c0;
+      color: #fff799;
+      font-size: 0.86rem;
+    }
+    .tool-event b {
+      color: #00ff99;
+    }
+    .composer textarea {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+      font: inherit;
+      background: #fffacd;
+      color: #000;
+      border: 4px inset #c0c0c0;
+      padding: 10px;
+    }
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .send {
+      font: inherit;
+      font-weight: bold;
+      color: #000;
+      background: linear-gradient(180deg, #00ff00 0%, #00aa00 100%);
+      border: 4px outset #ffffff;
+      padding: 10px 16px;
+      cursor: pointer;
+    }
+    .tiny {
+      font-size: 0.82rem;
+      color: #ffccff;
+    }
+    .badgebar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .badge {
+      background: #111;
+      border: 3px ridge #c0c0c0;
+      color: #00ff00;
+      padding: 4px 8px;
+      font-weight: bold;
+    }
+    .mode-toggle {
+      font: inherit;
+      font-weight: bold;
+      color: #000;
+      background: linear-gradient(180deg, #00ffff 0%, #00a0ff 100%);
+      border: 3px outset #ffffff;
+      padding: 4px 10px;
+      cursor: pointer;
+    }
+    .mode-toggle:active {
+      border-style: inset;
+    }
+    .mode-toggle[disabled] {
+      cursor: not-allowed;
+      opacity: 0.7;
+      filter: grayscale(0.25);
+    }
+    .under-construction {
+      text-align: center;
+      margin-top: 12px;
+      font-weight: bold;
+      color: #fff;
+      text-shadow: 2px 2px #f00;
+    }
+    .hidden {
+      display: none;
+    }
+    .dashboard-shell {
+      border: 5px ridge #c0c0c0;
+      background: #100010;
+      padding: 10px;
+      box-shadow: inset 0 0 0 2px #00ffff;
+    }
+    .dashboard-shell h2 {
+      margin: 0 0 10px;
+      color: #ff66ff;
+      text-shadow: 2px 2px #000;
+      font-size: 1.35rem;
+    }
+    .dashboard-frame {
+      width: 100%;
+      height: 900px;
+      border: 4px inset #c0c0c0;
+      background: #fff;
+    }
+    .cheesy-warning {
+      margin-top: 10px;
+      border: 4px dashed #ff00ff;
+      background: #220022;
+      color: #ffff66;
+      padding: 10px;
+      text-align: center;
+      font-weight: bold;
+      box-shadow: 0 0 18px rgba(255, 0, 255, 0.55);
+    }
+    @media (max-width: 900px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .dashboard-frame {
+        height: 70vh;
+      }
+      .chat-window {
+        min-height: 42vh;
+        max-height: 42vh;
+      }
+      .controls {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .send {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="banner">
+      <div class="blink"><font size="7"><b>!!! MASTER THESIS AGENT ONLINE !!!</b></font></div>
+      <div><font size="4">Best viewed with Netscape Navigator at 800x600</font></div>
+      <div class="badgebar">
+        <span class="badge">MCP INSIDE</span>
+        <span class="badge">LOCAL RAG</span>
+        <span class="badge">OLLAMA POWER</span>
+        <span class="badge">NO FLASH REQUIRED</span>
+        <button class="mode-toggle" id="mode-toggle" type="button">OPEN CHAT WINDOW</button>
+      </div>
+    </div>
+
+    <div class="marquee"><span>Welcome to the information superhighway... chat with the thesis agent... ask about bundles, proofs, signatures, IPFS artifacts, and local model inference...</span></div>
+
+    <div class="layout">
+      <aside class="panel sidebar">
+        <h2>Session Zone</h2>
+        <div class="counter">Visitor Counter: <b>0001337</b></div>
+        <button class="new-session" id="new-session">START NEW CHAT SESSION</button>
+        <div class="session-list" id="sessions"></div>
+        <div class="tip">
+          <b>Pro Tip:</b><br>
+          Ask wild things like:<br>
+          "latest bundle?"<br>
+          "search IPFS for signatures"<br>
+          "run proof index 7"
+        </div>
+        <div class="under-construction">[ UNDER CONSTRUCTION ] [ UNDER CONSTRUCTION ]</div>
+      </aside>
+
+      <main class="panel chat">
+        <h2 id="title">Fresh Session</h2>
+        <div class="statusbar" id="status">Status: idle and looking fabulous.</div>
+        <div id="dashboard-view">
+          <div class="dashboard-shell">
+            <h2>LIVE GRAFANA COMMAND CENTER</h2>
+            <div class="tiny" id="dashboard-hint">This box is meant for a Grafana "Share externally" link. Set <code>GRAFANA_EXTERNAL_DASHBOARD_URL</code> to the generated URL and rebuild the UI.</div>
+            <iframe
+              class="dashboard-frame"
+              id="dashboard-frame"
+              src=""
+              title="Grafana DFL Training Overview"
+              loading="lazy">
+            </iframe>
+            <div class="cheesy-warning" id="chat-warning">
+              CHAT TERMINAL STILL BOOTING... PLEASE STAND BY WHILE THE CYBER AGENT CONNECTS TO THE INFORMATION SUPERHIGHWAY.
+            </div>
+          </div>
+        </div>
+        <div id="chat-view" class="hidden">
+          <div class="chat-window" id="messages"></div>
+          <form class="composer" id="composer">
+            <textarea id="input" placeholder="TYPE YOUR MESSAGE TO THE CYBER AGENT HERE..."></textarea>
+            <div class="controls">
+              <div class="tiny">This website contains 0% subtlety and 100% glorious bad taste.</div>
+              <button class="send" type="submit">SEND TO CYBERSPACE</button>
+            </div>
+          </form>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const grafanaUrl = "__GRAFANA_EXTERNAL_DASHBOARD_URL__";
+    const hasGrafanaUrl = Boolean(grafanaUrl) && /^https?:\/\//.test(grafanaUrl);
+    const sessionsEl = document.getElementById("sessions");
+    const messagesEl = document.getElementById("messages");
+    const statusEl = document.getElementById("status");
+    const titleEl = document.getElementById("title");
+    const inputEl = document.getElementById("input");
+    const composerEl = document.getElementById("composer");
+    const newSessionBtn = document.getElementById("new-session");
+    const modeToggleBtn = document.getElementById("mode-toggle");
+    const chatViewEl = document.getElementById("chat-view");
+    const dashboardViewEl = document.getElementById("dashboard-view");
+    const dashboardFrameEl = document.getElementById("dashboard-frame");
+    const dashboardHintEl = document.getElementById("dashboard-hint");
+    const chatWarningEl = document.getElementById("chat-warning");
+    let currentSessionId = null;
+    let currentMode = "dashboard";
+    let agentReady = false;
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function renderMessages(messages) {
+      messagesEl.innerHTML = "";
+      for (const message of messages) {
+        const item = document.createElement("div");
+        item.className = `message ${message.role}`;
+        item.innerHTML = `<b>${message.role === "user" ? "YOU" : "AGENT"}:</b><br>${escapeHtml(message.content || "")}`;
+        if (message.role === "assistant" && Array.isArray(message.tool_events) && message.tool_events.length > 0) {
+          const trace = document.createElement("div");
+          trace.className = "tool-trace";
+          trace.innerHTML = "<b>TOOL TRACE:</b>";
+          for (const event of message.tool_events) {
+            const eventEl = document.createElement("div");
+            eventEl.className = "tool-event";
+            eventEl.innerHTML = `<b>${escapeHtml(event.label || event.type || "Tool")}</b><br>${escapeHtml(event.detail || "")}`;
+            trace.appendChild(eventEl);
+          }
+          item.appendChild(trace);
+        }
+        messagesEl.appendChild(item);
+      }
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function applyMode(mode) {
+      currentMode = mode;
+      if (mode === "chat") {
+        if (!agentReady || !currentSessionId) {
+          dashboardViewEl.classList.remove("hidden");
+          chatViewEl.classList.add("hidden");
+          modeToggleBtn.textContent = "CHAT NOT READY";
+          statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+          return;
+        }
+        chatViewEl.classList.remove("hidden");
+        dashboardViewEl.classList.add("hidden");
+        modeToggleBtn.textContent = "SHOW GRAFANA";
+        statusEl.textContent = "Status: chat mode active.";
+        inputEl.focus();
+      } else {
+        dashboardViewEl.classList.remove("hidden");
+        chatViewEl.classList.add("hidden");
+        modeToggleBtn.textContent = "OPEN CHAT WINDOW";
+        statusEl.textContent = "Status: Grafana command center active.";
+      }
+    }
+
+    function applyAgentReadiness(ready) {
+      const wasReady = agentReady;
+      agentReady = ready;
+      modeToggleBtn.disabled = !ready;
+      inputEl.disabled = !ready;
+      newSessionBtn.disabled = !ready;
+      if (ready) {
+        modeToggleBtn.textContent = currentMode === "chat" ? "SHOW GRAFANA" : "OPEN CHAT WINDOW";
+        chatWarningEl.classList.add("hidden");
+        if (currentMode !== "chat") {
+          statusEl.textContent = "Status: cyber agent online and accepting messages.";
+        }
+        if (!wasReady && !currentSessionId) {
+          void createSession();
+        }
+      } else {
+        if (currentMode === "chat") {
+          currentMode = "dashboard";
+          dashboardViewEl.classList.remove("hidden");
+          chatViewEl.classList.add("hidden");
+        }
+        modeToggleBtn.textContent = "CHAT NOT READY";
+        chatWarningEl.classList.remove("hidden");
+        statusEl.textContent = "Status: chat terminal still warming up...";
+      }
+    }
+
+    async function pollAgentHealth() {
+      try {
+        const [healthResponse, sessionsResponse] = await Promise.all([
+          fetch("/health", { cache: "no-store" }),
+          fetch("/api/sessions", { cache: "no-store" })
+        ]);
+        applyAgentReadiness(healthResponse.ok && sessionsResponse.ok);
+      } catch (_error) {
+        applyAgentReadiness(false);
+      }
+    }
+
+    function sessionLabel(session) {
+      return session.title || "Fresh Session";
+    }
+
+    async function refreshSessions(activeId = currentSessionId) {
+      if (!agentReady) {
+        sessionsEl.innerHTML = "";
+        return;
+      }
+      const response = await fetch("/api/sessions");
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      sessionsEl.innerHTML = "";
+      for (const session of payload.sessions) {
+        const button = document.createElement("button");
+        button.className = `session${session.id === activeId ? " active" : ""}`;
+        button.disabled = !agentReady;
+        button.innerHTML = `<b>${escapeHtml(sessionLabel(session))}</b><br><small>${session.message_count} messages stored in the machine</small>`;
+        button.onclick = async () => {
+          await pollAgentHealth();
+          if (!agentReady) {
+            statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+            return;
+          }
+          currentSessionId = session.id;
+          await loadSession(session.id);
+        };
+        sessionsEl.appendChild(button);
+      }
+    }
+
+    async function loadSession(sessionId) {
+      const response = await fetch(`/api/sessions/${sessionId}`);
+      if (!response.ok) {
+        statusEl.textContent = "Status: could not load session from the cyber backend.";
+        return;
+      }
+      const payload = await response.json();
+      currentSessionId = payload.session.id;
+      titleEl.textContent = sessionLabel(payload.session);
+      renderMessages(payload.session.messages);
+      await refreshSessions(currentSessionId);
+    }
+
+    async function createSession() {
+      if (!agentReady) {
+        statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+        return;
+      }
+      try {
+        const response = await fetch("/api/sessions", { method: "POST" });
+        if (!response.ok) {
+          applyAgentReadiness(false);
+          statusEl.textContent = "Status: chat backend still booting. Session creation delayed.";
+          return;
+        }
+        const payload = await response.json();
+        await loadSession(payload.session.id);
+        applyAgentReadiness(true);
+        if (agentReady) {
+          inputEl.focus();
+        }
+      } catch (_error) {
+        applyAgentReadiness(false);
+        statusEl.textContent = "Status: no session yet. Waiting for the cyber agent backend...";
+      }
+    }
+
+    async function resetSessionsAndCreateFreshOne() {
+      if (!agentReady) {
+        statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+        return;
+      }
+      statusEl.textContent = "Status: erasing the old chat archives from cyberspace...";
+      currentSessionId = null;
+      titleEl.textContent = "Fresh Session";
+      renderMessages([]);
+      sessionsEl.innerHTML = "";
+      const response = await fetch("/api/sessions", { method: "DELETE" });
+      if (!response.ok) {
+        statusEl.textContent = "Status: could not wipe the old session archives.";
+        return;
+      }
+      await createSession();
+    }
+
+    composerEl.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await pollAgentHealth();
+      const message = inputEl.value.trim();
+      if (!agentReady || !message || !currentSessionId) {
+        statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+        return;
+      }
+      inputEl.value = "";
+      statusEl.textContent = "Status: transmitting packet to the cyber agent...";
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: currentSessionId, message })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        statusEl.textContent = `Status: ERROR :: ${payload.detail || "Request failed."}`;
+        return;
+      }
+      titleEl.textContent = sessionLabel(payload.session);
+      renderMessages(payload.session.messages);
+      await refreshSessions(currentSessionId);
+      statusEl.textContent = "Status: message delivered successfully.";
+    });
+
+    newSessionBtn.addEventListener("click", async () => {
+      await pollAgentHealth();
+      await resetSessionsAndCreateFreshOne();
+    });
+    modeToggleBtn.addEventListener("click", async () => {
+      await pollAgentHealth();
+      if (!agentReady || !currentSessionId) {
+        statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+        return;
+      }
+      applyMode(currentMode === "chat" ? "dashboard" : "chat");
+    });
+
+    (async () => {
+      if (hasGrafanaUrl) {
+        dashboardFrameEl.src = grafanaUrl;
+        dashboardHintEl.innerHTML = 'External Grafana share link detected. Enjoy the cyber telemetry.';
+      } else {
+        dashboardFrameEl.removeAttribute("src");
+        dashboardHintEl.innerHTML = 'No external Grafana share URL configured yet. Set <code>GRAFANA_EXTERNAL_DASHBOARD_URL</code> and rebuild the UI to activate this panel.';
+      }
+      applyAgentReadiness(false);
+      await pollAgentHealth();
+      window.setInterval(pollAgentHealth, 15000);
+      applyMode("dashboard");
+      if (agentReady) {
+        await createSession();
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -174,7 +174,7 @@ library JSONParserLib {
     /// @dev Returns the item at index `i` for (array).
     /// If `item` is not an array, the result's type WILL be undefined.
     /// If there is no item with the index, the result's type WILL be undefined.
-    function at(Item memory item, uint256 i) internal pure returns (Item memory result) {
+    function atIndex(Item memory item, uint256 i) internal pure returns (Item memory result) {
         /// @solidity memory-safe-assembly
         assembly {
             mstore(0x40, result) // Free the default allocation. We'll allocate manually.
@@ -192,11 +192,11 @@ library JSONParserLib {
     /// @dev Returns the item at key `k` for (object).
     /// If `item` is not an object, the result's type WILL be undefined.
     /// The key MUST be double-quoted, JSON encoded. This is for efficiency reasons.
-    /// - Correct : `item.at('"k"')`.
-    /// - Wrong   : `item.at("k")`.
+    /// - Correct : `item.atKey('"k"')`.
+    /// - Wrong   : `item.atKey("k")`.
     /// For duplicated keys, the last item with the key WILL be returned.
     /// If there is no item with the key, the result's type WILL be undefined.
-    function at(Item memory item, string memory k) internal pure returns (Item memory result) {
+    function atKey(Item memory item, string memory k) internal pure returns (Item memory result) {
         /// @solidity memory-safe-assembly
         assembly {
             mstore(0x40, result) // Free the default allocation. We'll allocate manually.

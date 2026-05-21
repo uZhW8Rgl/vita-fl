@@ -49,6 +49,7 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_LOG_LEVEL: warn
@@ -67,6 +68,26 @@ services:
       tempo:
         condition: service_started
 
+  grafana-share-init:
+    image: curlimages/curl:8.8.0
+    container_name: grafana-share-init
+    restart: "no"
+    depends_on:
+      grafana:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - /work/ensure_shared_dashboard.sh
+    environment:
+      GRAFANA_URL: http://grafana:3000
+      GRAFANA_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GRAFANA_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      DASHBOARD_UID: dfl-training-overview
+      PUBLIC_DASHBOARD_UID: c656176f-25ca-4408-a109-731176af6da4
+      PUBLIC_DASHBOARD_TOKEN: c656176f25ca4408a109731176af6da4
+    volumes:
+      - ./observability/grafana/ensure_shared_dashboard.sh:/work/ensure_shared_dashboard.sh:ro
+
   prometheus:
     image: prom/prometheus:v2.52.0
     container_name: prometheus
@@ -74,6 +95,7 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time=24h
+      - --web.enable-remote-write-receiver
       - --log.level=warn
     ports:
       - "127.0.0.1:9090:9090"
@@ -86,6 +108,11 @@ services:
     container_name: loki
     restart: unless-stopped
     command: ["-config.file=/etc/loki/loki.yml", "-log.level=warn"]
+    logging:
+      driver: "local"
+      options:
+        max-size: "10m"
+        max-file: "2"
     ports:
       - "127.0.0.1:3100:3100"
     volumes:
@@ -97,6 +124,11 @@ services:
     container_name: promtail
     restart: unless-stopped
     command: ["-config.file=/etc/promtail/promtail.yml", "-log.level=warn"]
+    logging:
+      driver: "local"
+      options:
+        max-size: "10m"
+        max-file: "2"
     volumes:
       - ./observability/promtail/promtail.yml:/etc/promtail/promtail.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -179,6 +211,39 @@ services:
       timeout: 2s
       retries: 30
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ./ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep '[o]llama serve' >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: ollama-init
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - ollama pull qwen3:0.6b
+    volumes:
+      - ./ollama-data:/root/.ollama
+
   smart-contracts:
     build:
       context: .
@@ -193,8 +258,14 @@ services:
         condition: service_healthy
       ipfs:
         condition: service_healthy
+      promtail:
+        condition: service_started
+      otel-collector:
+        condition: service_started
     environment:
       FOUNDRY_DISABLE_NIGHTLY_WARNING: "1"
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      OTEL_SERVICE_NAME: smart-contracts
       IPFS_PROVIDER: ${IPFS_PROVIDER}
       DOCKER: ${DOCKER}
       KEEP_ALIVE: ${KEEP_ALIVE:-0}
@@ -215,7 +286,7 @@ services:
       INITIAL_GM_SIG_CID: ${INITIAL_GM_SIG_CID}
       INITIAL_GM_SIGNER_ADDRESS: ${INITIAL_GM_SIGNER_ADDRESS}
       ETH_EUR_PRICE: ${ETH_EUR_PRICE:-3000}
-    command: ["/dfl/smart_contracts/starter_docker.sh"]
+    command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
@@ -226,7 +297,7 @@ services:
     image: ghcr.io/uzhw8rgl/master-thesis-agent:latest
     platform: linux/amd64
     container_name: agent
-    restart: "no"
+    restart: unless-stopped
     working_dir: /app
     depends_on:
       anvil:
@@ -235,38 +306,64 @@ services:
         condition: service_healthy
       zk-inference:
         condition: service_started
+      ollama-init:
+        condition: service_completed_successfully
       VM-0:
-        condition: service_completed_successfully
+        condition: service_started
       VM-1:
-        condition: service_completed_successfully
+        condition: service_started
       VM-2:
-        condition: service_completed_successfully
+        condition: service_started
     environment:
       DOCKER: "1"
       PYTHONUNBUFFERED: "1"
       RPC_URL: http://anvil:8545
       IPFS_API_URL: http://ipfs:5001
       ZK_INFERENCE_URL: http://zk-inference:8090
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: qwen3:0.6b
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      OTEL_SERVICE_NAME: agent
       GM_STORAGE_ADDRESS: 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
       REGISTRY_ADDRESS: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+      AGENT_PORT: "8089"
     command:
       - python
       - agent/run_agent.py
+      - --serve
+      - --llm
       - --source
       - contract
       - --rpc-url
-      - http://127.0.0.1:8545
+      - http://anvil:8545
       - --gm-storage-address
       - 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
       - --registry-address
       - 0x5FbDB2315678afecb367f032d93F642f64180aa3
       - --ipfs-api-url
-      - http://127.0.0.1:5001
+      - http://ipfs:5001
       - --zk-inference-url
       - http://zk-inference:8090
       - --skip-calibration
     volumes:
       - ./agent/downloads:/app/agent/downloads
+
+  ui:
+    build:
+      context: .
+      dockerfile: ui/Dockerfile
+    image: ghcr.io/uzhw8rgl/master-thesis-ui:latest
+    container_name: ui
+    restart: unless-stopped
+    environment:
+      GRAFANA_EXTERNAL_DASHBOARD_URL: ${GRAFANA_EXTERNAL_DASHBOARD_URL:-http://localhost:3000/public-dashboards/c656176f25ca4408a109731176af6da4}
+    depends_on:
+      grafana:
+        condition: service_started
+      grafana-share-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8089:8080"
 
   zk-inference:
     build:
