@@ -132,6 +132,20 @@ def model_byte_size() -> int:
     return sum(rows * cols * 8 for _, rows, cols in MODEL_LAYOUT)
 
 
+def read_idx_image_count(path: Path) -> int:
+    blob = path.read_bytes()
+    if len(blob) < 16:
+        raise ValueError(f"{path} is too small to be a valid IDX image file")
+    return (len(blob) - 16) // INPUT_SIZE
+
+
+def read_idx_label_count(path: Path) -> int:
+    blob = path.read_bytes()
+    if len(blob) < 8:
+        raise ValueError(f"{path} is too small to be a valid IDX label file")
+    return len(blob) - 8
+
+
 def _read_matrix(blob: bytes, offset: int, rows: int, cols: int) -> tuple[torch.Tensor, int]:
     count = rows * cols
     byte_count = count * 8
@@ -215,16 +229,26 @@ def read_idx_images(path: Path, limit: int = NUM_TRAIN_IMAGES) -> torch.Tensor:
 
 def train_model(epochs: int, aggregator_public_key_der_hex: str) -> None:
     model = load_or_random(initial_model_file())
-    images = read_idx_images(input_data_file("train-images.idx3-ubyte"))
-    labels = read_idx_labels(input_data_file("train-labels.idx1-ubyte"))
+    train_images_path = input_data_file("train-images.idx3-ubyte")
+    train_labels_path = input_data_file("train-labels.idx1-ubyte")
+    num_images = read_idx_image_count(train_images_path)
+    num_labels = read_idx_label_count(train_labels_path)
+    if num_images != num_labels:
+        raise ValueError(
+            f"Mismatched training split sizes: {train_images_path} has {num_images} images "
+            f"but {train_labels_path} has {num_labels} labels"
+        )
+
+    images = read_idx_images(train_images_path, limit=num_images)
+    labels = read_idx_labels(train_labels_path, limit=num_labels)
     optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CrossEntropyLoss()
 
     for epoch in range(1, epochs + 1):
-        indices = list(range(NUM_TRAIN_IMAGES))
+        indices = list(range(num_images))
         random.shuffle(indices)
         correct = 0
-        for start in range(0, NUM_TRAIN_IMAGES, BATCH_SIZE):
+        for start in range(0, num_images, BATCH_SIZE):
             batch_idx = torch.tensor(indices[start : start + BATCH_SIZE], dtype=torch.long)
             x = images.index_select(0, batch_idx)
             y = labels.index_select(0, batch_idx)
@@ -235,7 +259,7 @@ def train_model(epochs: int, aggregator_public_key_der_hex: str) -> None:
             optimizer.step()
             correct += int((logits.argmax(dim=1) == y).sum().item())
         print(f"Epoch: {epoch}/{epochs}")
-        print(f"Accuracy: {correct}/{NUM_TRAIN_IMAGES}")
+        print(f"Accuracy: {correct}/{num_images}")
         print()
 
     lm_path = data_dir() / "lm.bin"

@@ -458,8 +458,8 @@ services:
   #     DEVICE_ID: ${W4_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W4_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W4_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-0.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-0.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-4.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-4.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_4.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_4.pem
 
@@ -473,8 +473,8 @@ services:
   #     DEVICE_ID: ${W5_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W5_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W5_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-1.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-1.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-5.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-5.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_5.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_5.pem
 
@@ -488,8 +488,8 @@ services:
   #     DEVICE_ID: ${W6_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W6_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W6_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-2.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-2.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-6.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-6.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_6.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_6.pem
 
@@ -503,8 +503,8 @@ services:
   #     DEVICE_ID: ${W7_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W7_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W7_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-3.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-3.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-7.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-7.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_7.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_7.pem
 
@@ -518,8 +518,8 @@ services:
   #     DEVICE_ID: ${W8_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W8_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W8_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-0.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-0.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-8.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-8.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_8.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_8.pem
 
@@ -533,8 +533,8 @@ services:
   #     DEVICE_ID: ${W9_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W9_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W9_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-1.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-1.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-9.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-9.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_9.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_9.pem
 
@@ -548,8 +548,8 @@ services:
   #     DEVICE_ID: ${W10_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W10_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W10_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-2.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-2.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-10.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-10.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_10.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_10.pem
 
@@ -563,8 +563,8 @@ services:
   #     DEVICE_ID: ${W11_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W11_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W11_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-3.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-3.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-11.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-11.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_11.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_11.pem
 
@@ -578,8 +578,8 @@ services:
   #     DEVICE_ID: ${W12_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W12_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W12_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-0.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-0.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-12.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-12.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_12.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_12.pem
 
@@ -593,8 +593,8 @@ services:
   #     DEVICE_ID: ${W13_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W13_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W13_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-1.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-1.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-13.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-13.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_13.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_13.pem
 
@@ -608,8 +608,8 @@ services:
   #     DEVICE_ID: ${W14_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W14_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W14_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-2.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-2.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-14.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-14.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_14.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_14.pem
 
@@ -623,8 +623,8 @@ services:
   #     DEVICE_ID: ${W15_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W15_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W15_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-3.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-3.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-15.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-15.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_15.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_15.pem
 
@@ -638,8 +638,8 @@ services:
   #     DEVICE_ID: ${W16_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W16_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W16_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-0.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-0.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-16.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-16.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_16.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_16.pem
 
@@ -653,8 +653,8 @@ services:
   #     DEVICE_ID: ${W17_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W17_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W17_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-1.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-1.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-17.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-17.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_17.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_17.pem
 
@@ -668,8 +668,8 @@ services:
   #     DEVICE_ID: ${W18_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W18_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W18_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-2.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-2.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-18.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-18.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_18.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_18.pem
 
@@ -683,8 +683,8 @@ services:
   #     DEVICE_ID: ${W19_DEVICE_ID}
   #     RSA_PRIVATE_KEY: ${W19_RSA_PRIVATE_KEY}
   #     RSA_PUBLIC_KEY: ${W19_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-3.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-3.idx1-ubyte
+  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-19.idx3-ubyte
+  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-19.idx1-ubyte
   #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_19.pem
   #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_19.pem
 
