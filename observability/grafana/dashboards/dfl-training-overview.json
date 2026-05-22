@@ -27,7 +27,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 4,
         "x": 0,
         "y": 0
       },
@@ -65,8 +65,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
+        "w": 4,
+        "x": 4,
         "y": 0
       },
       "id": 2,
@@ -103,8 +103,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 12,
+        "w": 4,
+        "x": 8,
         "y": 0
       },
       "id": 3,
@@ -139,44 +139,6 @@
         "type": "loki",
         "uid": "Loki"
       },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 0
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "sum(count_over_time({compose_service=~\"VM-.*\"} |~ \"Reporting aggregator timeout|aggregator_timeout\" [$__range]))",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Timeout Reports",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
       "fieldConfig": {
         "defaults": {
           "custom": {
@@ -192,7 +154,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 4
+        "y": 12
       },
       "id": 5,
       "options": {
@@ -243,8 +205,8 @@
     },
     {
       "datasource": {
-        "type": "prometheus",
-        "uid": "Prometheus"
+        "type": "tempo",
+        "uid": "Tempo"
       },
       "gridPos": {
         "h": 8,
@@ -253,59 +215,50 @@
         "y": 4
       },
       "id": 6,
-      "options": {
-        "edges": {
-          "mainStatUnit": "short",
-          "secondaryStatUnit": "ms"
+      "fieldConfig": {
+        "defaults": {
+          "links": [
+            {
+              "targetBlank": false,
+              "title": "Show In Trace View",
+              "url": "/d/dfl-training-overview/dfl-training-overview?var-traceId=${__data.fields.traceID}"
+            }
+          ]
         },
-        "nodes": {
-          "mainStatUnit": "ms",
-          "secondaryStatUnit": "reqps"
-        },
-        "zoomMode": "cooperative"
+        "overrides": []
       },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Start time"
+          }
+        ]
+      },
+      "pluginVersion": "11.6.0",
       "targets": [
         {
           "datasource": {
-            "type": "prometheus",
-            "uid": "Prometheus"
+            "type": "tempo",
+            "uid": "Tempo"
           },
-          "editorMode": "code",
-          "expr": "label_join(label_replace(label_replace(sum by (client, server) (increase(traces_service_graph_request_total[2m])) > 0, \"source\", \"$1\", \"client\", \"(.*)\"), \"target\", \"$1\", \"server\", \"(.*)\"), \"id\", \" -> \", \"source\", \"target\")",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "{{source}} -> {{target}}",
-          "range": false,
+          "limit": 20,
+          "query": "{ resource.service.name =~ \"dfl-.*\" }",
+          "queryType": "traceql",
           "refId": "A",
-          "queryType": "instant"
+          "tableType": "traces"
         }
       ],
-      "pluginVersion": "11.6.0",
-      "title": "OTel Live Service Graph",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true,
-              "Value": false,
-              "__name__": true,
-              "client": true,
-              "server": true
-            },
-            "indexByName": {
-              "Value": 3,
-              "id": 0,
-              "source": 1,
-              "target": 2
-            },
-            "renameByName": {
-              "Value": "mainStat"
-            }
-          }
-        }
-      ],
-      "type": "nodeGraph"
+      "title": "Tempo Trace Search",
+      "type": "table"
     },
     {
       "datasource": {
@@ -329,7 +282,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 12
+        "y": 4
       },
       "id": 7,
       "options": {
@@ -389,10 +342,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 4,
         "w": 12,
         "x": 12,
-        "y": 12
+        "y": 0
       },
       "id": 9,
       "options": {
@@ -430,8 +383,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
-        "y": 20
+        "x": 12,
+        "y": 12
       },
       "id": 10,
       "options": {
@@ -474,7 +427,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 28
+        "y": 24
       },
       "id": 11,
       "options": {
@@ -519,7 +472,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 28
+        "y": 24
       },
       "id": 12,
       "options": {
@@ -555,66 +508,16 @@
       },
       "fieldConfig": {
         "defaults": {
-          "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 25,
-            "lineWidth": 1,
-            "showPoints": "never"
-          },
-          "decimals": 0
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 28
-      },
-      "id": 13,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "sum by (compose_service) (sum_over_time({compose_service=~\"VM-.*\"} |= \"\\\"kind\\\":\\\"gas_cost\\\"\" | json | scope=\"worker\" | unwrap gasUsed [$__range]))",
-          "legendFormat": "{{compose_service}} gas",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Worker Gas Used",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
           "decimals": 2,
           "unit": "currencyEUR"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 4,
         "w": 12,
-        "x": 0,
-        "y": 32
+        "x": 12,
+        "y": 24
       },
       "id": 14,
       "options": {
@@ -649,11 +552,57 @@
         "type": "loki",
         "uid": "Loki"
       },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ether"
+        },
+        "overrides": []
+      },
       "gridPos": {
-        "h": 8,
+        "h": 4,
         "w": 12,
         "x": 12,
-        "y": 36
+        "y": 20
+      },
+      "id": 13,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "sum by (compose_service) (sum_over_time({compose_service=~\"VM-.*\"} |= \"\\\"kind\\\":\\\"gas_cost\\\"\" | json | scope=\"worker\" | unwrap costEth [$__range]))",
+          "legendFormat": "{{compose_service}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Worker Cost ETH",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
       },
       "id": 8,
       "options": {
@@ -685,7 +634,28 @@
   "schemaVersion": 39,
   "tags": ["dfl", "training", "observability"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "",
+          "value": ""
+        },
+        "hide": 0,
+        "label": "Trace ID",
+        "name": "traceId",
+        "options": [
+          {
+            "selected": true,
+            "text": "",
+            "value": ""
+          }
+        ],
+        "query": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
   },
   "time": {
     "from": "now-30m",
@@ -695,6 +665,6 @@
   "timezone": "",
   "title": "DFL Training Overview",
   "uid": "dfl-training-overview",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
