@@ -292,6 +292,7 @@
         <span class="badge">LOCAL RAG</span>
         <span class="badge">OLLAMA POWER</span>
         <span class="badge">NO FLASH REQUIRED</span>
+        <a class="mode-toggle" href="/thesis.html">OPEN THESIS UI</a>
         <button class="mode-toggle" id="mode-toggle" type="button">OPEN CHAT WINDOW</button>
       </div>
     </div>
@@ -570,6 +571,14 @@
       renderMessages(payload.session.messages);
       await refreshSessions(currentSessionId);
       statusEl.textContent = "Status: message delivered successfully.";
+    });
+
+    inputEl.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter" || event.shiftKey) {
+        return;
+      }
+      event.preventDefault();
+      composerEl.requestSubmit();
     });
 
     newSessionBtn.addEventListener("click", async () => {

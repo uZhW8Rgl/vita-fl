@@ -30,6 +30,8 @@ x-worker-env: &worker-env
   ETH_EUR_PRICE: ${ETH_EUR_PRICE:-3000}
   PYTHON_SERVICE_URL: http://127.0.0.1:8000
   TDX_QUOTE_PATH: ${TDX_QUOTE_PATH:-./attestation/phala_tdx_quote}
+  DATASET_NAME: ${DATASET_NAME:-mnist}
+  TEST_DATA_SRC: /dfl/config/chestmnist/test_data/test-data.npz
 
 x-worker-common: &worker-common
   image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker:latest
@@ -282,6 +284,7 @@ services:
       PHALA_COMPOSE_PATH: ${PHALA_COMPOSE_PATH:-../phala/dstack-compose.template.yml}
       PHALA_APP_CODE_PATH: ${PHALA_APP_CODE_PATH:-../phala/app_code.txt}
       PHALA_RTMR3_EVENT_LOG_PATH: ${PHALA_RTMR3_EVENT_LOG_PATH:-../phala/rtmr3_event_log.txt}
+      DATASET_NAME: ${DATASET_NAME:-mnist}
       INITIAL_GM_CID: ${INITIAL_GM_CID}
       INITIAL_GM_SIG_CID: ${INITIAL_GM_SIG_CID}
       INITIAL_GM_SIGNER_ADDRESS: ${INITIAL_GM_SIGNER_ADDRESS}
@@ -316,6 +319,7 @@ services:
         condition: service_started
     environment:
       DOCKER: "1"
+      DATASET_NAME: ${DATASET_NAME:-mnist}
       PYTHONUNBUFFERED: "1"
       RPC_URL: http://anvil:8545
       IPFS_API_URL: http://ipfs:5001
@@ -375,6 +379,7 @@ services:
     restart: unless-stopped
     working_dir: /app
     environment:
+      DATASET_NAME: ${DATASET_NAME:-mnist}
       PYTHONUNBUFFERED: "1"
       ZK_INFERENCE_HOST: 0.0.0.0
       ZK_INFERENCE_PORT: "8090"
@@ -396,6 +401,7 @@ services:
       RSA_PUBLIC_KEY: ${W0_RSA_PUBLIC_KEY}
       TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-0.idx3-ubyte
       TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-0.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-0.npz
       RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key.pem
       RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key.pem
 
@@ -411,6 +417,7 @@ services:
       RSA_PUBLIC_KEY: ${W1_RSA_PUBLIC_KEY}
       TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-1.idx3-ubyte
       TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-1.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-1.npz
       RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_1.pem
       RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_1.pem
 
@@ -426,6 +433,7 @@ services:
       RSA_PUBLIC_KEY: ${W2_RSA_PUBLIC_KEY}
       TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-2.idx3-ubyte
       TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-2.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-2.npz
       RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_2.pem
       RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_2.pem
 

@@ -9,7 +9,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from zk_inference.service_tools import prepare_mnist_sample, prove_single_image
+from zk_inference.service_tools import prepare_dataset_sample, prove_single_image
 
 
 HOST = os.environ.get("ZK_INFERENCE_HOST", "0.0.0.0")
@@ -26,17 +26,17 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.OK, {"ok": True})
 
     def do_POST(self) -> None:
-        if self.path not in {"/prove-single-image", "/prepare-mnist-sample"}:
+        if self.path not in {"/prove-single-image", "/prepare-mnist-sample", "/prepare-sample"}:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
-            if self.path == "/prepare-mnist-sample":
-                result = prepare_mnist_sample(
+            if self.path in {"/prepare-mnist-sample", "/prepare-sample"}:
+                result = prepare_dataset_sample(
                     index=payload.get("index"),
-                    images=payload.get("images", "data/mnist/data/t10k-images.idx3-ubyte"),
-                    labels=payload.get("labels", "data/mnist/data/t10k-labels.idx1-ubyte"),
+                    images=payload.get("images"),
+                    labels=payload.get("labels"),
                     out_dir=payload.get("out_dir", "zk_inference/single_query"),
                     input_json=payload.get("input_json", "zk_inference/out/input.json"),
                     metadata_out=payload.get("metadata_out", "zk_inference/single_query/selection.json"),

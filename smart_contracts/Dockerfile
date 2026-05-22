@@ -25,7 +25,7 @@ ENV PATH="/root/.foundry/bin:/root/.risc0/bin:${PATH}"
 WORKDIR /dfl
 COPY smart_contracts ./smart_contracts
 COPY data/phala_tdx_quote ./data/phala_tdx_quote
-COPY data/mnist/data/results_iid/aggregated.bin ./data/initial_gm/aggregated.bin
+COPY data/initial_gm ./data/initial_gm
 COPY data/rsa_keys/private_key.pem ./data/initial_gm/private_key.pem
 COPY phala ./phala
 

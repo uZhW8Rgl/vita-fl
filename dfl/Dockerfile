@@ -51,6 +51,8 @@ RUN python3 -m venv /opt/venv && \
 ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY data/mnist ./config
+COPY data/chestmnist ./config/chestmnist
+COPY data/initial_gm ./initial_gm
 COPY data/rsa_keys ./keys
 
 COPY dfl/node_server/package*.json ./node_server/
@@ -75,7 +77,6 @@ COPY data/mnist/data/train-images.idx3-ubyte ./node_server/data/train-images.idx
 COPY data/mnist/data/train-labels.idx1-ubyte ./node_server/data/train-labels.idx1-ubyte
 COPY data/mnist/data/t10k-images.idx3-ubyte ./node_server/data/t10k-images.idx3-ubyte
 COPY data/mnist/data/t10k-labels.idx1-ubyte ./node_server/data/t10k-labels.idx1-ubyte
-COPY data/mnist/data/random_start.bin ./node_server/data/random_start.bin
 COPY data/phala_tdx_quote ./node_server/attestation/
 
 RUN chmod +x /dfl/start_node_neural_network.sh && \

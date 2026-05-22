@@ -5,6 +5,7 @@ description = "PyTorch drop-in adapter for the thesis C++ FL executable"
 requires-python = ">=3.10"
 dependencies = [
   "cryptography",
+  "numpy",
   "pyzmq",
   "torch",
 ]

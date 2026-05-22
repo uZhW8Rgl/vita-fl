@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Helpers and CLI for extracting single MNIST samples for local inference flows."""
+"""Helpers and CLI for extracting single-image samples for local inference flows."""
 
 from __future__ import annotations
 
@@ -11,13 +11,21 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 for import_root in (REPO_ROOT / "dfl", REPO_ROOT):
     if str(import_root) not in sys.path:
         sys.path.insert(0, str(import_root))
 
-from neural_network.cli import INPUT_SIZE, read_idx_images, read_idx_labels  # type: ignore
+from neural_network.cli import (  # type: ignore
+    INPUT_SIZE,
+    current_dataset_name,
+    is_multilabel_dataset,
+    read_idx_images,
+    read_idx_labels,
+    read_npz_images_and_labels,
+)
 
 
 IMAGE_ROWS = 28
@@ -34,23 +42,38 @@ def metadata_path(path: Path) -> str:
 
 
 def dataset_size(images_path: Path) -> int:
+    if is_multilabel_dataset():
+        images, _ = read_npz_images_and_labels(images_path)
+        return int(images.shape[0])
     return (images_path.stat().st_size - 16) // INPUT_SIZE
 
 
 def choose_random_index(images_path: Path, seed: int | None = None) -> int:
     total = dataset_size(images_path)
     if total <= 0:
-        raise ValueError(f"No MNIST images found in {images_path}")
+        raise ValueError(f"No images found in {images_path}")
     rng = random.Random(seed) if seed is not None else random.SystemRandom()
     return int(rng.randrange(total))
 
 
 def load_image(images_path: Path, index: int) -> list[float]:
+    if is_multilabel_dataset():
+        images, _ = read_npz_images_and_labels(images_path)
+        return [float(value) for value in images[index].tolist()]
     images = read_idx_images(images_path, limit=index + 1)
     return [float(value) for value in images[index].tolist()]
 
 
 def read_raw_image_bytes(images_path: Path, index: int) -> bytes:
+    if is_multilabel_dataset():
+        with np.load(images_path) as bundle:
+            images = bundle["images"]
+        raw = images[index]
+        if raw.ndim == 3 and raw.shape[-1] == 1:
+            raw = raw[..., 0]
+        if raw.shape != (IMAGE_ROWS, IMAGE_COLS):
+            raise ValueError(f"Unexpected image shape {raw.shape} in {images_path}")
+        return raw.astype(np.uint8, copy=False).tobytes()
     blob = images_path.read_bytes()
     start = 16 + index * INPUT_SIZE
     end = start + INPUT_SIZE
@@ -69,6 +92,20 @@ def write_single_idx_files(raw_image: bytes, label: int | None, out_dir: Path) -
 
     label_path = out_dir / "single-label.idx1-ubyte"
     label_path.write_bytes(struct.pack(">II", 2049, 1) + bytes([label]))
+    return image_path, label_path
+
+
+def write_single_np_files(raw_image: bytes, label: list[int] | None, out_dir: Path) -> tuple[Path, Path | None]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    image_array = np.frombuffer(raw_image, dtype=np.uint8).reshape(IMAGE_ROWS, IMAGE_COLS)
+    image_path = out_dir / "single-image.npy"
+    np.save(image_path, image_array)
+
+    if label is None:
+        return image_path, None
+
+    label_path = out_dir / "single-label.json"
+    label_path.write_text(json.dumps({"labels": label}, indent=2) + "\n", encoding="utf-8")
     return image_path, label_path
 
 
@@ -98,24 +135,34 @@ def extract_mnist_sample(
     normalized_image = load_image(images_path, selected_index)
     raw_image = read_raw_image_bytes(images_path, selected_index)
 
-    label: int | None = None
+    label: int | list[int] | None = None
     if labels_path is not None:
-        labels = read_idx_labels(labels_path, limit=selected_index + 1)
-        label = int(labels[selected_index].item())
+        if is_multilabel_dataset():
+            _, labels = read_npz_images_and_labels(labels_path)
+            label = [int(value) for value in labels[selected_index].reshape(-1).tolist()]
+        else:
+            labels = read_idx_labels(labels_path, limit=selected_index + 1)
+            label = int(labels[selected_index].item())
 
-    image_path, label_path = write_single_idx_files(raw_image, label, out_dir)
+    if is_multilabel_dataset():
+        image_path, label_path = write_single_np_files(raw_image, label if isinstance(label, list) else None, out_dir)
+    else:
+        image_path, label_path = write_single_idx_files(raw_image, label if isinstance(label, int) else None, out_dir)
     preview_path = write_pgm_preview(raw_image, out_dir)
     write_query_input(normalized_image, input_json)
 
+    image_file_key = "single_image_npy" if is_multilabel_dataset() else "single_image_idx"
+    label_file_key = "single_label_json" if is_multilabel_dataset() else "single_label_idx"
     metadata = {
         "source_images": metadata_path(images_path),
         "source_labels": metadata_path(labels_path) if labels_path is not None else None,
         "source_index": selected_index,
+        "dataset": current_dataset_name(),
         "random_selection": index is None,
         "true_label": label,
         "files": {
-            "single_image_idx": metadata_path(image_path),
-            "single_label_idx": metadata_path(label_path) if label_path is not None else None,
+            image_file_key: metadata_path(image_path),
+            label_file_key: metadata_path(label_path) if label_path is not None else None,
             "preview_pgm": metadata_path(preview_path),
             "ezkl_input_json": metadata_path(input_json),
         },
@@ -130,10 +177,13 @@ def extract_mnist_sample(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Extract one MNIST sample and create an EZKL input.json.")
-    parser.add_argument("--images", type=Path, default=Path("data/mnist/data/t10k-images.idx3-ubyte"))
-    parser.add_argument("--labels", type=Path, default=Path("data/mnist/data/t10k-labels.idx1-ubyte"))
-    parser.add_argument("--index", type=int, default=None, help="Use a specific MNIST index instead of a random one")
+    dataset = current_dataset_name()
+    default_images = Path("data/chestmnist/test_data/test-data.npz") if dataset == "chestmnist" else Path("data/mnist/data/t10k-images.idx3-ubyte")
+    default_labels = Path("data/chestmnist/test_data/test-data.npz") if dataset == "chestmnist" else Path("data/mnist/data/t10k-labels.idx1-ubyte")
+    parser = argparse.ArgumentParser(description="Extract one dataset sample and create an EZKL input.json.")
+    parser.add_argument("--images", type=Path, default=default_images)
+    parser.add_argument("--labels", type=Path, default=default_labels)
+    parser.add_argument("--index", type=int, default=None, help="Use a specific sample index instead of a random one")
     parser.add_argument("--seed", type=int, default=None, help="Optional seed for reproducible random selection")
     parser.add_argument("--out-dir", type=Path, default=Path("zk_inference/single_query"))
     parser.add_argument("--input-json", type=Path, default=Path("zk_inference/out/input.json"))
@@ -150,7 +200,7 @@ def main() -> int:
         seed=args.seed,
     )
 
-    print(f"Selected MNIST test index: {metadata['source_index']}")
+    print(f"Selected {dataset} test index: {metadata['source_index']}")
     print(f"Random selection: {metadata['random_selection']}")
     if metadata["true_label"] is not None:
         print(f"True label: {metadata['true_label']}")

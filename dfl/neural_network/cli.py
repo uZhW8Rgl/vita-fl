@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 from typing import Iterable, List
 
+import numpy as np
 import torch
 from torch import nn
 
@@ -38,20 +39,28 @@ CONV_KERNEL_SIZE = 3
 CONV_STRIDE = 2
 CONV_PADDING = 1
 FC_HIDDEN_SIZE = 32
-OUTPUT_SIZE = 10
+DATASET_NAME = os.environ.get("DATASET_NAME", "mnist").strip().lower()
+CHESTMNIST_NUM_LABELS = 14
+OUTPUT_SIZE = CHESTMNIST_NUM_LABELS if DATASET_NAME == "chestmnist" else 10
 BATCH_SIZE = 32
 NUM_TRAIN_IMAGES = 10_000
 LEARNING_RATE = 0.1
-MODEL_LAYOUT = (
-    ("conv1.weight", (CONV1_OUT_CHANNELS, IMAGE_CHANNELS, CONV_KERNEL_SIZE, CONV_KERNEL_SIZE)),
-    ("conv1.bias", (CONV1_OUT_CHANNELS,)),
-    ("conv2.weight", (CONV2_OUT_CHANNELS, CONV1_OUT_CHANNELS, CONV_KERNEL_SIZE, CONV_KERNEL_SIZE)),
-    ("conv2.bias", (CONV2_OUT_CHANNELS,)),
-    ("fc1.weight", (FC_HIDDEN_SIZE, CONV2_OUT_CHANNELS * 7 * 7)),
-    ("fc1.bias", (FC_HIDDEN_SIZE,)),
-    ("fc2.weight", (OUTPUT_SIZE, FC_HIDDEN_SIZE)),
-    ("fc2.bias", (OUTPUT_SIZE,)),
-)
+
+
+def model_layout() -> tuple[tuple[str, tuple[int, ...]], ...]:
+    return (
+        ("conv1.weight", (CONV1_OUT_CHANNELS, IMAGE_CHANNELS, CONV_KERNEL_SIZE, CONV_KERNEL_SIZE)),
+        ("conv1.bias", (CONV1_OUT_CHANNELS,)),
+        ("conv2.weight", (CONV2_OUT_CHANNELS, CONV1_OUT_CHANNELS, CONV_KERNEL_SIZE, CONV_KERNEL_SIZE)),
+        ("conv2.bias", (CONV2_OUT_CHANNELS,)),
+        ("fc1.weight", (FC_HIDDEN_SIZE, CONV2_OUT_CHANNELS * 7 * 7)),
+        ("fc1.bias", (FC_HIDDEN_SIZE,)),
+        ("fc2.weight", (OUTPUT_SIZE, FC_HIDDEN_SIZE)),
+        ("fc2.bias", (OUTPUT_SIZE,)),
+    )
+
+
+MODEL_LAYOUT = model_layout()
 
 
 class FederatedCNN(nn.Module):
@@ -109,7 +118,7 @@ def repo_root() -> Path:
         *Path(__file__).resolve().parents,
     ]
     for candidate in candidates:
-        if (candidate / "data" / "mnist").exists():
+        if (candidate / "data" / "mnist").exists() or (candidate / "data" / "chestmnist").exists():
             return candidate
     return node_server_dir().parent
 
@@ -134,6 +143,7 @@ def input_data_file(name: str) -> Path:
     candidates = [
         data_dir() / name,
         repo_root() / "data" / "mnist" / "data" / name,
+        repo_root() / "data" / "chestmnist" / name,
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -146,6 +156,7 @@ def initial_model_file() -> Path:
         data_dir() / "random_start.bin",
         data_dir() / "gm.bin",
         data_dir() / "backup.bin",
+        repo_root() / "data" / "initial_gm" / current_dataset_name() / "aggregated.bin",
         repo_root() / "data" / "mnist" / "data" / "random_start.bin",
         repo_root() / "data" / "mnist" / "data" / "backup.bin",
     ]
@@ -256,27 +267,102 @@ def read_idx_images(path: Path, limit: int = NUM_TRAIN_IMAGES) -> torch.Tensor:
     return ((raw.reshape(limit, INPUT_SIZE) - 127.5) / 127.5).contiguous()
 
 
-def train_model(epochs: int, aggregator_public_key_der_hex: str) -> None:
-    model = load_or_random(initial_model_file())
-    train_images_path = input_data_file("train-images.idx3-ubyte")
-    train_labels_path = input_data_file("train-labels.idx1-ubyte")
-    num_images = read_idx_image_count(train_images_path)
+def read_npz_images_and_labels(path: Path) -> tuple[torch.Tensor, torch.Tensor]:
+    with np.load(path) as bundle:
+        if "images" not in bundle or "labels" not in bundle:
+            raise ValueError(f"{path} must contain 'images' and 'labels' arrays")
+        images = bundle["images"]
+        labels = bundle["labels"]
+
+    if images.ndim == 4 and images.shape[-1] == 1:
+        images = images[..., 0]
+    if images.ndim != 3 or tuple(images.shape[1:]) != (IMAGE_HEIGHT, IMAGE_WIDTH):
+        raise ValueError(f"{path} has unexpected image shape {images.shape}; expected (N, 28, 28)")
+
+    flat_images = torch.from_numpy(images.reshape(images.shape[0], INPUT_SIZE)).to(torch.float64)
+    normalized_images = ((flat_images - 127.5) / 127.5).contiguous()
+    label_tensor = torch.from_numpy(labels)
+    return normalized_images, label_tensor
+
+
+def current_dataset_name() -> str:
+    return DATASET_NAME
+
+
+def is_multilabel_dataset() -> bool:
+    return current_dataset_name() == "chestmnist"
+
+
+def train_dataset_paths() -> tuple[Path, Path | None]:
+    if is_multilabel_dataset():
+        return input_data_file("train-data.npz"), None
+    return input_data_file("train-images.idx3-ubyte"), input_data_file("train-labels.idx1-ubyte")
+
+
+def test_dataset_paths() -> tuple[Path, Path | None]:
+    if is_multilabel_dataset():
+        return input_data_file("test-data.npz"), None
+    return input_data_file("t10k-images.idx3-ubyte"), input_data_file("t10k-labels.idx1-ubyte")
+
+
+def load_training_dataset() -> tuple[torch.Tensor, torch.Tensor]:
+    train_data_path, train_labels_path = train_dataset_paths()
+    if is_multilabel_dataset():
+        images, labels = read_npz_images_and_labels(train_data_path)
+        labels = labels.to(torch.float64).reshape(images.shape[0], OUTPUT_SIZE)
+        return images, labels
+
+    assert train_labels_path is not None
+    num_images = read_idx_image_count(train_data_path)
     num_labels = read_idx_label_count(train_labels_path)
     if num_images != num_labels:
         raise ValueError(
-            f"Mismatched training split sizes: {train_images_path} has {num_images} images "
+            f"Mismatched training split sizes: {train_data_path} has {num_images} images "
             f"but {train_labels_path} has {num_labels} labels"
         )
-
-    images = read_idx_images(train_images_path, limit=num_images)
+    images = read_idx_images(train_data_path, limit=num_images)
     labels = read_idx_labels(train_labels_path, limit=num_labels)
+    return images, labels
+
+
+def load_test_dataset() -> tuple[torch.Tensor, torch.Tensor]:
+    test_data_path, test_labels_path = test_dataset_paths()
+    if is_multilabel_dataset():
+        images, labels = read_npz_images_and_labels(test_data_path)
+        labels = labels.to(torch.float64).reshape(images.shape[0], OUTPUT_SIZE)
+        return images, labels
+
+    assert test_labels_path is not None
+    limit = min(10_000, test_labels_path.stat().st_size - 8)
+    images = read_idx_images(test_data_path, limit=limit)
+    labels = read_idx_labels(test_labels_path, limit=limit)
+    return images, labels
+
+
+def batch_accuracy_stats(logits: torch.Tensor, labels: torch.Tensor) -> tuple[int, int]:
+    if is_multilabel_dataset():
+        predictions = (torch.sigmoid(logits) >= 0.5).to(labels.dtype)
+        correct = int((predictions == labels).sum().item())
+        total = int(labels.numel())
+        return correct, total
+
+    correct = int((logits.argmax(dim=1) == labels).sum().item())
+    total = int(labels.shape[0])
+    return correct, total
+
+
+def train_model(epochs: int, aggregator_public_key_der_hex: str) -> None:
+    model = load_or_random(initial_model_file())
+    images, labels = load_training_dataset()
+    num_images = int(images.shape[0])
     optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
-    criterion = nn.CrossEntropyLoss()
+    criterion: nn.Module = nn.BCEWithLogitsLoss() if is_multilabel_dataset() else nn.CrossEntropyLoss()
 
     for epoch in range(1, epochs + 1):
         indices = list(range(num_images))
         random.shuffle(indices)
         correct = 0
+        total_predictions = 0
         for start in range(0, num_images, BATCH_SIZE):
             batch_idx = torch.tensor(indices[start : start + BATCH_SIZE], dtype=torch.long)
             x = images.index_select(0, batch_idx)
@@ -286,10 +372,12 @@ def train_model(epochs: int, aggregator_public_key_der_hex: str) -> None:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            correct += int((logits.argmax(dim=1) == y).sum().item())
-        accuracy_percent = (correct / num_images) * 100 if num_images else 0.0
+            batch_correct, batch_total = batch_accuracy_stats(logits, y)
+            correct += batch_correct
+            total_predictions += batch_total
+        accuracy_percent = (correct / total_predictions) * 100 if total_predictions else 0.0
         print(f"Epoch: {epoch}/{epochs}")
-        print(f"Accuracy: {accuracy_percent:.2f}% ({correct}/{num_images})")
+        print(f"Accuracy: {accuracy_percent:.2f}% ({correct}/{total_predictions})")
         print()
 
     lm_path = data_dir() / "lm.bin"
@@ -488,21 +576,26 @@ def sign_file(path: Path, key_file: Path) -> None:
 
 
 def run_test(model_path: Path) -> None:
-    test_images = input_data_file("t10k-images.idx3-ubyte")
-    test_labels = input_data_file("t10k-labels.idx1-ubyte")
-    if not test_images.exists() or not test_labels.exists():
+    test_images, test_labels = test_dataset_paths()
+    if not test_images.exists():
         return
-    limit = min(10_000, (test_labels.stat().st_size - 8))
+    if test_labels is not None and not test_labels.exists():
+        return
     model = read_model_bin(model_path)
     model.eval()
-    images = read_idx_images(test_images, limit=limit)
-    labels = read_idx_labels(test_labels, limit=limit)
+    images, labels = load_test_dataset()
+    limit = int(images.shape[0])
     correct = 0
+    total_predictions = 0
     with torch.no_grad():
         for start in range(0, limit, BATCH_SIZE):
-            logits = model(images[start : start + BATCH_SIZE])
-            correct += int((logits.argmax(dim=1) == labels[start : start + BATCH_SIZE]).sum().item())
-    print(f"Test accuracy: {correct}/{limit}")
+            batch_logits = model(images[start : start + BATCH_SIZE])
+            batch_labels = labels[start : start + BATCH_SIZE]
+            batch_correct, batch_total = batch_accuracy_stats(batch_logits, batch_labels)
+            correct += batch_correct
+            total_predictions += batch_total
+    accuracy_percent = (correct / total_predictions) * 100 if total_predictions else 0.0
+    print(f"Test accuracy: {accuracy_percent:.2f}% ({correct}/{total_predictions})")
 
 
 def save_random() -> None:

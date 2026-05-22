@@ -37,6 +37,7 @@ from otel_trace import service_edge
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+DATASET_NAME = os.environ.get("DATASET_NAME", "mnist").strip().lower()
 API_HOME_HTML = """<!doctype html>
 <html lang="en">
 <head>
@@ -89,12 +90,12 @@ def remote_prove_single_image(
         raise RuntimeError(f"Could not reach zk_inference service at {service_url}: {exc}") from exc
 
 
-def remote_prepare_mnist_sample(
+def remote_prepare_dataset_sample(
     service_url: str,
     *,
     index: int | None,
-    images: str = "data/mnist/data/t10k-images.idx3-ubyte",
-    labels: str = "data/mnist/data/t10k-labels.idx1-ubyte",
+    images: str | None = None,
+    labels: str | None = None,
     out_dir: str = "zk_inference/single_query",
     input_json: str = "zk_inference/out/input.json",
     metadata_out: str = "zk_inference/single_query/selection.json",
@@ -112,13 +113,13 @@ def remote_prepare_mnist_sample(
         }
     ).encode("utf-8")
     request = urllib.request.Request(
-        service_url.rstrip("/") + "/prepare-mnist-sample",
+        service_url.rstrip("/") + "/prepare-sample",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
-        with service_edge("agent.prepare_mnist_sample", source="agent", target="zk-inference"):
+        with service_edge("agent.prepare_dataset_sample", source="agent", target="zk-inference"):
             with urllib.request.urlopen(request, timeout=120) as response:
                 return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
@@ -228,13 +229,14 @@ def _default_llm_prompt(args: argparse.Namespace) -> str:
     return (
         "You are the local thesis assistant and orchestration agent. "
         "Stay conversational, but when a user asks about model provenance, bundle discovery, signatures, "
-        "proof generation, or MNIST inference, decide whether to answer directly, inspect local IPFS/RAG "
+        "proof generation, or dataset inference, decide whether to answer directly, inspect local IPFS/RAG "
         "metadata, or call the MCP zk_inference tools. "
         "Treat GMStorage and DeviceRegistry as the source of truth for the current verified model bundle. "
         "Use local IPFS metadata search as a fallback or debugging aid. "
         "When you run a proof-related flow, include prediction label, true label if available, model path, "
         "signature path, and proof path. "
-        f"Default to MNIST index {args.index} only when a proof workflow needs a specific sample and none was given."
+        f"Default to sample index {args.index} only when a proof workflow needs a specific sample and none was given. "
+        f"The active dataset is {DATASET_NAME}."
     )
 
 
@@ -290,11 +292,33 @@ class AgentRuntime:
 
     def _route_message(self, user_message: str) -> str:
         lowered = user_message.lower()
-        if "mnist" in lowered and any(
-            term in lowered for term in ("image", "bild", "preview", "show", "zeige", "generier", "generate")
+        if any(term in lowered for term in ("aktuell", "aktuelle", "aktuellste", "neueste", "neustes", "latest", "current", "letzte runde", "last round")):
+            if any(term in lowered for term in ("modell", "model", "signatur", "signature", "bundle", "ipfs", "cid")):
+                return "latest_bundle"
+            if lowered.strip() in {"das aktuellste bitte", "das neueste bitte", "aktuellste bitte", "neueste bitte", "current please", "latest please"}:
+                return "latest_bundle"
+        image_terms = (
+            "image",
+            "bild",
+            "preview",
+            "show",
+            "zeige",
+            "generier",
+            "generate",
+            "sample",
+            "random",
+            "zufall",
+            "zufaellig",
+            "zufällig",
+        )
+        dataset_terms = ("mnist", "chestmnist", "chest", "xray", "x-ray", "dataset", "datensatz")
+        image_request_terms = ("erstelle", "erstell", "mach", "mache", "create", "make", "benutze", "use", "tool", "mcp", "zeige", "show")
+        if any(term in lowered for term in image_terms) and (
+            any(dataset_term in lowered for dataset_term in dataset_terms)
+            or any(term in lowered for term in image_request_terms)
         ):
-            return "mnist_image"
-        if any(term in lowered for term in ("proof", "prove", "ezkl", "mnist", "inference", "predict")):
+            return "dataset_image"
+        if any(term in lowered for term in ("proof", "prove", "ezkl", "mnist", "chestmnist", "chest", "inference", "predict", "xray", "x-ray")):
             return "proof"
         if any(
             term in lowered
@@ -317,7 +341,7 @@ class AgentRuntime:
         return "chat"
 
     def _extract_index(self, user_message: str) -> int | None:
-        match = re.search(r"\b(?:index|sample|mnist)\s*[:=]?\s*(\d+)\b", user_message, flags=re.IGNORECASE)
+        match = re.search(r"\b(?:index|sample|mnist|chestmnist|image)\s*[:=]?\s*(\d+)\b", user_message, flags=re.IGNORECASE)
         if match:
             return int(match.group(1))
         return None
@@ -354,6 +378,12 @@ class AgentRuntime:
         verification = verify_download_with_registry(bundle, download, rpc_url, registry_address)
         return {"bundle": bundle, "download": download, "verification": verification}
 
+    def _fetch_latest_ipfs_bundle(self) -> dict[str, Any]:
+        ipfs_api_url = normalize_ipfs_api_url(os.environ.get("IPFS_API_URL", DEFAULT_IPFS_API_URL))
+        bundle = discover_latest(api_url=ipfs_api_url, root=DEFAULT_IPFS_ROOT)
+        download = fetch_bundle(bundle, DEFAULT_DOWNLOAD_DIR, api_url=ipfs_api_url)
+        return {"bundle": bundle, "download": download}
+
     async def _handle_bundle_request(self, user_message: str) -> dict[str, Any]:
         try:
             result = self._fetch_current_onchain_bundle()
@@ -383,6 +413,50 @@ class AgentRuntime:
             "Explain the current verified on-chain model bundle, its signature verification state, and the relevant paths.",
         )
         return self._assistant_response(content, tool_events)
+
+    async def _handle_latest_bundle_request(self, user_message: str) -> dict[str, Any]:
+        try:
+            result = self._fetch_current_onchain_bundle()
+            bundle = result.get("bundle", {})
+            download = result.get("download", {})
+            verification = result.get("verification", {})
+            lines = ["Ich habe das aktuell verifizierte Modell-Bundle gefunden:"]
+            lines.append(f"- Modell-CID: {bundle.get('model_cid', 'unbekannt')}")
+            lines.append(f"- Signatur-CID: {bundle.get('signature_cid', 'unbekannt')}")
+            lines.append(f"- Lokales Modell: {download.get('model_path', 'unbekannt')}")
+            lines.append(f"- Lokale Signatur: {download.get('signature_path', 'unbekannt')}")
+            lines.append(f"- Letzter Aggregator: {bundle.get('last_aggregator', 'unbekannt')}")
+            lines.append(f"- Signatur verifiziert: {verification.get('ok', 'unbekannt')}")
+            return self._assistant_response(
+                "\n".join(lines),
+                [
+                    {"type": "route", "label": "Latest Bundle Route", "detail": "Deterministic latest-model lookup selected"},
+                    {"type": "tool", "label": "GMStorage", "detail": "Resolved the current model/signature CIDs from the contract"},
+                    {"type": "tool", "label": "IPFS Fetch", "detail": "Downloaded the exact current bundle from IPFS"},
+                    {"type": "tool", "label": "Registry Verify", "detail": "Verified the signature against DeviceRegistry"},
+                ],
+            )
+        except Exception as exc:
+            result = self._fetch_latest_ipfs_bundle()
+            bundle = result.get("bundle", {})
+            download = result.get("download", {})
+            model = bundle.get("model", {})
+            signature = bundle.get("signature", {})
+            lines = ["Ich habe das neueste vollständige Modell-Bundle direkt aus IPFS gefunden:"]
+            lines.append(f"- Modell: {model.get('path', 'unbekannt')}")
+            lines.append(f"- Modell-CID: {model.get('hash', 'unbekannt')}")
+            lines.append(f"- Signatur: {signature.get('path', 'unbekannt')}")
+            lines.append(f"- Signatur-CID: {signature.get('hash', 'unbekannt')}")
+            lines.append(f"- Lokales Modell: {download.get('model_path', 'unbekannt')}")
+            lines.append(f"- Lokale Signatur: {download.get('signature_path', 'unbekannt')}")
+            lines.append(f"- Hinweis: On-chain-Aufloesung fehlgeschlagen, daher IPFS-Fallback. Grund: {exc}")
+            return self._assistant_response(
+                "\n".join(lines),
+                [
+                    {"type": "route", "label": "Latest Bundle Route", "detail": "Deterministic latest-model lookup selected"},
+                    {"type": "tool", "label": "IPFS Discover", "detail": "Resolved the newest complete bundle directly from IPFS"},
+                ],
+            )
 
     async def _handle_rag_request(self, user_message: str) -> dict[str, Any]:
         ipfs_api_url = normalize_ipfs_api_url(os.environ.get("IPFS_API_URL", DEFAULT_IPFS_API_URL))
@@ -415,9 +489,9 @@ class AgentRuntime:
             ],
         )
 
-    async def _handle_mnist_image_request(self, user_message: str) -> dict[str, Any]:
+    async def _handle_dataset_image_request(self, user_message: str) -> dict[str, Any]:
         inferred_index = self._extract_index(user_message)
-        result = remote_prepare_mnist_sample(
+        result = remote_prepare_dataset_sample(
             self.args.zk_inference_url,
             index=inferred_index,
             out_dir="zk_inference/single_query",
@@ -426,17 +500,19 @@ class AgentRuntime:
         )
         selection = result.get("selection", {})
         files = selection.get("files", {})
-        lines = ["Ich habe ein MNIST-Bild vorbereitet:"]
+        dataset = selection.get("dataset") or DATASET_NAME
+        lines = [f"Ich habe ein {dataset}-Bild vorbereitet:"]
         lines.append(f"- Index: {selection.get('source_index', 'unbekannt')}")
         lines.append(f"- True Label: {selection.get('true_label', 'unbekannt')}")
         lines.append(f"- Preview: {files.get('preview_pgm', 'unbekannt')}")
-        lines.append(f"- IDX: {files.get('single_image_idx', 'unbekannt')}")
+        image_file = files.get('single_image_idx') or files.get('single_image_npy') or 'unbekannt'
+        lines.append(f"- Bilddatei: {image_file}")
         lines.append(f"- EZKL Input: {files.get('ezkl_input_json', 'unbekannt')}")
         return self._assistant_response(
             "\n".join(lines),
             [
-                {"type": "route", "label": "MNIST Image Route", "detail": "Lightweight sample generation selected"},
-                {"type": "tool", "label": "prepare_mnist_sample", "detail": "Generated one MNIST sample and preview files"},
+                {"type": "route", "label": "Dataset Image Route", "detail": "Lightweight sample generation selected"},
+                {"type": "tool", "label": "prepare_dataset_sample", "detail": "Generated one dataset sample and preview files"},
                 {"type": "service", "label": "zk-inference", "detail": "Served the sample-generation request"},
             ],
         )
@@ -455,7 +531,7 @@ class AgentRuntime:
         return self._assistant_response(
             content,
             [
-                {"type": "route", "label": "Proof Route", "detail": "Heavy MNIST proof/inference workflow selected"},
+                {"type": "route", "label": "Proof Route", "detail": "Heavy dataset proof/inference workflow selected"},
                 {"type": "tool", "label": "prove_single_image", "detail": "Exported model, built query, and ran EZKL proof flow"},
                 {"type": "service", "label": "zk-inference", "detail": "Executed proof/inference workflow"},
             ],
@@ -497,8 +573,10 @@ class AgentRuntime:
 
         history = [(message["role"], message["content"]) for message in session["messages"]]
         route = self._route_message(user_message)
-        if route == "mnist_image":
-            assistant_message = await self._handle_mnist_image_request(user_message)
+        if route == "dataset_image":
+            assistant_message = await self._handle_dataset_image_request(user_message)
+        elif route == "latest_bundle":
+            assistant_message = await self._handle_latest_bundle_request(user_message)
         elif route == "proof":
             assistant_message = await self._handle_proof_request(user_message)
         elif route == "bundle":

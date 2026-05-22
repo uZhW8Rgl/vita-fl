@@ -22,6 +22,7 @@ def _local_tools():
     from zk_inference.service_tools import (
         create_single_image_query as create_single_image_query_impl,
         export_model as export_model_impl,
+        prepare_dataset_sample as prepare_dataset_sample_impl,
         prepare_mnist_sample as prepare_mnist_sample_impl,
         prove_single_image as prove_single_image_impl,
         run_ezkl as run_ezkl_impl,
@@ -29,6 +30,7 @@ def _local_tools():
 
     return {
         "export_model": export_model_impl,
+        "prepare_dataset_sample": prepare_dataset_sample_impl,
         "prepare_mnist_sample": prepare_mnist_sample_impl,
         "create_single_image_query": create_single_image_query_impl,
         "run_ezkl": run_ezkl_impl,
@@ -74,11 +76,11 @@ def _remote_prove_single_image(
         raise RuntimeError(f"Could not reach zk_inference service at {ZK_INFERENCE_URL}: {exc}") from exc
 
 
-def _remote_prepare_mnist_sample(
+def _remote_prepare_dataset_sample(
     *,
     index: int | None,
-    images: str,
-    labels: str,
+    images: str | None,
+    labels: str | None,
     out_dir: str,
     input_json: str,
     metadata_out: str,
@@ -99,7 +101,7 @@ def _remote_prepare_mnist_sample(
         }
     ).encode("utf-8")
     request = urllib.request.Request(
-        ZK_INFERENCE_URL + "/prepare-mnist-sample",
+        ZK_INFERENCE_URL + "/prepare-sample",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -142,20 +144,20 @@ def export_model(model_path: str, out_dir: str = "zk_inference/out") -> dict[str
 
 
 @mcp.tool()
-def prepare_mnist_sample(
+def prepare_dataset_sample(
     index: int | None = None,
-    images: str = "data/mnist/data/t10k-images.idx3-ubyte",
-    labels: str = "data/mnist/data/t10k-labels.idx1-ubyte",
+    images: str | None = None,
+    labels: str | None = None,
     out_dir: str = "zk_inference/single_query",
     input_json: str = "zk_inference/out/input.json",
     metadata_out: str = "zk_inference/single_query/selection.json",
     seed: int | None = None,
 ) -> dict[str, Any]:
-    """Extract one MNIST sample, defaulting to a fresh random image on each run."""
+    """Extract one dataset sample, defaulting to the active dataset and a fresh random image."""
     try:
-        local_tool = _require_local_tool("prepare_mnist_sample")
+        local_tool = _require_local_tool("prepare_dataset_sample")
     except RuntimeError:
-        return _remote_prepare_mnist_sample(
+        return _remote_prepare_dataset_sample(
             index=index,
             images=images,
             labels=labels,
@@ -176,15 +178,37 @@ def prepare_mnist_sample(
 
 
 @mcp.tool()
-def create_single_image_query(
-    model_path: str,
+def prepare_mnist_sample(
     index: int | None = None,
     images: str = "data/mnist/data/t10k-images.idx3-ubyte",
     labels: str = "data/mnist/data/t10k-labels.idx1-ubyte",
     out_dir: str = "zk_inference/single_query",
     input_json: str = "zk_inference/out/input.json",
+    metadata_out: str = "zk_inference/single_query/selection.json",
+    seed: int | None = None,
 ) -> dict[str, Any]:
-    """Create a one-image MNIST query and EZKL input.json for the model."""
+    """Backward-compatible MNIST sample helper."""
+    return prepare_dataset_sample(
+        index=index,
+        images=images,
+        labels=labels,
+        out_dir=out_dir,
+        input_json=input_json,
+        metadata_out=metadata_out,
+        seed=seed,
+    )
+
+
+@mcp.tool()
+def create_single_image_query(
+    model_path: str,
+    index: int | None = None,
+    images: str | None = None,
+    labels: str | None = None,
+    out_dir: str = "zk_inference/single_query",
+    input_json: str = "zk_inference/out/input.json",
+) -> dict[str, Any]:
+    """Create a one-image query and EZKL input.json for the active dataset."""
     return _require_local_tool("create_single_image_query")(
         model_path,
         index=index,

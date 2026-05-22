@@ -6,23 +6,23 @@ This repository contains a proof-of-concept implementation for trusted decentral
 
 The current prototype combines:
 
-- decentralized MNIST model training with multiple worker nodes,
+- decentralized CNN training with multiple worker nodes,
 - smart-contract-based coordination and model metadata,
 - local IPFS/Kubo storage for global model artifacts,
 - TDX/DCAP quote verification through Solidity contracts,
 - RSA signature verification for global model artifacts,
-- EZKL-based zero-knowledge inference for a single MNIST image,
+- EZKL-based zero-knowledge inference for a single dataset image,
 - and a local LangChain/Ollama agent that orchestrates retrieval, verification, and proof generation.
 
 ## Repository Structure
 
 - [compose.yml](./compose.yml): Docker Compose entry point for local end-to-end runs.
 - [.env.example](./.env.example): Example runtime configuration; copy this to `.env` before running Docker Compose.
-- [data](./data): Shared local input artifacts and helpers, including MNIST data, RSA worker keys, the TDX quote, and MNIST sample extraction utilities.
+- [data](./data): Shared local input artifacts and helpers, including dataset files, RSA worker keys, the TDX quote, and single-image sample extraction utilities.
 - [observability](./observability): Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector configuration.
 - [smart_contracts](./smart_contracts/README.md): Focused Foundry project with DFL contracts and TDX/DCAP attestation deployment logic.
 - [dfl/node_server](./dfl/node_server/README.md): Node.js orchestration layer used by each worker.
-- [dfl/neural_network](./dfl/neural_network/README.md): Python/PyTorch MNIST CNN training, transfer, aggregation, and model serialization.
+- [dfl/neural_network](./dfl/neural_network/README.md): Python/PyTorch CNN training, transfer, aggregation, and model serialization.
 - [zk_inference](./zk_inference/README.md): ONNX export, single-image query creation, EZKL proof generation, and proof verification.
 - [agent](./agent/README.md): Local LangChain/MCP agent for contract-based model retrieval, signature verification, and ZK inference.
 
@@ -138,7 +138,7 @@ sequenceDiagram
   Compose->>W: Start worker containers
   W->>SC: Register device with quote/public key context
   SC->>SC: Verify TDX/DCAP quote path
-  W->>W: Train local MNIST model
+  W->>W: Train local dataset model
   W->>W: Transfer local model artifacts
   W->>W: Aggregate submitted local models
   W->>IPFS: Upload aggregated model and RSA signature
@@ -172,7 +172,7 @@ sequenceDiagram
 - `GMStorage` is treated as the source of truth for the active global model and signature CIDs.
 - IPFS stores bytes, but authenticity is checked through on-chain metadata and the aggregator's registered public key.
 - TDX/DCAP verification is represented by the on-chain attestation deployment and quote verification flow used during worker registration.
-- The ZK inference path proves one selected MNIST inference over the exported model artifacts; it complements, but does not replace, model provenance checks.
+- The ZK inference path proves one selected single-image inference over the exported model artifacts; it complements, but does not replace, model provenance checks.
 - The local runtime is intended as a reproducible research prototype rather than a production deployment.
 
 ## Reproducible Demo
@@ -209,7 +209,7 @@ The most important generated outputs are:
 
 - `agent/downloads/`: model and signature bundles fetched by the agent
 - `zk_inference/out/`: ONNX, EZKL settings, witness, proof, and verification key
-- `zk_inference/single_query/`: single-image MNIST input and prediction metadata
+- `zk_inference/single_query/`: single-image query input and prediction metadata
 - `smart_contracts/broadcast/`: deployment metadata and latest contract addresses
 
 ## Recommended Local Run
@@ -234,7 +234,9 @@ The local stack starts:
 - three DFL worker containers,
 - Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector.
 
-The root `.env` file provides the local timing, account, contract, and IPFS configuration. Use `.env.example` as the tracked template and keep local edits in `.env`. `IPFS_PROVIDER` is a strict switch: `kubo` uses only the local Kubo API/gateway, while `pinata` uses only the configured Pinata gateway/JWT path. The local Docker flow also uses RSA keys from `data/rsa_keys`, MNIST data from `data/mnist`, and the TDX quote from `data/phala_tdx_quote`.
+The root `.env` file provides the local timing, account, contract, IPFS, and dataset configuration. Use `.env.example` as the tracked template and keep local edits in `.env`. `IPFS_PROVIDER` is a strict switch: `kubo` uses only the local Kubo API/gateway, while `pinata` uses only the configured Pinata gateway/JWT path. The local Docker flow also uses RSA keys from `data/rsa_keys`, dataset artifacts under `data/mnist` or `data/chestmnist`, and the TDX quote from `data/phala_tdx_quote`.
+
+For dataset experiments, `DATASET_NAME=mnist` remains the default. `DATASET_NAME=chestmnist` switches the worker training path to ChestMNIST `.npz` shards under `data/chestmnist`.
 
 ## Quick Verification
 
@@ -360,7 +362,7 @@ Some runs create local build and proof outputs:
 - `smart_contracts/out/`: Foundry artifacts for the main Foundry project.
 - `smart_contracts/lib/automata-dcap-v3-attestation/lib/automata-on-chain-pccs/out/`: Foundry artifacts for the PCCS subproject.
 - `zk_inference/out/`: ONNX, EZKL settings, witness, proof, and verification key.
-- `zk_inference/single_query/`: single-image MNIST input and prediction metadata.
+- `zk_inference/single_query/`: single-image query input and prediction metadata.
 - `agent/downloads/`: model and signature bundles fetched by the agent.
 
 ## GitHub Workflow
@@ -389,4 +391,4 @@ Each image is also tagged with the commit SHA, for example `ghcr.io/uzhw8rgl/mas
 
 - The active neural-network implementation is Python/PyTorch in `dfl/neural_network`.
 - `smart_contracts` is the active contract and attestation project.
-- The healthcare setting is the motivating scenario. The concrete prototype uses a compact CNN on MNIST as a reproducible proof-of-concept workload.
+- The healthcare setting is the motivating scenario. The concrete prototype now supports a compact CNN on MNIST and a ChestMNIST training/query path. A full ChestMNIST Compose plus EZKL proof run should still be treated as an integration test to complete.

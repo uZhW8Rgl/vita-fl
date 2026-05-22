@@ -8,10 +8,27 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-cp "${TRAIN_IMAGES_SRC}" /dfl/node_server/data/train-images.idx3-ubyte
-cp "${TRAIN_LABELS_SRC}" /dfl/node_server/data/train-labels.idx1-ubyte
-cp /dfl/config/test_data/t10k-images.idx3-ubyte /dfl/node_server/data/t10k-images.idx3-ubyte
-cp /dfl/config/test_data/t10k-labels.idx1-ubyte /dfl/node_server/data/t10k-labels.idx1-ubyte
+DATASET_NAME=${DATASET_NAME:-mnist}
+BOOTSTRAP_MODEL_SRC=${BOOTSTRAP_MODEL_SRC:-/dfl/initial_gm/${DATASET_NAME}/aggregated.bin}
+
+case "$DATASET_NAME" in
+  mnist)
+    cp "${TRAIN_IMAGES_SRC}" /dfl/node_server/data/train-images.idx3-ubyte
+    cp "${TRAIN_LABELS_SRC}" /dfl/node_server/data/train-labels.idx1-ubyte
+    cp "${TEST_IMAGES_SRC:-/dfl/config/test_data/t10k-images.idx3-ubyte}" /dfl/node_server/data/t10k-images.idx3-ubyte
+    cp "${TEST_LABELS_SRC:-/dfl/config/test_data/t10k-labels.idx1-ubyte}" /dfl/node_server/data/t10k-labels.idx1-ubyte
+    ;;
+  chestmnist)
+    cp "${TRAIN_DATA_SRC}" /dfl/node_server/data/train-data.npz
+    cp "${TEST_DATA_SRC}" /dfl/node_server/data/test-data.npz
+    ;;
+  *)
+    echo "Unsupported DATASET_NAME: ${DATASET_NAME}" >&2
+    exit 1
+    ;;
+esac
+
+cp "${BOOTSTRAP_MODEL_SRC}" /dfl/node_server/data/random_start.bin
 if [ -n "${RSA_PRIVATE_KEY:-}" ] || [ -n "${RSA_PUBLIC_KEY:-}" ]; then
     python - <<'PY'
 import os

@@ -252,7 +252,8 @@ prepare_local_initial_gm() {
         return 0
     fi
 
-    local model_path=${INITIAL_GM_MODEL_PATH:-../data/initial_gm/aggregated.bin}
+    local dataset_name=${DATASET_NAME:-mnist}
+    local model_path=${INITIAL_GM_MODEL_PATH:-../data/initial_gm/${dataset_name}/aggregated.bin}
     local signing_key_path=${INITIAL_GM_SIGNING_KEY_PATH:-../data/initial_gm/private_key.pem}
     local signature_path=${INITIAL_GM_SIGNATURE_PATH:-/tmp/initial-gm.sig}
 

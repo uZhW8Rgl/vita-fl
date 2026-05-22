@@ -9,7 +9,7 @@ The normal flow is:
 3. Read the last aggregator's public key from `DeviceRegistry`.
 4. Verify the model signature with RSA-SHA256 and PKCS1v15 padding.
 5. Export the verified model to ONNX through `zk_inference`.
-6. Create a single-image MNIST query.
+6. Create a single-image query for the active dataset.
 7. Run EZKL to generate and verify a proof for the prediction.
 
 The smart contracts are the source of truth. Direct IPFS scanning is kept only as a debug fallback.
@@ -85,7 +85,7 @@ python agent/run_agent.py \
 Inside Docker, loopback URLs are rewritten to the Compose services automatically,
 and the agent forwards proof execution to `http://zk-inference:8090`.
 
-Use a specific MNIST test image:
+Use a specific test image index:
 
 ```bash
 .venv/bin/python agent/run_agent.py --source contract --index 7 --skip-calibration
@@ -154,7 +154,7 @@ This is separate from Grafana's generic embedding setting.
 
 - answer directly through Ollama,
 - inspect local IPFS metadata through the lightweight RAG helper,
-- call MCP tools for model export, MNIST query preparation, and proof generation.
+- call MCP tools for model export, dataset query preparation, and proof generation.
 
 Inside Compose, the agent automatically uses `OLLAMA_BASE_URL=http://ollama:11434`.
 
@@ -188,7 +188,7 @@ Run the MCP server directly:
 
 The MCP server does not reimplement proof logic. It wraps the existing scripts in `zk_inference`.
 
-The exposed tools include `prepare_mnist_sample`, which extracts a fresh random MNIST input by default before the inference/proof flow continues.
+The exposed tools include `prepare_dataset_sample` and the backward-compatible `prepare_mnist_sample`. They extract a fresh random input for the active dataset before the inference/proof flow continues.
 
 ## Debug IPFS Scan
 
