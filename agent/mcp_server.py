@@ -49,10 +49,7 @@ class LocalToolUnavailableError(RuntimeError):
 
 def _latest_downloaded_model_path() -> str:
     downloads_dir = Path("agent/downloads")
-    candidates = [
-        path for path in downloads_dir.glob("*.bin")
-        if path.is_file() and not path.name.endswith(".sig")
-    ]
+    candidates = [path for path in downloads_dir.glob("*.bin") if path.is_file() and not path.name.endswith(".sig")]
     if not candidates:
         raise RuntimeError("No downloaded model bundle is available yet in agent/downloads.")
     return str(max(candidates, key=lambda path: path.stat().st_mtime))
@@ -168,8 +165,11 @@ def create_single_image_query(
     """Prepare one dataset image plus EZKL input.json for the active dataset."""
     record_mcp_tool_call("create_single_image_query")
     payload = {
-        "index": _normalize_optional_index(index), "images": images,
-        "labels": labels, "out_dir": out_dir, "input_json": input_json
+        "index": _normalize_optional_index(index),
+        "images": images,
+        "labels": labels,
+        "out_dir": out_dir,
+        "input_json": input_json,
     }
     try:
         return _require_local_tool("create_single_image_query")(**payload)
@@ -203,17 +203,22 @@ def fetch_current_onchain_model_bundle(out_dir: str = "zk_inference/out") -> str
     """Read current CIDs, fetch both IPFS artifacts, verify the signature, and export for EZKL."""
     record_mcp_tool_call("fetch_current_onchain_model_bundle")
     from blockchain_source import (
-        load_env_file, DEFAULT_ENV_FILE, normalize_host_rpc_url, normalize_ipfs_api_url,
-        read_current_bundle_from_contract, fetch_onchain_bundle, verify_download_with_registry
+        load_env_file,
+        DEFAULT_ENV_FILE,
+        normalize_host_rpc_url,
+        normalize_ipfs_api_url,
+        read_current_bundle_from_contract,
+        fetch_onchain_bundle,
+        verify_download_with_registry,
     )
     from ipfs_bundle import DEFAULT_DOWNLOAD_DIR, DEFAULT_IPFS_API_URL
-    
+
     env_file = load_env_file(DEFAULT_ENV_FILE)
     rpc_url = normalize_host_rpc_url(os.environ.get("RPC_URL") or env_file.get("RPC_URL", "http://127.0.0.1:8545"))
     gm_storage_address = os.environ.get("GM_STORAGE_ADDRESS") or env_file.get("GM_STORAGE_ADDRESS", "")
     registry_address = os.environ.get("REGISTRY_ADDRESS") or env_file.get("REGISTRY_ADDRESS", "")
     ipfs_api_url = normalize_ipfs_api_url(os.environ.get("IPFS_API_URL", DEFAULT_IPFS_API_URL))
-    
+
     bundle = read_current_bundle_from_contract(rpc_url, gm_storage_address, registry_address=registry_address)
     download = fetch_onchain_bundle(bundle, DEFAULT_DOWNLOAD_DIR, ipfs_api_url=ipfs_api_url)
     verification = verify_download_with_registry(bundle, download, rpc_url, registry_address)
@@ -221,5 +226,7 @@ def fetch_current_onchain_model_bundle(out_dir: str = "zk_inference/out") -> str
     if verification.get("ok", False):
         payload["export"] = export_model(download.get("model_path"), out_dir=out_dir)
     return json.dumps(payload, indent=2)
+
+
 if __name__ == "__main__":
     mcp.run()

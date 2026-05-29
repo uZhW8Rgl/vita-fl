@@ -56,6 +56,7 @@ API_HOME_HTML = """<!doctype html>
 </html>
 """
 
+
 def deterministic_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     ipfs_api_url = normalize_ipfs_api_url(args.ipfs_api_url)
     if args.source == "contract":
@@ -92,6 +93,7 @@ def deterministic_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
     if args.zk_inference_url:
         import mcp_server
+
         mcp_server.ZK_INFERENCE_URL = args.zk_inference_url
 
     from mcp_server import export_model, create_single_image_query, run_ezkl
@@ -165,9 +167,7 @@ def _local_langchain_tools():
         )
 
         env_file = load_env_file(DEFAULT_ENV_FILE)
-        rpc_url = normalize_host_rpc_url(
-            os.environ.get("RPC_URL") or env_file.get("RPC_URL", "http://127.0.0.1:8545")
-        )
+        rpc_url = normalize_host_rpc_url(os.environ.get("RPC_URL") or env_file.get("RPC_URL", "http://127.0.0.1:8545"))
         gm_storage_address = os.environ.get("GM_STORAGE_ADDRESS") or env_file.get("GM_STORAGE_ADDRESS", "")
         registry_address = os.environ.get("REGISTRY_ADDRESS") or env_file.get("REGISTRY_ADDRESS", "")
         bundle = read_current_bundle_from_contract(
@@ -203,10 +203,7 @@ def _local_langchain_tools():
 
         if current_state is not None:
             current_model_cid, current_signature_cid = _bundle_identity(current_state)
-            if (
-                current_model_cid == latest_model_cid
-                and current_signature_cid == latest_signature_cid
-            ):
+            if current_model_cid == latest_model_cid and current_signature_cid == latest_signature_cid:
                 return current_state, False
 
         _remember_verified_bundle(latest_payload)
@@ -276,10 +273,7 @@ def _local_langchain_tools():
 
     def _default_downloaded_model_path() -> str:
         downloads_dir = REPO_ROOT / "agent" / "downloads"
-        candidates = [
-            path for path in downloads_dir.glob("*.bin")
-            if path.is_file() and not path.name.endswith(".sig")
-        ]
+        candidates = [path for path in downloads_dir.glob("*.bin") if path.is_file() and not path.name.endswith(".sig")]
         if not candidates:
             raise RuntimeError("No downloaded model bundle is available yet in agent/downloads.")
         return str(max(candidates, key=lambda path: path.stat().st_mtime))
@@ -341,6 +335,7 @@ def _local_langchain_tools():
     def fetch_latest_verified_model_bundle() -> str:
         """Fetch the latest verified model bundle and verify its on-chain signature."""
         from mcp_server import fetch_current_onchain_model_bundle
+
         payload = json.loads(fetch_current_onchain_model_bundle())
         _remember_verified_bundle(payload)
         return _bundle_summary_text(payload)
@@ -349,6 +344,7 @@ def _local_langchain_tools():
     def generate_random_chestmnist_image(index: Any = None) -> str:
         """Generate a ChestMNIST sample, remember it for the session, and return its artifacts."""
         from mcp_server import create_single_image_query
+
         sample = create_single_image_query(index=_normalize_optional_index(index))
         _remember_generated_sample(sample)
         return _compact_json(sample)
@@ -441,6 +437,7 @@ def _default_llm_prompt(args: argparse.Namespace) -> str:
         f"Active dataset: {DATASET_NAME}."
     )
 
+
 def _message_text(message: Any) -> str:
     content = getattr(message, "content", message)
     if isinstance(content, str):
@@ -525,8 +522,7 @@ class AgentRuntime:
             from langchain_ollama import ChatOllama
         except ImportError as exc:
             raise RuntimeError(
-                "LangChain mode dependencies are missing or incompatible. "
-                f"Original import error: {exc}"
+                f"LangChain mode dependencies are missing or incompatible. Original import error: {exc}"
             ) from exc
 
         model_name = os.environ.get("OLLAMA_MODEL", "qwen3:0.6b")
@@ -669,22 +665,26 @@ class AgentRuntime:
                     label = getattr(message, "name", None)
                     if label is None and isinstance(message, dict):
                         label = message.get("name")
-                    tool_events.append({
-                        "type": "tool",
-                        "label": label or "tool",
-                        "detail": _message_text(message),
-                    })
+                    tool_events.append(
+                        {
+                            "type": "tool",
+                            "label": label or "tool",
+                            "detail": _message_text(message),
+                        }
+                    )
                 elif msg_type in {"ai", "assistant"}:
                     assistant_text = _message_text(message)
             return assistant_text or "The agent completed without a text response.", tool_events
 
         tool_events = []
         for action, observation in response.get("intermediate_steps", []):
-            tool_events.append({
-                "type": "tool",
-                "label": action.tool,
-                "detail": f"Input: {action.tool_input}",
-            })
+            tool_events.append(
+                {
+                    "type": "tool",
+                    "label": action.tool,
+                    "detail": f"Input: {action.tool_input}",
+                }
+            )
         return response["output"], tool_events
 
     async def _run_agent_with_timeout(
@@ -749,7 +749,7 @@ class AgentRuntime:
         if session["title"] == "New session":
             session["title"] = user_message[:60] or "New session"
         session["messages"].append({"role": "user", "content": user_message})
-        
+
         try:
             await self.ensure_agent_model()
             print(f"[route] agent_planner message={user_message!r}", file=sys.stderr)

@@ -47,11 +47,7 @@ def _attribute_value(value: Any) -> dict[str, Any]:
 
 
 def _attributes(values: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {"key": key, "value": _attribute_value(value)}
-        for key, value in values.items()
-        if value is not None
-    ]
+    return [{"key": key, "value": _attribute_value(value)} for key, value in values.items() if value is not None]
 
 
 def _export_span(span: dict[str, Any], service_name: str) -> None:
