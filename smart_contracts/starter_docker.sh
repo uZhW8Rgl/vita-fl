@@ -18,8 +18,165 @@ else
 fi
 export RPC_URL=$rpc_url
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+KUBO_API_URL=${KUBO_API_URL:-http://ipfs:5001}
+IPFS_PROVIDER=${IPFS_PROVIDER:-kubo}
+
+OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-smart-contracts}
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+
+emit_otel_edge() {
+    local span_name=$1
+    local target_service=$2
+    local start_time_unix_nano=$3
+    local end_time_unix_nano=$4
+    local status=$5
+
+    if [ -z "$OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" ]; then
+        return 0
+    fi
+
+    OTEL_SPAN_NAME="$span_name" \
+    OTEL_TARGET_SERVICE="$target_service" \
+    OTEL_START_TIME_UNIX_NANO="$start_time_unix_nano" \
+    OTEL_END_TIME_UNIX_NANO="$end_time_unix_nano" \
+    OTEL_SPAN_STATUS="$status" \
+    python3 - <<'PY' >/dev/null 2>&1 || true
+import json
+import os
+import secrets
+import urllib.request
+
+
+endpoint = os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
+source = os.environ.get("OTEL_SERVICE_NAME", "smart-contracts")
+target = os.environ["OTEL_TARGET_SERVICE"]
+span_name = os.environ["OTEL_SPAN_NAME"]
+start = int(os.environ["OTEL_START_TIME_UNIX_NANO"])
+end = int(os.environ["OTEL_END_TIME_UNIX_NANO"])
+status_code = 1 if os.environ.get("OTEL_SPAN_STATUS") == "ok" else 2
+
+trace_id = secrets.token_hex(16)
+client_span_id = secrets.token_hex(8)
+server_span_id = secrets.token_hex(8)
+
+def service_resource(service_name, span):
+    return {
+        "resource": {
+            "attributes": [
+                {"key": "service.name", "value": {"stringValue": service_name}},
+            ],
+        },
+        "scopeSpans": [{"scope": {"name": "starter_docker.sh"}, "spans": [span]}],
+    }
+
+client_span = {
+    "traceId": trace_id,
+    "spanId": client_span_id,
+    "name": span_name,
+    "kind": 3,
+    "startTimeUnixNano": str(start),
+    "endTimeUnixNano": str(end),
+    "attributes": [
+        {"key": "peer.service", "value": {"stringValue": target}},
+        {"key": "component", "value": {"stringValue": "smart-contracts-init"}},
+    ],
+    "status": {"code": status_code},
+}
+server_span = {
+    "traceId": trace_id,
+    "spanId": server_span_id,
+    "parentSpanId": client_span_id,
+    "name": span_name,
+    "kind": 2,
+    "startTimeUnixNano": str(start),
+    "endTimeUnixNano": str(end),
+    "attributes": [
+        {"key": "peer.service", "value": {"stringValue": source}},
+        {"key": "component", "value": {"stringValue": "smart-contracts-init"}},
+    ],
+    "status": {"code": status_code},
+}
+
+payload = json.dumps({
+    "resourceSpans": [
+        service_resource(source, client_span),
+        service_resource(target, server_span),
+    ],
+}).encode("utf-8")
+
+request = urllib.request.Request(
+    endpoint,
+    data=payload,
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+urllib.request.urlopen(request, timeout=1).read()
+PY
+}
+
+trace_edge() {
+    local span_name=$1
+    local target_service=$2
+    shift 2
+
+    local start_time_unix_nano
+    local end_time_unix_nano
+    start_time_unix_nano=$(date +%s%N)
+    if "$@"; then
+        end_time_unix_nano=$(date +%s%N)
+        emit_otel_edge "$span_name" "$target_service" "$start_time_unix_nano" "$end_time_unix_nano" ok
+        return 0
+    fi
+
+    local exit_code=$?
+    end_time_unix_nano=$(date +%s%N)
+    emit_otel_edge "$span_name" "$target_service" "$start_time_unix_nano" "$end_time_unix_nano" error
+    return "$exit_code"
+}
+
+wait_for_anvil() {
+    local attempts=${1:-60}
+    local rpc_endpoint=$rpc_url
+
+    echo "Waiting for Anvil at ${rpc_endpoint}..."
+    for _ in $(seq 1 "$attempts"); do
+        if cast chain-id --rpc-url "$rpc_endpoint" >/dev/null 2>&1; then
+            echo "Anvil is ready."
+            return 0
+        fi
+        sleep 2
+    done
+
+    echo "Timed out waiting for Anvil at ${rpc_endpoint}."
+    return 1
+}
+
+wait_for_kubo() {
+    local attempts=${1:-60}
+
+    if [ "$IPFS_PROVIDER" != "kubo" ]; then
+        return 0
+    fi
+
+    echo "Waiting for Kubo at ${KUBO_API_URL}..."
+    for _ in $(seq 1 "$attempts"); do
+        if curl --connect-timeout 2 --max-time 5 -fsS -X POST "${KUBO_API_URL}/api/v0/version" >/dev/null 2>&1; then
+            echo "Kubo is ready."
+            return 0
+        fi
+        sleep 2
+    done
+
+    echo "Timed out waiting for Kubo at ${KUBO_API_URL}."
+    return 1
+}
+
+wait_for_anvil
+wait_for_kubo
 
 CHAIN_ID=$(cast chain-id --rpc-url $rpc_url)
+now_nano=$(date +%s%N)
+emit_otel_edge "smart_contracts.read_chain_id" "anvil" "$now_nano" "$now_nano" ok
 ETH_EUR_PRICE=${ETH_EUR_PRICE:-3000}
 
 require_address() {
@@ -108,9 +265,6 @@ for receipt in data.get("receipts", []):
 PY
 }
 
-KUBO_API_URL=${KUBO_API_URL:-http://ipfs:5001}
-IPFS_PROVIDER=${IPFS_PROVIDER:-kubo}
-
 if [ "$IPFS_PROVIDER" != "kubo" ] && [ "$IPFS_PROVIDER" != "pinata" ]; then
     echo "Unsupported IPFS_PROVIDER: $IPFS_PROVIDER"
     exit 1
@@ -120,7 +274,8 @@ add_file_to_kubo() {
     local file_path=$1
     local response
 
-    response=$(curl --connect-timeout 5 --max-time 60 -sSf -X POST \
+    response=$(trace_edge "smart_contracts.ipfs_add" "ipfs-kubo" \
+        curl --connect-timeout 5 --max-time 60 -sSf -X POST \
         -F "file=@${file_path}" \
         "${KUBO_API_URL}/api/v0/add?pin=true&cid-version=1&wrap-with-directory=false")
     printf '%s' "$response" | jq -re '.Hash'
@@ -136,7 +291,8 @@ prepare_local_initial_gm() {
         return 0
     fi
 
-    local model_path=${INITIAL_GM_MODEL_PATH:-../data/initial_gm/aggregated.bin}
+    local dataset_name=${DATASET_NAME:-mnist}
+    local model_path=${INITIAL_GM_MODEL_PATH:-../data/initial_gm/${dataset_name}/aggregated.bin}
     local signing_key_path=${INITIAL_GM_SIGNING_KEY_PATH:-../data/initial_gm/private_key.pem}
     local signature_path=${INITIAL_GM_SIGNATURE_PATH:-/tmp/initial-gm.sig}
 
@@ -162,7 +318,8 @@ prepare_local_initial_gm() {
 }
 
 prepare_local_initial_gm
-forge script --rpc-url $rpc_url --broadcast script/Deploy.s.sol
+trace_edge "smart_contracts.deploy_core_contracts" "anvil" \
+    forge script --rpc-url $rpc_url --broadcast script/Deploy.s.sol
 log_broadcast_gas_cost "deploy_core_contracts" "./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json"
 
 export DEVICE_REGISTRY_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "DeviceRegistry") | .contractAddress' ./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json)
@@ -724,13 +881,17 @@ echo "AUTOMATA_DCAP_TDX_V4_ATTESTATION_URL= ${DCAP_TDX_V4_ADDRESS:-}"
 echo "===================================================="
 
 #cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_1 $AGGREGATOR_SELECTION_ADDRESS "setGMStorageAddress(address)" $GMSTORAGE
-cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_0 $AGGREGATOR_SELECTION_ADDRESS "setGMStorageAddress(address)" $GMSTORAGE
+trace_edge "smart_contracts.configure_gm_storage" "anvil" \
+    cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_0 \
+    $AGGREGATOR_SELECTION_ADDRESS "setGMStorageAddress(address)" $GMSTORAGE
 
 
 echo "GMStorage Addresse wurde in AggregatorSelection gesetzt"
 
 AGGREGATOR_TIMEOUT_REPORT_PERCENT=${AGGREGATOR_TIMEOUT_REPORT_PERCENT:-50}
-cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_0 $AGGREGATOR_SELECTION_ADDRESS "setTimeoutReportThresholdPercent(uint256)" "$AGGREGATOR_TIMEOUT_REPORT_PERCENT"
+trace_edge "smart_contracts.configure_timeout_threshold" "anvil" \
+    cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_0 \
+    $AGGREGATOR_SELECTION_ADDRESS "setTimeoutReportThresholdPercent(uint256)" "$AGGREGATOR_TIMEOUT_REPORT_PERCENT"
 
 echo "Aggregator timeout report threshold wurde auf ${AGGREGATOR_TIMEOUT_REPORT_PERCENT}% gesetzt"
 
@@ -822,19 +983,25 @@ echo "Authorization Status:"
 if [ "${DOCKER:-}" = "phala" ]; then
     if [ "$IPFS_PROVIDER" = "kubo" ]; then
         echo "Pinning the initial GM to the IPFS node"
-        curl --connect-timeout 5 --max-time 60 -sSf -X POST "https://61ecc557e3b36593390057d322d46e9488032c34-5001.dstack-prod5.phala.network/api/v0/pin/add?arg=${INITIAL_GM_CID}"
-        curl --connect-timeout 5 --max-time 60 -sSf -X POST "https://61ecc557e3b36593390057d322d46e9488032c34-5001.dstack-prod5.phala.network/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start"
+        trace_edge "smart_contracts.ipfs_pin_initial_model" "ipfs-kubo" \
+            curl --connect-timeout 5 --max-time 60 -sSf -X POST "https://61ecc557e3b36593390057d322d46e9488032c34-5001.dstack-prod5.phala.network/api/v0/pin/add?arg=${INITIAL_GM_CID}"
+        trace_edge "smart_contracts.ipfs_copy_initial_model" "ipfs-kubo" \
+            curl --connect-timeout 5 --max-time 60 -sSf -X POST "https://61ecc557e3b36593390057d322d46e9488032c34-5001.dstack-prod5.phala.network/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start"
     fi
 else
     if [ "$IPFS_PROVIDER" = "kubo" ]; then
         echo "Copying the locally imported initial GM into IPFS MFS"
-        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        trace_edge "smart_contracts.ipfs_remove_start_model" "ipfs-kubo" \
+            curl --connect-timeout 5 --max-time 15 -sSf -X POST \
             "${KUBO_API_URL}/api/v0/files/rm?arg=/start&force=true" >/dev/null || true
-        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        trace_edge "smart_contracts.ipfs_remove_start_signature" "ipfs-kubo" \
+            curl --connect-timeout 5 --max-time 15 -sSf -X POST \
             "${KUBO_API_URL}/api/v0/files/rm?arg=/start.sig&force=true" >/dev/null || true
-        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        trace_edge "smart_contracts.ipfs_copy_initial_model" "ipfs-kubo" \
+            curl --connect-timeout 5 --max-time 15 -sSf -X POST \
             "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start&parents=true"
-        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        trace_edge "smart_contracts.ipfs_copy_initial_signature" "ipfs-kubo" \
+            curl --connect-timeout 5 --max-time 15 -sSf -X POST \
             "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_SIG_CID}&arg=/start.sig&parents=true"
     fi
 fi

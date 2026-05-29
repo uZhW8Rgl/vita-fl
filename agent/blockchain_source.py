@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from ipfs_rag import DEFAULT_DOWNLOAD_DIR, DEFAULT_IPFS_API_URL, cat_path
+from ipfs_bundle import DEFAULT_DOWNLOAD_DIR, DEFAULT_IPFS_API_URL, cat_path
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
@@ -54,19 +54,19 @@ def config_value(name: str, cli_value: str | None, env_file: dict[str, str], def
 
 def normalize_host_rpc_url(rpc_url: str) -> str:
     rpc_url = rpc_url.strip()
-    if "anvil:8545" in rpc_url:
-        return rpc_url.replace("anvil:8545", "127.0.0.1:8545")
     if _running_in_docker():
         return _replace_loopback_service(rpc_url, {8545: "anvil"})
+    if "anvil:8545" in rpc_url:
+        return rpc_url.replace("anvil:8545", "127.0.0.1:8545")
     return rpc_url
 
 
 def normalize_ipfs_api_url(api_url: str) -> str:
     api_url = api_url.strip()
-    if "ipfs:5001" in api_url:
-        return api_url.replace("ipfs:5001", "127.0.0.1:5001")
     if _running_in_docker():
         return _replace_loopback_service(api_url, {5001: "ipfs"})
+    if "ipfs:5001" in api_url:
+        return api_url.replace("ipfs:5001", "127.0.0.1:5001")
     return api_url
 
 

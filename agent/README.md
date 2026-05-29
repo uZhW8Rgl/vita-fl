@@ -9,7 +9,7 @@ The normal flow is:
 3. Read the last aggregator's public key from `DeviceRegistry`.
 4. Verify the model signature with RSA-SHA256 and PKCS1v15 padding.
 5. Export the verified model to ONNX through `zk_inference`.
-6. Create a single-image MNIST query.
+6. Create a single-image query for the active dataset.
 7. Run EZKL to generate and verify a proof for the prediction.
 
 The smart contracts are the source of truth. Direct IPFS scanning is kept only as a debug fallback.
@@ -85,7 +85,7 @@ python agent/run_agent.py \
 Inside Docker, loopback URLs are rewritten to the Compose services automatically,
 and the agent forwards proof execution to `http://zk-inference:8090`.
 
-Use a specific MNIST test image:
+Use a specific test image index:
 
 ```bash
 .venv/bin/python agent/run_agent.py --source contract --index 7 --skip-calibration
@@ -104,7 +104,7 @@ The output includes:
 The current LLM mode uses local Ollama, not an OpenAI API key:
 
 ```bash
-ollama pull gemma4:e2b
+ollama pull qwen3:0.6b
 ollama serve
 ```
 
@@ -112,31 +112,90 @@ Then:
 
 ```bash
 export OLLAMA_BASE_URL=http://127.0.0.1:11434
-export OLLAMA_MODEL=gemma4:e2b
+export OLLAMA_MODEL=qwen3:0.6b
 
 .venv/bin/python agent/run_agent.py --llm --source contract --skip-calibration
 ```
 
-In this mode LangChain can use local IPFS/RAG helpers and ZK tools exposed through MCP.
+In this mode LangChain can use local IPFS bundle helpers and ZK tools exposed through MCP.
+
+## Persistent Chat Service
+
+The Compose stack now includes:
+
+- `ollama`: the Ollama API server on the internal Docker network
+- `ollama-init`: a one-shot initializer that automatically pulls `qwen3:0.6b`
+- `agent`: the persistent API/session backend
+- `ui`: a separate frontend container that talks to the agent API and embeds Grafana
+
+So other services can use the same model through `http://ollama:11434` without a manual `ollama pull`.
+The model cache is stored in the repository folder `./ollama-data`, so it survives
+`docker compose down --volumes`.
+
+Start the complete chat agent with:
+
+```bash
+KEEP_ALIVE=0 docker compose up --build agent ui
+```
+
+Then open:
+
+```bash
+http://127.0.0.1:8089
+```
+
+The running `agent` stays alive and keeps chat sessions in memory, while the
+separate `ui` container serves the browser frontend and waits for Grafana so the
+embedded dashboard is available from the start. The agent can:
+
+For the embedded Grafana panel, use Grafana's **Share externally** feature and
+set the generated link as `GRAFANA_EXTERNAL_DASHBOARD_URL` for the `ui` service.
+This is separate from Grafana's generic embedding setting.
+
+- answer directly through Ollama,
+- inspect local IPFS bundle metadata through the lightweight IPFS helper,
+- call MCP tools for model export, dataset query preparation, and proof generation.
+
+Inside Compose, the agent automatically uses `OLLAMA_BASE_URL=http://ollama:11434`.
+
+## Terminal Modes
+
+You can still use the same code without the UI.
+
+Interactive terminal chat:
+
+```bash
+docker compose run --rm agent python agent/run_agent.py --llm --interactive --source contract --skip-calibration
+```
+
+Single custom prompt:
+
+```bash
+docker compose run --rm agent python agent/run_agent.py \
+  --llm \
+  --prompt "Explain the latest verified model bundle and then run one proof." \
+  --source contract \
+  --skip-calibration
+```
 
 ## MCP Server
 
 Run the MCP server directly:
 
 ```bash
-.venv/bin/python agent/zk_mcp_server.py
+.venv/bin/python agent/mcp_server.py
 ```
 
 The MCP server does not reimplement proof logic. It wraps the existing scripts in `zk_inference`.
 
-The exposed tools include `prepare_mnist_sample`, which extracts a fresh random MNIST input by default before the inference/proof flow continues.
+The exposed tools include `prepare_dataset_sample` and the backward-compatible `prepare_mnist_sample`. They extract a fresh random input for the active dataset before the inference/proof flow continues.
 
 ## Debug IPFS Scan
 
 For debugging old local artifacts, use:
 
 ```bash
-.venv/bin/python agent/ipfs_rag.py \
+.venv/bin/python agent/ipfs_bundle.py \
   --api-url http://127.0.0.1:5001 \
   --root / \
   --fetch

@@ -1,12 +1,12 @@
 # ZK Inference
 
-This directory exports a trained DFL model into an EZKL-compatible inference pipeline and generates a proof for a single MNIST image.
+This directory exports a trained DFL model into an EZKL-compatible inference pipeline and generates a proof for a single dataset image.
 
 `neural_network` is the source of truth for:
 
 - model class,
 - binary parameter layout,
-- MNIST normalization,
+- dataset normalization,
 - and native prediction behavior.
 
 ## Pipeline
@@ -46,7 +46,17 @@ Export PyTorch and ONNX artifacts:
 
 If no explicit model is given, the exporter tries the active aggregated model path first and then falls back to the newest `*-aggregated.bin` in `IPFS output`.
 
-## Prepare a Random MNIST Sample
+## Prepare a Random Dataset Sample
+
+```bash
+.venv/bin/python data/mnist_tools.py \
+  --out-dir zk_inference/single_query \
+  --input-json zk_inference/out/input.json
+```
+
+Without `--index`, the helper picks a fresh random image from the active dataset on each run and writes `zk_inference/single_query/selection.json`.
+
+For explicit MNIST inputs:
 
 ```bash
 .venv/bin/python data/mnist_tools.py \
@@ -56,7 +66,15 @@ If no explicit model is given, the exporter tries the active aggregated model pa
   --input-json zk_inference/out/input.json
 ```
 
-Without `--index`, the helper picks a fresh random MNIST image on each run and writes `zk_inference/single_query/selection.json`.
+For ChestMNIST after generating `data/chestmnist/test_data/test-data.npz`:
+
+```bash
+DATASET_NAME=chestmnist .venv/bin/python data/mnist_tools.py \
+  --images data/chestmnist/test_data/test-data.npz \
+  --labels data/chestmnist/test_data/test-data.npz \
+  --out-dir zk_inference/single_query \
+  --input-json zk_inference/out/input.json
+```
 
 ## Create a Single-Image Query
 
@@ -69,15 +87,20 @@ Without `--index`, the helper picks a fresh random MNIST image on each run and w
   --input-json zk_inference/out/input.json
 ```
 
-When `--index` is omitted, the query helper now chooses a random correctly classified MNIST test image from the search range. This creates:
+When `--index` is omitted, the query helper chooses a random sample from the active dataset. For MNIST it prefers a correctly classified image from the search range. This creates:
 
-- `zk_inference/single_query/single-image.idx3-ubyte`
-- `zk_inference/single_query/single-label.idx1-ubyte`
 - `zk_inference/single_query/single-image.pgm`
 - `zk_inference/single_query/prediction.json`
 - `zk_inference/out/input.json`
 
+Depending on the dataset, the sample artifact is either:
+
+- `zk_inference/single_query/single-image.idx3-ubyte` plus `single-label.idx1-ubyte` for MNIST
+- `zk_inference/single_query/single-image.npy` plus `single-label.json` for ChestMNIST
+
 The current single-image helper is an evaluation helper: it can include ground-truth label metadata so local runs can report whether the prediction was correct. A deployment-style inference query should only require an input image and should not rely on the label file.
+
+ChestMNIST is supported in the query-preparation path, but a full Compose plus EZKL proof run for ChestMNIST should still be treated as an explicit integration check.
 
 ## Run EZKL
 

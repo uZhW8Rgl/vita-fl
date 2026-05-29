@@ -2,7 +2,7 @@ import axios from "axios";
 import fs from "fs";
 import FormData from "form-data";
 
-import { setGlobalModelAndSignature, getCurrentGM, getCurrentGMSignature } from "./bc_client.js";
+import { setGlobalModelAndSignature, getCurrentGM, getCurrentGMSignature, getRound } from "./bc_client.js";
 
 export const pinFile = async (filePath: string) => {
     try {
@@ -56,6 +56,67 @@ export const pinFile = async (filePath: string) => {
   const ipfsTimeoutMs = () => Number(process.env.IPFS_FETCH_TIMEOUT_MS || 30000);
 
   const kuboApiBaseUrl = () => (process.env.KUBO_API || "").replace(/\/+$/, "");
+
+  const ipfsArchiveDir = () => {
+    const raw = (process.env.IPFS_ARCHIVE_DIR || "/").trim();
+    if (raw === "/" || raw === "") {
+      return "/";
+    }
+    return raw.replace(/\/+$/, "");
+  };
+
+  const timestampedArtifactName = async (baseName: string) => {
+    const round = Number(await getRound().catch(() => 0)) + 1;
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return `round-${round}-${stamp}-${baseName}`;
+  };
+
+  const ensureKuboMfsDir = async (dir: string) => {
+    const api = kuboApiBaseUrl();
+    if (!api) {
+      throw new Error("IPFS_PROVIDER=kubo requires KUBO_API");
+    }
+    await axios.post(`${api}/api/v0/files/mkdir`, null, {
+      params: {
+        arg: dir,
+        parents: true,
+      },
+      timeout: ipfsTimeoutMs(),
+    });
+  };
+
+  const copyCidToKuboMfs = async (cid: string, destPath: string) => {
+    const api = kuboApiBaseUrl();
+    if (!api) {
+      throw new Error("IPFS_PROVIDER=kubo requires KUBO_API");
+    }
+    await axios.post(`${api}/api/v0/files/cp`, null, {
+      params: {
+        arg: [`/ipfs/${cid}`, destPath],
+      },
+      timeout: ipfsTimeoutMs(),
+      paramsSerializer: {
+        serialize: (params) => {
+          const values = Array.isArray(params.arg) ? params.arg : [params.arg];
+          return values.map((value) => `arg=${encodeURIComponent(String(value))}`).join("&");
+        },
+      },
+    });
+  };
+
+  const archivePinnedFileToKubo = async (cid: string, baseName: string) => {
+    if (process.env.IPFS_PROVIDER !== "kubo") {
+      return;
+    }
+    const dir = ipfsArchiveDir();
+    const filename = await timestampedArtifactName(baseName);
+    const destPath = dir === "/" ? `/${filename}` : `${dir}/${filename}`;
+    if (dir !== "/") {
+      await ensureKuboMfsDir(dir);
+    }
+    await copyCidToKuboMfs(cid, destPath);
+    console.log(`Archived ${baseName} in Kubo MFS: ${destPath}`);
+  };
   
   const ipfsGatewayUrl = (hash: string) => {
     const configuredGateway = process.env.IPFS_PROVIDER === "kubo"
@@ -102,9 +163,11 @@ export const pinFile = async (filePath: string) => {
 
     const modelCid = await pinFile(modelPath);
     if (!modelCid) throw new Error("Pinning failed for model, no CID returned");
+    await archivePinnedFileToKubo(modelCid, "aggregated.bin");
 
     const sigCid = await pinFile(sigPath);
     if (!sigCid) throw new Error("Pinning failed for signature, no CID returned");
+    await archivePinnedFileToKubo(sigCid, "aggregated.bin.sig");
 
     console.log("New GM CID:", modelCid);
     console.log("New GM SIG CID:", sigCid);

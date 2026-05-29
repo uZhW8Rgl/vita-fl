@@ -9,7 +9,11 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from zk_inference.service_tools import prove_single_image
+from zk_inference.service_tools import (
+    create_single_image_query,
+    export_model,
+    run_ezkl,
+)
 
 
 HOST = os.environ.get("ZK_INFERENCE_HOST", "0.0.0.0")
@@ -26,20 +30,39 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.OK, {"ok": True})
 
     def do_POST(self) -> None:
-        if self.path != "/prove-single-image":
+        if self.path not in {
+            "/export-model",
+            "/create-query",
+            "/run-ezkl",
+        }:
             self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
-            result = prove_single_image(
-                model_path=payload["model_path"],
-                signature_path=payload["signature_path"],
-                index=payload.get("index"),
-                workdir=payload.get("workdir", "zk_inference/out"),
-                query_dir=payload.get("query_dir", "zk_inference/single_query"),
-                skip_calibration=bool(payload.get("skip_calibration", True)),
-            )
+            if self.path == "/export-model":
+                result = export_model(
+                    model_path=payload["model_path"],
+                    out_dir=payload.get("out_dir", "zk_inference/out"),
+                )
+            elif self.path == "/create-query":
+                result = create_single_image_query(
+                    index=payload.get("index"),
+                    images=payload.get("images"),
+                    labels=payload.get("labels"),
+                    out_dir=payload.get("out_dir", "zk_inference/single_query"),
+                    input_json=payload.get("input_json", "zk_inference/out/input.json"),
+                )
+            elif self.path == "/run-ezkl":
+                result = run_ezkl(
+                    workdir=payload.get("workdir", "zk_inference/out"),
+                    model=payload.get("model", "model_logits.onnx"),
+                    data=payload.get("data", "input.json"),
+                    skip_calibration=bool(payload.get("skip_calibration", True)),
+                )
+            else:
+                self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+                return
             status = HTTPStatus.OK if result.get("ok", False) else HTTPStatus.BAD_GATEWAY
             self._send_json(status, result)
         except KeyError as exc:

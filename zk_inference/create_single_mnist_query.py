@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Create a one-image MNIST query dataset and EZKL input for a single inference.
+Create a one-image query dataset and EZKL input for a single inference.
 
-By default the script selects a random correctly classified MNIST test image
-for the selected model. It writes a one-sample IDX image/label pair, an EZKL
-input.json, a portable PGM preview, and prediction metadata.
+For MNIST, the helper prefers a random correctly classified test image.
+For ChestMNIST, it falls back to a random sample because exact multi-label
+matches are much rarer. It writes a one-sample artifact, an EZKL input.json,
+a portable PGM preview, and prediction metadata.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import json
 import random
 import sys
 from pathlib import Path
+from typing import Any
 
 try:
     import torch
@@ -29,7 +31,14 @@ if str(REPO_ROOT / "zk_inference") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "zk_inference"))
 
 from data.mnist_tools import extract_mnist_sample  # type: ignore
-from neural_network.cli import INPUT_SIZE, read_idx_images, read_idx_labels  # type: ignore
+from neural_network.cli import (  # type: ignore
+    INPUT_SIZE,
+    current_dataset_name,
+    is_multilabel_dataset,
+    read_idx_images,
+    read_idx_labels,
+    read_npz_images_and_labels,
+)
 from export_model import default_model_path, load_worker_model  # type: ignore
 
 
@@ -47,7 +56,7 @@ def ensure_torch() -> None:
         raise RuntimeError("PyTorch is required. Install it with: pip install torch")
 
 
-def predict(model_path: Path, normalized_image: "torch.Tensor") -> tuple[int, list[float], list[float]]:
+def predict_single_label(model_path: Path, normalized_image: "torch.Tensor") -> tuple[int, list[float], list[float]]:
     model = load_worker_model(model_path).eval()
     with torch.no_grad():
         logits = model(normalized_image.reshape(1, INPUT_SIZE)).reshape(-1)
@@ -59,20 +68,52 @@ def predict(model_path: Path, normalized_image: "torch.Tensor") -> tuple[int, li
     )
 
 
+def predict_multilabel(
+    model_path: Path,
+    normalized_image: "torch.Tensor",
+) -> tuple[list[int], list[float], list[float]]:
+    model = load_worker_model(model_path).eval()
+    with torch.no_grad():
+        logits = model(normalized_image.reshape(1, INPUT_SIZE)).reshape(-1)
+        probabilities = torch.sigmoid(logits)
+        predictions = (probabilities >= 0.5).to(torch.int64)
+    return (
+        [int(value) for value in predictions.tolist()],
+        [float(value) for value in logits.tolist()],
+        [float(value) for value in probabilities.tolist()],
+    )
+
+
 def select_index(
     model_path: Path,
     images_path: Path,
     labels_path: Path,
     preferred_index: int | None,
     search_limit: int,
-) -> tuple[int, int, int, list[float], list[float]]:
+) -> tuple[int, Any, Any, list[float], list[float], bool]:
     ensure_torch()
+    if is_multilabel_dataset():
+        images, labels = read_npz_images_and_labels(images_path)
+        labels = labels.reshape(labels.shape[0], -1)
+        limit = min(search_limit, int(images.shape[0]))
+        if preferred_index is not None:
+            true_labels = [int(value) for value in labels[preferred_index].reshape(-1).tolist()]
+            predicted, logits, probabilities = predict_multilabel(model_path, images[preferred_index])
+            return preferred_index, true_labels, predicted, logits, probabilities, predicted == true_labels
+
+        if limit <= 0:
+            raise ValueError(f"No samples available in {images_path}")
+        index = random.SystemRandom().randrange(limit)
+        true_labels = [int(value) for value in labels[index].reshape(-1).tolist()]
+        predicted, logits, probabilities = predict_multilabel(model_path, images[index])
+        return index, true_labels, predicted, logits, probabilities, predicted == true_labels
+
     if preferred_index is not None:
         images = read_idx_images(images_path, limit=preferred_index + 1)
         labels = read_idx_labels(labels_path, limit=preferred_index + 1)
         label = int(labels[preferred_index].item())
-        predicted, logits, probabilities = predict(model_path, images[preferred_index])
-        return preferred_index, label, predicted, logits, probabilities
+        predicted, logits, probabilities = predict_single_label(model_path, images[preferred_index])
+        return preferred_index, label, predicted, logits, probabilities, predicted == label
 
     limit = min(search_limit, labels_path.stat().st_size - 8)
     images = read_idx_images(images_path, limit=limit)
@@ -82,7 +123,7 @@ def select_index(
         logits_batch = model(images)
         predictions = logits_batch.argmax(dim=1)
 
-    candidates: list[tuple[int, int, int, list[float], list[float]]] = []
+    candidates: list[tuple[int, int, int, list[float], list[float], bool]] = []
     for index in range(limit):
         label = int(labels[index].item())
         predicted = int(predictions[index].item())
@@ -96,6 +137,7 @@ def select_index(
                     predicted,
                     [float(value) for value in logits.tolist()],
                     [float(value) for value in probabilities.tolist()],
+                    True,
                 )
             )
 
@@ -105,17 +147,28 @@ def select_index(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Create a single-image MNIST inference query for EZKL.")
+    dataset = current_dataset_name()
+    default_images = (
+        Path("data/chestmnist/test_data/test-data.npz")
+        if dataset == "chestmnist"
+        else Path("data/mnist/data/t10k-images.idx3-ubyte")
+    )
+    default_labels = (
+        Path("data/chestmnist/test_data/test-data.npz")
+        if dataset == "chestmnist"
+        else Path("data/mnist/data/t10k-labels.idx1-ubyte")
+    )
+    parser = argparse.ArgumentParser(description="Create a single-image inference query for EZKL.")
     parser.add_argument("--model", type=Path, default=default_model_path(), help="Model to use for prediction")
-    parser.add_argument("--images", type=Path, default=Path("data/mnist/data/t10k-images.idx3-ubyte"))
-    parser.add_argument("--labels", type=Path, default=Path("data/mnist/data/t10k-labels.idx1-ubyte"))
-    parser.add_argument("--index", type=int, default=None, help="Use a specific MNIST test index")
+    parser.add_argument("--images", type=Path, default=default_images)
+    parser.add_argument("--labels", type=Path, default=default_labels)
+    parser.add_argument("--index", type=int, default=None, help="Use a specific test index")
     parser.add_argument("--search-limit", type=int, default=1000, help="Search range when --index is omitted")
     parser.add_argument("--out-dir", type=Path, default=Path("zk_inference/single_query"))
     parser.add_argument("--input-json", type=Path, default=Path("zk_inference/out/input.json"))
     args = parser.parse_args()
 
-    index, label, predicted, logits, probabilities = select_index(
+    index, label, predicted, logits, probabilities, correct = select_index(
         model_path=args.model,
         images_path=args.images,
         labels_path=args.labels,
@@ -137,21 +190,20 @@ def main() -> int:
         "source_index": index,
         "true_label": label,
         "predicted_label": predicted,
-        "correct": predicted == label,
+        "correct": correct,
         "logits": logits,
         "probabilities": probabilities,
+        "dataset": dataset,
         "files": sample["files"],
     }
     metadata_file = args.out_dir / "prediction.json"
     metadata_file.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
-    print(f"Selected MNIST test index: {index}")
+    print(f"Selected {dataset} test index: {index}")
     print(f"Random selection: {args.index is None}")
     print(f"True label: {label}")
     print(f"Predicted label: {predicted}")
-    print(f"Correct: {predicted == label}")
-    print(f"Wrote {args.out_dir / 'single-image.idx3-ubyte'}")
-    print(f"Wrote {args.out_dir / 'single-label.idx1-ubyte'}")
+    print(f"Correct: {correct}")
     print(f"Wrote {args.out_dir / 'single-image.pgm'}")
     print(f"Wrote {args.input_json}")
     print(f"Wrote {metadata_file}")

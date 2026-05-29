@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 from typing import Iterable, List
 
+import numpy as np
 import torch
 from torch import nn
 
@@ -29,33 +30,69 @@ except ImportError:  # pragma: no cover - handled at runtime
 
 
 INPUT_SIZE = 784
-L1_SIZE = 200
-L2_SIZE = 50
-OUTPUT_SIZE = 10
+IMAGE_HEIGHT = 28
+IMAGE_WIDTH = 28
+IMAGE_CHANNELS = 1
+CONV1_OUT_CHANNELS = 8
+CONV2_OUT_CHANNELS = 16
+CONV_KERNEL_SIZE = 3
+CONV_STRIDE = 2
+CONV_PADDING = 1
+FC_HIDDEN_SIZE = 32
+DATASET_NAME = os.environ.get("DATASET_NAME", "mnist").strip().lower()
+CHESTMNIST_NUM_LABELS = 14
+OUTPUT_SIZE = CHESTMNIST_NUM_LABELS if DATASET_NAME == "chestmnist" else 10
 BATCH_SIZE = 32
 NUM_TRAIN_IMAGES = 10_000
 LEARNING_RATE = 0.1
-MODEL_LAYOUT = (
-    ("fc1.weight", L1_SIZE, INPUT_SIZE),
-    ("fc1.bias", L1_SIZE, 1),
-    ("fc2.weight", L2_SIZE, L1_SIZE),
-    ("fc2.bias", L2_SIZE, 1),
-    ("fc3.weight", OUTPUT_SIZE, L2_SIZE),
-    ("fc3.bias", OUTPUT_SIZE, 1),
-)
 
 
-class FederatedMLP(nn.Module):
+def model_layout() -> tuple[tuple[str, tuple[int, ...]], ...]:
+    return (
+        ("conv1.weight", (CONV1_OUT_CHANNELS, IMAGE_CHANNELS, CONV_KERNEL_SIZE, CONV_KERNEL_SIZE)),
+        ("conv1.bias", (CONV1_OUT_CHANNELS,)),
+        ("conv2.weight", (CONV2_OUT_CHANNELS, CONV1_OUT_CHANNELS, CONV_KERNEL_SIZE, CONV_KERNEL_SIZE)),
+        ("conv2.bias", (CONV2_OUT_CHANNELS,)),
+        ("fc1.weight", (FC_HIDDEN_SIZE, CONV2_OUT_CHANNELS * 7 * 7)),
+        ("fc1.bias", (FC_HIDDEN_SIZE,)),
+        ("fc2.weight", (OUTPUT_SIZE, FC_HIDDEN_SIZE)),
+        ("fc2.bias", (OUTPUT_SIZE,)),
+    )
+
+
+MODEL_LAYOUT = model_layout()
+
+
+class FederatedCNN(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        self.fc1 = nn.Linear(INPUT_SIZE, L1_SIZE)
-        self.fc2 = nn.Linear(L1_SIZE, L2_SIZE)
-        self.fc3 = nn.Linear(L2_SIZE, OUTPUT_SIZE)
+        self.conv1 = nn.Conv2d(
+            IMAGE_CHANNELS,
+            CONV1_OUT_CHANNELS,
+            kernel_size=CONV_KERNEL_SIZE,
+            stride=CONV_STRIDE,
+            padding=CONV_PADDING,
+        )
+        self.conv2 = nn.Conv2d(
+            CONV1_OUT_CHANNELS,
+            CONV2_OUT_CHANNELS,
+            kernel_size=CONV_KERNEL_SIZE,
+            stride=CONV_STRIDE,
+            padding=CONV_PADDING,
+        )
+        self.fc1 = nn.Linear(CONV2_OUT_CHANNELS * 7 * 7, FC_HIDDEN_SIZE)
+        self.fc2 = nn.Linear(FC_HIDDEN_SIZE, OUTPUT_SIZE)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.reshape(-1, IMAGE_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH)
+        x = torch.tanh(self.conv1(x))
+        x = torch.tanh(self.conv2(x))
+        x = x.reshape(x.shape[0], -1)
         x = torch.tanh(self.fc1(x))
-        x = torch.tanh(self.fc2(x))
-        return self.fc3(x)
+        return self.fc2(x)
+
+
+FederatedMLP = FederatedCNN
 
 
 def ensure_crypto() -> None:
@@ -81,7 +118,7 @@ def repo_root() -> Path:
         *Path(__file__).resolve().parents,
     ]
     for candidate in candidates:
-        if (candidate / "data" / "mnist").exists():
+        if (candidate / "data" / "mnist").exists() or (candidate / "data" / "chestmnist").exists():
             return candidate
     return node_server_dir().parent
 
@@ -106,6 +143,7 @@ def input_data_file(name: str) -> Path:
     candidates = [
         data_dir() / name,
         repo_root() / "data" / "mnist" / "data" / name,
+        repo_root() / "data" / "chestmnist" / name,
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -118,6 +156,7 @@ def initial_model_file() -> Path:
         data_dir() / "random_start.bin",
         data_dir() / "gm.bin",
         data_dir() / "backup.bin",
+        repo_root() / "data" / "initial_gm" / current_dataset_name() / "aggregated.bin",
         repo_root() / "data" / "mnist" / "data" / "random_start.bin",
         repo_root() / "data" / "mnist" / "data" / "backup.bin",
     ]
@@ -129,30 +168,48 @@ def initial_model_file() -> Path:
 
 
 def model_byte_size() -> int:
-    return sum(rows * cols * 8 for _, rows, cols in MODEL_LAYOUT)
+    return sum(shape_numel(shape) * 8 for _, shape in MODEL_LAYOUT)
 
 
-def _read_matrix(blob: bytes, offset: int, rows: int, cols: int) -> tuple[torch.Tensor, int]:
-    count = rows * cols
+def read_idx_image_count(path: Path) -> int:
+    blob = path.read_bytes()
+    if len(blob) < 16:
+        raise ValueError(f"{path} is too small to be a valid IDX image file")
+    return (len(blob) - 16) // INPUT_SIZE
+
+
+def read_idx_label_count(path: Path) -> int:
+    blob = path.read_bytes()
+    if len(blob) < 8:
+        raise ValueError(f"{path} is too small to be a valid IDX label file")
+    return len(blob) - 8
+
+
+def shape_numel(shape: tuple[int, ...]) -> int:
+    count = 1
+    for dim in shape:
+        count *= dim
+    return count
+
+
+def _read_tensor(blob: bytes, offset: int, shape: tuple[int, ...]) -> tuple[torch.Tensor, int]:
+    count = shape_numel(shape)
     byte_count = count * 8
     chunk = blob[offset : offset + byte_count]
     if len(chunk) != byte_count:
         raise ValueError("Unexpected end of model file")
     values = torch.tensor(struct.unpack("<" + "d" * count, chunk), dtype=torch.float64)
-    matrix = values.reshape(cols, rows).t().contiguous()
-    return matrix, offset + byte_count
+    return values.reshape(shape).contiguous(), offset + byte_count
 
 
-def read_model_bin(path: Path) -> FederatedMLP:
-    model = FederatedMLP().double()
+def read_model_bin(path: Path) -> FederatedCNN:
+    model = FederatedCNN().double()
     blob = path.read_bytes()
     offset = 0
     state = {}
-    for name, rows, cols in MODEL_LAYOUT:
-        matrix, offset = _read_matrix(blob, offset, rows, cols)
-        if cols == 1:
-            matrix = matrix.reshape(rows)
-        state[name] = matrix
+    for name, shape in MODEL_LAYOUT:
+        tensor, offset = _read_tensor(blob, offset, shape)
+        state[name] = tensor
     if offset != len(blob):
         raise ValueError(f"{path} contains {len(blob) - offset} trailing bytes")
     model.load_state_dict(state)
@@ -160,36 +217,33 @@ def read_model_bin(path: Path) -> FederatedMLP:
     return model
 
 
-def matrix_to_save_bytes(tensor: torch.Tensor, rows: int, cols: int) -> bytes:
-    matrix = tensor.detach().cpu().to(torch.float64)
-    if cols == 1:
-        matrix = matrix.reshape(rows, 1)
-    out = bytearray()
-    for j in range(cols):
-        for i in range(rows):
-            out += struct.pack("<d", float(matrix[i, j]))
-    return bytes(out)
+def tensor_to_save_bytes(tensor: torch.Tensor, shape: tuple[int, ...]) -> bytes:
+    values = tensor.detach().cpu().to(torch.float64)
+    if tuple(values.shape) != shape:
+        raise ValueError(f"Tensor shape mismatch: got {tuple(values.shape)}, expected {shape}")
+    flat = values.reshape(-1).tolist()
+    return struct.pack("<" + "d" * len(flat), *flat)
 
 
-def model_to_bytes(model: FederatedMLP) -> bytes:
+def model_to_bytes(model: FederatedCNN) -> bytes:
     state = model.state_dict()
-    return b"".join(matrix_to_save_bytes(state[name], rows, cols) for name, rows, cols in MODEL_LAYOUT)
+    return b"".join(tensor_to_save_bytes(state[name], shape) for name, shape in MODEL_LAYOUT)
 
 
-def write_model_bin(model: FederatedMLP, path: Path) -> None:
+def write_model_bin(model: FederatedCNN, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(model_to_bytes(model))
 
 
-def random_model() -> FederatedMLP:
-    model = FederatedMLP().double()
+def random_model() -> FederatedCNN:
+    model = FederatedCNN().double()
     with torch.no_grad():
         for param in model.parameters():
             param.uniform_(-0.5, 0.5)
     return model
 
 
-def load_or_random(path: Path) -> FederatedMLP:
+def load_or_random(path: Path) -> FederatedCNN:
     if path.exists() and path.stat().st_size == model_byte_size():
         return read_model_bin(path)
     if path.exists():
@@ -213,18 +267,103 @@ def read_idx_images(path: Path, limit: int = NUM_TRAIN_IMAGES) -> torch.Tensor:
     return ((raw.reshape(limit, INPUT_SIZE) - 127.5) / 127.5).contiguous()
 
 
+def read_npz_images_and_labels(path: Path) -> tuple[torch.Tensor, torch.Tensor]:
+    with np.load(path) as bundle:
+        if "images" not in bundle or "labels" not in bundle:
+            raise ValueError(f"{path} must contain 'images' and 'labels' arrays")
+        images = bundle["images"]
+        labels = bundle["labels"]
+
+    if images.ndim == 4 and images.shape[-1] == 1:
+        images = images[..., 0]
+    if images.ndim != 3 or tuple(images.shape[1:]) != (IMAGE_HEIGHT, IMAGE_WIDTH):
+        raise ValueError(f"{path} has unexpected image shape {images.shape}; expected (N, 28, 28)")
+
+    flat_images = torch.from_numpy(images.reshape(images.shape[0], INPUT_SIZE)).to(torch.float64)
+    normalized_images = ((flat_images - 127.5) / 127.5).contiguous()
+    label_tensor = torch.from_numpy(labels)
+    return normalized_images, label_tensor
+
+
+def current_dataset_name() -> str:
+    return DATASET_NAME
+
+
+def is_multilabel_dataset() -> bool:
+    return current_dataset_name() == "chestmnist"
+
+
+def train_dataset_paths() -> tuple[Path, Path | None]:
+    if is_multilabel_dataset():
+        return input_data_file("train-data.npz"), None
+    return input_data_file("train-images.idx3-ubyte"), input_data_file("train-labels.idx1-ubyte")
+
+
+def test_dataset_paths() -> tuple[Path, Path | None]:
+    if is_multilabel_dataset():
+        return input_data_file("test-data.npz"), None
+    return input_data_file("t10k-images.idx3-ubyte"), input_data_file("t10k-labels.idx1-ubyte")
+
+
+def load_training_dataset() -> tuple[torch.Tensor, torch.Tensor]:
+    train_data_path, train_labels_path = train_dataset_paths()
+    if is_multilabel_dataset():
+        images, labels = read_npz_images_and_labels(train_data_path)
+        labels = labels.to(torch.float64).reshape(images.shape[0], OUTPUT_SIZE)
+        return images, labels
+
+    assert train_labels_path is not None
+    num_images = read_idx_image_count(train_data_path)
+    num_labels = read_idx_label_count(train_labels_path)
+    if num_images != num_labels:
+        raise ValueError(
+            f"Mismatched training split sizes: {train_data_path} has {num_images} images "
+            f"but {train_labels_path} has {num_labels} labels"
+        )
+    images = read_idx_images(train_data_path, limit=num_images)
+    labels = read_idx_labels(train_labels_path, limit=num_labels)
+    return images, labels
+
+
+def load_test_dataset() -> tuple[torch.Tensor, torch.Tensor]:
+    test_data_path, test_labels_path = test_dataset_paths()
+    if is_multilabel_dataset():
+        images, labels = read_npz_images_and_labels(test_data_path)
+        labels = labels.to(torch.float64).reshape(images.shape[0], OUTPUT_SIZE)
+        return images, labels
+
+    assert test_labels_path is not None
+    limit = min(10_000, test_labels_path.stat().st_size - 8)
+    images = read_idx_images(test_data_path, limit=limit)
+    labels = read_idx_labels(test_labels_path, limit=limit)
+    return images, labels
+
+
+def batch_accuracy_stats(logits: torch.Tensor, labels: torch.Tensor) -> tuple[int, int]:
+    if is_multilabel_dataset():
+        predictions = (torch.sigmoid(logits) >= 0.5).to(labels.dtype)
+        correct = int((predictions == labels).sum().item())
+        total = int(labels.numel())
+        return correct, total
+
+    correct = int((logits.argmax(dim=1) == labels).sum().item())
+    total = int(labels.shape[0])
+    return correct, total
+
+
 def train_model(epochs: int, aggregator_public_key_der_hex: str) -> None:
     model = load_or_random(initial_model_file())
-    images = read_idx_images(input_data_file("train-images.idx3-ubyte"))
-    labels = read_idx_labels(input_data_file("train-labels.idx1-ubyte"))
+    images, labels = load_training_dataset()
+    num_images = int(images.shape[0])
     optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
-    criterion = nn.CrossEntropyLoss()
+    criterion: nn.Module = nn.BCEWithLogitsLoss() if is_multilabel_dataset() else nn.CrossEntropyLoss()
 
     for epoch in range(1, epochs + 1):
-        indices = list(range(NUM_TRAIN_IMAGES))
+        indices = list(range(num_images))
         random.shuffle(indices)
         correct = 0
-        for start in range(0, NUM_TRAIN_IMAGES, BATCH_SIZE):
+        total_predictions = 0
+        for start in range(0, num_images, BATCH_SIZE):
             batch_idx = torch.tensor(indices[start : start + BATCH_SIZE], dtype=torch.long)
             x = images.index_select(0, batch_idx)
             y = labels.index_select(0, batch_idx)
@@ -233,9 +372,12 @@ def train_model(epochs: int, aggregator_public_key_der_hex: str) -> None:
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            correct += int((logits.argmax(dim=1) == y).sum().item())
+            batch_correct, batch_total = batch_accuracy_stats(logits, y)
+            correct += batch_correct
+            total_predictions += batch_total
+        accuracy_percent = (correct / total_predictions) * 100 if total_predictions else 0.0
         print(f"Epoch: {epoch}/{epochs}")
-        print(f"Accuracy: {correct}/{NUM_TRAIN_IMAGES}")
+        print(f"Accuracy: {accuracy_percent:.2f}% ({correct}/{total_predictions})")
         print()
 
     lm_path = data_dir() / "lm.bin"
@@ -410,10 +552,10 @@ def aggregate(num_files: int | None = None) -> None:
     else:
         print(f"Aggregating {len(model_paths)} received model file(s).")
 
-    models: List[FederatedMLP] = [read_model_bin(path) for path in model_paths]
+    models: List[FederatedCNN] = [read_model_bin(path) for path in model_paths]
     if not models:
         raise ValueError("aggregate requires at least one model")
-    avg_model = FederatedMLP().double()
+    avg_model = FederatedCNN().double()
     avg_state = {}
     for key in avg_model.state_dict().keys():
         avg_state[key] = torch.stack([m.state_dict()[key] for m in models]).mean(dim=0)
@@ -434,21 +576,26 @@ def sign_file(path: Path, key_file: Path) -> None:
 
 
 def run_test(model_path: Path) -> None:
-    test_images = input_data_file("t10k-images.idx3-ubyte")
-    test_labels = input_data_file("t10k-labels.idx1-ubyte")
-    if not test_images.exists() or not test_labels.exists():
+    test_images, test_labels = test_dataset_paths()
+    if not test_images.exists():
         return
-    limit = min(10_000, (test_labels.stat().st_size - 8))
+    if test_labels is not None and not test_labels.exists():
+        return
     model = read_model_bin(model_path)
     model.eval()
-    images = read_idx_images(test_images, limit=limit)
-    labels = read_idx_labels(test_labels, limit=limit)
+    images, labels = load_test_dataset()
+    limit = int(images.shape[0])
     correct = 0
+    total_predictions = 0
     with torch.no_grad():
         for start in range(0, limit, BATCH_SIZE):
-            logits = model(images[start : start + BATCH_SIZE])
-            correct += int((logits.argmax(dim=1) == labels[start : start + BATCH_SIZE]).sum().item())
-    print(f"Test accuracy: {correct}/{limit}")
+            batch_logits = model(images[start : start + BATCH_SIZE])
+            batch_labels = labels[start : start + BATCH_SIZE]
+            batch_correct, batch_total = batch_accuracy_stats(batch_logits, batch_labels)
+            correct += batch_correct
+            total_predictions += batch_total
+    accuracy_percent = (correct / total_predictions) * 100 if total_predictions else 0.0
+    print(f"Test accuracy: {accuracy_percent:.2f}% ({correct}/{total_predictions})")
 
 
 def save_random() -> None:

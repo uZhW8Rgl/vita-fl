@@ -27,7 +27,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 4,
         "x": 0,
         "y": 0
       },
@@ -65,8 +65,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
+        "w": 4,
+        "x": 4,
         "y": 0
       },
       "id": 2,
@@ -103,8 +103,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 12,
+        "w": 4,
+        "x": 8,
         "y": 0
       },
       "id": 3,
@@ -139,13 +139,38 @@
         "type": "loki",
         "uid": "Loki"
       },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "green",
+                "value": 70
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 0
+        "w": 24,
+        "x": 0,
+        "y": 4
       },
-      "id": 4,
+      "id": 9,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
@@ -164,13 +189,116 @@
             "type": "loki",
             "uid": "Loki"
           },
-          "expr": "sum(count_over_time({compose_service=~\"VM-.*\"} |~ \"Reporting aggregator timeout|aggregator_timeout\" [$__range]))",
+          "expr": "avg by (compose_service) (last_over_time({compose_service=~\"VM-.*\"} |= \"Accuracy:\" | regexp \"Accuracy: (?P<accuracy>[0-9.]+)%\" | unwrap accuracy [$__range]))",
+          "legendFormat": "{{compose_service}}",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "Timeout Reports",
+      "title": "Latest Worker Accuracy",
       "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "Loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "auto"
+          },
+          "decimals": 2,
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "Loki"
+          },
+          "expr": "avg by (compose_service) (avg_over_time({compose_service=~\"VM-.*\"} |= \"Accuracy:\" | regexp \"Accuracy: (?P<accuracy>[0-9.]+)%\" | unwrap accuracy [1m]))",
+          "legendFormat": "{{compose_service}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Worker Accuracy",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "Tempo"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "links": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 6,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": ["sum"],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Start time"
+          }
+        ]
+      },
+      "pluginVersion": "11.6.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "Tempo"
+          },
+          "limit": 20,
+          "query": "{ resource.service.name =~ \"dfl-.*\" }",
+          "queryType": "traceql",
+          "refId": "A",
+          "tableType": "traces"
+        }
+      ],
+      "title": "Tempo Trace Search",
+      "type": "table"
     },
     {
       "datasource": {
@@ -192,7 +320,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 4
+        "y": 16
       },
       "id": 5,
       "options": {
@@ -243,187 +371,14 @@
     },
     {
       "datasource": {
-        "type": "prometheus",
-        "uid": "Prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 0,
-          "unit": "short"
-        },
-        "overrides": []
+        "type": "loki",
+        "uid": "Loki"
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 4
-      },
-      "id": 6,
-      "options": {
-        "displayMode": "gradient",
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "maxVizHeight": 300,
-        "minVizHeight": 16,
-        "minVizWidth": 8,
-        "namePlacement": "auto",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "showUnfilled": true,
-        "sizing": "auto",
-        "valueMode": "color"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "Prometheus"
-          },
-          "editorMode": "code",
-          "expr": "sum by (span_name) (calls_total{service_name=\"dfl-node-worker\"})",
-          "instant": true,
-          "legendFormat": "{{span_name}}",
-          "range": false,
-          "refId": "A"
-        }
-      ],
-      "title": "OTel Span Counts",
-      "type": "bargauge"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "lineWidth": 1,
-            "showPoints": "auto"
-          },
-          "decimals": 2,
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 12
-      },
-      "id": 7,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "avg by (compose_service) (avg_over_time({compose_service=~\"VM-.*\"} |= \"Accuracy:\" | regexp \"Accuracy: (?P<accuracy>[0-9]+)/10000\" | unwrap accuracy [1m])) / 100",
-          "legendFormat": "{{compose_service}}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Worker Accuracy",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 2,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 50
-              },
-              {
-                "color": "green",
-                "value": 70
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 12
-      },
-      "id": 9,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "avg by (compose_service) (last_over_time({compose_service=~\"VM-.*\"} |= \"Accuracy:\" | regexp \"Accuracy: (?P<accuracy>[0-9]+)/10000\" | unwrap accuracy [$__range])) / 100",
-          "legendFormat": "{{compose_service}}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Latest Worker Accuracy",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 20
+        "y": 16
       },
       "id": 10,
       "options": {
@@ -464,11 +419,11 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 24,
         "x": 0,
-        "y": 28
+        "y": 24
       },
-      "id": 11,
+      "id": 13,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
@@ -487,12 +442,13 @@
             "type": "loki",
             "uid": "Loki"
           },
-          "expr": "sum(sum_over_time({compose_service=\"smart-contracts\"} |= \"\\\"kind\\\":\\\"gas_cost\\\"\" | json | scope=\"smart_contracts_init\" | unwrap costEth [$__range]))",
+          "expr": "sum by (compose_service) (sum_over_time({compose_service=~\"VM-.*\"} |= \"\\\"kind\\\":\\\"gas_cost\\\"\" | json | scope=\"worker\" | unwrap costEth [$__range]))",
+          "legendFormat": "{{compose_service}}",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "Contract Init Cost ETH",
+      "title": "Worker Cost ETH",
       "type": "stat"
     },
     {
@@ -509,104 +465,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 28
-      },
-      "id": 12,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "sum(sum_over_time({compose_service=\"smart-contracts\"} |= \"\\\"kind\\\":\\\"gas_cost\\\"\" | json | scope=\"smart_contracts_init\" | unwrap costEur [$__range]))",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Contract Init Cost EUR",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 25,
-            "lineWidth": 1,
-            "showPoints": "never"
-          },
-          "decimals": 0
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 28
-      },
-      "id": 13,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "sum by (compose_service) (sum_over_time({compose_service=~\"VM-.*\"} |= \"\\\"kind\\\":\\\"gas_cost\\\"\" | json | scope=\"worker\" | unwrap gasUsed [$__range]))",
-          "legendFormat": "{{compose_service}} gas",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Worker Gas Used",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 2,
-          "unit": "currencyEUR"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
+        "w": 24,
         "x": 0,
-        "y": 32
+        "y": 28
       },
       "id": 14,
       "options": {
@@ -641,22 +502,31 @@
         "type": "loki",
         "uid": "Loki"
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 36
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "unit": "short"
+        },
+        "overrides": []
       },
-      "id": 8,
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 32
+      },
+      "id": 15,
       "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showCommonLabels": false,
-        "showLabels": true,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": true
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
       },
       "targets": [
         {
@@ -664,16 +534,108 @@
             "type": "loki",
             "uid": "Loki"
           },
-          "expr": "{compose_service=~\"VM-.*|smart-contracts|anvil|ipfs\"}",
+          "expr": "last_over_time({compose_service=~\"VM-.*\"} |= \"\\\"kind\\\":\\\"worker_score\\\"\" | json | unwrap score [$__range])",
+          "legendFormat": "{{compose_service}}",
           "queryType": "range",
           "refId": "A"
         }
       ],
-      "title": "All Runtime Logs",
-      "type": "logs"
+      "title": "Current Worker Scores",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "id": 16,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_current_round",
+          "refId": "A"
+        }
+      ],
+      "title": "Current Round",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "id": 17,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "name"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_current_aggregator{aggregator_vm!=\"unknown\"}",
+          "instant": true,
+          "legendFormat": "{{aggregator_vm}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Current Aggregator",
+      "type": "stat"
     }
   ],
-  "refresh": "30s",
+  "refresh": "5s",
   "schemaVersion": 39,
   "tags": ["dfl", "training", "observability"],
   "templating": {
@@ -687,6 +649,6 @@
   "timezone": "",
   "title": "DFL Training Overview",
   "uid": "dfl-training-overview",
-  "version": 2,
+  "version": 1,
   "weekStart": ""
 }
