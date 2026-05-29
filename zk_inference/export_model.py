@@ -170,7 +170,10 @@ def write_manifest(
             "batch_size_training": BATCH_SIZE,
             "layout": [{"name": name, "shape": list(shape)} for name, shape in MODEL_LAYOUT],
             "hidden_activations": "tanh",
-            "architecture": "conv(1->8, k=3, s=2, p=1) -> tanh -> conv(8->16, k=3, s=2, p=1) -> tanh -> flatten -> linear(784->32) -> tanh -> linear(32->10)",
+            "architecture": (
+                "conv(1->8, k=3, s=2, p=1) -> tanh -> conv(8->16, k=3, s=2, p=1) "
+                "-> tanh -> flatten -> linear(784->32) -> tanh -> linear(32->10)"
+            ),
             "native_output": "logits",
         },
         "files": {

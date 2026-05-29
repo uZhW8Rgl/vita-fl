@@ -148,8 +148,16 @@ def select_index(
 
 def main() -> int:
     dataset = current_dataset_name()
-    default_images = Path("data/chestmnist/test_data/test-data.npz") if dataset == "chestmnist" else Path("data/mnist/data/t10k-images.idx3-ubyte")
-    default_labels = Path("data/chestmnist/test_data/test-data.npz") if dataset == "chestmnist" else Path("data/mnist/data/t10k-labels.idx1-ubyte")
+    default_images = (
+        Path("data/chestmnist/test_data/test-data.npz")
+        if dataset == "chestmnist"
+        else Path("data/mnist/data/t10k-images.idx3-ubyte")
+    )
+    default_labels = (
+        Path("data/chestmnist/test_data/test-data.npz")
+        if dataset == "chestmnist"
+        else Path("data/mnist/data/t10k-labels.idx1-ubyte")
+    )
     parser = argparse.ArgumentParser(description="Create a single-image inference query for EZKL.")
     parser.add_argument("--model", type=Path, default=default_model_path(), help="Model to use for prediction")
     parser.add_argument("--images", type=Path, default=default_images)

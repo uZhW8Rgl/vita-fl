@@ -116,6 +116,21 @@ type EdgeOptions = {
     spanAttributes?: Record<string, unknown>;
 };
 
+type RoundEventOptions = {
+    round?: number;
+    role?: string;
+    attributes?: Record<string, unknown>;
+};
+
+type RoundSpanOptions = {
+    round?: number;
+    role?: string;
+    startTimeMs?: number;
+    endTimeMs?: number;
+    status?: string;
+    attributes?: Record<string, unknown>;
+};
+
 async function exportPairedServiceEdge({
     round,
     source,
@@ -186,7 +201,7 @@ async function recordWorkflowEdge(
     },
 ) {
     const worker = workerServiceName();
-    const edges: Record<string, string[][]> = {
+    const workflowEdges: Record<string, string[][]> = {
         "worker.fetch_global_model": [
             [worker, "smart-contracts"],
             [worker, "ipfs-kubo"],
@@ -202,7 +217,8 @@ async function recordWorkflowEdge(
             ["dfl-aggregator", "smart-contracts"],
         ],
         "aggregator.selection": [["dfl-aggregator", "smart-contracts"]],
-    }[name];
+    };
+    const edges = workflowEdges[name];
     if (!edges) return;
 
     for (const [source, target] of edges) {
@@ -221,7 +237,7 @@ async function recordWorkflowEdge(
 
 export async function recordRoundEvent(
     name: string,
-    { round = 0, role = "", attributes: eventAttributes = {} } = {},
+    { round = 0, role = "", attributes: eventAttributes = {} }: RoundEventOptions = {},
 ) {
     const timestamp = nowUnixNano();
     await exportSpan({
@@ -250,7 +266,7 @@ export async function recordRoundSpan(
         endTimeMs,
         status = "OK",
         attributes: spanAttributes = {},
-    } = {},
+    }: RoundSpanOptions = {},
 ) {
     const start = Number.isFinite(startTimeMs) ? Number(startTimeMs) : Date.now();
     const end = Number.isFinite(endTimeMs) ? Number(endTimeMs) : Date.now();

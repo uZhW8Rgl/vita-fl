@@ -200,7 +200,7 @@ def run_ezkl(
 
 @mcp.tool()
 def fetch_current_onchain_model_bundle(out_dir: str = "zk_inference/out") -> str:
-    """Read current CIDs from GMStorage, fetch both artifacts from IPFS, verify the RSA signature, and export the model for EZKL."""
+    """Read current CIDs, fetch both IPFS artifacts, verify the signature, and export for EZKL."""
     record_mcp_tool_call("fetch_current_onchain_model_bundle")
     from blockchain_source import (
         load_env_file, DEFAULT_ENV_FILE, normalize_host_rpc_url, normalize_ipfs_api_url,

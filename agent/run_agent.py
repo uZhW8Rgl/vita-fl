@@ -10,8 +10,6 @@ import json
 import os
 import sys
 import traceback
-import urllib.error
-import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
@@ -341,7 +339,7 @@ def _local_langchain_tools():
 
     @tool
     def fetch_latest_verified_model_bundle() -> str:
-        """Fetch the latest verified model bundle from the blockchain, download it from IPFS, and verify its signature."""
+        """Fetch the latest verified model bundle and verify its on-chain signature."""
         from mcp_server import fetch_current_onchain_model_bundle
         payload = json.loads(fetch_current_onchain_model_bundle())
         _remember_verified_bundle(payload)
@@ -349,7 +347,7 @@ def _local_langchain_tools():
 
     @tool
     def generate_random_chestmnist_image(index: Any = None) -> str:
-        """Generate a ChestMNIST image sample, remember it for this chat session, and return the sample files and labels."""
+        """Generate a ChestMNIST sample, remember it for the session, and return its artifacts."""
         from mcp_server import create_single_image_query
         sample = create_single_image_query(index=_normalize_optional_index(index))
         _remember_generated_sample(sample)
@@ -357,7 +355,7 @@ def _local_langchain_tools():
 
     @tool
     def generate_zk_inference_proof(index: Any = None) -> str:
-        """Use the current verified bundle and the remembered session image to create an EZKL ZK inference proof; do not ask for an index if this session already generated a sample."""
+        """Build an EZKL proof from the current verified bundle and the remembered session image."""
         from mcp_server import create_single_image_query, export_model, run_ezkl
 
         bundle_state, bundle_refreshed = _ensure_current_verified_bundle()
@@ -415,16 +413,28 @@ def _local_langchain_tools():
 def _default_llm_prompt(args: argparse.Namespace) -> str:
     return (
         "You are a local thesis agent for model provenance and ZK inference. "
-        "You must decide from the user's intent whether to answer directly or use tools; do not rely on exact keywords. "
-        "For greetings, small talk, acknowledgements, or general conversation, answer directly without using any tool. "
-        "Use tools only when the user needs external state or actions, such as bundles, signatures, IPFS artifacts, dataset samples, inference, or proofs. "
+        "You must decide from the user's intent whether to answer directly or use tools. "
+        "Do not rely on exact keywords. "
+        "For greetings, small talk, acknowledgements, or general conversation, "
+        "answer directly without using any tool. "
+        "Use tools only when the user needs external state or actions, such as "
+        "bundles, signatures, IPFS artifacts, dataset samples, inference, or proofs. "
         "Do not force a tool call when a direct answer is sufficient. "
-        "If the request can be answered from the conversation alone, reply normally and do not mention tools. "
+        "If the request can be answered from the conversation alone, reply normally "
+        "and do not mention tools. "
         "Only call a tool when it materially helps answer the user's actual request. "
-        "When the user asks for a proof or asks to verify an image against the latest model, plan the workflow across the available tools: check the blockchain-backed verified bundle first, obtain a ChestMNIST sample if needed, then produce the proof. "
-        "Always check the blockchain-backed current bundle before using a remembered model for proof generation, and only reuse the remembered bundle if it is already the current verified on-chain bundle. "
-        "Reuse remembered tool results from the current session when they satisfy the user's request, but refresh them when the user asks for the latest or for a new random sample. "
-        "If the current session already has a generated ChestMNIST sample and the user asks to continue with the proof, use that remembered sample automatically instead of asking for its index again. "
+        "When the user asks for a proof or asks to verify an image against the latest "
+        "model, plan the workflow across the available tools: check the blockchain-backed "
+        "verified bundle first, obtain a ChestMNIST sample if needed, then produce the proof. "
+        "Always check the blockchain-backed current bundle before using a remembered "
+        "model for proof generation, and only reuse the remembered bundle if it is "
+        "already the current verified on-chain bundle. "
+        "Reuse remembered tool results from the current session when they satisfy "
+        "the user's request, but refresh them when the user asks for the latest "
+        "or for a new random sample. "
+        "If the current session already has a generated ChestMNIST sample and the "
+        "user asks to continue with the proof, use that remembered sample "
+        "automatically instead of asking for its index again. "
         "Treat GMStorage and DeviceRegistry as the source of truth for the current verified bundle. "
         "Keep answers short and concrete. "
         f"Use sample index {args.index} only if a proof flow needs one and the user did not provide it. "
@@ -656,9 +666,12 @@ class AgentRuntime:
                 if msg_type is None and isinstance(message, dict):
                     msg_type = message.get("type") or message.get("role")
                 if msg_type == "tool":
+                    label = getattr(message, "name", None)
+                    if label is None and isinstance(message, dict):
+                        label = message.get("name")
                     tool_events.append({
                         "type": "tool",
-                        "label": getattr(message, "name", None) or (message.get("name") if isinstance(message, dict) else "tool"),
+                        "label": label or "tool",
                         "detail": _message_text(message),
                     })
                 elif msg_type in {"ai", "assistant"}:
@@ -765,14 +778,16 @@ class AgentRuntime:
                     )
                 elif timed_out:
                     assistant_message = self._assistant_response(
-                        "The local LLM did not answer before the chat timeout. Please try a shorter prompt or ask for a specific artifact/tool.",
+                        "The local LLM did not answer before the chat timeout. "
+                        "Please try a shorter prompt or ask for a specific artifact/tool.",
                         [{"type": "error", "label": "Chat Timeout", "detail": "Local Ollama response timed out"}],
                     )
                 else:
                     assistant_message = self._assistant_response(content, tool_events)
             elif timed_out:
                 assistant_message = self._assistant_response(
-                    "The local LLM did not answer before the chat timeout. Please try a shorter prompt or ask for a specific artifact/tool.",
+                    "The local LLM did not answer before the chat timeout. "
+                    "Please try a shorter prompt or ask for a specific artifact/tool.",
                     [{"type": "error", "label": "Chat Timeout", "detail": "Local Ollama response timed out"}],
                 )
             else:

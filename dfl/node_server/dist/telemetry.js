@@ -1,18 +1,14 @@
 import crypto from 'crypto';
-
 const endpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || "";
 let warned = false;
-
 const SpanKind = {
     INTERNAL: 1,
     SERVER: 2,
     CLIENT: 3,
 };
-
 function nowUnixNano() {
     return String(BigInt(Date.now()) * 1000000n);
 }
-
 function traceIdForRound(round) {
     return crypto
         .createHash('sha256')
@@ -20,44 +16,41 @@ function traceIdForRound(round) {
         .digest('hex')
         .slice(0, 32);
 }
-
 function spanId() {
     return crypto.randomBytes(8).toString('hex');
 }
-
 function workerServiceName() {
     const deviceId = String(process.env.DEVICE_ID || "").trim();
     return deviceId ? `dfl-worker-${deviceId}` : "dfl-worker";
 }
-
 function serviceNameForRole(role) {
-    if (role === "aggregator") return "dfl-aggregator";
-    if (role === "worker") return workerServiceName();
+    if (role === "aggregator")
+        return "dfl-aggregator";
+    if (role === "worker")
+        return workerServiceName();
     return process.env.OTEL_SERVICE_NAME || "dfl-node";
 }
-
 function attributeValue(value) {
     if (typeof value === 'number' && Number.isFinite(value)) {
         return Number.isInteger(value)
             ? { intValue: String(value) }
             : { doubleValue: value };
     }
-    if (typeof value === 'boolean') return { boolValue: value };
+    if (typeof value === 'boolean')
+        return { boolValue: value };
     return { stringValue: String(value ?? "") };
 }
-
 function attributes(values) {
     return Object.entries(values)
         .filter(([, value]) => value !== undefined && value !== null)
         .map(([key, value]) => ({
-            key,
-            value: attributeValue(value),
-        }));
+        key,
+        value: attributeValue(value),
+    }));
 }
-
 async function exportSpan(span, resourceAttributes = {}) {
-    if (!endpoint) return;
-
+    if (!endpoint)
+        return;
     const payload = {
         resourceSpans: [
             {
@@ -82,7 +75,6 @@ async function exportSpan(span, resourceAttributes = {}) {
             },
         ],
     };
-
     try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 1000);
@@ -97,26 +89,17 @@ async function exportSpan(span, resourceAttributes = {}) {
             warned = true;
             console.warn(`OTel trace export failed (${response.status})`);
         }
-    } catch (error) {
+    }
+    catch (error) {
         if (!warned) {
             warned = true;
             console.warn("OTel trace export failed:", error);
         }
     }
 }
-
-async function exportPairedServiceEdge({
-    round,
-    source,
-    target,
-    name,
-    startTimeMs,
-    endTimeMs,
-    status = "OK",
-    spanAttributes = {},
-}) {
-    const start = Number.isFinite(startTimeMs) ? startTimeMs : Date.now();
-    const end = Number.isFinite(endTimeMs) ? endTimeMs : Date.now();
+async function exportPairedServiceEdge({ round, source, target, name, startTimeMs, endTimeMs, status = "OK", spanAttributes = {}, }) {
+    const start = Number.isFinite(startTimeMs) ? Number(startTimeMs) : Date.now();
+    const end = Number.isFinite(endTimeMs) ? Number(endTimeMs) : Date.now();
     const traceId = traceIdForRound(round);
     const clientSpanId = spanId();
     const serverSpanId = spanId();
@@ -128,7 +111,6 @@ async function exportPairedServiceEdge({
         "dfl.duration_ms": Math.max(0, Math.floor(end - start)),
         ...spanAttributes,
     };
-
     await exportSpan({
         traceId,
         spanId: clientSpanId,
@@ -146,7 +128,6 @@ async function exportPairedServiceEdge({
     }, {
         "service.name": source,
     });
-
     await exportSpan({
         traceId,
         spanId: serverSpanId,
@@ -163,10 +144,9 @@ async function exportPairedServiceEdge({
         "service.name": target,
     });
 }
-
 async function recordWorkflowEdge(name, options) {
     const worker = workerServiceName();
-    const edges = {
+    const workflowEdges = {
         "worker.fetch_global_model": [
             [worker, "smart-contracts"],
             [worker, "ipfs-kubo"],
@@ -182,9 +162,10 @@ async function recordWorkflowEdge(name, options) {
             ["dfl-aggregator", "smart-contracts"],
         ],
         "aggregator.selection": [["dfl-aggregator", "smart-contracts"]],
-    }[name];
-    if (!edges) return;
-
+    };
+    const edges = workflowEdges[name];
+    if (!edges)
+        return;
     for (const [source, target] of edges) {
         await exportPairedServiceEdge({
             ...options,
@@ -198,7 +179,6 @@ async function recordWorkflowEdge(name, options) {
         });
     }
 }
-
 export async function recordRoundEvent(name, { round = 0, role = "", attributes: eventAttributes = {} } = {}) {
     const timestamp = nowUnixNano();
     await exportSpan({
@@ -217,17 +197,9 @@ export async function recordRoundEvent(name, { round = 0, role = "", attributes:
         "service.name": serviceNameForRole(role),
     });
 }
-
-export async function recordRoundSpan(name, {
-    round = 0,
-    role = "",
-    startTimeMs,
-    endTimeMs,
-    status = "OK",
-    attributes: spanAttributes = {},
-} = {}) {
-    const start = Number.isFinite(startTimeMs) ? startTimeMs : Date.now();
-    const end = Number.isFinite(endTimeMs) ? endTimeMs : Date.now();
+export async function recordRoundSpan(name, { round = 0, role = "", startTimeMs, endTimeMs, status = "OK", attributes: spanAttributes = {}, } = {}) {
+    const start = Number.isFinite(startTimeMs) ? Number(startTimeMs) : Date.now();
+    const end = Number.isFinite(endTimeMs) ? Number(endTimeMs) : Date.now();
     await exportSpan({
         traceId: traceIdForRound(round),
         spanId: spanId(),

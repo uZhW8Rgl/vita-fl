@@ -79,7 +79,10 @@ def _entry_from_files_ls(parent: str, item: dict[str, Any]) -> IpfsEntry:
 
 
 def _entry_from_ls(parent: str, item: dict[str, Any]) -> IpfsEntry:
-    path = _join_ipfs_path(parent, item["Name"]) if not parent.startswith("/ipfs/") else f"{parent.rstrip('/')}/{item['Name']}"
+    if parent.startswith("/ipfs/"):
+        path = f"{parent.rstrip('/')}/{item['Name']}"
+    else:
+        path = _join_ipfs_path(parent, item["Name"])
     return IpfsEntry(
         path=path,
         name=item["Name"],
@@ -278,9 +281,15 @@ def discover_latest(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Discover and fetch the latest aggregated model bundle from local IPFS.")
+    parser = argparse.ArgumentParser(
+        description="Discover and fetch the latest aggregated model bundle from local IPFS."
+    )
     parser.add_argument("--api-url", default=DEFAULT_IPFS_API_URL)
-    parser.add_argument("--root", default=DEFAULT_IPFS_ROOT, help="MFS path like /models, or immutable path like /ipfs/<cid>")
+    parser.add_argument(
+        "--root",
+        default=DEFAULT_IPFS_ROOT,
+        help="MFS path like /models, or immutable path like /ipfs/<cid>",
+    )
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_DOWNLOAD_DIR)
     parser.add_argument("--fetch", action="store_true")
     parser.add_argument(

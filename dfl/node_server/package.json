@@ -15,14 +15,13 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/node": "^20.14.10",
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "@helia/unixfs": "^3.0.6",
     "@phala/dstack-sdk": "^0.5.7",
     "axios": "^1.7.2",
     "dotenv": "^16.4.5",
-    "helia": "^4.2.3",
     "web3": "^4.9.0"
   }
 }
