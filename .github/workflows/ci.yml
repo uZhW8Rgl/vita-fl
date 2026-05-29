@@ -79,8 +79,8 @@ jobs:
           python -m py_compile \
             agent/run_agent.py \
             agent/blockchain_source.py \
-            agent/ipfs_rag.py \
-            agent/zk_mcp_server.py \
+            agent/ipfs_bundle.py \
+            agent/mcp_server.py \
             data/mnist_tools.py \
             zk_inference/create_single_mnist_query.py \
             zk_inference/export_model.py \
