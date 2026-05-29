@@ -12,7 +12,7 @@ The current prototype combines:
 - TDX/DCAP quote verification through Solidity contracts,
 - RSA signature verification for global model artifacts,
 - EZKL-based zero-knowledge inference for a single dataset image,
-- and a local LangChain/Ollama agent that orchestrates retrieval, verification, and proof generation.
+- and a local LangChain/Ollama agent that orchestrates contract lookup, artifact verification, and proof generation.
 
 ## Repository Structure
 
@@ -24,7 +24,7 @@ The current prototype combines:
 - [dfl/node_server](./dfl/node_server/README.md): Node.js orchestration layer used by each worker.
 - [dfl/neural_network](./dfl/neural_network/README.md): Python/PyTorch CNN training, transfer, aggregation, and model serialization.
 - [zk_inference](./zk_inference/README.md): ONNX export, single-image query creation, EZKL proof generation, and proof verification.
-- [agent](./agent/README.md): Local LangChain/MCP agent for contract-based model retrieval, signature verification, and ZK inference.
+- [agent](./agent/README.md): Local LangChain/MCP agent for contract-based model lookup, signature verification, and ZK inference.
 
 ## Architecture
 
@@ -52,7 +52,7 @@ flowchart TB
     subgraph AgentLayer["Agent Layer"]
       direction LR
       AgentMain["run_agent.py\nworkflow orchestration"]
-      IPFSRAG["RAG \nartifact search"]
+      IPFSBundle["IPFS bundle\nselection + fetch"]
       Verify["artifact verification\nCID + RSA signature"]
       MCP["MCP / tool interface"]
     end
@@ -97,9 +97,9 @@ flowchart TB
 
   DeviceRegistry <--> AutomataDcapTdxV4Attestation
 
-  IPFSRAG --> Verify
-  AgentMain --> IPFSRAG
-  IPFSRAG <--> GMStorage
+  IPFSBundle --> Verify
+  AgentMain --> IPFSBundle
+  IPFSBundle <--> GMStorage
   Verify --> MCP
   MCP --> ZK
   MCP --> AgentMain 
@@ -163,7 +163,7 @@ sequenceDiagram
 | `dfl/node_server` | Worker orchestration, contract interaction, timing logic, and tracing | `dfl/start_node_neural_network.sh` |
 | `dfl/neural_network` | PyTorch training, local model transfer, aggregation, and serialization | `dfl/neural_network/cli.py` |
 | `ipfs` | Local content-addressed storage for global model artifacts | Kubo API on `127.0.0.1:5001` |
-| `agent` | Contract-based model retrieval, artifact fetching, signature verification, and proof orchestration | `agent/run_agent.py` |
+| `agent` | Contract-based model lookup, artifact fetching, signature verification, and proof orchestration | `agent/run_agent.py` |
 | `zk_inference` | ONNX export, single-query generation, EZKL witness/proof generation, and verification | `zk_inference/server.py` |
 | `observability` | Local logs, traces, metrics, and dashboarding | Grafana on `127.0.0.1:3000` |
 

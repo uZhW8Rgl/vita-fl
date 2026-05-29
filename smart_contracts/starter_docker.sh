@@ -18,6 +18,8 @@ else
 fi
 export RPC_URL=$rpc_url
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+KUBO_API_URL=${KUBO_API_URL:-http://ipfs:5001}
+IPFS_PROVIDER=${IPFS_PROVIDER:-kubo}
 
 OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-smart-contracts}
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
@@ -132,6 +134,46 @@ trace_edge() {
     return "$exit_code"
 }
 
+wait_for_anvil() {
+    local attempts=${1:-60}
+    local rpc_endpoint=$rpc_url
+
+    echo "Waiting for Anvil at ${rpc_endpoint}..."
+    for _ in $(seq 1 "$attempts"); do
+        if cast chain-id --rpc-url "$rpc_endpoint" >/dev/null 2>&1; then
+            echo "Anvil is ready."
+            return 0
+        fi
+        sleep 2
+    done
+
+    echo "Timed out waiting for Anvil at ${rpc_endpoint}."
+    return 1
+}
+
+wait_for_kubo() {
+    local attempts=${1:-60}
+
+    if [ "$IPFS_PROVIDER" != "kubo" ]; then
+        return 0
+    fi
+
+    echo "Waiting for Kubo at ${KUBO_API_URL}..."
+    for _ in $(seq 1 "$attempts"); do
+        if curl --connect-timeout 2 --max-time 5 -fsS -X POST "${KUBO_API_URL}/api/v0/version" >/dev/null 2>&1; then
+            echo "Kubo is ready."
+            return 0
+        fi
+        sleep 2
+    done
+
+    echo "Timed out waiting for Kubo at ${KUBO_API_URL}."
+    return 1
+}
+
+wait_for_anvil
+wait_for_kubo
+
 CHAIN_ID=$(cast chain-id --rpc-url $rpc_url)
 now_nano=$(date +%s%N)
 emit_otel_edge "smart_contracts.read_chain_id" "anvil" "$now_nano" "$now_nano" ok
@@ -222,9 +264,6 @@ for receipt in data.get("receipts", []):
     }, separators=(",", ":")))
 PY
 }
-
-KUBO_API_URL=${KUBO_API_URL:-http://ipfs:5001}
-IPFS_PROVIDER=${IPFS_PROVIDER:-kubo}
 
 if [ "$IPFS_PROVIDER" != "kubo" ] && [ "$IPFS_PROVIDER" != "pinata" ]; then
     echo "Unsupported IPFS_PROVIDER: $IPFS_PROVIDER"

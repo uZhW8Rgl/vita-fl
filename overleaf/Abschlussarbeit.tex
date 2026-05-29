@@ -1,0 +1,174 @@
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[10pt,bibliography=totoc,listof=totoc,BCOR=5mm,DIV=10]{scrbook}
+\setlength{\footheight}{36.0pt}
+
+
+% use this declaration to set specific page margins
+%\usepackage[a4paper , lmargin = {2.7cm} , rmargin = {2.9cm} , tmargin = {2.7cm} , bmargin = {4.6cm} ]{geometry}
+\usepackage[a4paper]{geometry}
+\usepackage{acronym}
+\usepackage{pdflscape} % queerkant
+%\usepackage{plantuml} % class diagram
+%\usepackage{tikz}
+%\usepackage{aeguill}
+%\usepackage{svg}
+\usepackage{svg}
+\usepackage{amsmath}
+\usepackage{csquotes} 
+\usepackage{biblatex}
+\addbibresource{bib/manual.bib}
+\usepackage[ngerman, english]{babel}
+\usepackage[ngerman]{datetime}
+\usepackage{bibgerm}       		% german references
+\usepackage[T1]{fontenc} % german characters
+\usepackage{graphicx} 				% it's recommended to use PDF images but you can use JPG or PNG as well
+\usepackage[hyphens]{url}
+%\usepackage{hyperref}
+%\usepackage{url}           		% format URLs
+%\usepackage{hyperref} 				% create hyperlinks
+\usepackage{listings, color}	% for source code
+\usepackage{subfig}						% two figures next to each other (example: figure 3a), figure 3b)
+\usepackage{scrlayer-scrpage}					% header and footer line
+\usepackage{todonotes}
+% header and footer line - no header & footer line on pages where a new chapter starts
+%\usepackage{float} % Float H
+\usepackage{amssymb} % Math G
+\usepackage{amsmath} %Equations
+\usepackage[hypcap=false]{caption} % for fixing a warning
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{url}
+\usepackage[strings]{underscore}
+\usepackage{hyperref}
+\usepackage{xurl}
+\usepackage{cleveref}
+\usepackage{enumitem}
+\usepackage{dirtytalk}
+\pagestyle{scrheadings}
+\ohead{\headmark}%Design and Implementation of X}
+\ihead{Ramon Mehrpoya}
+\ofoot[]{\thepage}
+\setlength{\footheight}{27.2pt} 
+\ifoot{Verifiable Decentralized Federated Machine \\ Learning and Inference for AI Agent Systems\\TU Berlin, Software and Business Engineering, 2026}
+
+% set path where images are stored
+\graphicspath{{./img/}}
+
+%\input{./misc/hyphenation} 					% use this file to set explicit hyphenations (doesn't seem to work correctly)
+\usepackage{colortbl} % Tabellenfarben
+
+
+\newdateformat{myformat}{\THEDAY. \monthnamengerman[\THEMONTH] \THEYEAR}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+%\lstdefinestyle{mystyle1}{
+%    backgroundcolor=\color{backcolour},   
+%    commentstyle=\color{codegreen},
+%    keywordstyle=\color{magenta},
+%    %numberstyle=\tiny\color{codegray},
+%    stringstyle=\color{codepurple},
+%    basicstyle=\ttfamily\tiny,
+%    breakatwhitespace=false,         
+%    breaklines=true,                 
+%    captionpos=b,                    
+%    keepspaces=true,                 
+%    %numbers=left,                    
+%    %numbersep=5pt,                  
+%    showspaces=false,                
+%    showstringspaces=false,
+%    showtabs=false,                  
+%    tabsize=2,
+%    moredelim=**[is][\color{red}]{*|}{|*}
+%}
+
+%\lstdefinestyle{mystyle2}{
+%    backgroundcolor=\color{backcolour},   
+%    commentstyle=\color{codegreen},
+%    keywordstyle=\color{magenta},
+%    numberstyle=\tiny\color{codegray},
+%    stringstyle=\color{codepurple},
+%    basicstyle=\ttfamily\tiny,
+%    breakatwhitespace=false,         
+%    breaklines=true,                 
+%    captionpos=b,                    
+%    keepspaces=true,                 
+%    numbers=left,                    
+%    numbersep=5pt,                  
+%    showspaces=false,                
+%    showstringspaces=false,
+%    showtabs=false,                  
+%    tabsize=2,
+%    moredelim=**[is][\color{red}]{*|}{|*}
+%}
+
+%\DeclareCiteCommand{\bracketcite}[\mkbibbrackets]
+%  {\usebibmacro{prenote}}
+%  {\usebibmacro{citeindex}%
+%   \usebibmacro{cite}}
+%  {\multicitedelim}
+%  {\usebibmacro{postnote}} 
+
+\begin{document}
+% ---------------------------------------------------------------
+\frontmatter
+    \include{./misc/titlepage}
+    %\thispagestyle{empty}
+    %\cleardoublepage
+    
+    
+    %\include{./misc/self-assertion} 
+    %\thispagestyle{empty}
+    %\cleardoublepage
+
+    %\include{./misc/self-assertion_de} 
+    %\thispagestyle{empty}
+    %\cleardoublepage
+    
+    
+    %\include{./misc/abstract}
+    %\thispagestyle{empty}
+    %\cleardoublepage
+    
+    %\include{./misc/abstract_de}
+    %\thispagestyle{empty}
+    
+    
+    \tableofcontents
+    %\thispagestyle{empty}
+    
+    %\listoffigures
+    %\thispagestyle{empty}
+    
+    %\listoftables
+    %\thispagestyle{empty}
+    
+% --------------------------------------------------------------
+
+\mainmatter % comment single chapters for faster compilation
+
+    \input{./chapters/chapter1}
+    \input{./chapters/chapter2}
+    \input{./chapters/chapter3}
+    \input{./chapters/chapter4}
+    \input{./chapters/chapter5}
+    %\input{./chapters/chapter6}
+    %\input{./chapters/chapter7}
+
+% ---------------------------------------------------------------
+\backmatter % no page numbering from here
+    %\todo[inline]{talk to your supervisor if this is needed}
+    \input{./misc/acronyms}
+		
+		% if you want to provide a glossary with explanations of important terms put it in here
+
+    %\bibliographystyle{geralpha}
+    %\bibliography{./bib/manual}
+    \nocite{*}
+    \printbibliography     
+    \input{./misc/annex}
+
+\end{document}

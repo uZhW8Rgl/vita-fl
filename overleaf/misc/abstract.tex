@@ -1,0 +1,12 @@
+\thispagestyle{empty}
+\vspace*{1.0cm}
+
+\begin{center}
+    \textbf{Abstract}
+\end{center}
+
+\vspace*{0.5cm}
+
+\noindent
+
+This thesis shows how to extend ZoKrates by further embedded elliptic curves. It gives an introduction to elliptic curve arithmetic, to familiarize the reader with the terminology. It introduces SageMath code for finding an embedded curve and evaluating possible candidates using the SafeCurve criteria. A detailed implementation of the BLS12\_377s embedded curve, the Decaf377, is presented, as well as an EdDSA signature verification using the newly implemented Decaf377 nested inside the BLS12\_377 in turn nested in a BW6\_761. Then results of the SafeCurve criteria test on implemented and possible curves for ZoKrates is presented and I explain why the possible implementation of the Bandersnatch, an embedded curve of the BLS12\_381, is ruled out. I will give an overview of embedded elliptic curves, in the context of zk-SNARKs, with ZoKrates and thereby will facilitate the implementation of new embedded elliptic curves for non-crypto experts.

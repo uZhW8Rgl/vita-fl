@@ -36,6 +36,7 @@ x-worker-env: &worker-env
 x-worker-common: &worker-common
   image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker:latest
   platform: linux/amd64
+  profiles: ["runtime"]
   depends_on:
     smart-contracts:
       condition: service_completed_successfully
@@ -69,26 +70,6 @@ services:
         condition: service_started
       tempo:
         condition: service_started
-
-  grafana-share-init:
-    image: curlimages/curl:8.8.0
-    container_name: grafana-share-init
-    restart: "no"
-    depends_on:
-      grafana:
-        condition: service_started
-    entrypoint:
-      - /bin/sh
-      - /work/ensure_shared_dashboard.sh
-    environment:
-      GRAFANA_URL: http://grafana:3000
-      GRAFANA_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GRAFANA_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-      DASHBOARD_UID: dfl-training-overview
-      PUBLIC_DASHBOARD_UID: c656176f-25ca-4408-a109-731176af6da4
-      PUBLIC_DASHBOARD_TOKEN: c656176f25ca4408a109731176af6da4
-    volumes:
-      - ./observability/grafana/ensure_shared_dashboard.sh:/work/ensure_shared_dashboard.sh:ro
 
   prometheus:
     image: prom/prometheus:v2.52.0
@@ -216,6 +197,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
+    profiles: ["runtime"]
     restart: unless-stopped
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
@@ -232,6 +214,7 @@ services:
   ollama-init:
     image: ollama/ollama:latest
     container_name: ollama-init
+    profiles: ["runtime"]
     restart: "no"
     depends_on:
       ollama:
@@ -242,7 +225,11 @@ services:
       - /bin/sh
       - -c
     command:
-      - ollama pull qwen3:0.6b
+      - |
+        ollama pull gemma4:e2b
+        # Smaller local fallback:
+        # ollama pull llama3.2
+        # ollama pull qwen3:0.6b
     volumes:
       - ./ollama-data:/root/.ollama
 
@@ -297,26 +284,12 @@ services:
     build:
       context: .
       dockerfile: agent/Dockerfile
-    image: ghcr.io/uzhw8rgl/master-thesis-agent:latest
-    platform: linux/amd64
+    image: master-thesis-agent:dev
+    pull_policy: never
     container_name: agent
+    profiles: ["runtime"]
     restart: unless-stopped
     working_dir: /app
-    depends_on:
-      anvil:
-        condition: service_healthy
-      ipfs:
-        condition: service_healthy
-      zk-inference:
-        condition: service_started
-      ollama-init:
-        condition: service_completed_successfully
-      VM-0:
-        condition: service_started
-      VM-1:
-        condition: service_started
-      VM-2:
-        condition: service_started
     environment:
       DOCKER: "1"
       DATASET_NAME: ${DATASET_NAME:-mnist}
@@ -324,8 +297,13 @@ services:
       RPC_URL: http://anvil:8545
       IPFS_API_URL: http://ipfs:5001
       ZK_INFERENCE_URL: http://zk-inference:8090
-      OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_MODEL: qwen3:0.6b
+      # OLLAMA_BASE_URL: http://ollama:11434
+      # OLLAMA_MODEL: gemma4:e2b
+      # Remote Ollama fallback:
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://elise.ise.tu-berlin.de:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e2b}
+      OLLAMA_NUM_PREDICT: "128"
+      AGENT_CHAT_TIMEOUT_SECONDS: "360"
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
       OTEL_SERVICE_NAME: agent
       GM_STORAGE_ADDRESS: 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
@@ -352,6 +330,29 @@ services:
     volumes:
       - ./agent/downloads:/app/agent/downloads
 
+  control-api:
+    build:
+      context: .
+      dockerfile: control_api/Dockerfile
+    image: ghcr.io/uzhw8rgl/master-thesis-control-api:latest
+    platform: linux/amd64
+    container_name: control-api
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      PWD: ${PWD}
+      TRAINING_WORKSPACE_ROOT: ${PWD}
+      TRAINING_COMPOSE_BIN: docker-compose
+      TRAINING_COMPOSE_PROJECT_NAME: master-thesis
+      TRAINING_COMPOSE_PROFILE: runtime
+      CONTROL_API_PORT: "8091"
+    command:
+      - python
+      - control_api/server.py
+    volumes:
+      - ./:${PWD}
+      - ${HOME}/.docker/run/docker.sock:/var/run/docker.sock
+
   ui:
     build:
       context: .
@@ -361,11 +362,14 @@ services:
     restart: unless-stopped
     environment:
       GRAFANA_EXTERNAL_DASHBOARD_URL: ${GRAFANA_EXTERNAL_DASHBOARD_URL:-http://localhost:3000/public-dashboards/c656176f25ca4408a109731176af6da4}
+      GRAFANA_CONTRACT_DASHBOARD_URL: ${GRAFANA_CONTRACT_DASHBOARD_URL:-http://localhost:3000/d/dfl-contract-init-overview/dfl-contract-init-overview?kiosk}
+      GRAFANA_TRAINING_DASHBOARD_URL: ${GRAFANA_TRAINING_DASHBOARD_URL:-http://localhost:3000/d/dfl-training-overview/dfl-training-overview?kiosk}
+      GRAFANA_AGENT_DASHBOARD_URL: ${GRAFANA_AGENT_DASHBOARD_URL:-http://localhost:3000/d/agent-mcp-tool-usage/agent-mcp-tool-usage?kiosk}
     depends_on:
       grafana:
         condition: service_started
-      grafana-share-init:
-        condition: service_completed_successfully
+      control-api:
+        condition: service_started
     ports:
       - "127.0.0.1:8089:8080"
 
@@ -376,6 +380,7 @@ services:
     image: ghcr.io/uzhw8rgl/master-thesis-zk-inference:latest
     platform: linux/amd64
     container_name: zk-inference
+    profiles: ["runtime"]
     restart: unless-stopped
     working_dir: /app
     environment:
@@ -437,264 +442,277 @@ services:
       RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_2.pem
       RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_2.pem
 
+  VM-3:
+    <<: *worker-common
+    container_name: ${W3_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W3_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W3_PRIVATE_KEY}
+      DEVICE_ID: ${W3_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W3_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W3_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-3.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-3.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-3.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_3.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_3.pem
 
+  VM-4:
+    <<: *worker-common
+    container_name: ${W4_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W4_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W4_PRIVATE_KEY}
+      DEVICE_ID: ${W4_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W4_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W4_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-4.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-4.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-4.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_4.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_4.pem
 
-  # Additional worker VMs for larger local experiments.
-  # Uncomment the required blocks and provide matching W*_ variables in .env.
-  # VM-3:
-  #   <<: *worker-common
-  #   container_name: ${W3_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W3_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W3_PRIVATE_KEY}
-  #     DEVICE_ID: ${W3_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W3_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W3_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-3.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-3.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_3.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_3.pem
+  VM-5:
+    <<: *worker-common
+    container_name: ${W5_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W5_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W5_PRIVATE_KEY}
+      DEVICE_ID: ${W5_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W5_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W5_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-5.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-5.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-5.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_5.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_5.pem
 
-  # VM-4:
-  #   <<: *worker-common
-  #   container_name: ${W4_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W4_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W4_PRIVATE_KEY}
-  #     DEVICE_ID: ${W4_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W4_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W4_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-4.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-4.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_4.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_4.pem
+  VM-6:
+    <<: *worker-common
+    container_name: ${W6_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W6_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W6_PRIVATE_KEY}
+      DEVICE_ID: ${W6_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W6_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W6_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-6.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-6.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-6.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_6.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_6.pem
 
-  # VM-5:
-  #   <<: *worker-common
-  #   container_name: ${W5_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W5_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W5_PRIVATE_KEY}
-  #     DEVICE_ID: ${W5_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W5_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W5_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-5.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-5.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_5.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_5.pem
+  VM-7:
+    <<: *worker-common
+    container_name: ${W7_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W7_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W7_PRIVATE_KEY}
+      DEVICE_ID: ${W7_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W7_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W7_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-7.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-7.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-7.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_7.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_7.pem
 
-  # VM-6:
-  #   <<: *worker-common
-  #   container_name: ${W6_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W6_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W6_PRIVATE_KEY}
-  #     DEVICE_ID: ${W6_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W6_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W6_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-6.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-6.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_6.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_6.pem
+  VM-8:
+    <<: *worker-common
+    container_name: ${W8_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W8_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W8_PRIVATE_KEY}
+      DEVICE_ID: ${W8_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W8_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W8_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-8.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-8.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-8.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_8.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_8.pem
 
-  # VM-7:
-  #   <<: *worker-common
-  #   container_name: ${W7_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W7_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W7_PRIVATE_KEY}
-  #     DEVICE_ID: ${W7_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W7_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W7_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-7.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-7.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_7.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_7.pem
+  VM-9:
+    <<: *worker-common
+    container_name: ${W9_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W9_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W9_PRIVATE_KEY}
+      DEVICE_ID: ${W9_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W9_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W9_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-9.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-9.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-9.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_9.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_9.pem
 
-  # VM-8:
-  #   <<: *worker-common
-  #   container_name: ${W8_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W8_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W8_PRIVATE_KEY}
-  #     DEVICE_ID: ${W8_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W8_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W8_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-8.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-8.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_8.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_8.pem
+  VM-10:
+    <<: *worker-common
+    container_name: ${W10_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W10_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W10_PRIVATE_KEY}
+      DEVICE_ID: ${W10_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W10_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W10_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-10.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-10.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-10.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_10.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_10.pem
 
-  # VM-9:
-  #   <<: *worker-common
-  #   container_name: ${W9_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W9_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W9_PRIVATE_KEY}
-  #     DEVICE_ID: ${W9_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W9_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W9_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-9.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-9.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_9.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_9.pem
+  VM-11:
+    <<: *worker-common
+    container_name: ${W11_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W11_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W11_PRIVATE_KEY}
+      DEVICE_ID: ${W11_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W11_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W11_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-11.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-11.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-11.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_11.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_11.pem
 
-  # VM-10:
-  #   <<: *worker-common
-  #   container_name: ${W10_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W10_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W10_PRIVATE_KEY}
-  #     DEVICE_ID: ${W10_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W10_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W10_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-10.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-10.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_10.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_10.pem
+  VM-12:
+    <<: *worker-common
+    container_name: ${W12_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W12_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W12_PRIVATE_KEY}
+      DEVICE_ID: ${W12_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W12_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W12_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-12.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-12.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-12.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_12.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_12.pem
 
-  # VM-11:
-  #   <<: *worker-common
-  #   container_name: ${W11_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W11_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W11_PRIVATE_KEY}
-  #     DEVICE_ID: ${W11_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W11_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W11_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-11.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-11.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_11.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_11.pem
+  VM-13:
+    <<: *worker-common
+    container_name: ${W13_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W13_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W13_PRIVATE_KEY}
+      DEVICE_ID: ${W13_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W13_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W13_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-13.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-13.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-13.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_13.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_13.pem
 
-  # VM-12:
-  #   <<: *worker-common
-  #   container_name: ${W12_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W12_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W12_PRIVATE_KEY}
-  #     DEVICE_ID: ${W12_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W12_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W12_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-12.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-12.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_12.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_12.pem
+  VM-14:
+    <<: *worker-common
+    container_name: ${W14_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W14_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W14_PRIVATE_KEY}
+      DEVICE_ID: ${W14_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W14_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W14_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-14.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-14.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-14.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_14.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_14.pem
 
-  # VM-13:
-  #   <<: *worker-common
-  #   container_name: ${W13_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W13_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W13_PRIVATE_KEY}
-  #     DEVICE_ID: ${W13_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W13_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W13_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-13.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-13.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_13.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_13.pem
+  VM-15:
+    <<: *worker-common
+    container_name: ${W15_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W15_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W15_PRIVATE_KEY}
+      DEVICE_ID: ${W15_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W15_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W15_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-15.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-15.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-15.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_15.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_15.pem
 
-  # VM-14:
-  #   <<: *worker-common
-  #   container_name: ${W14_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W14_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W14_PRIVATE_KEY}
-  #     DEVICE_ID: ${W14_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W14_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W14_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-14.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-14.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_14.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_14.pem
+  VM-16:
+    <<: *worker-common
+    container_name: ${W16_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W16_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W16_PRIVATE_KEY}
+      DEVICE_ID: ${W16_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W16_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W16_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-16.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-16.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-16.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_16.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_16.pem
 
-  # VM-15:
-  #   <<: *worker-common
-  #   container_name: ${W15_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W15_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W15_PRIVATE_KEY}
-  #     DEVICE_ID: ${W15_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W15_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W15_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-15.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-15.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_15.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_15.pem
+  VM-17:
+    <<: *worker-common
+    container_name: ${W17_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W17_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W17_PRIVATE_KEY}
+      DEVICE_ID: ${W17_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W17_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W17_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-17.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-17.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-17.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_17.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_17.pem
 
-  # VM-16:
-  #   <<: *worker-common
-  #   container_name: ${W16_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W16_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W16_PRIVATE_KEY}
-  #     DEVICE_ID: ${W16_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W16_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W16_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-16.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-16.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_16.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_16.pem
+  VM-18:
+    <<: *worker-common
+    container_name: ${W18_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W18_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W18_PRIVATE_KEY}
+      DEVICE_ID: ${W18_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W18_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W18_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-18.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-18.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-18.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_18.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_18.pem
 
-  # VM-17:
-  #   <<: *worker-common
-  #   container_name: ${W17_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W17_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W17_PRIVATE_KEY}
-  #     DEVICE_ID: ${W17_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W17_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W17_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-17.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-17.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_17.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_17.pem
-
-  # VM-18:
-  #   <<: *worker-common
-  #   container_name: ${W18_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W18_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W18_PRIVATE_KEY}
-  #     DEVICE_ID: ${W18_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W18_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W18_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-18.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-18.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_18.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_18.pem
-
-  # VM-19:
-  #   <<: *worker-common
-  #   container_name: ${W19_ACCOUNT_ADDRESS}
-  #   environment:
-  #     <<: *worker-env
-  #     ACCOUNT_ADDRESS: ${W19_ACCOUNT_ADDRESS}
-  #     PRIVATE_KEY: ${W19_PRIVATE_KEY}
-  #     DEVICE_ID: ${W19_DEVICE_ID}
-  #     RSA_PRIVATE_KEY: ${W19_RSA_PRIVATE_KEY}
-  #     RSA_PUBLIC_KEY: ${W19_RSA_PUBLIC_KEY}
-  #     TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-19.idx3-ubyte
-  #     TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-19.idx1-ubyte
-  #     RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_19.pem
-  #     RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_19.pem
+  VM-19:
+    <<: *worker-common
+    container_name: ${W19_ACCOUNT_ADDRESS}
+    environment:
+      <<: *worker-env
+      ACCOUNT_ADDRESS: ${W19_ACCOUNT_ADDRESS}
+      PRIVATE_KEY: ${W19_PRIVATE_KEY}
+      DEVICE_ID: ${W19_DEVICE_ID}
+      RSA_PRIVATE_KEY: ${W19_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W19_RSA_PUBLIC_KEY}
+      TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-19.idx3-ubyte
+      TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-19.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-19.npz
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key_19.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_19.pem
 
 volumes:
   grafana-data:

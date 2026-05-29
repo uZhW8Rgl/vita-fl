@@ -59,7 +59,7 @@ def current_dataset_defaults() -> tuple[str, str]:
     return "data/mnist/data/t10k-images.idx3-ubyte", "data/mnist/data/t10k-labels.idx1-ubyte"
 
 
-def prepare_dataset_sample(
+def _prepare_dataset_sample(
     index: int | None = None,
     images: str | None = None,
     labels: str | None = None,
@@ -95,49 +95,22 @@ def prepare_dataset_sample(
     return result
 
 
-def prepare_mnist_sample(
-    index: int | None = None,
-    images: str = "data/mnist/data/t10k-images.idx3-ubyte",
-    labels: str = "data/mnist/data/t10k-labels.idx1-ubyte",
-    out_dir: str = "zk_inference/single_query",
-    input_json: str = "zk_inference/out/input.json",
-    metadata_out: str = "zk_inference/single_query/selection.json",
-    seed: int | None = None,
-) -> dict[str, Any]:
-    return prepare_dataset_sample(index=index, images=images, labels=labels, out_dir=out_dir, input_json=input_json, metadata_out=metadata_out, seed=seed)
-
-
 def create_single_image_query(
-    model_path: str,
     index: int | None = None,
     images: str | None = None,
     labels: str | None = None,
     out_dir: str = "zk_inference/single_query",
     input_json: str = "zk_inference/out/input.json",
 ) -> dict[str, Any]:
-    default_images, default_labels = current_dataset_defaults()
-    args = [
-        str(PYTHON),
-        "zk_inference/create_single_mnist_query.py",
-        "--model",
-        str(repo_path(model_path)),
-        "--images",
-        str(repo_path(images or default_images)),
-        "--labels",
-        str(repo_path(labels or default_labels)),
-        "--out-dir",
-        str(repo_path(out_dir)),
-        "--input-json",
-        str(repo_path(input_json)),
-    ]
-    if index is not None:
-        args.extend(["--index", str(index)])
-    result = run_subprocess(args)
-    metadata_path = repo_path(out_dir) / "prediction.json"
-    result["prediction_metadata"] = str(metadata_path)
-    if metadata_path.exists():
-        result["prediction"] = json.loads(metadata_path.read_text(encoding="utf-8"))
-    return result
+    metadata_out = str(repo_path(out_dir) / "selection.json")
+    return _prepare_dataset_sample(
+        index=index,
+        images=images,
+        labels=labels,
+        out_dir=out_dir,
+        input_json=input_json,
+        metadata_out=metadata_out,
+    )
 
 
 def run_ezkl(
@@ -189,7 +162,6 @@ def prove_single_image(
         return {"ok": False, "stage": "export_model", "export": export_result}
 
     query_result = create_single_image_query(
-        model_path=str(model),
         index=index,
         out_dir=str(query),
         input_json=str(work / "input.json"),

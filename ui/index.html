@@ -3,354 +3,787 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>!!! THESIS AGENT 2000 !!!</title>
+  <title>VITA-FL: Verifiable Inference and Trust for AI Agents in Federated Learning</title>
   <style>
+    :root {
+      --bg: #08131b;
+      --bg-2: #0f1f29;
+      --panel: rgba(8, 18, 25, 0.86);
+      --panel-strong: rgba(10, 24, 34, 0.96);
+      --line: rgba(117, 183, 211, 0.22);
+      --line-strong: rgba(117, 183, 211, 0.42);
+      --text: #d9eef5;
+      --muted: #91aab5;
+      --accent: #82d1e8;
+      --accent-2: #b7f07a;
+      --accent-3: #f5c979;
+      --danger: #ff8a8a;
+      --shadow: 0 26px 60px rgba(0, 0, 0, 0.34);
+      --radius: 24px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
-      background: #000080;
-      color: #ffff00;
-      font-family: "Comic Sans MS", "Trebuchet MS", cursive, sans-serif;
-      background-image:
-        repeating-linear-gradient(45deg, rgba(255, 0, 255, 0.12) 0 14px, rgba(0, 255, 255, 0.12) 14px 28px),
-        radial-gradient(circle at top left, #ff00ff 0, transparent 20%),
-        radial-gradient(circle at top right, #00ffff 0, transparent 18%);
+      min-height: 100vh;
+      color: var(--text);
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(130, 209, 232, 0.18), transparent 24%),
+        radial-gradient(circle at top right, rgba(183, 240, 122, 0.14), transparent 22%),
+        linear-gradient(180deg, #061018 0%, #091720 42%, #071019 100%);
     }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.34;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 32px 32px;
+    }
+
     a {
-      color: #00ff00;
-      font-weight: bold;
+      color: inherit;
+      text-decoration: none;
     }
-    .page {
-      max-width: 1220px;
+
+    .shell {
+      max-width: 1440px;
       margin: 0 auto;
-      padding: 12px;
+      padding: 28px;
     }
-    .banner {
-      border: 6px ridge #c0c0c0;
-      background: linear-gradient(180deg, #ff0000 0%, #000000 100%);
-      padding: 10px;
-      text-align: center;
-      box-shadow: 0 0 0 6px #000, 0 0 30px #00ffff;
-    }
-    .blink {
-      animation: blink 1s steps(2, start) infinite;
-    }
-    @keyframes blink {
-      to { visibility: hidden; }
-    }
-    .marquee {
-      display: block;
-      background: #000;
-      color: #00ff00;
-      border: 4px groove #c0c0c0;
-      padding: 6px;
-      margin-top: 10px;
-      white-space: nowrap;
-      overflow: hidden;
+
+    .hero {
       position: relative;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 30px;
+      padding: 28px;
+      background:
+        linear-gradient(135deg, rgba(130, 209, 232, 0.12), rgba(8, 18, 25, 0.85) 38%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
+      box-shadow: var(--shadow);
     }
-    .marquee span {
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -10% -45% 48%;
+      height: 380px;
+      background: radial-gradient(circle, rgba(130, 209, 232, 0.22), transparent 68%);
+      filter: blur(22px);
+      pointer-events: none;
+    }
+
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .eyebrow {
       display: inline-block;
-      padding-left: 100%;
-      animation: scroll 12s linear infinite;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-size: 0.78rem;
+      color: var(--accent);
+      background: rgba(130, 209, 232, 0.08);
     }
-    @keyframes scroll {
-      from { transform: translateX(0); }
-      to { transform: translateX(-100%); }
+
+    .eyebrow-acronym {
+      color: #4b90b8;
+      font-weight: 800;
+      display: inline;
+      letter-spacing: 0;
     }
+
+    .hero h1 {
+      max-width: 980px;
+      margin: 16px 0 12px;
+      font-family: "Source Serif 4", "Georgia", serif;
+      font-size: clamp(2.3rem, 5vw, 4.4rem);
+      line-height: 0.98;
+      letter-spacing: -0.03em;
+    }
+
+    .hero p {
+      max-width: 900px;
+      margin: 0;
+      font-size: 1.05rem;
+      line-height: 1.7;
+      color: var(--muted);
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .hero-link,
+    .tab-button,
+    .new-session {
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      padding: 11px 16px;
+      background: rgba(130, 209, 232, 0.1);
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .hero-link:hover,
+    .tab-button:hover,
+    .new-session:hover {
+      transform: translateY(-1px);
+      border-color: rgba(130, 209, 232, 0.56);
+      background: rgba(130, 209, 232, 0.16);
+    }
+
+    .hero-link.primary,
+    .send {
+      background: linear-gradient(135deg, #7fcde5, #a7f1df);
+      color: #08131b;
+      border: none;
+      font-weight: 700;
+    }
+
+    .training-metric {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .training-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 12px;
+    }
+
+    .training-item {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.025);
+    }
+
+    .training-item-label {
+      color: var(--muted);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 8px;
+    }
+
+    .training-stepper {
+      display: grid;
+      grid-template-columns: 38px 1fr 38px;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .training-step-btn,
+    .training-action-btn {
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      background: rgba(130, 209, 232, 0.1);
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }
+
+    .training-step-btn:hover,
+    .training-action-btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(130, 209, 232, 0.56);
+      background: rgba(130, 209, 232, 0.16);
+    }
+
+    .training-step-btn {
+      height: 38px;
+      font-size: 1.05rem;
+      line-height: 1;
+    }
+
+    .training-step-value {
+      text-align: center;
+      font-size: 1.1rem;
+      font-weight: 700;
+    }
+
+    .training-note {
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.5;
+      min-height: 2.7em;
+    }
+
+    .training-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .training-action-btn {
+      padding: 10px 14px;
+    }
+
+    .training-action-btn.primary {
+      background: linear-gradient(135deg, #7fcde5, #a7f1df);
+      color: #08131b;
+      border: none;
+      font-weight: 700;
+    }
+
+    .training-step-btn:disabled,
+    .training-action-btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+      transform: none;
+    }
+
     .layout {
       display: grid;
-      grid-template-columns: 280px 1fr;
-      gap: 14px;
-      margin-top: 14px;
+      grid-template-columns: 330px minmax(0, 1fr);
+      gap: 24px;
+      margin-top: 20px;
     }
+
     .panel {
-      border: 5px ridge #c0c0c0;
-      background: #000;
-      padding: 10px;
-      box-shadow: inset 0 0 0 2px #ffff00;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
     }
-    .sidebar h2,
-    .chat h2 {
+
+    .sidebar {
+      padding: 20px;
+    }
+
+    .sidebar.hidden {
+      display: none;
+    }
+
+    .panel-title {
       margin: 0 0 10px;
-      font-size: 1.4rem;
-      color: #00ffff;
-      text-shadow: 2px 2px #ff00ff;
+      font-size: 0.82rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
     }
-    .counter,
-    .statusbar,
-    .tip {
-      background: #202020;
-      border: 3px inset #c0c0c0;
-      padding: 8px;
-      margin-bottom: 10px;
-      color: #fff;
+
+    .sidebar-card {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.025);
     }
-    .new-session {
-      width: 100%;
-      font: inherit;
-      font-weight: bold;
-      color: #000;
-      background: linear-gradient(180deg, #ffff00 0%, #ff9900 100%);
-      border: 4px outset #ffffff;
-      padding: 10px;
-      cursor: pointer;
-      margin-bottom: 10px;
+
+    .sidebar-card strong {
+      display: block;
+      font-size: 1rem;
     }
-    .new-session:active,
-    .send:active {
-      border-style: inset;
+
+    .sidebar-copy {
+      margin: 0;
+      line-height: 1.55;
+      color: var(--muted);
+      font-size: 0.95rem;
     }
+
     .session-list {
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      max-height: 60vh;
+      gap: 12px;
+      max-height: 44vh;
       overflow: auto;
     }
+
     .session {
-      border: 3px outset #c0c0c0;
-      background: #1d1d1d;
-      color: #fff;
-      padding: 8px;
+      width: 100%;
       text-align: left;
-      cursor: pointer;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 13px 14px;
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
       font: inherit;
+      cursor: pointer;
     }
+
     .session.active {
-      background: #330066;
-      color: #00ff00;
-      border-color: #ffff00;
+      border-color: rgba(130, 209, 232, 0.7);
+      background: rgba(130, 209, 232, 0.14);
     }
-    .chat-window {
-      min-height: 58vh;
-      max-height: 58vh;
-      overflow: auto;
+
+    .main {
+      padding: 0;
+      border: none;
+      background: transparent;
+      box-shadow: none;
+      backdrop-filter: none;
+    }
+
+    .main.full-width {
+      grid-column: 1 / -1;
+    }
+
+    .toolbar {
+      display: none;
+    }
+
+    .title-cluster h2 {
+      margin: 0;
+      font-family: "Source Serif 4", "Georgia", serif;
+      font-size: 2rem;
+      font-weight: 600;
+    }
+
+    .status {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.96rem;
+    }
+
+    .tabs {
+      display: inline-flex;
+      gap: 10px;
+      padding: 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .tab-button.active {
+      background: rgba(130, 209, 232, 0.22);
+      border-color: rgba(130, 209, 232, 0.58);
+    }
+
+    .tab-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+      transform: none;
+    }
+
+    .content {
+      min-height: 640px;
+    }
+
+    .content-tabs {
+      margin-bottom: 16px;
+    }
+
+    .dashboard,
+    .chat-view {
+      height: 100%;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .dashboard-card {
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 18px;
       background:
-        linear-gradient(180deg, rgba(0, 0, 0, 0.88) 0%, rgba(32, 0, 64, 0.9) 100%);
-      border: 4px inset #c0c0c0;
-      padding: 12px;
-      margin-bottom: 10px;
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01)),
+        rgba(9, 20, 27, 0.85);
+      height: 100%;
     }
-    .message {
+
+    .dashboard-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+
+    .dashboard-copy {
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+
+    .control-strip {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+
+    .control-note {
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.5;
+    }
+
+    .dashboard-frame {
+      width: 100%;
+      height: 760px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #fff;
+    }
+
+    .sidebar-dashboard-card {
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 16px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.01)),
+        rgba(9, 20, 27, 0.85);
+    }
+
+    .sidebar-dashboard-card .dashboard-head {
       margin-bottom: 12px;
-      padding: 10px;
-      border: 3px ridge #c0c0c0;
+    }
+
+    .sidebar-dashboard-frame {
+      width: 100%;
+      height: 714px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+    }
+
+    .chat-window {
+      height: 560px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 16px;
+      background:
+        radial-gradient(circle at top right, rgba(130, 209, 232, 0.08), transparent 20%),
+        rgba(9, 20, 27, 0.92);
+    }
+
+    .message {
+      margin-bottom: 14px;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
       white-space: pre-wrap;
-      line-height: 1.4;
+      line-height: 1.55;
       word-break: break-word;
     }
+
     .message.user {
-      background: #330000;
-      color: #ffcc00;
+      background: rgba(130, 209, 232, 0.12);
     }
+
     .message.assistant {
-      background: #001133;
-      color: #99ffff;
+      background: rgba(255, 255, 255, 0.03);
     }
+
     .tool-trace {
-      margin-top: 10px;
-      padding-top: 8px;
-      border-top: 2px dashed #ff66ff;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--line-strong);
     }
+
     .tool-event {
-      margin-top: 6px;
-      padding: 6px 8px;
-      background: #111;
-      border: 2px groove #c0c0c0;
-      color: #fff799;
-      font-size: 0.86rem;
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(0, 0, 0, 0.18);
+      border: 1px solid var(--line);
+      font-size: 0.9rem;
+      color: var(--muted);
     }
+
     .tool-event b {
-      color: #00ff99;
+      color: var(--accent-2);
     }
+
+    .composer {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 16px;
+      background: var(--panel-strong);
+    }
+
     .composer textarea {
       width: 100%;
       min-height: 120px;
       resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
       font: inherit;
-      background: #fffacd;
-      color: #000;
-      border: 4px inset #c0c0c0;
-      padding: 10px;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.03);
     }
-    .controls {
+
+    .composer textarea:focus {
+      outline: 1px solid rgba(130, 209, 232, 0.6);
+      border-color: rgba(130, 209, 232, 0.6);
+    }
+
+    .composer-foot {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 10px;
-      margin-top: 8px;
-    }
-    .send {
-      font: inherit;
-      font-weight: bold;
-      color: #000;
-      background: linear-gradient(180deg, #00ff00 0%, #00aa00 100%);
-      border: 4px outset #ffffff;
-      padding: 10px 16px;
-      cursor: pointer;
-    }
-    .tiny {
-      font-size: 0.82rem;
-      color: #ffccff;
-    }
-    .badgebar {
-      display: flex;
+      gap: 14px;
       flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 10px;
-    }
-    .badge {
-      background: #111;
-      border: 3px ridge #c0c0c0;
-      color: #00ff00;
-      padding: 4px 8px;
-      font-weight: bold;
-    }
-    .mode-toggle {
-      font: inherit;
-      font-weight: bold;
-      color: #000;
-      background: linear-gradient(180deg, #00ffff 0%, #00a0ff 100%);
-      border: 3px outset #ffffff;
-      padding: 4px 10px;
-      cursor: pointer;
-    }
-    .mode-toggle:active {
-      border-style: inset;
-    }
-    .mode-toggle[disabled] {
-      cursor: not-allowed;
-      opacity: 0.7;
-      filter: grayscale(0.25);
-    }
-    .under-construction {
-      text-align: center;
       margin-top: 12px;
-      font-weight: bold;
-      color: #fff;
-      text-shadow: 2px 2px #f00;
     }
-    .hidden {
-      display: none;
+
+    .hint {
+      color: var(--muted);
+      font-size: 0.92rem;
     }
-    .dashboard-shell {
-      border: 5px ridge #c0c0c0;
-      background: #100010;
-      padding: 10px;
-      box-shadow: inset 0 0 0 2px #00ffff;
+
+    .send {
+      border-radius: 999px;
+      padding: 12px 18px;
+      cursor: pointer;
+      font: inherit;
     }
-    .dashboard-shell h2 {
-      margin: 0 0 10px;
-      color: #ff66ff;
-      text-shadow: 2px 2px #000;
-      font-size: 1.35rem;
+
+    .dashboard-note {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px 14px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.02);
     }
-    .dashboard-frame {
-      width: 100%;
-      height: 900px;
-      border: 4px inset #c0c0c0;
-      background: #fff;
-    }
-    .cheesy-warning {
-      margin-top: 10px;
-      border: 4px dashed #ff00ff;
-      background: #220022;
-      color: #ffff66;
-      padding: 10px;
-      text-align: center;
-      font-weight: bold;
-      box-shadow: 0 0 18px rgba(255, 0, 255, 0.55);
-    }
-    @media (max-width: 900px) {
+
+    @media (max-width: 1120px) {
       .layout {
         grid-template-columns: 1fr;
       }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        padding: 16px;
+      }
+
+      .hero {
+        padding: 20px;
+      }
+
+      .training-grid {
+        grid-template-columns: 1fr;
+      }
+
       .dashboard-frame {
-        height: 70vh;
+        height: 540px;
       }
+
+      .sidebar-dashboard-frame {
+        height: 612px;
+      }
+
       .chat-window {
-        min-height: 42vh;
-        max-height: 42vh;
-      }
-      .controls {
-        flex-direction: column;
-        align-items: stretch;
-      }
-      .send {
-        width: 100%;
+        height: 440px;
       }
     }
   </style>
 </head>
 <body>
-  <div class="page">
-    <div class="banner">
-      <div class="blink"><font size="7"><b>!!! MASTER THESIS AGENT ONLINE !!!</b></font></div>
-      <div><font size="4">Best viewed with Netscape Navigator at 800x600</font></div>
-      <div class="badgebar">
-        <span class="badge">MCP INSIDE</span>
-        <span class="badge">LOCAL RAG</span>
-        <span class="badge">OLLAMA POWER</span>
-        <span class="badge">NO FLASH REQUIRED</span>
-        <a class="mode-toggle" href="/thesis.html">OPEN THESIS UI</a>
-        <button class="mode-toggle" id="mode-toggle" type="button">OPEN CHAT WINDOW</button>
-      </div>
-    </div>
-
-    <div class="marquee"><span>Welcome to the information superhighway... chat with the thesis agent... ask about bundles, proofs, signatures, IPFS artifacts, and local model inference...</span></div>
-
-    <div class="layout">
-      <aside class="panel sidebar">
-        <h2>Session Zone</h2>
-        <div class="counter">Visitor Counter: <b>0001337</b></div>
-        <button class="new-session" id="new-session">START NEW CHAT SESSION</button>
-        <div class="session-list" id="sessions"></div>
-        <div class="tip">
-          <b>Pro Tip:</b><br>
-          Ask wild things like:<br>
-          "latest bundle?"<br>
-          "search IPFS for signatures"<br>
-          "run proof index 7"
+  <div class="shell">
+    <section class="hero">
+      <div class="hero-top">
+        <div>
+          <div class="eyebrow"><span class="eyebrow-acronym">V</span>erifiable <span class="eyebrow-acronym">I</span>nference and <span class="eyebrow-acronym">T</span>rust for AI <span class="eyebrow-acronym">A</span>gents in <span class="eyebrow-acronym">F</span>ederated <span class="eyebrow-acronym">L</span>earning</div>
+          <h1>VITA-FL</h1>
+          <p>
+            An interface for medical professionals to review chest X-ray data, monitor federated training rounds,
+            and inspect model provenance and verifiable inference artifacts.
+          </p>
         </div>
-        <div class="under-construction">[ UNDER CONSTRUCTION ] [ UNDER CONSTRUCTION ]</div>
-      </aside>
-
-      <main class="panel chat">
-        <h2 id="title">Fresh Session</h2>
-        <div class="statusbar" id="status">Status: idle and looking fabulous.</div>
-        <div id="dashboard-view">
-          <div class="dashboard-shell">
-            <h2>LIVE GRAFANA COMMAND CENTER</h2>
-            <div class="tiny" id="dashboard-hint">This box is meant for a Grafana "Share externally" link. Set <code>GRAFANA_EXTERNAL_DASHBOARD_URL</code> to the generated URL and rebuild the UI.</div>
+      </div>
+      <section class="layout">
+      <aside class="panel sidebar hidden" id="sidebar">
+        <div class="sidebar-card">
+          <strong>Sessions</strong>
+          <button class="new-session" id="new-session" type="button">Start New Session</button>
+          <div class="session-list" id="sessions"></div>
+          <div class="sidebar-dashboard-card">
+            <div class="dashboard-head">
+              <div>
+                <div class="panel-title">MCP Tool Usage</div>
+                <div class="dashboard-copy" id="agent-dashboard-hint">
+                  Monitor how often the three public MCP tools are used by the agent runtime.
+                </div>
+              </div>
+            </div>
             <iframe
-              class="dashboard-frame"
-              id="dashboard-frame"
+              class="sidebar-dashboard-frame"
+              id="agent-dashboard-frame"
               src=""
-              title="Grafana DFL Training Overview"
+              title="Grafana Agent MCP Tool Usage"
               loading="lazy">
             </iframe>
-            <div class="cheesy-warning" id="chat-warning">
-              CHAT TERMINAL STILL BOOTING... PLEASE STAND BY WHILE THE CYBER AGENT CONNECTS TO THE INFORMATION SUPERHIGHWAY.
-            </div>
           </div>
         </div>
-        <div id="chat-view" class="hidden">
-          <div class="chat-window" id="messages"></div>
-          <form class="composer" id="composer">
-            <textarea id="input" placeholder="TYPE YOUR MESSAGE TO THE CYBER AGENT HERE..."></textarea>
-            <div class="controls">
-              <div class="tiny">This website contains 0% subtlety and 100% glorious bad taste.</div>
-              <button class="send" type="submit">SEND TO CYBERSPACE</button>
+      </aside>
+
+      <main class="panel main full-width" id="main-panel">
+        <div class="sr-only">
+          <h2 id="title">Fresh Session</h2>
+          <div class="status" id="status">Status: Waiting for smart contracts to initialize.</div>
+        </div>
+
+        <div class="content">
+          <div class="tabs content-tabs">
+            <button class="tab-button active" id="contracts-tab" type="button">Smart Contracts</button>
+            <button class="tab-button" id="training-tab" type="button" disabled>Training Setup</button>
+            <button class="tab-button" id="chat-tab" type="button" disabled>Agent Client</button>
+          </div>
+          <section class="dashboard" id="contracts-view">
+            <div class="dashboard-card">
+              <div class="dashboard-head">
+                <div>
+                  <div class="panel-title">Smart Contract Initialization</div>
+                  <div class="dashboard-copy" id="contracts-hint">
+                    Observe the automatic smart contract startup flow and track initialization cost and runtime logs in Grafana.
+                  </div>
+                </div>
+              </div>
+              <div class="control-strip">
+                <div class="control-note" id="contract-init-note">
+                  `anvil`, `ipfs`, and `smart-contracts` start automatically with the base stack. Training unlocks once smart contract initialization finishes successfully.
+                </div>
+              </div>
+              <iframe
+                class="dashboard-frame"
+                id="contracts-dashboard-frame"
+                src=""
+                title="Grafana DFL Contract Initialization Overview"
+                loading="lazy">
+              </iframe>
             </div>
-          </form>
+          </section>
+
+          <section class="dashboard hidden" id="training-view">
+            <div class="dashboard-card">
+              <div class="dashboard-head">
+                <div>
+                  <div class="panel-title">Training Setup</div>
+                  <div class="dashboard-copy" id="training-dashboard-hint">
+                    Configure the training run, then launch the selected worker set together with the training telemetry dashboard.
+                  </div>
+                </div>
+              </div>
+              <div class="training-metric">
+                <div class="training-grid">
+                  <div class="training-item">
+                    <div class="training-item-label">Rounds</div>
+                    <div class="training-stepper">
+                      <button class="training-step-btn" data-training-field="rounds" data-training-delta="-1" type="button">-</button>
+                      <div class="training-step-value" id="training-rounds">-</div>
+                      <button class="training-step-btn" data-training-field="rounds" data-training-delta="1" type="button">+</button>
+                    </div>
+                  </div>
+                  <div class="training-item">
+                    <div class="training-item-label">Epoch</div>
+                    <div class="training-stepper">
+                      <button class="training-step-btn" data-training-field="epoch" data-training-delta="-1" type="button">-</button>
+                      <div class="training-step-value" id="training-epoch">-</div>
+                      <button class="training-step-btn" data-training-field="epoch" data-training-delta="1" type="button">+</button>
+                    </div>
+                  </div>
+                  <div class="training-item">
+                    <div class="training-item-label">Workers</div>
+                    <div class="training-stepper">
+                      <button class="training-step-btn" data-training-field="worker_count" data-training-delta="-1" type="button">-</button>
+                      <div class="training-step-value" id="training-worker-count">-</div>
+                      <button class="training-step-btn" data-training-field="worker_count" data-training-delta="1" type="button">+</button>
+                    </div>
+                  </div>
+                  <div class="training-item">
+                    <div class="training-item-label">Client Limit</div>
+                    <div class="training-stepper">
+                      <button class="training-step-btn" data-training-field="client_limit" data-training-delta="-1" type="button">-</button>
+                      <div class="training-step-value" id="training-client-limit">-</div>
+                      <button class="training-step-btn" data-training-field="client_limit" data-training-delta="1" type="button">+</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="training-note" id="training-note">The training runner will use the values from the local environment file.</div>
+                <div class="training-actions">
+                  <button class="training-action-btn primary" id="training-start" type="button">Start Training</button>
+                  <button class="training-action-btn" id="training-reset" type="button">Reset</button>
+                </div>
+              </div>
+              <iframe
+                class="dashboard-frame"
+                id="training-dashboard-frame"
+                src=""
+                title="Grafana DFL Training Overview"
+                loading="lazy">
+              </iframe>
+            </div>
+          </section>
+
+          <section class="chat-view hidden" id="chat-view">
+            <div class="dashboard-note" id="chat-warning">
+              The agent is not ready yet. Chat will become available once the training start has launched the agent and `/health` responds.
+            </div>
+            <div class="chat-window" id="messages"></div>
+            <form class="composer" id="composer">
+              <textarea id="input" placeholder="Ask about latest bundles, dataset samples, proofs or artifact provenance..."></textarea>
+              <div class="composer-foot">
+                <div class="hint">Press Enter to send. Use Shift+Enter for a new line.</div>
+                <button class="send" type="submit">Send Message</button>
+              </div>
+            </form>
+          </section>
         </div>
       </main>
-    </div>
+      </section>
+    </section>
   </div>
 
   <script>
-    const grafanaUrl = "__GRAFANA_EXTERNAL_DASHBOARD_URL__";
-    const hasGrafanaUrl = Boolean(grafanaUrl) && /^https?:\/\//.test(grafanaUrl);
+    const contractDashboardUrl = "__GRAFANA_CONTRACT_DASHBOARD_URL__";
+    const trainingDashboardUrl = "__GRAFANA_TRAINING_DASHBOARD_URL__";
+    const agentDashboardUrl = "__GRAFANA_AGENT_DASHBOARD_URL__";
+    const hasContractDashboardUrl = Boolean(contractDashboardUrl) && /^https?:\/\//.test(contractDashboardUrl);
+    const hasTrainingDashboardUrl = Boolean(trainingDashboardUrl) && /^https?:\/\//.test(trainingDashboardUrl);
+    const hasAgentDashboardUrl = Boolean(agentDashboardUrl) && /^https?:\/\//.test(agentDashboardUrl);
+    const sidebarEl = document.getElementById("sidebar");
+    const mainPanelEl = document.getElementById("main-panel");
     const sessionsEl = document.getElementById("sessions");
     const messagesEl = document.getElementById("messages");
     const statusEl = document.getElementById("status");
@@ -358,15 +791,59 @@
     const inputEl = document.getElementById("input");
     const composerEl = document.getElementById("composer");
     const newSessionBtn = document.getElementById("new-session");
-    const modeToggleBtn = document.getElementById("mode-toggle");
+    const contractsTabBtn = document.getElementById("contracts-tab");
+    const trainingTabBtn = document.getElementById("training-tab");
+    const chatTabBtn = document.getElementById("chat-tab");
+    const contractsViewEl = document.getElementById("contracts-view");
+    const trainingViewEl = document.getElementById("training-view");
     const chatViewEl = document.getElementById("chat-view");
-    const dashboardViewEl = document.getElementById("dashboard-view");
-    const dashboardFrameEl = document.getElementById("dashboard-frame");
-    const dashboardHintEl = document.getElementById("dashboard-hint");
+    const contractsDashboardFrameEl = document.getElementById("contracts-dashboard-frame");
+    const trainingDashboardFrameEl = document.getElementById("training-dashboard-frame");
+    const agentDashboardFrameEl = document.getElementById("agent-dashboard-frame");
+    const contractsHintEl = document.getElementById("contracts-hint");
+    const trainingDashboardHintEl = document.getElementById("training-dashboard-hint");
+    const agentDashboardHintEl = document.getElementById("agent-dashboard-hint");
+    const contractInitNoteEl = document.getElementById("contract-init-note");
     const chatWarningEl = document.getElementById("chat-warning");
+    const trainingRoundsEl = document.getElementById("training-rounds");
+    const trainingEpochEl = document.getElementById("training-epoch");
+    const trainingWorkerCountEl = document.getElementById("training-worker-count");
+    const trainingClientLimitEl = document.getElementById("training-client-limit");
+    const trainingNoteEl = document.getElementById("training-note");
+    const trainingStartBtn = document.getElementById("training-start");
+    const trainingResetBtn = document.getElementById("training-reset");
+    const trainingStepBtns = Array.from(document.querySelectorAll("[data-training-field]"));
     let currentSessionId = null;
-    let currentMode = "dashboard";
+    let currentMessages = [];
+    let currentMode = "contracts";
     let agentReady = false;
+    let trainingConfigLoaded = false;
+    let contractBusy = false;
+    let trainingBusy = false;
+    let workflowState = {
+      contract_initialized: false,
+      contract_running: false,
+      training_started: false,
+      agent_running: false,
+      base_runtime_ready: false,
+      running_workers: []
+    };
+    let trainingConfig = {
+      rounds: 5,
+      epoch: 1,
+      worker_count: 1,
+      client_limit: 1,
+      max_worker_count: 1,
+      available_workers: []
+    };
+
+    function contractsReady() {
+      return Boolean(workflowState.contract_initialized);
+    }
+
+    function trainingReady() {
+      return contractsReady() && Boolean(workflowState.training_started);
+    }
 
     function escapeHtml(text) {
       const div = document.createElement("div");
@@ -375,16 +852,20 @@
     }
 
     function renderMessages(messages) {
+      currentMessages = Array.isArray(messages) ? messages.slice() : [];
       messagesEl.innerHTML = "";
-      for (const message of messages) {
+      for (const message of currentMessages) {
+        const toolEvents = Array.isArray(message.events)
+          ? message.events
+          : (Array.isArray(message.tool_events) ? message.tool_events : []);
         const item = document.createElement("div");
         item.className = `message ${message.role}`;
         item.innerHTML = `<b>${message.role === "user" ? "YOU" : "AGENT"}:</b><br>${escapeHtml(message.content || "")}`;
-        if (message.role === "assistant" && Array.isArray(message.tool_events) && message.tool_events.length > 0) {
+        if (message.role === "assistant" && toolEvents.length > 0) {
           const trace = document.createElement("div");
           trace.className = "tool-trace";
           trace.innerHTML = "<b>TOOL TRACE:</b>";
-          for (const event of message.tool_events) {
+          for (const event of toolEvents) {
             const eventEl = document.createElement("div");
             eventEl.className = "tool-event";
             eventEl.innerHTML = `<b>${escapeHtml(event.label || event.type || "Tool")}</b><br>${escapeHtml(event.detail || "")}`;
@@ -397,57 +878,259 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    async function readJsonResponse(response, fallbackMessage) {
+      const rawText = await response.text();
+      let payload = null;
+      try {
+        payload = rawText ? JSON.parse(rawText) : {};
+      } catch (_error) {
+        const preview = rawText.trim().slice(0, 120);
+        const hint = preview.startsWith("<")
+          ? "The backend returned HTML instead of JSON. Rebuild/restart the control-api container so the training API routes are available."
+          : `Unexpected response: ${preview || "empty response"}`;
+        throw new Error(fallbackMessage ? `${fallbackMessage} ${hint}` : hint);
+      }
+      if (!response.ok) {
+        throw new Error(payload?.detail || fallbackMessage || "Request failed.");
+      }
+      return payload;
+    }
+
+    function setTrainingControlsDisabled(disabled) {
+      for (const button of trainingStepBtns) {
+        button.disabled = disabled;
+      }
+      trainingStartBtn.disabled = disabled;
+      trainingResetBtn.disabled = disabled;
+    }
+
+    function syncTabs() {
+      contractsTabBtn.classList.toggle("active", currentMode === "contracts");
+      trainingTabBtn.classList.toggle("active", currentMode === "training");
+      chatTabBtn.classList.toggle("active", currentMode === "chat");
+      trainingTabBtn.disabled = !contractsReady();
+      chatTabBtn.disabled = !trainingReady();
+    }
+
+    function currentStatusText() {
+      if (contractBusy) {
+        return "Status: Smart contract initialization is running...";
+      }
+      if (trainingBusy) {
+        return "Status: Starting training services with the selected setup...";
+      }
+      if (!contractsReady()) {
+        return workflowState.contract_running
+          ? "Status: Smart contract initialization is running..."
+          : "Status: Waiting for smart contracts to initialize.";
+      }
+      if (!trainingReady()) {
+        return "Status: Smart contracts ready. Configure training in the Training Setup tab.";
+      }
+      if (currentMode === "chat") {
+        return agentReady
+          ? "Status: Agent chat is active."
+          : "Status: Training is live. Waiting for the agent chat backend.";
+      }
+      if (currentMode === "training") {
+        return "Status: Training telemetry is live.";
+      }
+      return "Status: Smart contracts ready. Training controls are unlocked.";
+    }
+
+    function renderContractState() {
+      if (workflowState.contract_running || contractBusy) {
+        contractInitNoteEl.textContent = "Contract initialization is currently running. The next tabs unlock automatically after success.";
+      } else if (contractsReady()) {
+        contractInitNoteEl.textContent = "Smart contracts initialized successfully. You can continue with the Training Setup tab.";
+      } else {
+        contractInitNoteEl.textContent = "The base stack starts anvil, ipfs, and smart-contracts automatically. Training and agent access unlock after initialization finishes successfully.";
+      }
+    }
+
+    function renderTrainingConfig() {
+      trainingRoundsEl.textContent = String(trainingConfig.rounds);
+      trainingEpochEl.textContent = String(trainingConfig.epoch);
+      trainingWorkerCountEl.textContent = String(trainingConfig.worker_count);
+      trainingClientLimitEl.textContent = String(trainingConfig.client_limit);
+      if (!contractsReady()) {
+        trainingNoteEl.textContent = "Initialize the smart contracts first to unlock the training controls.";
+      } else {
+        trainingNoteEl.textContent = `Available VM services in compose: ${trainingConfig.max_worker_count}. The start action uses VM-0 up to the selected worker count. CLIENT_LIMIT stays independent.`;
+      }
+      setTrainingControlsDisabled(!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady());
+    }
+
+    function renderWorkflow() {
+      renderContractState();
+      renderTrainingConfig();
+      inputEl.disabled = !agentReady;
+      newSessionBtn.disabled = !agentReady;
+      const showSidebar = currentMode === "chat";
+      sidebarEl.classList.toggle("hidden", !showSidebar);
+      mainPanelEl.classList.toggle("full-width", !showSidebar);
+      if (agentReady) {
+        chatWarningEl.classList.add("hidden");
+      } else {
+        chatWarningEl.classList.remove("hidden");
+      }
+      if (currentMode === "training" && !contractsReady()) {
+        currentMode = "contracts";
+      }
+      if (currentMode === "chat" && !contractsReady()) {
+        currentMode = "contracts";
+      }
+      contractsViewEl.classList.toggle("hidden", currentMode !== "contracts");
+      trainingViewEl.classList.toggle("hidden", currentMode !== "training");
+      chatViewEl.classList.toggle("hidden", currentMode !== "chat");
+      syncTabs();
+      statusEl.textContent = currentStatusText();
+    }
+
+    async function refreshWorkflowStatus() {
+      try {
+        const response = await fetch("/api/control/status", { cache: "no-store" });
+        const payload = await readJsonResponse(response, "Control status unavailable.");
+        trainingConfig = payload.config;
+        workflowState = payload.runtime;
+        trainingConfigLoaded = true;
+        renderWorkflow();
+      } catch (error) {
+        trainingConfigLoaded = false;
+        contractInitNoteEl.textContent = String(error.message || error);
+        trainingNoteEl.textContent = String(error.message || error);
+        setTrainingControlsDisabled(true);
+        statusEl.textContent = `Status: ERROR :: ${error.message || error}`;
+      }
+    }
+
+    function adjustTrainingConfig(field, delta) {
+      if (!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady()) {
+        return;
+      }
+      const currentValue = Number(trainingConfig[field] || 1);
+      const maxWorkerCount = Math.max(1, Number(trainingConfig.max_worker_count || 1));
+      let nextValue = currentValue + delta;
+      if (field === "worker_count") {
+        nextValue = Math.max(1, Math.min(nextValue, maxWorkerCount));
+      } else {
+        nextValue = Math.max(1, nextValue);
+      }
+      trainingConfig[field] = nextValue;
+      renderTrainingConfig();
+    }
+
+    async function startTrainingRun() {
+      if (!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady()) {
+        statusEl.textContent = "Status: Training controls are not ready yet.";
+        return;
+      }
+
+      let finalStatus = "";
+      trainingBusy = true;
+      renderTrainingConfig();
+      statusEl.textContent = "Status: Starting training stack with the selected setup...";
+
+      try {
+        const response = await fetch("/api/training/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rounds: trainingConfig.rounds,
+            epoch: trainingConfig.epoch,
+            worker_count: trainingConfig.worker_count,
+            client_limit: trainingConfig.client_limit
+          })
+        });
+        const payload = await readJsonResponse(response, "Training restart failed.");
+        trainingConfig = payload.config;
+        workflowState = payload.status;
+        trainingConfigLoaded = true;
+        await refreshWorkflowStatus();
+        const selectedWorkers = Array.isArray(payload.selected_workers) ? payload.selected_workers.join(", ") : "none";
+        renderWorkflow();
+        finalStatus = `Status: Training restart triggered for ${selectedWorkers}.`;
+      } catch (error) {
+        finalStatus = `Status: ERROR :: ${error.message || error}`;
+      } finally {
+        trainingBusy = false;
+        renderWorkflow();
+        if (finalStatus) {
+          statusEl.textContent = finalStatus;
+        }
+      }
+    }
+
+    async function resetTrainingRun() {
+      if (!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady()) {
+        statusEl.textContent = "Status: Training controls are not ready yet.";
+        return;
+      }
+
+      let finalStatus = "";
+      trainingBusy = true;
+      renderTrainingConfig();
+      statusEl.textContent = "Status: Resetting training services...";
+
+      try {
+        const response = await fetch("/api/training/reset", {
+          method: "POST"
+        });
+        const payload = await readJsonResponse(response, "Training reset failed.");
+        trainingConfig = payload.config || trainingConfig;
+        workflowState = payload.status || workflowState;
+        trainingConfigLoaded = true;
+        currentMode = "contracts";
+        applyAgentReadiness(false);
+        finalStatus = "Status: Base runtime restarted and smart contracts reinitialized. You are back at Smart Contracts.";
+      } catch (error) {
+        finalStatus = `Status: ERROR :: ${error.message || error}`;
+      } finally {
+        trainingBusy = false;
+        await refreshWorkflowStatus();
+        renderWorkflow();
+        if (finalStatus) {
+          statusEl.textContent = finalStatus;
+        }
+      }
+    }
+
     function applyMode(mode) {
-      currentMode = mode;
+      if (mode === "training" && !contractsReady()) {
+        currentMode = "contracts";
+        renderWorkflow();
+        return;
+      }
       if (mode === "chat") {
-        if (!agentReady || !currentSessionId) {
-          dashboardViewEl.classList.remove("hidden");
-          chatViewEl.classList.add("hidden");
-          modeToggleBtn.textContent = "CHAT NOT READY";
-          statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+        if (!trainingReady()) {
+          currentMode = contractsReady() ? "training" : "contracts";
+          renderWorkflow();
           return;
         }
-        chatViewEl.classList.remove("hidden");
-        dashboardViewEl.classList.add("hidden");
-        modeToggleBtn.textContent = "SHOW GRAFANA";
-        statusEl.textContent = "Status: chat mode active.";
+      }
+      currentMode = mode;
+      renderWorkflow();
+      if (mode === "chat" && agentReady) {
         inputEl.focus();
-      } else {
-        dashboardViewEl.classList.remove("hidden");
-        chatViewEl.classList.add("hidden");
-        modeToggleBtn.textContent = "OPEN CHAT WINDOW";
-        statusEl.textContent = "Status: Grafana command center active.";
       }
     }
 
     function applyAgentReadiness(ready) {
       const wasReady = agentReady;
-      agentReady = ready;
-      modeToggleBtn.disabled = !ready;
-      inputEl.disabled = !ready;
-      newSessionBtn.disabled = !ready;
-      if (ready) {
-        modeToggleBtn.textContent = currentMode === "chat" ? "SHOW GRAFANA" : "OPEN CHAT WINDOW";
-        chatWarningEl.classList.add("hidden");
-        if (currentMode !== "chat") {
-          statusEl.textContent = "Status: cyber agent online and accepting messages.";
-        }
-        if (!wasReady && !currentSessionId) {
+      agentReady = ready && trainingReady();
+      if (agentReady) {
+        if (agentReady && !wasReady && !currentSessionId) {
           void createSession();
         }
-      } else {
-        if (currentMode === "chat") {
-          currentMode = "dashboard";
-          dashboardViewEl.classList.remove("hidden");
-          chatViewEl.classList.add("hidden");
-        }
-        modeToggleBtn.textContent = "CHAT NOT READY";
-        chatWarningEl.classList.remove("hidden");
-        statusEl.textContent = "Status: chat terminal still warming up...";
       }
+      renderWorkflow();
     }
 
     async function pollAgentHealth() {
+      if (!trainingReady()) {
+        applyAgentReadiness(false);
+        return;
+      }
       try {
         const [healthResponse, sessionsResponse] = await Promise.all([
           fetch("/health", { cache: "no-store" }),
@@ -478,11 +1161,11 @@
         const button = document.createElement("button");
         button.className = `session${session.id === activeId ? " active" : ""}`;
         button.disabled = !agentReady;
-        button.innerHTML = `<b>${escapeHtml(sessionLabel(session))}</b><br><small>${session.message_count} messages stored in the machine</small>`;
+        button.innerHTML = `<b>${escapeHtml(sessionLabel(session))}</b><br><small>${session.message_count} messages</small>`;
         button.onclick = async () => {
           await pollAgentHealth();
           if (!agentReady) {
-            statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+            statusEl.textContent = "Status: Agent chat is not ready yet.";
             return;
           }
           currentSessionId = session.id;
@@ -495,7 +1178,7 @@
     async function loadSession(sessionId) {
       const response = await fetch(`/api/sessions/${sessionId}`);
       if (!response.ok) {
-        statusEl.textContent = "Status: could not load session from the cyber backend.";
+        statusEl.textContent = "Status: Session could not be loaded.";
         return;
       }
       const payload = await response.json();
@@ -505,46 +1188,50 @@
       await refreshSessions(currentSessionId);
     }
 
-    async function createSession() {
+    async function createSession(options = {}) {
       if (!agentReady) {
-        statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+        statusEl.textContent = "Status: Agent chat is not ready yet.";
         return;
       }
       try {
-        const response = await fetch("/api/sessions", { method: "POST" });
+        const response = await fetch("/api/sessions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reset_metrics: Boolean(options.resetMetrics) })
+        });
         if (!response.ok) {
           applyAgentReadiness(false);
-          statusEl.textContent = "Status: chat backend still booting. Session creation delayed.";
+          statusEl.textContent = "Status: Session creation is still pending.";
           return;
         }
         const payload = await response.json();
         await loadSession(payload.session.id);
         applyAgentReadiness(true);
-        if (agentReady) {
+        if (agentReady && currentMode === "chat") {
           inputEl.focus();
         }
       } catch (_error) {
         applyAgentReadiness(false);
-        statusEl.textContent = "Status: no session yet. Waiting for the cyber agent backend...";
+        statusEl.textContent = "Status: Waiting for the agent backend.";
       }
     }
 
     async function resetSessionsAndCreateFreshOne() {
       if (!agentReady) {
-        statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+        statusEl.textContent = "Status: Agent chat is not ready yet.";
         return;
       }
-      statusEl.textContent = "Status: erasing the old chat archives from cyberspace...";
+      statusEl.textContent = "Status: Clearing session history...";
       currentSessionId = null;
       titleEl.textContent = "Fresh Session";
       renderMessages([]);
       sessionsEl.innerHTML = "";
       const response = await fetch("/api/sessions", { method: "DELETE" });
       if (!response.ok) {
-        statusEl.textContent = "Status: could not wipe the old session archives.";
+        statusEl.textContent = "Status: Old sessions could not be removed.";
         return;
       }
-      await createSession();
+      await createSession({ resetMetrics: true });
     }
 
     composerEl.addEventListener("submit", async (event) => {
@@ -552,28 +1239,37 @@
       await pollAgentHealth();
       const message = inputEl.value.trim();
       if (!agentReady || !message || !currentSessionId) {
-        statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+        statusEl.textContent = "Status: Agent chat is not ready yet.";
         return;
       }
       inputEl.value = "";
-      statusEl.textContent = "Status: transmitting packet to the cyber agent...";
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: currentSessionId, message })
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        statusEl.textContent = `Status: ERROR :: ${payload.detail || "Request failed."}`;
-        return;
+      renderMessages([
+        ...currentMessages,
+        { role: "user", content: message },
+        { role: "assistant", content: "Working on it..." }
+      ]);
+      statusEl.textContent = "Status: Sending message to the agent...";
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: currentSessionId, message })
+        });
+        const payload = await readJsonResponse(response, "Chat request failed.");
+        titleEl.textContent = sessionLabel(payload.session);
+        renderMessages(payload.session.messages);
+        await refreshSessions(currentSessionId);
+        statusEl.textContent = "Status: Message delivered.";
+      } catch (error) {
+        renderMessages([
+          ...currentMessages.slice(0, -1),
+          { role: "assistant", content: `Request failed: ${error.message || error}` }
+        ]);
+        statusEl.textContent = `Status: ERROR :: ${error.message || error}`;
       }
-      titleEl.textContent = sessionLabel(payload.session);
-      renderMessages(payload.session.messages);
-      await refreshSessions(currentSessionId);
-      statusEl.textContent = "Status: message delivered successfully.";
     });
 
-    inputEl.addEventListener("keydown", async (event) => {
+    inputEl.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.shiftKey) {
         return;
       }
@@ -585,27 +1281,58 @@
       await pollAgentHealth();
       await resetSessionsAndCreateFreshOne();
     });
-    modeToggleBtn.addEventListener("click", async () => {
-      await pollAgentHealth();
-      if (!agentReady || !currentSessionId) {
-        statusEl.textContent = "Status: hold your modem horses, the agent is not ready yet.";
+
+    for (const button of trainingStepBtns) {
+      button.addEventListener("click", () => {
+        adjustTrainingConfig(button.dataset.trainingField, Number(button.dataset.trainingDelta || "0"));
+      });
+    }
+
+    trainingStartBtn.addEventListener("click", async () => {
+      await startTrainingRun();
+    });
+    trainingResetBtn.addEventListener("click", async () => {
+      await resetTrainingRun();
+    });
+
+    contractsTabBtn.addEventListener("click", () => applyMode("contracts"));
+    trainingTabBtn.addEventListener("click", () => applyMode("training"));
+    chatTabBtn.addEventListener("click", async () => {
+      if (!trainingReady()) {
         return;
       }
-      applyMode(currentMode === "chat" ? "dashboard" : "chat");
+      await pollAgentHealth();
+      applyMode("chat");
     });
 
     (async () => {
-      if (hasGrafanaUrl) {
-        dashboardFrameEl.src = grafanaUrl;
-        dashboardHintEl.innerHTML = 'External Grafana share link detected. Enjoy the cyber telemetry.';
+      if (hasContractDashboardUrl) {
+        contractsDashboardFrameEl.src = contractDashboardUrl;
+        contractsHintEl.textContent = "Contract initialization telemetry is embedded from Grafana.";
       } else {
-        dashboardFrameEl.removeAttribute("src");
-        dashboardHintEl.innerHTML = 'No external Grafana share URL configured yet. Set <code>GRAFANA_EXTERNAL_DASHBOARD_URL</code> and rebuild the UI to activate this panel.';
+        contractsDashboardFrameEl.removeAttribute("src");
+        contractsHintEl.innerHTML = 'No contract dashboard URL configured yet. Set <code>GRAFANA_CONTRACT_DASHBOARD_URL</code> and rebuild the UI.';
+      }
+      if (hasTrainingDashboardUrl) {
+        trainingDashboardFrameEl.src = trainingDashboardUrl;
+        trainingDashboardHintEl.textContent = "Training telemetry is embedded from Grafana.";
+      } else {
+        trainingDashboardFrameEl.removeAttribute("src");
+        trainingDashboardHintEl.innerHTML = 'No training dashboard URL configured yet. Set <code>GRAFANA_TRAINING_DASHBOARD_URL</code> and rebuild the UI.';
+      }
+      if (hasAgentDashboardUrl) {
+        agentDashboardFrameEl.src = agentDashboardUrl;
+        agentDashboardHintEl.textContent = "Agent MCP tool telemetry is embedded from Grafana.";
+      } else {
+        agentDashboardFrameEl.removeAttribute("src");
+        agentDashboardHintEl.innerHTML = 'No agent dashboard URL configured yet. Set <code>GRAFANA_AGENT_DASHBOARD_URL</code> and rebuild the UI.';
       }
       applyAgentReadiness(false);
       await pollAgentHealth();
+      await refreshWorkflowStatus();
       window.setInterval(pollAgentHealth, 15000);
-      applyMode("dashboard");
+      window.setInterval(refreshWorkflowStatus, 15000);
+      applyMode("contracts");
       if (agentReady) {
         await createSession();
       }

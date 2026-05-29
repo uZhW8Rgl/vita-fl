@@ -11,9 +11,9 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "agent/blockchain_source.py" = ["I001"]
-"agent/ipfs_rag.py" = ["I001"]
+"agent/ipfs_bundle.py" = ["I001"]
 "agent/run_agent.py" = ["I001"]
-"agent/zk_mcp_server.py" = ["I001"]
+"agent/mcp_server.py" = ["I001"]
 "data/mnist_tools.py" = ["E402", "I001"]
 "dfl/neural_network/start_service.py" = ["E402", "I001"]
 "dfl/neural_network/service.py" = ["I001"]

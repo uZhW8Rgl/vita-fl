@@ -296,12 +296,29 @@ export const setContribution = async (deviceID) => {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
+        await logWorkerScore(deviceID?.[0] || account.address, "increment");
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
     catch (error) {
         console.error("Error sending transaction: ", error);
         throw error;
+    }
+};
+
+const logWorkerScore = async (deviceAddress, reason = "update") => {
+    try {
+        const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
+        const contract = new web3.eth.Contract(abi, gm_storage_address);
+        const score = await contract.methods.getContribution(deviceAddress).call();
+        console.log(JSON.stringify({
+            kind: "worker_score",
+            account: deviceAddress,
+            score: Number(score?.toString?.() ?? score ?? 0),
+            reason,
+        }, jsonReplacer));
+    } catch (error) {
+        console.error("Error reading worker score:", serializeError(error));
     }
 };
 
@@ -324,6 +341,9 @@ export const penalizeContribution = async (deviceIDs, reason) => {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
+        for (const deviceID of deviceIDs || []) {
+            await logWorkerScore(deviceID, reason || "penalty");
+        }
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }

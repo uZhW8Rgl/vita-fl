@@ -117,7 +117,7 @@ export OLLAMA_MODEL=qwen3:0.6b
 .venv/bin/python agent/run_agent.py --llm --source contract --skip-calibration
 ```
 
-In this mode LangChain can use local IPFS/RAG helpers and ZK tools exposed through MCP.
+In this mode LangChain can use local IPFS bundle helpers and ZK tools exposed through MCP.
 
 ## Persistent Chat Service
 
@@ -153,7 +153,7 @@ set the generated link as `GRAFANA_EXTERNAL_DASHBOARD_URL` for the `ui` service.
 This is separate from Grafana's generic embedding setting.
 
 - answer directly through Ollama,
-- inspect local IPFS metadata through the lightweight RAG helper,
+- inspect local IPFS bundle metadata through the lightweight IPFS helper,
 - call MCP tools for model export, dataset query preparation, and proof generation.
 
 Inside Compose, the agent automatically uses `OLLAMA_BASE_URL=http://ollama:11434`.
@@ -183,7 +183,7 @@ docker compose run --rm agent python agent/run_agent.py \
 Run the MCP server directly:
 
 ```bash
-.venv/bin/python agent/zk_mcp_server.py
+.venv/bin/python agent/mcp_server.py
 ```
 
 The MCP server does not reimplement proof logic. It wraps the existing scripts in `zk_inference`.
@@ -195,7 +195,7 @@ The exposed tools include `prepare_dataset_sample` and the backward-compatible `
 For debugging old local artifacts, use:
 
 ```bash
-.venv/bin/python agent/ipfs_rag.py \
+.venv/bin/python agent/ipfs_bundle.py \
   --api-url http://127.0.0.1:5001 \
   --root / \
   --fetch

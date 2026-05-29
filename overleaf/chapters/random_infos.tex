@@ -1,0 +1,240 @@
+
+\section{Verifiable Distributed Federated Learning}
+
+The distributed federated learning subsystem was designed as a hybrid architecture that combines off-chain model training, peer-to-aggregator transfer, decentralized model distribution, and on-chain coordination. Its central objective is to enable collaborative model training without centralizing the underlying participant datasets, while still preserving a shared notion of system state. In the current implementation, local training is performed off-chain in the neural_network component, coordination logic and artifact exchange are handled by the node_server, and a set of Solidity contracts provides a lightweight control plane for participant authorization, aggregator selection, contribution tracking, and global model publication. This separation reflects a deliberate architectural choice: computationally intensive tasks remain off-chain, whereas the blockchain is used to anchor role assignments and model references in a tamper-evident manner.
+
+At the learning level, the system implements a multilayer perceptron trained over partitioned MNIST data, with the global state represented as a serialized parameter artifact. The local learners operate on disjoint data partitions and produce updated parameter files rather than raw gradients. These parameter updates are then transferred to an aggregator node, which computes a federated average and publishes the resulting global model. In architectural terms, the system therefore follows a parameter-exchange paradigm rather than a gradient-streaming paradigm. This design keeps the off-chain communication model comparatively simple and aligns well with the subsequent storage of the global model as a discrete binary artifact, which can then be signed, pinned to IPFS, and referenced on-chain.
+
+The control-plane design is centered around a minimal set of contracts. DeviceRegistry maintains the membership state of training participants and stores endpoint metadata and public keys (DeviceRegistry.sol (line 4)). AggregatorSelection stores the current system state, the current aggregator, and the broker endpoint, and exposes a mechanism for selecting a new aggregator based on the top contributor returned by the model storage contract (AggregatorSelection.sol (line 15)). GMStorage maintains the current and backup model CIDs, the associated signature CIDs, the current round, and contribution counters used for aggregator rotation (GMStorage.sol (line 12)). The resulting design does not place the model itself on-chain, but only authenticated references to off-chain model artifacts, thereby reducing on-chain storage cost while retaining a persistent coordination record.
+
+A further design dimension concerns trust establishment at participant admission time. In its current form, the registry authorizes addresses explicitly, but the broader architecture already contains the building blocks for a significantly stronger admission model based on trusted execution environments. Specifically, the remote_attestation subsystem contains an on-chain TDX quote verification flow using AutomataDcapTdxV4Attestation, together with scripts for parsing and verifying Intel TDX v4 quotes on-chain (VerifyTDXV4Quote.s.sol (line 11)). This enables a natural architectural extension in which a participant is admitted into the federated learning system only if it can present a valid quote whose attested measurement or embedded report data corresponds to an approved Docker image digest. Under such a design, address-based membership would be replaced by attestation-backed enrollment, thereby binding training participation not merely to an Ethereum account but to a verifiably measured software environment.
+
+\section{Zero-Knowledge Inference}
+
+The zero-knowledge inference subsystem was designed as a post-training extension to the existing distributed federated learning pipeline rather than as an intrusive modification of the training stack itself. In the current architecture, the federated process produces a final aggregated global model in the form of aggregated.bin. This file constitutes the most stable integration point, because it captures the result of the complete multi-round training and aggregation procedure in a single artifact. Consequently, the zero-knowledge component was intentionally attached to the finalized model state rather than to intermediate local updates, participant-specific gradients, or round-wise aggregation states. This design decision allowed the integration of verifiable inference without requiring a fundamental reimplementation of the existing C++-based federated learning system.
+
+The resulting design follows a layered transformation pipeline. First, the aggregated model parameters are extracted from the custom binary format used by the original neural-network implementation. Second, these parameters are translated into a framework-compatible representation and exported to ONNX, enabling interoperability with zero-knowledge machine-learning tooling. Third, an input instance is prepared in exactly the same numerical format as expected by the original model, ensuring semantic consistency between conventional inference and zero-knowledge inference. Fourth, the exported model and the prepared input are compiled into a zero-knowledge circuit from which a proof of correct inference can be generated and verified. This architecture separates concerns cleanly: federated learning remains responsible for training and aggregation, while the zero-knowledge subsystem is responsible for verifiable execution of inference on the resulting global model.
+
+A further design objective was semantic fidelity. The original model is a multilayer perceptron with an input dimension of 784, two hidden layers of sizes 200 and 50, and an output layer of size 10. Hidden-layer activations are implemented using tanh, while the output layer is post-processed via softmax in the original C++ implementation. For zero-knowledge purposes, an additional logits-only export path was introduced, because proving raw logits is operationally simpler and numerically more stable than proving fully normalized probability distributions. Thus, the design does not attempt to alter the predictive behavior of the model; rather, it creates a proof-friendly representation of the same forward computation.
+
+\subsection{Erweiterung der Systemarchitektur}
+
+Im ursprünglichen Aufbau waren die Blockchain-Logik und die lokale Trainingslogik vergleichsweise eng miteinander gekoppelt. Im Rahmen dieser Arbeit wurde die Architektur stärker modularisiert. Der Node.js-Prozess übernimmt weiterhin die Orchestrierung der Blockchain-Interaktion, der IPFS-Kommunikation, der Zustandsmaschine und der Kommunikation zwischen den Teilnehmern. Die Machine-Learning-Logik wurde hingegen in eine separate Python/PyTorch-Komponente ausgelagert.
+
+Diese Trennung folgt einer klaren Verantwortungsaufteilung. Node.js eignet sich besonders für asynchrone Netzwerkkommunikation, Blockchain-RPC-Aufrufe und Orchestrierungslogik. Python mit PyTorch stellt dagegen eine etablierte Umgebung für Training, Modellaggregation und spätere Erweiterungen im Bereich Machine Learning dar. Beide Komponenten können weiterhin gemeinsam innerhalb eines Worker-Containers ausgeführt werden, sind intern jedoch logisch getrennt.
+
+Ein Vorteil dieser Lösung besteht darin, dass die ML-Komponente unabhängig von der Blockchain-Orchestrierung weiterentwickelt werden kann. Beispielsweise kann das neuronale Netz später durch ein CNN oder ein anderes PyTorch-Modell ersetzt werden, ohne die Smart-Contract- oder IPFS-Logik grundlegend zu verändern. Nachteilig ist, dass durch diese Trennung zusätzliche Schnittstellen entstehen, die überwacht und getestet werden müssen.
+
+\subsection{TEE-basierte Registrierung}
+
+Ein zentraler Schritt war die Umstellung der Teilnehmerregistrierung auf eine TEE-basierte Verifikation. Geräte werden nicht mehr nur manuell oder ohne Nachweis autorisiert, sondern können sich über eine TDX Quote beim \texttt{DeviceRegistry}-Contract registrieren. Der Smart Contract prüft diese Quote onchain über die konfigurierte Automata-DCAP-TDX-Attestation-Komponente. Erst nach erfolgreicher Verifikation wird ein Gerät als autorisiert markiert.
+
+Dadurch entsteht eine stärkere Bindung zwischen Teilnehmeridentität und vertrauenswürdiger Ausführungsumgebung. Für das System bedeutet dies, dass nur Geräte in Trainings- und Aggregationsprozesse einbezogen werden, die onchain als TEE-verifiziert gelten.
+
+\paragraph{Vorteile}
+Die Autorisierung ist onchain nachvollziehbar. Zudem muss der Aggregator Teilnehmer nicht aus einer lokalen Konfiguration kennen, da die Teilnehmerliste dynamisch aus dem Smart Contract gelesen werden kann.
+
+\paragraph{Nachteile}
+Die Attestation-Logik erhöht die Komplexität des Deployments. Außerdem ist die onchain Verifikation gasintensiver als eine einfache Registrierung. Fehler im Quote-Format, in PCCS-Daten oder in der Attestation-Konfiguration können zu schwerer diagnostizierbaren Reverts führen.
+
+\subsection{Onchain-Teilnehmerliste}
+
+Vorher mussten teilnahmeberechtigte Geräte teilweise über Umgebungsvariablen oder lokal bekannte Listen definiert werden. Dies wurde durch eine onchain abrufbare Liste autorisierter Geräte ersetzt. Der \texttt{DeviceRegistry}-Contract speichert bekannte Geräte und stellt mit \texttt{getAuthorizedDevices()} eine Funktion bereit, die alle aktuell autorisierten Teilnehmer zurückgibt.
+
+Damit kann der Aggregator die Menge der erwarteten Teilnehmer direkt aus dem Contract bestimmen. Das reduziert lokale Konfigurationsfehler und macht den Systemzustand transparenter. Wenn die Blockchain die Quelle der Wahrheit sein soll, sollte auch die Teilnehmerliste onchain liegen und nicht in lokalen Docker-Variablen dupliziert werden.
+
+\subsection{Freiwilliges Verlassen des Netzwerks}
+
+Zusätzlich wurde eine Methode ergänzt, mit der ein TEE-registrierter Teilnehmer sich selbst wieder deaktivieren kann. Diese Funktion ist als Self-Service-Mechanismus umgesetzt:
+
+\begin{lstlisting}%[language=Solidity]
+function leaveNetwork() public {
+    require(knownDevice[msg.sender], "device not registered");
+    require(devices[msg.sender].authorized, "device not authorized");
+    devices[msg.sender].authorized = false;
+    emit DeviceLeft(msg.sender);
+}
+\end{lstlisting}
+
+Die Funktion verwendet \texttt{msg.sender} und akzeptiert keinen Adressparameter. Dadurch kann ein Teilnehmer nur sich selbst abmelden, nicht jedoch andere Geräte. Die Eigenschaft \texttt{authorized} wird auf \texttt{false} gesetzt, während das Gerät weiterhin historisch bekannt bleibt.
+
+\subsection{Scoring- und Bestrafungsmechanismus}
+
+Das System wurde um einen onchain nachvollziehbaren Scoring-Mechanismus erweitert. Teilnehmer erhalten positive Contributions, wenn sie erfolgreich ein Modell einreichen. Gleichzeitig können sie bestraft werden, wenn sie erwartete Aufgaben nicht erfüllen, zum Beispiel wenn ein autorisiertes Gerät innerhalb der vorgegebenen Deadline kein trainiertes Modell liefert.
+
+Die Deadline ist nicht hardcodiert, sondern über eine Docker-Umgebungsvariable konfigurierbar:
+
+\begin{lstlisting}
+MODEL_SUBMISSION_DEADLINE_MS=600000
+\end{lstlisting}
+
+Die Bestrafung reduziert ausschließlich den Score. Es gibt keine Sperre, keinen Ausschluss aus zukünftigen Runden und keine härteren Sanktionen. Dadurch bleibt das System fehlertolerant: Kurzzeitige Ausfälle führen nicht direkt zum Ausschluss, beeinflussen aber die zukünftige Wahrscheinlichkeit, als Aggregator gewählt zu werden.
+
+\subsection{Onchain-Modellabgabe}
+
+Teilnehmer melden eine erfolgreiche Modellabgabe zusätzlich onchain über eine \texttt{submitModel}-Funktion. Dabei wird ein Hash des lokalen Modellpakets gespeichert. Dadurch wird nicht nur die Datei an den Aggregator übertragen, sondern auch onchain dokumentiert, dass ein Teilnehmer in einer bestimmten Runde ein Modell eingereicht hat.
+
+Die Blockchain speichert nicht das Modell selbst, sondern nur einen kompakten Nachweis in Form eines Hashes. Dies verbessert die Nachvollziehbarkeit, ohne große Modellartefakte onchain speichern zu müssen.
+
+\subsection{Aggregator-Auswahl mit Score und Randomness}
+
+Ursprünglich wurde der Aggregator deterministisch anhand des höchsten Scores gewählt. Dies hat den Vorteil, dass zuverlässige Teilnehmer bevorzugt werden. Allerdings kann es dazu führen, dass ein einzelner Teilnehmer dauerhaft Aggregator bleibt, sobald er einen Score-Vorsprung aufgebaut hat.
+
+Deshalb wurde die Auswahl um eine native Blockchain-Zufallskomponente erweitert. Als Zufallsquelle wird \texttt{block.prevrandao} verwendet. Die Auswahl ist nicht rein zufällig, sondern score-gewichtet:
+
+\begin{equation}
+w_i = s_i + 1
+\end{equation}
+
+Dabei bezeichnet \(s_i\) den Score des Teilnehmers \(i\). Die Wahrscheinlichkeit, dass Teilnehmer \(i\) Aggregator wird, ergibt sich aus:
+
+\begin{equation}
+P(i) = \frac{s_i + 1}{\sum_{j \in A}(s_j + 1)}
+\end{equation}
+
+Dabei ist \(A\) die Menge aller aktuell TEE-autorisierten Teilnehmer.
+
+Beispiel:
+
+\begin{align}
+s_A &= 10 \Rightarrow w_A = 11 \\
+s_B &= 3  \Rightarrow w_B = 4 \\
+s_C &= 0  \Rightarrow w_C = 1
+\end{align}
+
+Damit ergibt sich:
+
+\begin{align}
+P(A) &= \frac{11}{16} = 68{,}75\% \\
+P(B) &= \frac{4}{16} = 25{,}00\% \\
+P(C) &= \frac{1}{16} = 6{,}25\%
+\end{align}
+
+Der Score beeinflusst also weiterhin stark die Auswahl, aber der beste Teilnehmer gewinnt nicht mehr garantiert. Neue oder bisher scorelose Teilnehmer bleiben durch den \(+1\)-Term auswählbar.
+
+\paragraph{Vorteile}
+Zuverlässige Teilnehmer werden bevorzugt, ohne dass die Auswahl vollständig deterministisch bleibt. Dadurch wird eine dauerhafte Zentralisierung auf einen einzelnen Aggregator reduziert. Gleichzeitig bleibt die Auswahl onchain nachvollziehbar.
+
+\paragraph{Nachteile}
+\texttt{block.prevrandao} ist keine perfekte Zufallsquelle. Block-Produzenten können theoretisch begrenzten Einfluss nehmen. Für produktive Systeme mit hohen Sicherheitsanforderungen wären Verfahren wie Chainlink VRF oder Commit-Reveal robuster. Für ein prototypisches Forschungssetup stellt \texttt{block.prevrandao} jedoch einen pragmatischen Kompromiss dar, da keine externe Infrastruktur benötigt wird.
+
+\subsection{Gesamtbewertung}
+
+Durch die beschriebenen Änderungen wurde das System stärker in Richtung einer nachvollziehbaren, onchain koordinierten föderierten Lernarchitektur erweitert. Die Blockchain dient nicht mehr nur als Speicher für globale Modellreferenzen, sondern zunehmend als Kontroll- und Reputationsschicht. Teilnehmerregistrierung, Autorisierung, Modellabgabe, Bestrafung und Aggregator-Auswahl werden onchain abgebildet.
+
+Der größte Vorteil dieser Architektur ist Transparenz: Der Zustand des Systems ist für alle Teilnehmer nachvollziehbar. Gleichzeitig bleibt das eigentliche Machine Learning offchain, wodurch große Modell- und Trainingsdaten nicht auf der Blockchain gespeichert werden müssen.
+
+Der wichtigste Nachteil ist die höhere Komplexität. Die Kombination aus Docker, Node.js, Python/PyTorch, IPFS, Smart Contracts und TEE-Attestation erzeugt viele mögliche Fehlerquellen. Für eine Forschungsarbeit ist diese Komplexität jedoch vertretbar, da sie realistische Herausforderungen dezentraler ML-Systeme sichtbar macht.
+
+
+\subsection{Observability der Trainingsausführung}
+
+Zur besseren Nachvollziehbarkeit des dezentralen Trainingsprozesses wurde eine Observability-Schicht in die Docker-basierte Testumgebung integriert. Ziel dieser Erweiterung ist es, den Ablauf einzelner Trainingsrunden nicht nur über Konsolenausgaben zu verfolgen, sondern systematisch auszuwerten. Dies ist insbesondere relevant, da das System aus mehreren nebenläufigen Komponenten besteht: Worker-Knoten trainieren lokale Modelle, ein wechselnder Aggregator sammelt diese Modelle ein, Smart Contracts verwalten Zustände und Berechtigungen, und IPFS dient zur Verteilung globaler Modelle.
+
+Die Observability-Architektur basiert auf Grafana, Loki, Prometheus, Tempo, Promtail und einem OpenTelemetry Collector. Loki sammelt die Container-Logs der beteiligten Dienste, während Promtail diese Logs aus der Docker-Umgebung extrahiert und mit Labels wie Containername und Compose-Service versieht. Prometheus wird zur Abfrage metrischer Daten genutzt. Tempo speichert Traces, die über den OpenTelemetry Collector aus dem Node.js-basierten Worker-Prozess exportiert werden. Grafana dient als zentrale Visualisierungsschicht und stellt Dashboards für Logs, Metriken und Traces bereit.
+
+Ein wichtiger Bestandteil ist die Verknüpfung einzelner Ereignisse mit Trainingsrunden. Im Node.js-Worker wurden dafür Trace-Ereignisse und Spans ergänzt, beispielsweise für das Starten des lokalen Trainings, das Laden eines globalen Modells, die Modellübertragung an den Aggregator, die Aggregation, das Aktualisieren des globalen Modells sowie die Auswahl eines neuen Aggregators. Dadurch kann nachvollzogen werden, welcher Knoten zu welchem Zeitpunkt welche Rolle eingenommen hat und wie lange einzelne Schritte gedauert haben.
+
+Zusätzlich werden relevante Ereignisse aus den Logs extrahiert und in Grafana visualisiert. Dazu gehören unter anderem Trainingsstarts, erfolgreiche Modellübertragungen, abgeschlossene Aggregationen, Timeout-Meldungen, Fehler, Strafmechanismen und Accuracy-Werte der Worker. Die Accuracy wird aus Log-Zeilen der Form \texttt{Accuracy: 7011/10000} extrahiert und als Prozentwert pro Worker dargestellt. Dadurch lässt sich beobachten, wie sich die lokale Modellqualität über mehrere Runden entwickelt.
+
+\subsubsection{Nutzen für Debugging und Analyse}
+
+Die Observability-Schicht hat sich besonders bei der Analyse von Race Conditions und Smart-Contract-Reverts als nützlich erwiesen. Da der Ablauf des Systems stark zustandsabhängig ist, reicht ein einzelner Fehlerlog häufig nicht aus, um die Ursache zu bestimmen. Beispielsweise kann ein Fehler bei der Aggregator-Auswahl durch einen falschen Systemzustand, fehlende autorisierte Teilnehmer, einen nicht mehr aktuellen Aggregator oder ein zu knapp bemessenes Gas-Limit entstehen.
+
+Zur Diagnose solcher Fälle wurden zusätzliche Logs in den Blockchain-Client integriert. Vor der Aggregator-Auswahl werden nun unter anderem der aktuelle Aggregator, der Systemzustand, die Round-Nummer, die Liste autorisierter Geräte, der Top-Contributor, Blockinformationen sowie die Gas-Schätzung protokolliert. Außerdem wird vor dem Senden der Transaktion eine \texttt{eth\_call}-Simulation ausgeführt. Dadurch kann in vielen Fällen erkannt werden, ob ein Smart-Contract-\texttt{require} fehlschlägt, bevor eine echte Transaktion gesendet wird.
+
+Ein konkretes Beispiel war die Aggregator-Auswahl nach Abschluss einer Runde. Die Transaktion revertete zunächst ohne aussagekräftige Solidity-Fehlermeldung. Durch die zusätzlichen Diagnose-Logs wurde sichtbar, dass die Simulation erfolgreich war, die echte Transaktion jedoch beim Mining scheiterte. Dies deutete auf ein zu knapp bemessenes Gas-Limit hin. Anschließend wurde ein Gas-Puffer auf die geschätzte Gasmenge aufgeschlagen, wodurch die Transaktion stabil erfolgreich ausgeführt wurde. Dieses Beispiel zeigt, dass Observability nicht nur zur Darstellung des Systems dient, sondern aktiv zur Stabilisierung der Architektur beiträgt.
+
+\subsubsection{Vorteile}
+
+Ein wesentlicher Vorteil der integrierten Observability ist die End-to-End-Nachvollziehbarkeit des Trainingsprozesses. Es ist ersichtlich, wann ein Worker trainiert, wann ein Modell übertragen wird, wann der Aggregator eine Aggregation startet und wann ein neues globales Modell veröffentlicht wird. Dadurch können Verzögerungen, fehlende Modelle oder fehlerhafte Zustandsübergänge schneller erkannt werden.
+
+Ein weiterer Vorteil ist die Verbindung von Off-Chain- und On-Chain-Ereignissen. Die Smart Contracts bilden den vertrauenswürdigen Zustand ab, während die Logs und Traces zeigen, wie sich die einzelnen Knoten in der Ausführung verhalten. Gerade in einem System mit TEE-Registrierung, On-Chain-Scoring und Aggregator-Fallback ist diese Kombination wichtig, da Fehler sowohl in der Blockchain-Interaktion als auch in der verteilten Off-Chain-Kommunikation entstehen können.
+
+Auch für die Evaluation der Trainingsqualität ist die Visualisierung hilfreich. Sinkende oder stark schwankende Accuracy-Werte können früh erkannt und mit anderen Ereignissen korreliert werden, etwa mit fehlenden Modellübertragungen, Aggregator-Wechseln oder Timeout-Ereignissen.
+
+\subsubsection{Nachteile und Einschränkungen}
+
+Die Observability-Schicht erhöht die Komplexität der Testumgebung. Neben den eigentlichen Systemkomponenten müssen zusätzliche Dienste betrieben werden. Dies erhöht den Ressourcenverbrauch und macht den Docker-Stack umfangreicher. Für produktive Umgebungen müsste außerdem entschieden werden, welche Logs und Traces dauerhaft gespeichert werden und wie lange diese aufbewahrt werden sollen.
+
+Eine weitere Einschränkung besteht darin, dass viele Metriken aus Logs extrahiert werden. Dies ist pragmatisch und für die Entwicklungsumgebung ausreichend, aber weniger robust als explizit instrumentierte Metriken. Ändert sich das Format einer Log-Nachricht, können Grafana-Panels fehlerhaft oder leer werden. Langfristig wäre es daher sinnvoll, wichtige Kennzahlen wie Accuracy, Round-Dauer, Anzahl empfangener Modelle oder Aggregationsdauer zusätzlich als strukturierte OpenTelemetry-Metriken zu exportieren.
+
+Außerdem darf Observability nicht mit Korrektheit gleichgesetzt werden. Die Visualisierung zeigt, was im System passiert, verhindert aber keine fehlerhaften Zustandsübergänge. Sie unterstützt die Analyse und Diagnose, ersetzt jedoch keine formale Validierung der Smart Contracts oder Tests der verteilten Protokolllogik.
+
+\subsubsection{Bewertung}
+
+Insgesamt verbessert die Observability-Erweiterung die Wartbarkeit und Auswertbarkeit des Systems deutlich. Besonders bei verteilten Abläufen mit wechselnden Rollen ist es schwierig, Fehler allein anhand einzelner Konsolenausgaben zu verstehen. Durch die Kombination aus Logs, Traces und Dashboards entsteht ein zusammenhängendes Bild der Trainingsausführung. Für die Masterarbeit ist dies insbesondere deshalb relevant, weil nicht nur die funktionale Umsetzung des dezentralen Trainings betrachtet wird, sondern auch dessen praktische Betreibbarkeit, Fehlertoleranz und Analysefähigkeit.
+
+
+\chapter{Implementation}
+\label{cha:chapter3}
+
+\section{Verifiable Distributed Federated Learning}
+
+The core learning implementation resides in the C++-based neural_network subsystem. Local training is initiated through train_network, which reads an input model, performs repeated epochs of gradient descent over a participant-specific image and label partition, and writes the resulting local model update back to disk (train-network2.cpp (line 417)). In the simulation path, multiple local clients are launched in parallel and train on disjoint IID shards of the MNIST training set before a federated averaging step is executed (start.cpp (line 89)). The trained network itself is a compact multilayer perceptron with dimensions 784 -> 200 -> 50 -> 10, implemented using Eigen matrices and standard forward and backward propagation routines.
+
+Participant-to-aggregator communication is implemented using ZeroMQ request-reply sockets. The aggregator exposes a server endpoint on TCP port 5555, receives encrypted model packages from clients, decrypts them, and stores the resulting local model files for aggregation (start.cpp (line 289)). Clients connect to this endpoint, send a filename handshake, and subsequently transfer the encrypted model payload produced during local training (start.cpp (line 353)). On the client side, the local model is serialized in the same parameter format used throughout the project and then encrypted under a hybrid scheme consisting of a randomly generated AES-256 key and IV, wrapped via RSA-OAEP using the aggregator’s public key (train-network2.cpp (line 519)). This establishes confidentiality of model updates in transit and ensures that only the designated aggregator can recover the local model contents.
+
+The federated aggregation itself is implemented in federatedAvg, which reconstructs the layer parameters of the submitted local models, computes their element-wise average, writes the resulting global model to disk, and signs the final model bytes using an OpenSSL-backed signing routine (functions.cpp (line 570)). The output consists of the aggregated model file as well as a detached signature file, which are subsequently handled by the Node.js coordination layer. The node_server component acts as the bridge between the off-chain learning process and the blockchain/IPFS control plane. It retrieves the current model CID from the chain, downloads the referenced global model from IPFS, launches either aggregator or client-side training logic depending on the current contract state, and uploads the newly aggregated model and signature to IPFS once a round is complete (server.ts (line 21), ipfs.ts (line 53)).
+
+The on-chain logic provides the coordination semantics for this off-chain training flow. GMStorage restricts model publication to the current aggregator and records both the active and previous model references, as well as a contribution score for participants (GMStorage.sol (line 41)). AggregatorSelection can then choose a new aggregator by querying the top contributor from storage (AggregatorSelection.sol (line 102)). DeviceRegistry, in its current form, serves as a manually managed authorization layer for addresses and network metadata (DeviceRegistry.sol (line 19)). In addition, the repository already contains a remote attestation proof-publication path in Rust, where a TEE-derived proof is created off-chain and sent to a contract-side registration function (publisher.rs (line 97)). Although this attestation path is not yet fully integrated into the deployed DeviceRegistry contract, it constitutes the implementation basis for the next-stage participant onboarding mechanism.
+
+\section{Zero-Knowledge Inference}
+
+The implementation began with the development of a dedicated Python-based export tool, located in zk_inference/export_model.py (line 1). This script reads the federated model file aggregated.bin directly according to the storage logic used by the C++ codebase. Concretely, it reconstructs the six parameter matrices W1, B1, W2, B2, W3, and B3 from a sequence of float64 values serialized in column-major order. This step is crucial because the original system stores model parameters in a project-specific Eigen-based format rather than in a standard machine-learning serialization format. Instead of introducing a separate conversion layer outside the project context, the export script explicitly reproduces the semantics of the existing serialization process.
+
+On the basis of the reconstructed matrices, the script instantiates an equivalent PyTorch model and exports two ONNX representations: a probability-based version and a logits-based version. The logits-based variant, model\_logits.onnx, was selected as the preferred input to EZKL, since it reduces circuit complexity while preserving the essential predictive semantics needed for classification. To ensure that the exported model was not merely syntactically valid but semantically equivalent to the original neural network, an explicit parity-checking procedure was implemented. This procedure compares the outputs of a NumPy-based reimplementation of the original C++ forward pass with the outputs of the exported PyTorch model on randomly generated inputs. The resulting numerical deviations were on the order of $10^-7$, indicating that the exported model constitutes a highly faithful representation of the original network, with only negligible floating-point discrepancies attributable to the transition from float64 to float32.
+
+A second script, zk_inference/prepare_mnist_input.py (line 1), was implemented to generate proof inputs in a reproducible and model-consistent way. This script reads a concrete image from the MNIST test dataset already contained in the repository and applies the same normalization rule as the C++ inference code, namely (pixel - 127.5) / 127.5. The normalized pixel vector is then written into input.json, which serves as the model input for the zero-knowledge workflow. By mirroring the preprocessing logic of the original implementation, this step ensures that the proof system operates on numerically identical input semantics rather than on an approximated or reinterpreted input representation.
+
+The zero-knowledge proving workflow itself was encapsulated in zk_inference/run_ezkl.py (line 1). This runner was implemented because the installed EZKL package in the target environment exposed a Python API but did not provide a directly callable shell binary. The script programmatically executes the complete proving pipeline, including gen_settings, compile_circuit, get_srs or, where necessary, a fallback to gen_srs, followed by setup, gen_witness, prove, and verify. During implementation, additional engineering adjustments became necessary. In particular, the ONNX export was changed from symbolic batch dimensions to a fixed batch size of one, because EZKL failed to process models with undetermined symbolic dimensions. Moreover, a compatibility fallback for structured reference string generation was added to address runtime limitations in the Python bindings. After these modifications, the full local proof-generation and verification workflow completed successfully.
+
+\chapter{Security Rationale}
+\label{cha:chapter4}
+
+\section{Verifiable Distributed Federated Learning}
+
+The security rationale of the distributed federated learning implementation is based on layered trust reduction rather than on full cryptographic trust elimination. At the transport level, local model updates are not sent in plaintext but are protected through hybrid encryption before being transmitted to the aggregator. This reduces the exposure of participant-specific parameter updates in transit and narrows the attack surface to the intended aggregation endpoint. At the publication level, the aggregated global model is signed and stored as a model-signature pair, thereby allowing downstream components to verify that the published artifact originated from an authorized aggregation process rather than from an arbitrary uploader. At the coordination level, only the contract-recognized aggregator is permitted to replace the active global model reference on-chain, which prevents non-aggregator participants from unilaterally redefining the global state.
+
+A second security objective concerns governance and role consistency in a decentralized environment. Because the system decouples training from control, the blockchain acts as a durable coordination anchor rather than as a computational substrate. GMStorage and AggregatorSelection jointly provide a mechanism by which the current system state, the designated aggregator, the round counter, and the model references are shared across participants in a tamper-evident manner. This does not make the training itself trustless, but it does ensure that all participants can refer to the same published global model and the same currently recognized aggregator. In effect, the blockchain provides a common source of truth for orchestration-critical metadata, while the computationally expensive tasks remain off-chain.
+
+The planned TEE-based admission control significantly strengthens this security model by addressing the currently weakest point in the trust chain: participant enrollment. In the present implementation, a participant can be authorized by address through DeviceRegistry, which provides identity gating but not execution-environment assurance. By integrating on-chain verification of TDX quotes, the system could require each participant to prove that it is executing inside an approved enclave before it is admitted to training. If the attestation report additionally binds to an expected Docker image digest, membership can be restricted not just to a hardware-protected environment, but to a specific measured software stack. This is a substantial conceptual improvement, because it shifts the admission criterion from “who is calling” to “what verifiably measured code is executing.” In a federated learning context, such a mechanism can reduce the risk of arbitrary client implementations participating in the protocol under superficially valid blockchain identities.
+
+This is particularly important because federated learning is vulnerable not only to network adversaries but also to semantically malicious participants. A participant may conform to the message format while executing an altered training binary, a modified preprocessing pipeline, or a poisoned local optimizer. By linking training eligibility to a TEE quote whose measurement corresponds to an approved container image, the system can constrain the set of permissible client implementations. While this does not eliminate all possible attacks, it improves assurance that admitted participants execute a previously vetted software image under hardware-backed attestation. In combination with signed model publication and on-chain coordination, this yields a progressively layered trust model in which software integrity, communication confidentiality, and state consistency mutually reinforce one another.
+
+
+
+\section{Zero-Knowledge Inference}
+
+The principal security objective of the implemented subsystem is computational integrity of model inference. In a conventional machine-learning deployment, an external verifier must trust that an inference engine has used the intended model and has executed the forward pass correctly. In the present prototype, this trust assumption is partially replaced by a cryptographic proof. A valid proof establishes that a specific output was indeed produced by evaluating a specific model on a specific input according to the prescribed circuit semantics. The verifier is therefore relieved from re-executing the full neural-network computation and instead checks the proof against the corresponding verification key. This transforms inference correctness from an operational trust assumption into a formally verifiable cryptographic statement.
+
+It is important, however, to delimit precisely what security property is achieved. The current proof system does not establish correctness of distributed training, correctness of local participant behavior, or authenticity of each federated aggregation round. Instead, it certifies only the correctness of inference with respect to the finalized aggregated model. From a security perspective, this still provides meaningful protection, because it prevents an evaluator from accepting outputs that were produced by a manipulated model, an altered forward-pass logic, or an arbitrary fabricated prediction. In other words, the proof binds the inference result to a concrete set of model parameters and to a well-defined computational graph. This guarantees post-training execution integrity, even though it does not retroactively guarantee integrity of the training process that produced the model.
+
+The use of a logits-based proof path is also security-relevant. While softmax is suitable for downstream interpretation of classification probabilities, its inclusion in a zero-knowledge circuit introduces additional numerical and structural complexity. Proving logits instead of normalized probabilities reduces the surface for approximation-related instability while preserving the essential claim that the network was evaluated correctly. For many classification scenarios, the decisive security-relevant information is not the exact probability vector, but the fact that a certain class score or class ranking arose from the intended model. The design therefore follows a minimization principle: prove exactly what is necessary for verifiable inference, but avoid unnecessary computational complexity that may weaken robustness or increase the chance of engineering error.
+
+An additional element of the security rationale is the parity validation between the original C++ model and the exported proof model. A zero-knowledge proof is meaningful only if the underlying circuit corresponds to the intended machine-learning semantics. Without such validation, one might obtain a mathematically valid proof for a model that differs subtly from the one actually trained and deployed. By reconstructing the original parameter tensors directly from the native binary format and quantitatively validating the equivalence of forward-pass outputs, the implementation reduces this risk. Security in this context thus emerges not only from the zero-knowledge proof system itself, but also from the rigor of the model transformation process that precedes proof generation.
+
+\chapter{Limitations}
+\label{cha:chapter5}
+
+\section{Verifiable Distributed Federated Learning}
+
+Despite its conceptual strength, the current distributed federated learning implementation retains several important limitations. Most fundamentally, the current system does not yet cryptographically prove correctness of local training or aggregation. The blockchain records model references, signatures, and coordinator roles, but it does not verify that the local updates were honestly computed or that the aggregation was mathematically correct. Similarly, the encryption of local model updates protects confidentiality in transit, but it does not prevent a malicious participant from sending an arbitrarily crafted update. The present architecture should therefore be understood as a coordinated and partially authenticated federated learning system, rather than as a fully verifiable federated learning protocol.
+
+A second limitation concerns the current state of participant authorization. Although the design already anticipates attestation-based enrollment, the deployed DeviceRegistry contract presently implements a simpler address-based authorization mechanism (DeviceRegistry.sol (line 19)). The remote attestation code path and the Solidity quote verification flow exist in the repository, but they are not yet fully integrated into the production registration path. In particular, the Rust-based publisher expects a richer registerDevice interface that includes proof-related arguments, whereas the currently deployed Solidity contract exposes a simpler metadata-based registration signature (publisher.rs (line 156), DeviceRegistry.sol (line 35)). This indicates that the attestation-backed admission mechanism is architecturally prepared but not yet fully realized end-to-end. For the thesis, it is therefore important to distinguish clearly between implemented functionality and planned security hardening.
+
+A further limitation arises in the current federated averaging code. The implementation structure indicates that the aggregator is intended to iterate over multiple client model files and average them, but the present code path repeatedly reads from pathToFiles + "0" + ".bin" inside the averaging loop rather than indexing distinct client files (functions.cpp (line 571)). From a scientific perspective, this is not merely a coding detail but a potential threat to validity, because it suggests that the current routine may re-read the same client artifact multiple times instead of aggregating distinct participant updates. If this behavior is confirmed in runtime experiments, it should be reported explicitly as an implementation limitation, since it affects the correctness of the claimed federated averaging semantics.
+
+Finally, even the planned TEE extension has conceptual boundaries. On-chain quote verification and image-digest checking can provide strong evidence that a participant was launched from an approved software image inside a genuine trusted execution environment. However, this does not automatically guarantee benign behavior at every stage of execution, nor does it prove that the local training data itself are valid, representative, or non-poisoned. Moreover, maintaining a registry of approved image digests introduces operational overhead and requires a governance process for image updates and revocation. Consequently, the attestation-based admission mechanism should be framed as a substantial security enhancement, but not as a complete solution to all federated learning integrity risks.
+
+\section{Zero-Knowledge Inference}
+
+he most significant limitation of the current approach is that it operates exclusively on the final global model and does not capture the full distributed federated learning process. Neither participant-specific training inputs, nor local gradient updates, nor round-wise aggregation steps are represented in the generated proof. As a consequence, the system cannot establish that the global model was derived from a particular sequence of honest local updates, nor can it certify that each aggregation round was executed correctly. Achieving such guarantees would require a substantially broader cryptographic design, potentially involving participant-side commitments, per-round signed model updates, Merkle-based state tracking, or even separate proofs for local training and aggregation correctness. The present prototype was deliberately scoped more narrowly in order to demonstrate the feasibility of zero-knowledge inference on the aggregated model.
+
+A second limitation concerns model architecture and zero-knowledge suitability. The original network uses tanh activations, which are more demanding in zero-knowledge circuits than simpler nonlinearities such as ReLU. Although EZKL was able to process the network in the local prototype, the proving workflow indicated the use of low scale values, which may affect numerical precision and suggest that the present parameterization is not yet fully optimized. Accordingly, the current implementation should be interpreted as a proof-of-feasibility rather than as a performance-optimized ZKML deployment. Future work could investigate architectural adaptations, quantization-aware retraining, or alternative activation choices that better align with the arithmetic structure of zero-knowledge circuits.
+
+The privacy properties of the prototype are also limited in the current form. The concrete proof input is derived from a publicly available MNIST test image and is represented explicitly in input.json. Therefore, the present system primarily demonstrates correctness of inference rather than privacy-preserving inference over confidential inputs. While zero-knowledge proof systems are in principle capable of hiding selected components of the witness, the effective confidentiality guarantees depend on the visibility configuration of model inputs and outputs in the circuit. In the implemented prototype, the emphasis is on reproducibility and execution correctness, not on maximizing secrecy of the inference request. This distinction is important in order to avoid overstating the privacy guarantees of the current implementation.
+
+Finally, the implementation remains subject to practical limitations of the surrounding tooling ecosystem. Several nontrivial engineering adaptations were required during development, including the use of static batch dimensions for EZKL compatibility, the fallback from get_srs to gen_srs in the Python bindings, and environment-specific handling of proof setup outside a restricted sandbox. These issues do not invalidate the prototype, but they do illustrate that ZKML toolchains are still evolving and may impose significant integration overhead. From a research perspective, this is itself a meaningful result: the prototype demonstrates that zero-knowledge inference over an aggregated federated model is technically achievable, but it also highlights the gap between conceptual viability and mature, production-grade deployability.
+
+If you want, I can also turn this into a more thesis-like style with stronger academic phrasing, or compress it into a shorter version suitable for direct inclusion in chapter drafts.

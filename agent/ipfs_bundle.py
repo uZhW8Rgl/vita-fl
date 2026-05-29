@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Small local-IPFS discovery and retrieval helpers for model bundles.
-
-The "RAG" part here is intentionally lightweight: it builds retrievable
-documents from IPFS model/signature metadata and scores them with simple
-keyword overlap. This keeps the local fetch path independent from any hosted
-embedding service while still giving the LangChain agent a retrieval tool.
-"""
+"""Deterministic local-IPFS helpers for model bundle discovery and download."""
 
 from __future__ import annotations
 
@@ -21,11 +15,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 
 DEFAULT_IPFS_API_URL = os.environ.get("IPFS_API_URL", "http://127.0.0.1:5001").rstrip("/")
-DEFAULT_IPFS_ROOT = os.environ.get("IPFS_ROOT", "/")
+DEFAULT_IPFS_ROOT = os.environ.get("IPFS_ROOT", "/models")
 DEFAULT_DOWNLOAD_DIR = Path(os.environ.get("AGENT_DOWNLOAD_DIR", "agent/downloads"))
 MODEL_RE = re.compile(r"(?P<stamp>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)-aggregated\.bin$")
 SIGNATURE_RE = re.compile(r"(?P<stamp>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)-aggregated\.bin\.sig$")
@@ -68,12 +62,12 @@ def _request_bytes(api_url: str, endpoint: str, params: dict[str, str | int | bo
 
 
 def _join_ipfs_path(parent: str, child: str) -> str:
-    if parent in ("", "/"):
+    if parent in {"", "/"}:
         return f"/{child}"
     return f"{parent.rstrip('/')}/{child}"
 
 
-def _entry_from_files_ls(parent: str, item: dict) -> IpfsEntry:
+def _entry_from_files_ls(parent: str, item: dict[str, Any]) -> IpfsEntry:
     return IpfsEntry(
         path=_join_ipfs_path(parent, item["Name"]),
         name=item["Name"],
@@ -84,12 +78,8 @@ def _entry_from_files_ls(parent: str, item: dict) -> IpfsEntry:
     )
 
 
-def _entry_from_ls(parent: str, item: dict) -> IpfsEntry:
-    path = (
-        _join_ipfs_path(parent, item["Name"])
-        if not parent.startswith("/ipfs/")
-        else f"{parent.rstrip('/')}/{item['Name']}"
-    )
+def _entry_from_ls(parent: str, item: dict[str, Any]) -> IpfsEntry:
+    path = _join_ipfs_path(parent, item["Name"]) if not parent.startswith("/ipfs/") else f"{parent.rstrip('/')}/{item['Name']}"
     return IpfsEntry(
         path=path,
         name=item["Name"],
@@ -101,7 +91,6 @@ def _entry_from_ls(parent: str, item: dict) -> IpfsEntry:
 
 def list_ipfs_tree(api_url: str = DEFAULT_IPFS_API_URL, root: str = DEFAULT_IPFS_ROOT) -> list[IpfsEntry]:
     """List a local MFS path or immutable /ipfs/<cid> tree recursively."""
-
     entries: list[IpfsEntry] = []
     stack = [root]
     immutable = root.startswith("/ipfs/")
@@ -129,37 +118,11 @@ def list_ipfs_tree(api_url: str = DEFAULT_IPFS_API_URL, root: str = DEFAULT_IPFS
     return entries
 
 
-def _model_sort_key(entry: IpfsEntry) -> tuple[str, int, str]:
-    match = MODEL_RE.search(entry.name)
-    stamp = match.group("stamp") if match else ""
-    return stamp, entry.mtime or 0, entry.path
-
-
-def _candidate_model_entries(entries: Iterable[IpfsEntry]) -> list[IpfsEntry]:
-    entries_list = list(entries)
-    strict_models = [entry for entry in entries_list if entry.is_model]
-    if strict_models:
-        return strict_models
-
-    signature_names = {
-        entry.name
-        for entry in entries_list
-        if _artifact_kind(entry, entries_list) == "signature"
-    }
-    fallback_models = [
-        entry
-        for entry in entries_list
-        if _artifact_kind(entry, entries_list) == "model" and f"{entry.name}.sig" in signature_names
-    ]
-    return fallback_models
-
-
-def _artifact_kind(entry: IpfsEntry, entries: Iterable[IpfsEntry]) -> str | None:
+def _artifact_kind(entry: IpfsEntry, entries_list: list[IpfsEntry]) -> str | None:
     if entry.is_model:
         return "model"
     if entry.is_signature:
         return "signature"
-    entries_list = list(entries)
     if entry.type != "file":
         return None
     if entry.name.endswith(".sig"):
@@ -170,6 +133,26 @@ def _artifact_kind(entry: IpfsEntry, entries: Iterable[IpfsEntry]) -> str | None
     if any(candidate.name == f"{entry.name}.sig" for candidate in entries_list):
         return "model"
     return None
+
+
+def _candidate_model_entries(entries: Iterable[IpfsEntry]) -> list[IpfsEntry]:
+    entries_list = list(entries)
+    strict_models = [entry for entry in entries_list if entry.is_model]
+    if strict_models:
+        return strict_models
+
+    signature_names = {entry.name for entry in entries_list if _artifact_kind(entry, entries_list) == "signature"}
+    return [
+        entry
+        for entry in entries_list
+        if _artifact_kind(entry, entries_list) == "model" and f"{entry.name}.sig" in signature_names
+    ]
+
+
+def _model_sort_key(entry: IpfsEntry) -> tuple[str, int, str]:
+    match = MODEL_RE.search(entry.name)
+    stamp = match.group("stamp") if match else ""
+    return stamp, entry.mtime or 0, entry.path
 
 
 def _parse_artifact_timestamp(name: str) -> dt.datetime | None:
@@ -215,14 +198,13 @@ def _matching_signature(
         return None
     candidates.sort(key=lambda item: (item[0], item[1], item[2].path))
     return candidates[0][2]
-    return None
 
 
 def select_latest_bundle(
     entries: Iterable[IpfsEntry],
     require_latest_model: bool = False,
     pair_window_seconds: int = DEFAULT_PAIR_WINDOW_SECONDS,
-) -> dict:
+) -> dict[str, Any]:
     entries_list = list(entries)
     models = sorted(_candidate_model_entries(entries_list), key=_model_sort_key)
     if not models:
@@ -263,49 +245,11 @@ def select_latest_bundle(
     }
 
 
-def build_retrieval_docs(entries: Iterable[IpfsEntry]) -> list[dict]:
-    entries_list = list(entries)
-    docs = []
-    for entry in entries_list:
-        kind = _artifact_kind(entry, entries_list)
-        if kind is None:
-            continue
-        stamp_match = MODEL_RE.search(entry.name.removesuffix(".sig"))
-        stamp = stamp_match.group("stamp") if stamp_match else "unknown"
-        localized_kind = "Modell" if kind == "model" else "Signatur"
-        text = (
-            f"{kind} artifact {entry.name} {localized_kind} Artefakt "
-            f"timestamp {stamp} zeitstempel {stamp} path {entry.path} "
-            f"size {entry.size or 'unknown'} groesse {entry.size or 'unknown'} "
-            f"cid {entry.hash or 'unknown'} ipfs"
-        )
-        docs.append(
-            {
-                "page_content": text,
-                "metadata": dataclasses.asdict(entry) | {"kind": kind, "timestamp": stamp},
-            }
-        )
-    return docs
-
-
-def rag_search(query: str, entries: Iterable[IpfsEntry], limit: int = 5) -> list[dict]:
-    terms = {term.lower() for term in re.findall(r"[A-Za-z0-9_.:-]+", query)}
-    scored = []
-    for doc in build_retrieval_docs(entries):
-        haystack = doc["page_content"].lower()
-        score = sum(1 for term in terms if term in haystack)
-        if "latest" in terms or "letzte" in terms or "neueste" in terms or "neustes" in terms:
-            score += 1 if doc["metadata"].get("kind") == "model" else 0
-        scored.append((score, doc))
-    scored.sort(key=lambda item: (item[0], item[1]["metadata"].get("timestamp", "")), reverse=True)
-    return [doc for score, doc in scored[:limit] if score > 0]
-
-
 def cat_path(api_url: str, path: str) -> bytes:
     return _request_bytes(api_url, "cat", {"arg": path})
 
 
-def fetch_bundle(bundle: dict, out_dir: Path, api_url: str = DEFAULT_IPFS_API_URL) -> dict:
+def fetch_bundle(bundle: dict[str, Any], out_dir: Path, api_url: str = DEFAULT_IPFS_API_URL) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
     model_path = out_dir / bundle["model"]["name"]
     signature_path = out_dir / bundle["signature"]["name"]
@@ -324,7 +268,7 @@ def discover_latest(
     root: str,
     require_latest_model: bool = False,
     pair_window_seconds: int = DEFAULT_PAIR_WINDOW_SECONDS,
-) -> dict:
+) -> dict[str, Any]:
     entries = list_ipfs_tree(api_url=api_url, root=root)
     return select_latest_bundle(
         entries,
@@ -334,13 +278,10 @@ def discover_latest(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Discover and fetch the latest aggregated model bundle from local IPFS."
-    )
+    parser = argparse.ArgumentParser(description="Discover and fetch the latest aggregated model bundle from local IPFS.")
     parser.add_argument("--api-url", default=DEFAULT_IPFS_API_URL)
-    parser.add_argument("--root", default=DEFAULT_IPFS_ROOT, help="MFS path like /, or immutable path like /ipfs/<cid>")
+    parser.add_argument("--root", default=DEFAULT_IPFS_ROOT, help="MFS path like /models, or immutable path like /ipfs/<cid>")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_DOWNLOAD_DIR)
-    parser.add_argument("--query", default="latest aggregated model with signature")
     parser.add_argument("--fetch", action="store_true")
     parser.add_argument(
         "--pair-window-seconds",
@@ -355,13 +296,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    entries = list_ipfs_tree(api_url=args.api_url, root=args.root)
-    bundle = select_latest_bundle(
-        entries,
+    bundle = discover_latest(
+        api_url=args.api_url,
+        root=args.root,
         require_latest_model=args.require_latest_model,
         pair_window_seconds=args.pair_window_seconds,
     )
-    result = {"bundle": bundle, "rag_hits": rag_search(args.query, entries)}
+    result: dict[str, Any] = {"bundle": bundle}
     if args.fetch:
         result["download"] = fetch_bundle(bundle, args.out_dir, api_url=args.api_url)
     print(json.dumps(result, indent=2))
