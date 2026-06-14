@@ -73,11 +73,14 @@ COPY dfl/node_server ./node_server
 COPY dfl/neural_network ./neural_network
 COPY dfl/start_node_neural_network.sh ./start_node_neural_network.sh
 
+WORKDIR /dfl/node_server
+RUN npm run build
+
 COPY data/mnist/data/train-images.idx3-ubyte ./node_server/data/train-images.idx3-ubyte
 COPY data/mnist/data/train-labels.idx1-ubyte ./node_server/data/train-labels.idx1-ubyte
 COPY data/mnist/data/t10k-images.idx3-ubyte ./node_server/data/t10k-images.idx3-ubyte
 COPY data/mnist/data/t10k-labels.idx1-ubyte ./node_server/data/t10k-labels.idx1-ubyte
-COPY data/phala_tdx_quote ./node_server/attestation/
+COPY data/phala_tdx_quote ./attestation/
 
 RUN chmod +x /dfl/start_node_neural_network.sh && \
     mkdir -p /dfl/node_server/data/results_iid /dfl/node_server/received_models /dfl/node_server/attestation

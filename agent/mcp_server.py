@@ -48,7 +48,7 @@ class LocalToolUnavailableError(RuntimeError):
 
 
 def _latest_downloaded_model_path() -> str:
-    downloads_dir = Path("agent/downloads")
+    downloads_dir = Path(os.environ.get("AGENT_DOWNLOAD_DIR", str(Path(__file__).resolve().parent / "downloads")))
     candidates = [path for path in downloads_dir.glob("*.bin") if path.is_file() and not path.name.endswith(".sig")]
     if not candidates:
         raise RuntimeError("No downloaded model bundle is available yet in agent/downloads.")
@@ -162,7 +162,7 @@ def create_single_image_query(
     out_dir: str = "zk_inference/single_query",
     input_json: str = "zk_inference/out/input.json",
 ) -> dict[str, Any]:
-    """Prepare one dataset image plus EZKL input.json for the active dataset."""
+    """Prepare one dataset image and write the EZKL input.json consumed by run_ezkl()."""
     record_mcp_tool_call("create_single_image_query")
     payload = {
         "index": _normalize_optional_index(index),
@@ -184,7 +184,7 @@ def run_ezkl(
     data: str = "input.json",
     skip_calibration: bool = True,
 ) -> dict[str, Any]:
-    """Run EZKL setup, witness generation, proof generation, and verification."""
+    """Run EZKL against an existing input artifact, usually the input.json written by create_single_image_query()."""
     record_mcp_tool_call("run_ezkl")
     payload = {
         "workdir": workdir or "zk_inference/out",
@@ -200,18 +200,30 @@ def run_ezkl(
 
 @mcp.tool()
 def fetch_current_onchain_model_bundle(out_dir: str = "zk_inference/out") -> str:
-    """Read current CIDs, fetch both IPFS artifacts, verify the signature, and export for EZKL."""
+    """Read current CIDs, fetch both IPFS artifacts, verify them, and export the model for later EZKL runs."""
     record_mcp_tool_call("fetch_current_onchain_model_bundle")
-    from blockchain_source import (
-        load_env_file,
-        DEFAULT_ENV_FILE,
-        normalize_host_rpc_url,
-        normalize_ipfs_api_url,
-        read_current_bundle_from_contract,
-        fetch_onchain_bundle,
-        verify_download_with_registry,
-    )
-    from ipfs_bundle import DEFAULT_DOWNLOAD_DIR, DEFAULT_IPFS_API_URL
+    try:
+        from .blockchain_source import (
+            load_env_file,
+            DEFAULT_ENV_FILE,
+            normalize_host_rpc_url,
+            normalize_ipfs_api_url,
+            read_current_bundle_from_contract,
+            fetch_onchain_bundle,
+            verify_download_with_registry,
+        )
+        from .ipfs_bundle import DEFAULT_DOWNLOAD_DIR, DEFAULT_IPFS_API_URL
+    except ImportError:
+        from blockchain_source import (
+            load_env_file,
+            DEFAULT_ENV_FILE,
+            normalize_host_rpc_url,
+            normalize_ipfs_api_url,
+            read_current_bundle_from_contract,
+            fetch_onchain_bundle,
+            verify_download_with_registry,
+        )
+        from ipfs_bundle import DEFAULT_DOWNLOAD_DIR, DEFAULT_IPFS_API_URL
 
     env_file = load_env_file(DEFAULT_ENV_FILE)
     rpc_url = normalize_host_rpc_url(os.environ.get("RPC_URL") or env_file.get("RPC_URL", "http://127.0.0.1:8545"))

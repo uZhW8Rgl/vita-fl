@@ -10,6 +10,10 @@ trap cleanup INT TERM EXIT
 
 DATASET_NAME=${DATASET_NAME:-mnist}
 BOOTSTRAP_MODEL_SRC=${BOOTSTRAP_MODEL_SRC:-/dfl/initial_gm/${DATASET_NAME}/aggregated.bin}
+export TDX_QUOTE_PATH=${TDX_QUOTE_PATH:-/dfl/node_server/attestation/phala_tdx_quote}
+if [ ! -f "${TDX_QUOTE_PATH}" ] && [ -f "/dfl/node_server/attestation/phala_tdx_quote" ]; then
+  export TDX_QUOTE_PATH=/dfl/node_server/attestation/phala_tdx_quote
+fi
 
 case "$DATASET_NAME" in
   mnist)

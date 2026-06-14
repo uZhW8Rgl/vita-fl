@@ -2,7 +2,19 @@ import axios from "axios";
 import fs from "fs";
 import FormData from "form-data";
 
-import { setGlobalModelAndSignature, getCurrentGM, getCurrentGMSignature, getRound } from "./bc_client.js";
+import {
+  getAuthorizedDevices,
+  getCurrentGM,
+  getCurrentGMKeyBundle,
+  getCurrentGMSignature,
+  getDevicePublicKey,
+  getRound,
+  setGlobalModelAndSignatureAndKeyBundle,
+} from "./bc_client.js";
+import {
+  buildEncryptedGlobalModelArtifacts,
+  decryptEncryptedGlobalModelArtifacts,
+} from "./gm_crypto.js";
 
 export const pinFile = async (filePath: string) => {
     try {
@@ -134,59 +146,113 @@ export const pinFile = async (filePath: string) => {
     return api ? `${api}/api/v0/cat?arg=${encodeURIComponent(hash)}` : "";
   }
 
-  export const getFileFromIPFS = async (hash: string, outPath: string = "./data/gm.bin") => {
+  const fetchIPFSBytes = async (hash: string) => {
     const catUrl = process.env.IPFS_PROVIDER === "kubo" ? kuboApiCatUrl(hash) : "";
     const url = catUrl || ipfsGatewayUrl(hash);
     try {
       const res = catUrl
         ? await axios.post(url, null, { responseType: "arraybuffer", timeout: ipfsTimeoutMs() })
         : await axios.get(url, { responseType: "arraybuffer", timeout: ipfsTimeoutMs() });
-      fs.writeFileSync(outPath, Buffer.from(res.data));
-      console.log(`File written to ${outPath} from ${url}`);
+      return Buffer.from(res.data);
     } catch (error) {
       if (catUrl) {
         const gatewayUrl = ipfsGatewayUrl(hash);
         console.warn(`Kubo API cat failed for ${hash}; falling back to gateway ${gatewayUrl}`);
         const res = await axios.get(gatewayUrl, { responseType: "arraybuffer", timeout: ipfsTimeoutMs() });
-        fs.writeFileSync(outPath, Buffer.from(res.data));
-        console.log(`File written to ${outPath} from ${gatewayUrl}`);
-        return;
+        return Buffer.from(res.data);
       }
       console.error(`Failed to fetch IPFS file ${hash} from ${url}`, error);
       throw error;
     }
   }
+
+  export const getFileFromIPFS = async (hash: string, outPath: string = "./data/gm.bin") => {
+    const bytes = await fetchIPFSBytes(hash);
+    fs.writeFileSync(outPath, bytes);
+    console.log(`File written to ${outPath} from IPFS hash ${hash}`);
+  }
+
+  const encryptedBundlePaths = () => ({
+    bundlePath: "./data/results_iid/aggregated.bundle.enc",
+    bundleSignaturePath: "./data/results_iid/aggregated.bundle.enc.sig",
+    keyBundlePath: "./data/results_iid/aggregated.bundle.keys.json",
+  });
   
   export const updateGM = async () => {
     const modelPath = "./data/results_iid/aggregated.bin";
     const sigPath = "./data/results_iid/aggregated.bin.sig";
+    const round = Number(await getRound().catch(() => 0)) + 1;
 
-    const modelCid = await pinFile(modelPath);
-    if (!modelCid) throw new Error("Pinning failed for model, no CID returned");
-    await archivePinnedFileToKubo(modelCid, "aggregated.bin");
+    const recipients = [];
+    for (const address of await getAuthorizedDevices()) {
+      const publicKeyDerHex = await getDevicePublicKey(address);
+      if (!publicKeyDerHex || publicKeyDerHex === "0x") {
+        console.warn(`Skipping GM encryption recipient without RSA key: ${address}`);
+        continue;
+      }
+      recipients.push({ address, publicKeyDerHex });
+    }
+    const { bundlePath, bundleSignaturePath, keyBundlePath } = encryptedBundlePaths();
+    await buildEncryptedGlobalModelArtifacts({
+      modelPath,
+      signaturePath: sigPath,
+      encryptedBundlePath: bundlePath,
+      encryptedSignaturePath: bundleSignaturePath,
+      keyBundlePath,
+      recipients,
+      round,
+    });
 
-    const sigCid = await pinFile(sigPath);
-    if (!sigCid) throw new Error("Pinning failed for signature, no CID returned");
-    await archivePinnedFileToKubo(sigCid, "aggregated.bin.sig");
+    const modelCid = await pinFile(bundlePath);
+    if (!modelCid) throw new Error("Pinning failed for encrypted model bundle, no CID returned");
+    await archivePinnedFileToKubo(modelCid, "aggregated.bundle.enc");
 
-    console.log("New GM CID:", modelCid);
-    console.log("New GM SIG CID:", sigCid);
+    const sigCid = await pinFile(bundleSignaturePath);
+    if (!sigCid) throw new Error("Pinning failed for encrypted bundle signature, no CID returned");
+    await archivePinnedFileToKubo(sigCid, "aggregated.bundle.enc.sig");
 
-    await setGlobalModelAndSignature(modelCid, sigCid);
-    console.log("Global model + signature updated (on-chain) ");
+    const keyBundleCid = await pinFile(keyBundlePath);
+    if (!keyBundleCid) throw new Error("Pinning failed for encrypted key bundle, no CID returned");
+    await archivePinnedFileToKubo(keyBundleCid, "aggregated.bundle.keys.json");
+
+    console.log("New encrypted GM bundle CID:", modelCid);
+    console.log("New encrypted GM bundle signature CID:", sigCid);
+    console.log("New encrypted GM key bundle CID:", keyBundleCid);
+
+    await setGlobalModelAndSignatureAndKeyBundle(modelCid, sigCid, keyBundleCid);
+    console.log("Encrypted global model bundle + signature + key bundle updated (on-chain)");
   }
   
   export const getCurrentModel = async () => {
     const modelCid = String(await getCurrentGM() || "");
     const sigCid = String(await getCurrentGMSignature() || "");
+    const keyBundleCid = String(await getCurrentGMKeyBundle() || "");
+    if (!modelCid) {
+      throw new Error("Missing encrypted global model bundle CID on-chain.");
+    }
+    if (!sigCid) {
+      throw new Error("Missing encrypted global model bundle signature CID on-chain.");
+    }
+    if (!keyBundleCid) {
+      throw new Error("Missing encrypted global model key bundle CID on-chain.");
+    }
     console.log("Model CID:", modelCid);
     console.log("Sig CID:", sigCid);
+    console.log("Key bundle CID:", keyBundleCid);
 
-    if (modelCid.length > 0) {
-      await getFileFromIPFS(modelCid, "./data/gm.bin");
-    }
-    if (sigCid.length > 0) {
-      await getFileFromIPFS(sigCid, "./data/gm.bin.sig");
-    }
-    console.log("Global model fetched" + (sigCid ? " + signature" : ""));
+    const { bundlePath, bundleSignaturePath, keyBundlePath } = encryptedBundlePaths();
+    fs.writeFileSync(bundlePath, await fetchIPFSBytes(modelCid));
+    console.log(`Encrypted GM bundle written to ${bundlePath}`);
+    fs.writeFileSync(bundleSignaturePath, await fetchIPFSBytes(sigCid));
+    console.log(`Encrypted GM bundle signature written to ${bundleSignaturePath}`);
+    fs.writeFileSync(keyBundlePath, await fetchIPFSBytes(keyBundleCid));
+    console.log(`Encrypted GM key bundle written to ${keyBundlePath}`);
+    await decryptEncryptedGlobalModelArtifacts({
+      encryptedBundlePath: bundlePath,
+      keyBundlePath,
+      ownAddress: String(process.env.ACCOUNT_ADDRESS || ""),
+      outModelPath: "./data/gm.bin",
+      outSignaturePath: "./data/gm.bin.sig",
+    });
+    console.log("Encrypted global model bundle fetched + decrypted");
   }

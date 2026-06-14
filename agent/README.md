@@ -9,8 +9,8 @@ The normal flow is:
 3. Read the last aggregator's public key from `DeviceRegistry`.
 4. Verify the model signature with RSA-SHA256 and PKCS1v15 padding.
 5. Export the verified model to ONNX through `zk_inference`.
-6. Create a single-image query for the active dataset.
-7. Run EZKL to generate and verify a proof for the prediction.
+6. Create a single-image query for the active dataset and write `zk_inference/out/input.json`.
+7. Run EZKL against that prepared `input.json` to generate and verify a proof for the prediction.
 
 The smart contracts are the source of truth. Direct IPFS scanning is kept only as a debug fallback.
 
@@ -90,6 +90,8 @@ Use a specific test image index:
 ```bash
 .venv/bin/python agent/run_agent.py --source contract --index 7 --skip-calibration
 ```
+
+Here `--index 7` affects the sample preparation step. `run_ezkl()` itself does not select an image again; it consumes the `input.json` already written by `create_single_image_query(...)`.
 
 The output includes:
 
@@ -188,7 +190,11 @@ Run the MCP server directly:
 
 The MCP server does not reimplement proof logic. It wraps the existing scripts in `zk_inference`.
 
-The exposed tools include `prepare_dataset_sample` and the backward-compatible `prepare_mnist_sample`. They extract a fresh random input for the active dataset before the inference/proof flow continues.
+The exposed tools separate sample preparation from proof generation:
+
+- `create_single_image_query(...)` selects a dataset sample and writes the `input.json` that EZKL will use.
+- `run_ezkl(...)` consumes an existing `input.json`; it does not choose a new sample on its own.
+- `generate_zk_inference_proof()` in the chat agent assumes a sample was already prepared in the current session and fails instead of regenerating one implicitly.
 
 ## Debug IPFS Scan
 

@@ -20,7 +20,7 @@ from typing import Any, Iterable
 
 DEFAULT_IPFS_API_URL = os.environ.get("IPFS_API_URL", "http://127.0.0.1:5001").rstrip("/")
 DEFAULT_IPFS_ROOT = os.environ.get("IPFS_ROOT", "/models")
-DEFAULT_DOWNLOAD_DIR = Path(os.environ.get("AGENT_DOWNLOAD_DIR", "agent/downloads"))
+DEFAULT_DOWNLOAD_DIR = Path(os.environ.get("AGENT_DOWNLOAD_DIR", str(Path(__file__).resolve().parent / "downloads")))
 MODEL_RE = re.compile(r"(?P<stamp>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)-aggregated\.bin$")
 SIGNATURE_RE = re.compile(r"(?P<stamp>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)-aggregated\.bin\.sig$")
 DEFAULT_PAIR_WINDOW_SECONDS = int(os.environ.get("AGENT_PAIR_WINDOW_SECONDS", "120"))

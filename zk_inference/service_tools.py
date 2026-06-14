@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,15 +26,40 @@ def repo_path(path: str | Path) -> Path:
     return candidate.resolve()
 
 
+_NOISY_STDERR_PATTERNS = (
+    re.compile(r"^/app/zk_inference/export_model\.py:\d+: DeprecationWarning:"),
+    re.compile(r"^  torch\.onnx\.export\($"),
+)
+
+
+def _clean_stderr(stderr: str) -> tuple[str, list[str]]:
+    warnings: list[str] = []
+    cleaned_lines: list[str] = []
+
+    for raw_line in stderr.splitlines():
+        line = raw_line.rstrip()
+        if not line:
+            continue
+        if any(pattern.search(line) for pattern in _NOISY_STDERR_PATTERNS):
+            warnings.append(line)
+            continue
+        cleaned_lines.append(line)
+
+    cleaned = "\n".join(cleaned_lines).strip()
+    return cleaned, warnings
+
+
 def run_subprocess(args: list[str], cwd: Path = REPO_ROOT) -> dict[str, Any]:
     env = os.environ.copy()
     env["PYTHONPATH"] = f"{REPO_ROOT}:{REPO_ROOT / 'zk_inference'}:{env.get('PYTHONPATH', '')}"
     completed = subprocess.run(args, cwd=cwd, env=env, text=True, capture_output=True, check=False)
+    stderr, warnings = _clean_stderr(completed.stderr)
     return {
         "command": args,
         "returncode": completed.returncode,
-        "stdout": completed.stdout,
-        "stderr": completed.stderr,
+        "stdout": completed.stdout.strip(),
+        "stderr": stderr,
+        "warnings": warnings,
         "ok": completed.returncode == 0,
     }
 

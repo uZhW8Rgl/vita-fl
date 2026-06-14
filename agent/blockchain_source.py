@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -14,13 +15,17 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from ipfs_bundle import DEFAULT_DOWNLOAD_DIR, DEFAULT_IPFS_API_URL, cat_path
+try:
+    from .ipfs_bundle import DEFAULT_DOWNLOAD_DIR, DEFAULT_IPFS_API_URL, cat_path
+except ImportError:
+    from ipfs_bundle import DEFAULT_DOWNLOAD_DIR, DEFAULT_IPFS_API_URL, cat_path
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 except ImportError:  # pragma: no cover - reported at runtime
-    hashes = serialization = padding = None
+    hashes = serialization = padding = AESGCM = None
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -103,6 +108,7 @@ def function_selector(signature: str) -> str:
         selectors = {
             "getGlobalModel()": "0x2beb6c93",
             "getGlobalModelSignature()": "0xac77077f",
+            "getGlobalModelKeyBundle()": "0x6f86433c",
             "getLastRoundsAggregator()": "0x95f17aed",
             "getDevice(address)": "0x00d55318",
             "devices(address)": "0xe7b4cac6",
@@ -218,12 +224,14 @@ def read_current_bundle_from_contract(
     validate_contract_addresses(contract_address, registry_address)
     model_cid = eth_call_string(rpc_url, contract_address, "getGlobalModel()")
     signature_cid = eth_call_string(rpc_url, contract_address, "getGlobalModelSignature()")
+    key_bundle_cid = eth_call_string(rpc_url, contract_address, "getGlobalModelKeyBundle()")
     last_aggregator = eth_call_address(rpc_url, contract_address, "getLastRoundsAggregator()")
-    if not model_cid or not signature_cid:
+    if not model_cid:
         raise RuntimeError("GMStorage returned an empty model CID or signature CID.")
     bundle = {
         "model_cid": model_cid,
         "signature_cid": signature_cid,
+        "key_bundle_cid": key_bundle_cid,
         "last_aggregator": last_aggregator,
         "rpc_url": rpc_url,
         "gm_storage_address": contract_address,
@@ -247,25 +255,117 @@ def _artifact_name(cid: str, suffix: str) -> str:
     return f"onchain-{short_hash}{suffix}"
 
 
+def _load_private_key_from_env() -> tuple[Any, str]:
+    if serialization is None:
+        raise RuntimeError("cryptography is required for encrypted bundle decryption.")
+    key_file = (os.environ.get("RSA_PRIVATE_KEY_FILE") or "").strip()
+    if key_file:
+        return serialization.load_pem_private_key(Path(key_file).read_bytes(), password=None), key_file
+    raw_key = (os.environ.get("RSA_PRIVATE_KEY") or "").replace("\\n", "\n").strip()
+    if raw_key:
+        return serialization.load_pem_private_key(raw_key.encode("utf-8"), password=None), "env:RSA_PRIVATE_KEY"
+    raise RuntimeError(
+        "Encrypted on-chain model bundle requires RSA_PRIVATE_KEY or RSA_PRIVATE_KEY_FILE for decryption."
+    )
+
+
+def _decrypt_encrypted_bundle(
+    bundle: dict[str, str],
+    encrypted_model_path: Path,
+    key_bundle_path: Path,
+    plain_model_path: Path,
+    plain_signature_path: Path,
+) -> dict[str, Any]:
+    if AESGCM is None or padding is None:
+        raise RuntimeError("cryptography is required for encrypted bundle decryption.")
+    own_address = (os.environ.get("ACCOUNT_ADDRESS") or "").strip().lower()
+    if not re.fullmatch(r"0x[a-f0-9]{40}", own_address):
+        raise RuntimeError("Encrypted on-chain model bundle requires a valid ACCOUNT_ADDRESS.")
+
+    bundle_doc = json.loads(encrypted_model_path.read_text(encoding="utf-8"))
+    key_bundle_doc = json.loads(key_bundle_path.read_text(encoding="utf-8"))
+    wrapped_keys = key_bundle_doc.get("wrapped_keys_b64", {})
+    wrapped_key_b64 = wrapped_keys.get(own_address)
+    if not isinstance(wrapped_key_b64, str) or not wrapped_key_b64:
+        raise RuntimeError(f"No wrapped round key found for participant {own_address}.")
+
+    private_key, private_key_source = _load_private_key_from_env()
+    key_iv = private_key.decrypt(
+        base64.b64decode(wrapped_key_b64),
+        padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
+    )
+    if len(key_iv) != 44:
+        raise RuntimeError(f"Invalid wrapped round key length {len(key_iv)}; expected 44 bytes.")
+
+    aes_key = key_iv[:32]
+    iv = key_iv[32:]
+    aesgcm = AESGCM(aes_key)
+    ciphertext = base64.b64decode(bundle_doc["ciphertext_b64"])
+    auth_tag = base64.b64decode(bundle_doc["auth_tag_b64"])
+    plaintext = aesgcm.decrypt(iv, ciphertext + auth_tag, None)
+    payload = json.loads(plaintext.decode("utf-8"))
+    plain_model_path.write_bytes(base64.b64decode(payload["model_b64"]))
+    plain_signature_path.write_bytes(base64.b64decode(payload["signature_b64"]))
+    return {
+        "encrypted": True,
+        "round": int(key_bundle_doc.get("round") or 0),
+        "recipient_address": own_address,
+        "private_key_source": private_key_source,
+        "plain_model_path": str(plain_model_path),
+        "plain_signature_path": str(plain_signature_path),
+    }
+
+
 def fetch_onchain_bundle(
     bundle: dict[str, str],
     out_dir: Path,
     ipfs_api_url: str = DEFAULT_IPFS_API_URL,
 ) -> dict[str, Any]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    model_path = out_dir / _artifact_name(bundle["model_cid"], "-aggregated.bin")
-    signature_path = out_dir / _artifact_name(bundle["signature_cid"], "-aggregated.bin.sig")
+    key_bundle_cid = str(bundle.get("key_bundle_cid") or "")
+    if not bundle.get("signature_cid"):
+        raise RuntimeError("Missing encrypted global model bundle signature CID on-chain.")
+    if not key_bundle_cid:
+        raise RuntimeError("Missing encrypted global model key bundle CID on-chain.")
+    encrypted_bundle = True
+    model_suffix = "-aggregated.bundle.enc"
+    signature_suffix = "-aggregated.bundle.enc.sig"
+    model_path = out_dir / _artifact_name(bundle["model_cid"], model_suffix)
+    signature_path = out_dir / _artifact_name(bundle["signature_cid"], signature_suffix)
     model_path.write_bytes(cat_path(ipfs_api_url, normalize_cid_path(bundle["model_cid"])))
     signature_path.write_bytes(cat_path(ipfs_api_url, normalize_cid_path(bundle["signature_cid"])))
+    key_bundle_path = None
+    plain_model_path = model_path
+    plain_signature_path = signature_path
+    decrypt_metadata = None
+    key_bundle_path = out_dir / _artifact_name(key_bundle_cid, "-aggregated.bundle.keys.json")
+    key_bundle_path.write_bytes(cat_path(ipfs_api_url, normalize_cid_path(key_bundle_cid)))
+    plain_model_path = out_dir / _artifact_name(bundle["model_cid"], "-aggregated.bin")
+    plain_signature_path = out_dir / _artifact_name(bundle["model_cid"], "-aggregated.bin.sig")
+    decrypt_metadata = _decrypt_encrypted_bundle(
+        bundle,
+        model_path,
+        key_bundle_path,
+        plain_model_path,
+        plain_signature_path,
+    )
     manifest_path = out_dir / "onchain_bundle.json"
     manifest = {
         "source": "GMStorage",
         "bundle": bundle,
         "download": {
-            "model_path": str(model_path),
-            "signature_path": str(signature_path),
-            "model_size": model_path.stat().st_size,
-            "signature_size": signature_path.stat().st_size,
+            "model_path": str(plain_model_path),
+            "signature_path": str(plain_signature_path),
+            "model_size": plain_model_path.stat().st_size,
+            "signature_size": plain_signature_path.stat().st_size,
+            "encrypted_bundle": encrypted_bundle,
+            "encrypted_model_path": str(model_path),
+            "encrypted_model_size": model_path.stat().st_size,
+            "encrypted_signature_path": str(signature_path) if bundle.get("signature_cid") else "",
+            "encrypted_signature_size": signature_path.stat().st_size if signature_path.exists() else 0,
+            "key_bundle_path": str(key_bundle_path) if key_bundle_path else "",
+            "key_bundle_size": key_bundle_path.stat().st_size if key_bundle_path else 0,
+            "decryption": decrypt_metadata,
         },
     }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
@@ -306,11 +406,29 @@ def verify_download_with_registry(
 ) -> dict[str, Any]:
     validate_contract_addresses(bundle["gm_storage_address"], registry_address)
     public_key_der = read_device_public_key_der(rpc_url, registry_address, bundle["last_aggregator"])
-    verification = verify_model_signature(
-        Path(download["model_path"]),
-        Path(download["signature_path"]),
-        public_key_der,
-    )
+    encrypted_bundle = bool(download.get("encrypted_bundle"))
+    if encrypted_bundle:
+        outer_verification = verify_model_signature(
+            Path(download["encrypted_model_path"]),
+            Path(download["encrypted_signature_path"]),
+            public_key_der,
+        )
+        inner_verification = verify_model_signature(
+            Path(download["model_path"]),
+            Path(download["signature_path"]),
+            public_key_der,
+        )
+        verification = {
+            "ok": outer_verification["ok"] and inner_verification["ok"],
+            "outer_bundle_signature": outer_verification,
+            "inner_model_signature": inner_verification,
+        }
+    else:
+        verification = verify_model_signature(
+            Path(download["model_path"]),
+            Path(download["signature_path"]),
+            public_key_der,
+        )
     verification.update(
         {
             "last_aggregator": bundle["last_aggregator"],

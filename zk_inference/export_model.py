@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import warnings
 from pathlib import Path
 from typing import Iterable
 
@@ -41,6 +42,13 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
         "Could not import neural_network.cli. Run this script "
         "from the repository root and ensure dfl/neural_network is present."
     ) from exc
+
+
+warnings.filterwarnings(
+    "ignore",
+    message="You are using the legacy TorchScript-based ONNX export.*",
+    category=DeprecationWarning,
+)
 
 
 DEFAULT_MODEL_CANDIDATES = (REPO_ROOT / "dfl" / "node_server" / "data" / "results_iid" / "aggregated.bin",)
