@@ -29,17 +29,21 @@ x-worker-env: &worker-env
   ROUND: ${ROUND}
   ETH_EUR_PRICE: ${ETH_EUR_PRICE:-3000}
   PYTHON_SERVICE_URL: http://127.0.0.1:8000
-  TDX_QUOTE_PATH: ${TDX_QUOTE_PATH:-./attestation/phala_tdx_quote}
+  TDX_QUOTE_PATH: /dfl/node_server/attestation/phala_tdx_quote
   DATASET_NAME: ${DATASET_NAME:-mnist}
   TEST_DATA_SRC: /dfl/config/chestmnist/test_data/test-data.npz
 
 x-worker-common: &worker-common
+  build: *worker-build
   image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker:latest
+  pull_policy: never
   platform: linux/amd64
   profiles: ["runtime"]
   depends_on:
-    smart-contracts:
-      condition: service_completed_successfully
+    anvil:
+      condition: service_healthy
+    ipfs:
+      condition: service_healthy
     otel-collector:
       condition: service_started
   command: ["/dfl/start_node_neural_network.sh"]
@@ -275,6 +279,26 @@ services:
       INITIAL_GM_CID: ${INITIAL_GM_CID}
       INITIAL_GM_SIG_CID: ${INITIAL_GM_SIG_CID}
       INITIAL_GM_SIGNER_ADDRESS: ${INITIAL_GM_SIGNER_ADDRESS}
+      W0_ACCOUNT_ADDRESS: ${W0_ACCOUNT_ADDRESS}
+      W1_ACCOUNT_ADDRESS: ${W1_ACCOUNT_ADDRESS}
+      W2_ACCOUNT_ADDRESS: ${W2_ACCOUNT_ADDRESS}
+      W3_ACCOUNT_ADDRESS: ${W3_ACCOUNT_ADDRESS}
+      W4_ACCOUNT_ADDRESS: ${W4_ACCOUNT_ADDRESS}
+      W5_ACCOUNT_ADDRESS: ${W5_ACCOUNT_ADDRESS}
+      W6_ACCOUNT_ADDRESS: ${W6_ACCOUNT_ADDRESS}
+      W7_ACCOUNT_ADDRESS: ${W7_ACCOUNT_ADDRESS}
+      W8_ACCOUNT_ADDRESS: ${W8_ACCOUNT_ADDRESS}
+      W9_ACCOUNT_ADDRESS: ${W9_ACCOUNT_ADDRESS}
+      W10_ACCOUNT_ADDRESS: ${W10_ACCOUNT_ADDRESS}
+      W11_ACCOUNT_ADDRESS: ${W11_ACCOUNT_ADDRESS}
+      W12_ACCOUNT_ADDRESS: ${W12_ACCOUNT_ADDRESS}
+      W13_ACCOUNT_ADDRESS: ${W13_ACCOUNT_ADDRESS}
+      W14_ACCOUNT_ADDRESS: ${W14_ACCOUNT_ADDRESS}
+      W15_ACCOUNT_ADDRESS: ${W15_ACCOUNT_ADDRESS}
+      W16_ACCOUNT_ADDRESS: ${W16_ACCOUNT_ADDRESS}
+      W17_ACCOUNT_ADDRESS: ${W17_ACCOUNT_ADDRESS}
+      W18_ACCOUNT_ADDRESS: ${W18_ACCOUNT_ADDRESS}
+      W19_ACCOUNT_ADDRESS: ${W19_ACCOUNT_ADDRESS}
       ETH_EUR_PRICE: ${ETH_EUR_PRICE:-3000}
     command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]
     volumes:
@@ -308,6 +332,11 @@ services:
       OTEL_SERVICE_NAME: agent
       GM_STORAGE_ADDRESS: 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
       REGISTRY_ADDRESS: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+      ACCOUNT_ADDRESS: ${W0_ACCOUNT_ADDRESS}
+      RSA_PRIVATE_KEY: ${W0_RSA_PRIVATE_KEY}
+      RSA_PUBLIC_KEY: ${W0_RSA_PUBLIC_KEY}
+      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key.pem
+      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key.pem
       AGENT_PORT: "8089"
     command:
       - python
@@ -329,6 +358,7 @@ services:
       - --skip-calibration
     volumes:
       - ./agent/downloads:/app/agent/downloads
+      - ./data/rsa_keys:/dfl/keys:ro
 
   control-api:
     build:
@@ -395,7 +425,6 @@ services:
 
   VM-0:
     <<: *worker-common
-    build: *worker-build
     container_name: ${W0_ACCOUNT_ADDRESS}
     environment:
       <<: *worker-env

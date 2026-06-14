@@ -15,6 +15,8 @@ contract GMStorage {
     string public backupGlobalModel;
     string public globalModelSignature;
     string public backupGlobalModelSignature;
+    string public globalModelKeyBundle;
+    string public backupGlobalModelKeyBundle;
     uint256 public round;
     address public lastRoundAggregator;
     address public device_registry_address;
@@ -55,6 +57,8 @@ contract GMStorage {
         backupGlobalModel = _initial_GM_CID;
         globalModelSignature = _initial_GM_SIG_CID;
         backupGlobalModelSignature = _initial_GM_SIG_CID;
+        globalModelKeyBundle = "";
+        backupGlobalModelKeyBundle = "";
         device_registry_address = _device_registry_address;
         aggregator_selection_address = _aggregator_selection_address;
         round = 0;
@@ -62,38 +66,37 @@ contract GMStorage {
     }
 
     function setGlobalModel(string memory _newGlobalModel) external {
-        // check if caller is the aggregator
-        require(
-            IAggregatorSelection(aggregator_selection_address).isAggregator(
-                msg.sender
-            ),
-            "Caller is not an aggregator"
+        _newGlobalModel;
+        revert(
+            "Encrypted GM flow requires setGlobalModelAndSignatureAndKeyBundle"
         );
-        backupGlobalModel = globalModel;
-        globalModel = _newGlobalModel;
-        lastRoundAggregator = msg.sender;
     }
 
     function setGlobalModelSignature(string memory _newGlobalModelSignature)
         external
     {
-        // check if caller is the aggregator
-        require(
-            IAggregatorSelection(aggregator_selection_address).isAggregator(
-                msg.sender
-            ),
-            "Caller is not an aggregator"
+        _newGlobalModelSignature;
+        revert(
+            "Encrypted GM flow requires setGlobalModelAndSignatureAndKeyBundle"
         );
-        backupGlobalModelSignature = globalModelSignature;
-        globalModelSignature = _newGlobalModelSignature;
-        lastRoundAggregator = msg.sender;
     }
 
     function setGlobalModelAndSignature(
         string memory _newGlobalModel,
         string memory _newGlobalModelSignature
     ) external {
-        // check if caller is the aggregator
+        _newGlobalModel;
+        _newGlobalModelSignature;
+        revert(
+            "Encrypted GM flow requires setGlobalModelAndSignatureAndKeyBundle"
+        );
+    }
+
+    function setGlobalModelAndSignatureAndKeyBundle(
+        string memory _newGlobalModel,
+        string memory _newGlobalModelSignature,
+        string memory _newGlobalModelKeyBundle
+    ) external {
         require(
             IAggregatorSelection(aggregator_selection_address).isAggregator(
                 msg.sender
@@ -102,8 +105,10 @@ contract GMStorage {
         );
         backupGlobalModel = globalModel;
         backupGlobalModelSignature = globalModelSignature;
+        backupGlobalModelKeyBundle = globalModelKeyBundle;
         globalModel = _newGlobalModel;
         globalModelSignature = _newGlobalModelSignature;
+        globalModelKeyBundle = _newGlobalModelKeyBundle;
         lastRoundAggregator = msg.sender;
     }
 
@@ -243,6 +248,18 @@ contract GMStorage {
         returns (string memory)
     {
         return backupGlobalModelSignature;
+    }
+
+    function getGlobalModelKeyBundle() external view returns (string memory) {
+        return globalModelKeyBundle;
+    }
+
+    function getBackupGlobalModelKeyBundle()
+        external
+        view
+        returns (string memory)
+    {
+        return backupGlobalModelKeyBundle;
     }
 
     function getLastRoundsAggregator() external view returns (address) {

@@ -134,6 +134,13 @@ export const getCurrentGMSignature = async () => {
     });
     return sig;
 };
+export const getCurrentGMKeyBundle = async () => {
+    const contract = getGMStorageContract();
+    let cid = await contract.methods.getGlobalModelKeyBundle().call().then((result) => {
+        return result;
+    });
+    return cid;
+};
 export const getLastRoundsAggregator = async () => {
     const contract = getGMStorageContract();
     let agg = await contract.methods.getLastRoundsAggregator().call().then((result) => {
@@ -214,6 +221,37 @@ export const setGlobalModelAndSignature = async (newModelIpfsAddress, newSigIpfs
         gas: gasEstimate,
         gasPrice: gasPrice,
         data: contract.methods.setGlobalModelAndSignature(newModelIpfsAddress, newSigIpfsAddress).encodeABI(),
+    };
+    try {
+        const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
+        console.log("Transaction receipt: ", receipt);
+        return receipt;
+    }
+    catch (error) {
+        console.error("Error sending transaction: ", error);
+        throw error;
+    }
+};
+export const setGlobalModelAndSignatureAndKeyBundle = async (newModelIpfsAddress, newSigIpfsAddress, newKeyBundleIpfsAddress) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
+    const address = gm_storage_address;
+    const contract = new web3.eth.Contract(abi, address);
+    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+    addAccountToWallet(account);
+    const gasPrice = await web3.eth.getGasPrice();
+    const gasEstimate = await contract.methods
+        .setGlobalModelAndSignatureAndKeyBundle(newModelIpfsAddress, newSigIpfsAddress, newKeyBundleIpfsAddress)
+        .estimateGas({ from: account.address });
+    const tx = {
+        from: account.address,
+        to: address,
+        gas: gasEstimate,
+        gasPrice: gasPrice,
+        data: contract.methods
+            .setGlobalModelAndSignatureAndKeyBundle(newModelIpfsAddress, newSigIpfsAddress, newKeyBundleIpfsAddress)
+            .encodeABI(),
     };
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);

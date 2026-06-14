@@ -56,6 +56,8 @@ If no explicit model is given, the exporter tries the active aggregated model pa
 
 Without `--index`, the helper picks a fresh random image from the active dataset on each run and writes `zk_inference/single_query/selection.json`.
 
+This preparation step also writes the `zk_inference/out/input.json` later consumed by the EZKL runner.
+
 For explicit MNIST inputs:
 
 ```bash
@@ -110,6 +112,8 @@ ChestMNIST is supported in the query-preparation path, but a full Compose plus E
   --model model_logits.onnx \
   --data input.json
 ```
+
+`run_ezkl.py` does not choose a sample by itself. It expects that `input.json` already exists, typically because it was written by the dataset/query preparation step above.
 
 For faster local debugging:
 

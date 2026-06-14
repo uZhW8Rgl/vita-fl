@@ -317,6 +317,77 @@ prepare_local_initial_gm() {
     echo "Local initial GM signature CID: $INITIAL_GM_SIG_CID"
 }
 
+prepare_encrypted_initial_gm() {
+    if [ "${DOCKER:-}" = "phala" ]; then
+        return 0
+    fi
+
+    if [ "$IPFS_PROVIDER" = "pinata" ]; then
+        echo "Skipping encrypted local bootstrap generation for IPFS_PROVIDER=pinata"
+        return 0
+    fi
+
+    local dataset_name=${DATASET_NAME:-mnist}
+    local model_path=${INITIAL_GM_MODEL_PATH:-../data/initial_gm/${dataset_name}/aggregated.bin}
+    local signing_key_path=${INITIAL_GM_SIGNING_KEY_PATH:-../data/initial_gm/private_key.pem}
+    local signature_path=${INITIAL_GM_SIGNATURE_PATH:-/tmp/initial-gm.sig}
+    local out_dir=/tmp/bootstrap-encrypted-gm
+    local bootstrap_recipient_address=${INITIAL_BOOTSTRAP_RECIPIENT_ADDRESS:-${W0_ACCOUNT_ADDRESS:-}}
+    local bootstrap_recipient_public_key=${INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY_PATH:-../data/rsa_keys/public_key.pem}
+
+    if [ ! -f "$model_path" ]; then
+        echo "Missing initial GM model file for encrypted bootstrap: $model_path"
+        exit 1
+    fi
+    if [ ! -f "$signature_path" ]; then
+        echo "Missing initial GM signature file for encrypted bootstrap: $signature_path"
+        exit 1
+    fi
+    if [ ! -f "$signing_key_path" ]; then
+        echo "Missing initial GM signing key for encrypted bootstrap: $signing_key_path"
+        exit 1
+    fi
+
+    echo "Generating encrypted initial GM bootstrap bundle"
+    local bootstrap_json
+    bootstrap_json=$(node ./bootstrap_encrypted_gm.mjs \
+        --model "$model_path" \
+        --signature "$signature_path" \
+        --private-key "$signing_key_path" \
+        --out-dir "$out_dir" \
+        --rpc-url "$rpc_url" \
+        --registry-address "$DEVICE_REGISTRY_ADDRESS" \
+        --bootstrap-address "$bootstrap_recipient_address" \
+        --bootstrap-public-key "$bootstrap_recipient_public_key" \
+        --round 0)
+
+    local bundle_path
+    local bundle_signature_path
+    local key_bundle_path
+    bundle_path=$(printf '%s' "$bootstrap_json" | jq -re '.bundlePath')
+    bundle_signature_path=$(printf '%s' "$bootstrap_json" | jq -re '.bundleSignaturePath')
+    key_bundle_path=$(printf '%s' "$bootstrap_json" | jq -re '.keyBundlePath')
+    recipient_count=$(printf '%s' "$bootstrap_json" | jq -re '.recipientCount')
+
+    echo "Encrypted bootstrap recipients from on-chain registry: $recipient_count"
+
+    local encrypted_model_cid
+    local encrypted_sig_cid
+    local encrypted_key_cid
+    encrypted_model_cid=$(add_file_to_kubo "$bundle_path")
+    encrypted_sig_cid=$(add_file_to_kubo "$bundle_signature_path")
+    encrypted_key_cid=$(add_file_to_kubo "$key_bundle_path")
+
+    echo "Encrypted initial GM bundle CID: $encrypted_model_cid"
+    echo "Encrypted initial GM signature CID: $encrypted_sig_cid"
+    echo "Encrypted initial GM key bundle CID: $encrypted_key_cid"
+
+    trace_edge "smart_contracts.seed_encrypted_initial_gm" "anvil" \
+        cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
+        $GMSTORAGE "setGlobalModelAndSignatureAndKeyBundle(string,string,string)" \
+        "$encrypted_model_cid" "$encrypted_sig_cid" "$encrypted_key_cid"
+}
+
 prepare_local_initial_gm
 trace_edge "smart_contracts.deploy_core_contracts" "anvil" \
     forge script --rpc-url $rpc_url --broadcast script/Deploy.s.sol
@@ -1005,6 +1076,8 @@ else
             "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_SIG_CID}&arg=/start.sig&parents=true"
     fi
 fi
+
+prepare_encrypted_initial_gm
 
 KEEP_ALIVE=${KEEP_ALIVE:-0}
 if [ "$KEEP_ALIVE" = "1" ]; then

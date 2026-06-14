@@ -16,22 +16,40 @@ from typing import Any
 
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from blockchain_source import (
-    DEFAULT_ENV_FILE,
-    fetch_onchain_bundle,
-    load_env_file,
-    normalize_host_rpc_url,
-    normalize_ipfs_api_url,
-    read_current_bundle_from_contract,
-    verify_download_with_registry,
-)
-from ipfs_bundle import (
-    DEFAULT_DOWNLOAD_DIR,
-    DEFAULT_IPFS_API_URL,
-    DEFAULT_IPFS_ROOT,
-    discover_latest,
-    fetch_bundle,
-)
+try:
+    from .blockchain_source import (
+        DEFAULT_ENV_FILE,
+        fetch_onchain_bundle,
+        load_env_file,
+        normalize_host_rpc_url,
+        normalize_ipfs_api_url,
+        read_current_bundle_from_contract,
+        verify_download_with_registry,
+    )
+    from .ipfs_bundle import (
+        DEFAULT_DOWNLOAD_DIR,
+        DEFAULT_IPFS_API_URL,
+        DEFAULT_IPFS_ROOT,
+        discover_latest,
+        fetch_bundle,
+    )
+except ImportError:
+    from blockchain_source import (
+        DEFAULT_ENV_FILE,
+        fetch_onchain_bundle,
+        load_env_file,
+        normalize_host_rpc_url,
+        normalize_ipfs_api_url,
+        read_current_bundle_from_contract,
+        verify_download_with_registry,
+    )
+    from ipfs_bundle import (
+        DEFAULT_DOWNLOAD_DIR,
+        DEFAULT_IPFS_API_URL,
+        DEFAULT_IPFS_ROOT,
+        discover_latest,
+        fetch_bundle,
+    )
 from otel_trace import service_edge
 
 
@@ -209,7 +227,7 @@ def _local_langchain_tools():
         _remember_verified_bundle(latest_payload)
         return _latest_verified_bundle(), True
 
-    def _latest_generated_sample_index() -> int:
+    def _latest_generated_sample() -> dict[str, Any]:
         selection = _session_state().get("latest_selection")
         if not isinstance(selection, dict):
             raise RuntimeError(
@@ -219,7 +237,7 @@ def _local_langchain_tools():
         index = selection.get("source_index")
         if not isinstance(index, int):
             raise RuntimeError("The session sample metadata is missing a valid source_index.")
-        return index
+        return selection
 
     def _remember_generated_sample(sample: dict[str, Any]) -> None:
         selection = sample.get("selection")
@@ -319,13 +337,19 @@ def _local_langchain_tools():
         bundle = payload.get("bundle", {})
         download = payload.get("download", {})
         verification = payload.get("verification", {})
+        decryption = download.get("decryption", {})
         return "\n".join(
             [
                 f"model_cid={bundle.get('model_cid', 'unknown')}",
                 f"signature_cid={bundle.get('signature_cid', 'unknown')}",
                 f"last_aggregator={bundle.get('last_aggregator', 'unknown')}",
+                f"encrypted_bundle={download.get('encrypted_bundle', 'unknown')}",
                 f"model_path={download.get('model_path', 'unknown')}",
                 f"signature_path={download.get('signature_path', 'unknown')}",
+                f"decryption_ok={bool(decryption)}",
+                f"decryption_round={decryption.get('round', 'unknown') if isinstance(decryption, dict) else 'unknown'}",
+                f"decryption_recipient={decryption.get('recipient_address', 'unknown') if isinstance(decryption, dict) else 'unknown'}",
+                f"decryption_key_source={decryption.get('private_key_source', 'unknown') if isinstance(decryption, dict) else 'unknown'}",
                 f"signature_verified={verification.get('ok', 'unknown')}",
                 f"verification_error={verification.get('error') or 'none'}",
             ]
@@ -342,7 +366,7 @@ def _local_langchain_tools():
 
     @tool
     def generate_random_chestmnist_image(index: Any = None) -> str:
-        """Generate a ChestMNIST sample, remember it for the session, and return its artifacts."""
+        """Generate a ChestMNIST sample, remember it, and refresh the input.json later consumed by run_ezkl()."""
         from mcp_server import create_single_image_query
 
         sample = create_single_image_query(index=_normalize_optional_index(index))
@@ -350,33 +374,19 @@ def _local_langchain_tools():
         return _compact_json(sample)
 
     @tool
-    def generate_zk_inference_proof(index: Any = None) -> str:
-        """Build an EZKL proof from the current verified bundle and the remembered session image."""
-        from mcp_server import create_single_image_query, export_model, run_ezkl
+    def generate_zk_inference_proof() -> str:
+        """Build an EZKL proof from the current verified bundle and the already prepared session input.json."""
+        from mcp_server import export_model, run_ezkl
 
         bundle_state, bundle_refreshed = _ensure_current_verified_bundle()
         model_path = _normalize_model_path(bundle_state.get("model_path"))
-        sample_index = _normalize_optional_index(index)
-        if sample_index is None:
-            sample_index = _latest_generated_sample_index()
+        selection = _latest_generated_sample()
 
         export_result = bundle_state.get("export")
         if not isinstance(export_result, dict) or not export_result.get("ok", False):
             export_result = export_model(model_path)
         if not export_result.get("ok", False):
             return _compact_json({"ok": False, "stage": "export_model", "export": export_result})
-
-        query_result = create_single_image_query(index=sample_index)
-        if not query_result.get("ok", False):
-            return _compact_json(
-                {
-                    "ok": False,
-                    "stage": "create_single_image_query",
-                    "sample_index": sample_index,
-                    "export": export_result,
-                    "query": query_result,
-                }
-            )
 
         ezkl_result = run_ezkl(
             workdir=_normalize_workdir("zk_inference/out"),
@@ -392,9 +402,8 @@ def _local_langchain_tools():
                 "bundle_refreshed": bundle_refreshed,
                 "bundle_model_cid": bundle_state.get("bundle", {}).get("model_cid"),
                 "bundle_signature_cid": bundle_state.get("bundle", {}).get("signature_cid"),
-                "sample_index": sample_index,
+                "selection": selection,
                 "export": export_result,
-                "query": query_result,
                 "ezkl": ezkl_result,
             }
         )
@@ -408,32 +417,17 @@ def _local_langchain_tools():
 
 def _default_llm_prompt(args: argparse.Namespace) -> str:
     return (
-        "You are a local thesis agent for model provenance and ZK inference. "
-        "You must decide from the user's intent whether to answer directly or use tools. "
-        "Do not rely on exact keywords. "
-        "For greetings, small talk, acknowledgements, or general conversation, "
-        "answer directly without using any tool. "
-        "Use tools only when the user needs external state or actions, such as "
-        "bundles, signatures, IPFS artifacts, dataset samples, inference, or proofs. "
-        "Do not force a tool call when a direct answer is sufficient. "
-        "If the request can be answered from the conversation alone, reply normally "
-        "and do not mention tools. "
-        "Only call a tool when it materially helps answer the user's actual request. "
-        "When the user asks for a proof or asks to verify an image against the latest "
-        "model, plan the workflow across the available tools: check the blockchain-backed "
-        "verified bundle first, obtain a ChestMNIST sample if needed, then produce the proof. "
-        "Always check the blockchain-backed current bundle before using a remembered "
-        "model for proof generation, and only reuse the remembered bundle if it is "
-        "already the current verified on-chain bundle. "
-        "Reuse remembered tool results from the current session when they satisfy "
-        "the user's request, but refresh them when the user asks for the latest "
-        "or for a new random sample. "
-        "If the current session already has a generated ChestMNIST sample and the "
-        "user asks to continue with the proof, use that remembered sample "
-        "automatically instead of asking for its index again. "
+        "You are VITA-FL, a local medical advisor agent for Verifiable Inference and Trust for AI Agents in Federated Learning. "
+        "Answer greetings and simple conversation directly. "
+        "Use tools for bundles, samples, inference, and proofs. "
         "Treat GMStorage and DeviceRegistry as the source of truth for the current verified bundle. "
+        "Before proof generation, ensure the current verified on-chain bundle is available. "
+        "Reuse remembered session artifacts when they satisfy the request. "
+        "If session image memory exists, use that sample for the proof and do not ask for an index. "
+        "If no session sample exists yet and the user asks for a proof, generate a ChestMNIST sample first. "
+        "Do not claim that a tool was executed unless you actually called it. "
+        "When a tool is needed, call it instead of describing what you would do. "
         "Keep answers short and concrete. "
-        f"Use sample index {args.index} only if a proof flow needs one and the user did not provide it. "
         f"Active dataset: {DATASET_NAME}."
     )
 
@@ -467,6 +461,7 @@ def _session_memory_messages(session_state: dict[str, Any] | None) -> list[dict[
             f"model_cid={bundle.get('model_cid', 'unknown')}, "
             f"signature_cid={bundle.get('signature_cid', 'unknown')}, "
             f"model_path={bundle_state.get('model_path', 'unknown')}, "
+            f"encrypted_bundle={bundle_state.get('download', {}).get('encrypted_bundle', 'unknown')}, "
             f"signature_verified={verification.get('ok', 'unknown')}."
         )
 
@@ -617,9 +612,8 @@ class AgentRuntime:
 
         if label == "generate_zk_inference_proof" and isinstance(parsed, dict):
             export = parsed.get("export", {})
-            query = parsed.get("query", {})
             ezkl = parsed.get("ezkl", {})
-            selection = query.get("selection", {})
+            selection = parsed.get("selection", {})
             files = selection.get("files", {})
             artifacts = ezkl.get("artifacts", {})
             return "\n".join(

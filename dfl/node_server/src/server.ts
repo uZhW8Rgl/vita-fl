@@ -288,6 +288,51 @@ async function verifyDownloadedGlobalModelSignature({ publicKeyDerHex, modelPath
     }
 }
 
+function isMissingRoundKeyError(error) {
+    const message = error?.message || String(error || "");
+    return message.includes("No wrapped GM round key found");
+}
+
+async function signFileWithLocalRsaKey(inputPath, outputSignaturePath) {
+    if (!rsaPrivateKey.trim()) {
+        throw new Error("RSA_PRIVATE_KEY is required to sign the round-0 bootstrap rollover model.");
+    }
+    const inputBytes = await fs.readFile(inputPath);
+    const signatureBytes = crypto.sign(
+        'RSA-SHA256',
+        inputBytes,
+        {
+            key: rsaPrivateKey,
+            padding: crypto.constants.RSA_PKCS1_PADDING,
+        }
+    );
+    await fs.writeFile(outputSignaturePath, signatureBytes);
+}
+
+async function prepareRoundZeroBootstrapRollover() {
+    console.log("Round 0 bootstrap rollover: fetching current encrypted GM bundle.");
+    await getCurrentModel();
+
+    const lastSignerAddress = await getLastRoundsAggregator();
+    const lastSignersPubKey = await getDevicePublicKey(lastSignerAddress);
+    const sigOk = await verifyDownloadedGlobalModelSignature({
+        publicKeyDerHex: lastSignersPubKey,
+        modelPath: "./data/gm.bin",
+        sigPath: "./data/gm.bin.sig",
+    });
+    if (!sigOk) {
+        throw new Error("Round-0 bootstrap rollover signature verification failed.");
+    }
+
+    await fs.mkdir(resultsIIDDir, { recursive: true });
+    await fs.copyFile("./data/gm.bin", path.join(resultsIIDDir, "aggregated.bin"));
+    await signFileWithLocalRsaKey(
+        path.join(resultsIIDDir, "aggregated.bin"),
+        path.join(resultsIIDDir, "aggregated.bin.sig"),
+    );
+    console.log("Round 0 bootstrap rollover prepared aggregated.bin + aggregated.bin.sig for encrypted republish.");
+}
+
 const stateMachine = async () => {
     if (process.env.DOCKER === "phala") {
         console.log("Fetching TDX Quote ...");
@@ -335,7 +380,13 @@ const stateMachine = async () => {
                 if (state[1] === process.env.ACCOUNT_ADDRESS) {
                     console.log("I am the aggregator");
                     await traceEvent("state.training.aggregator", { role: "aggregator" });
-                    console.log("Round %d.", Number(await getRound()));
+                    const currentRound = Number(await getRound());
+                    console.log("Round %d.", currentRound);
+                    if (currentRound === 0) {
+                        console.log("Round 0 bootstrap phase: skipping worker submission wait and proceeding directly to aggregation.");
+                        await setCurrentState("AGGREGATING");
+                        continue;
+                    }
                     console.log("Starting the zerompq server ...");
                     try {
                         if (!aggregatorServerRunning) {
@@ -379,10 +430,25 @@ const stateMachine = async () => {
                 } else {
                     console.log("I am not the aggregator");
                     await traceEvent("state.training.worker", { role: "worker", aggregator: String(state["1"]) });
-                    console.log("Round %d.", Number(await getRound()));
+                    const currentRound = Number(await getRound());
+                    console.log("Round %d.", currentRound);
                     console.log("Fetching the global model from IPFS ...");
                     await traceEvent("worker.fetch_global_model.started", { role: "worker" });
-                    await traceOperation("worker.fetch_global_model", { role: "worker" }, () => getCurrentModel());
+                    try {
+                        await traceOperation("worker.fetch_global_model", { role: "worker" }, () => getCurrentModel());
+                    } catch (error) {
+                        if (!isMissingRoundKeyError(error)) {
+                            throw error;
+                        }
+                        console.warn(`No round key for ${process.env.ACCOUNT_ADDRESS} in round ${currentRound}. Waiting for the next round after registration.`);
+                        await traceEvent("worker.fetch_global_model.deferred", {
+                            role: "worker",
+                            round: currentRound,
+                            reason: "missing_round_key",
+                        });
+                        await waitForRoundAdvance(currentRound, { pollMs: 5000 });
+                        continue;
+                    }
                     await traceEvent("worker.fetch_global_model.finished", { role: "worker" });
 
                     const prevGM = await getCurrentGM();
@@ -479,6 +545,7 @@ const stateMachine = async () => {
                     console.log("Starting the aggregation process ...");
                     await traceEvent("aggregator.aggregation.started", { role: "aggregator" });
                     try {
+                        const currentRound = Number(await getRound());
                         const expected = Number(process.env.CLIENT_LIMIT || 1);
                         const present = await waitForModels(expected, {
                             dir: srcModelsDir,
@@ -500,11 +567,20 @@ const stateMachine = async () => {
                             expected_models: expected,
                         });
                         if (count <= 0) {
+                            if (currentRound === 0) {
+                                console.log("Round 0 has no worker submissions. Re-publishing the verified bootstrap model for the next encrypted round.");
+                                await traceOperation("aggregator.round0.bootstrap_rollover", {
+                                    role: "aggregator",
+                                    round: currentRound,
+                                }, () => prepareRoundZeroBootstrapRollover());
+                                await setCurrentState("UPDATING");
+                                continue;
+                            }
                             console.log("No models to aggregate (count=0). Keeping round open and waiting for workers.");
                             await sleep(5000);
                             continue;
                         }
-                        const missingWorkers = await getMissingAuthorizedWorkers();
+                        const missingWorkers = currentRound === 0 ? [] : await getMissingAuthorizedWorkers();
                         if (missingWorkers.length > 0) {
                             console.log("Penalizing missing model submissions:", missingWorkers);
                             await penalizeContribution(missingWorkers, "missed_model_deadline");
@@ -513,6 +589,8 @@ const stateMachine = async () => {
                                 reason: "missed_model_deadline",
                                 count: missingWorkers.length,
                             });
+                        } else if (currentRound === 0) {
+                            console.log("Skipping missed-deadline penalties in round 0.");
                         }
                         if (count < expected) {
                             console.log(`Aggregating with ${count}/${expected} models.`);
@@ -663,6 +741,16 @@ async function waitForGMUpdate(prevCid, { pollMs = 3000, timeoutMs = 10 * 60 * 1
         if (cid && cid !== prevCid) return cid;
         if (Date.now() - start > timeoutMs) {
             throw new Error("Timeout waiting for aggregator signal (new Global Model).");
+        }
+        await sleep(pollMs);
+    }
+}
+
+async function waitForRoundAdvance(prevRound, { pollMs = 3000 } = {}) {
+    while (true) {
+        const currentRound = Number(await getRound());
+        if (currentRound > Number(prevRound)) {
+            return currentRound;
         }
         await sleep(pollMs);
     }

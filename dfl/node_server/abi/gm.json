@@ -71,6 +71,19 @@
   },
   {
     "type": "function",
+    "name": "backupGlobalModelKeyBundle",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "backupGlobalModelSignature",
     "inputs": [],
     "outputs": [
@@ -129,6 +142,19 @@
   },
   {
     "type": "function",
+    "name": "getBackupGlobalModelKeyBundle",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getBackupGlobalModelSignature",
     "inputs": [],
     "outputs": [
@@ -162,6 +188,19 @@
   {
     "type": "function",
     "name": "getGlobalModel",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getGlobalModelKeyBundle",
     "inputs": [],
     "outputs": [
       {
@@ -270,6 +309,19 @@
   {
     "type": "function",
     "name": "globalModel",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "globalModelKeyBundle",
     "inputs": [],
     "outputs": [
       {
@@ -482,6 +534,29 @@
       },
       {
         "name": "_newGlobalModelSignature",
+        "type": "string",
+        "internalType": "string"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setGlobalModelAndSignatureAndKeyBundle",
+    "inputs": [
+      {
+        "name": "_newGlobalModel",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "_newGlobalModelSignature",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "_newGlobalModelKeyBundle",
         "type": "string",
         "internalType": "string"
       }

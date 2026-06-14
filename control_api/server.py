@@ -222,6 +222,10 @@ def compose_project_name() -> str:
     return WORKSPACE_ROOT.name
 
 
+def use_local_ollama() -> bool:
+    return os.environ.get("USE_LOCAL_OLLAMA", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def compose_ps_state(service_name: str, output: str, container_id: str = "") -> dict[str, Any]:
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     data_lines = [line for line in lines if not line.lower().startswith(("name ", "name\t"))]
@@ -596,34 +600,36 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
     inactive_workers = available_workers[config["worker_count"] :]
 
     logs = await reset_services(["agent", "zk-inference", *available_workers])
+    base_services = [
+        "anvil",
+        "ipfs",
+        "loki",
+        "promtail",
+        "tempo",
+        "otel-collector",
+    ]
+    if use_local_ollama():
+        base_services.append("ollama")
+
     logs.append(
         await run_subprocess(
-            compose_command(
-                "up",
-                "-d",
-                "anvil",
-                "ipfs",
-                "loki",
-                "promtail",
-                "tempo",
-                "otel-collector",
-                "ollama",
-            ),
+            compose_command("up", "-d", *base_services),
             cwd=WORKSPACE_ROOT,
             check=True,
         )
     )
-    logs.append(
-        await run_subprocess(
-            compose_command(
-                "up",
-                "-d",
-                "ollama-init",
-            ),
-            cwd=WORKSPACE_ROOT,
-            check=True,
+    if use_local_ollama():
+        logs.append(
+            await run_subprocess(
+                compose_command(
+                    "up",
+                    "-d",
+                    "ollama-init",
+                ),
+                cwd=WORKSPACE_ROOT,
+                check=True,
+            )
         )
-    )
     logs.append(
         await run_subprocess(
             compose_command(
@@ -640,6 +646,7 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
         await run_subprocess(
             compose_command(
                 "up",
+                "--build",
                 "--no-deps",
                 "-d",
                 *selected_workers,
@@ -652,6 +659,7 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
         await run_subprocess(
             compose_command(
                 "up",
+                "--build",
                 "--no-deps",
                 "-d",
                 "agent",
