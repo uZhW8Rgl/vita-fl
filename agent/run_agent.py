@@ -338,6 +338,13 @@ def _local_langchain_tools():
         download = payload.get("download", {})
         verification = payload.get("verification", {})
         decryption = download.get("decryption", {})
+        decryption_round = decryption.get("round", "unknown") if isinstance(decryption, dict) else "unknown"
+        decryption_recipient = (
+            decryption.get("recipient_address", "unknown") if isinstance(decryption, dict) else "unknown"
+        )
+        decryption_key_source = (
+            decryption.get("private_key_source", "unknown") if isinstance(decryption, dict) else "unknown"
+        )
         return "\n".join(
             [
                 f"model_cid={bundle.get('model_cid', 'unknown')}",
@@ -347,9 +354,9 @@ def _local_langchain_tools():
                 f"model_path={download.get('model_path', 'unknown')}",
                 f"signature_path={download.get('signature_path', 'unknown')}",
                 f"decryption_ok={bool(decryption)}",
-                f"decryption_round={decryption.get('round', 'unknown') if isinstance(decryption, dict) else 'unknown'}",
-                f"decryption_recipient={decryption.get('recipient_address', 'unknown') if isinstance(decryption, dict) else 'unknown'}",
-                f"decryption_key_source={decryption.get('private_key_source', 'unknown') if isinstance(decryption, dict) else 'unknown'}",
+                f"decryption_round={decryption_round}",
+                f"decryption_recipient={decryption_recipient}",
+                f"decryption_key_source={decryption_key_source}",
                 f"signature_verified={verification.get('ok', 'unknown')}",
                 f"verification_error={verification.get('error') or 'none'}",
             ]
@@ -417,7 +424,8 @@ def _local_langchain_tools():
 
 def _default_llm_prompt(args: argparse.Namespace) -> str:
     return (
-        "You are VITA-FL, a local medical advisor agent for Verifiable Inference and Trust for AI Agents in Federated Learning. "
+        "You are VITA-FL, a local medical advisor agent for "
+        "Verifiable Inference and Trust for AI Agents in Federated Learning. "
         "Answer greetings and simple conversation directly. "
         "Use tools for bundles, samples, inference, and proofs. "
         "Treat GMStorage and DeviceRegistry as the source of truth for the current verified bundle. "
