@@ -102,7 +102,12 @@ def deterministic_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "ok": None,
             "skipped": "source=ipfs-scan has no on-chain last aggregator context",
         }
-        return {"bundle": bundle, "download": download, "verification": verification, "proof_run": {"ok": False, "stage": "contract_source_required"}}
+        return {
+            "bundle": bundle,
+            "download": download,
+            "verification": verification,
+            "proof_run": {"ok": False, "stage": "contract_source_required"},
+        }
 
     from mcp_server import (
         fetch_latest_verified_model_bundle,
@@ -221,7 +226,8 @@ def _default_llm_prompt(args: argparse.Namespace) -> str:
         f"{describe_agent_skills()} "
         "Use the available skill tools instead of composing low-level verification steps yourself. "
         "Treat GMStorage and DeviceRegistry as the source of truth for the current verified bundle. "
-        "For proof requests, first fetch the verified bundle if needed, then prepare a sample, then run the proof skill. "
+        "For proof requests, first fetch the verified bundle if needed, "
+        "then prepare a sample, then run the proof skill. "
         "Reuse remembered session artifacts when they satisfy the request. "
         "If session image memory exists, reuse that sample unless the user explicitly requests a different index. "
         "Do not claim that a tool was executed unless you actually called it. "
