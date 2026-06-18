@@ -74,7 +74,10 @@ def normalize_optional_index(index: Any) -> int | None:
     return int(normalized)
 
 
-def resolve_preferred_sample_index(session_state: dict[str, Any], requested_index: Any) -> int | None:
+def resolve_preferred_sample_index(
+    session_state: dict[str, Any],
+    requested_index: Any,
+) -> int | None:
     normalized = normalize_optional_index(requested_index)
     if normalized is not None:
         return normalized
@@ -121,7 +124,9 @@ def format_verified_bundle_summary(payload: dict[str, Any]) -> str:
     download = payload.get("download", {})
     verification = payload.get("verification", {})
     decryption = download.get("decryption", {})
-    decryption_round = decryption.get("round", "unknown") if isinstance(decryption, dict) else "unknown"
+    decryption_round = (
+        decryption.get("round", "unknown") if isinstance(decryption, dict) else "unknown"
+    )
     decryption_recipient = (
         decryption.get("recipient_address", "unknown") if isinstance(decryption, dict) else "unknown"
     )
@@ -170,10 +175,16 @@ def run_fetch_latest_verified_model_bundle_skill(
     verification = payload.get("verification", {})
     return structured_skill_result(
         skill=FETCH_LATEST_VERIFIED_MODEL_BUNDLE_SKILL.name,
-        stage="verified_bundle_ready" if verification.get("ok", False) else "signature_verification",
+        stage=(
+            "verified_bundle_ready"
+            if verification.get("ok", False)
+            else "signature_verification"
+        ),
         ok=bool(verification.get("ok", False)),
         bundle_payload=payload,
-        export_payload=payload.get("export") if isinstance(payload.get("export"), dict) else None,
+        export_payload=(
+            payload.get("export") if isinstance(payload.get("export"), dict) else None
+        ),
     )
 
 
@@ -191,7 +202,11 @@ def run_generate_random_chestmnist_image_skill(
     )
     return structured_skill_result(
         skill=GENERATE_RANDOM_CHESTMNIST_IMAGE_SKILL.name,
-        stage="create_single_image_query" if selection_payload.get("ok", True) else "create_single_image_query",
+        stage=(
+            "create_single_image_query"
+            if selection_payload.get("ok", True)
+            else "create_single_image_query"
+        ),
         ok=bool(selection_payload.get("ok", True)),
         selection_payload=selection_payload,
     )
