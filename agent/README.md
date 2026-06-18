@@ -1,16 +1,25 @@
-# Agent: Contract-Based Retrieval and ZK Inference
+# Agent: Skill-Based Retrieval and ZK Inference
 
-This folder contains a local agent layer around the DFL and ZK inference pipeline.
+This folder contains the local agent layer around the DFL and ZK inference pipeline.
 
-The normal flow is:
+The implementation is now centered around three separate public agent skills:
+
+1. `fetch_latest_verified_model_bundle()`
+2. `generate_random_chestmnist_image(...)`
+3. `generate_zk_inference_proof()`
+
+The shared skill orchestration now lives in `agent/agent_skills.py`. MCP, the deterministic CLI path, and the LangChain/Ollama chat layer use that skill layer instead of each implementing the workflow independently.
+
+Together they cover the normal flow in separate steps:
 
 1. Read the current global model CID, signature CID, and last aggregator from `GMStorage`.
-2. Fetch model and signature from the local IPFS/Kubo node.
-3. Read the last aggregator's public key from `DeviceRegistry`.
-4. Verify the model signature with RSA-SHA256 and PKCS1v15 padding.
-5. Export the verified model to ONNX through `zk_inference`.
-6. Create a single-image query for the active dataset and write `zk_inference/out/input.json`.
-7. Run EZKL against that prepared `input.json` to generate and verify a proof for the prediction.
+2. Fetch the encrypted model bundle and signature from the local IPFS/Kubo node.
+3. Decrypt the model bundle for the intended recipient.
+4. Read the last aggregator's public key from `DeviceRegistry`.
+5. Verify the model signature with RSA-SHA256 and PKCS1v15 padding.
+6. Export the verified model to ONNX through `zk_inference`.
+7. Create a single-image query for the active dataset and write `zk_inference/out/input.json`.
+8. Run EZKL against that prepared `input.json` to generate and verify a proof for the prediction.
 
 The smart contracts are the source of truth. Direct IPFS scanning is kept only as a debug fallback.
 
@@ -24,7 +33,7 @@ pip install -e dfl/neural_network
 pip install -r agent/requirements.txt
 ```
 
-`agent/requirements.txt` is only needed for LangChain, Ollama, and MCP mode. The deterministic pipeline can run without an LLM.
+`agent/requirements.txt` is only needed for LangChain, Ollama, and MCP mode. The deterministic pipeline can run without an LLM, but it now uses the same three-skill sequence internally for consistency.
 
 ## Contract Source
 
@@ -119,7 +128,7 @@ export OLLAMA_MODEL=qwen3:0.6b
 .venv/bin/python agent/run_agent.py --llm --source contract --skip-calibration
 ```
 
-In this mode LangChain can use local IPFS bundle helpers and ZK tools exposed through MCP.
+In this mode LangChain should prefer the three public skills instead of manually composing low-level retrieval, verification, and proof steps.
 
 ## Persistent Chat Service
 
@@ -148,15 +157,19 @@ http://127.0.0.1:8089
 
 The running `agent` stays alive and keeps chat sessions in memory, while the
 separate `ui` container serves the browser frontend and waits for Grafana so the
-embedded dashboard is available from the start. The agent can:
+embedded dashboard is available from the start.
 
 For the embedded Grafana panel, use Grafana's **Share externally** feature and
 set the generated link as `GRAFANA_EXTERNAL_DASHBOARD_URL` for the `ui` service.
 This is separate from Grafana's generic embedding setting.
 
+The agent can:
+
 - answer directly through Ollama,
-- inspect local IPFS bundle metadata through the lightweight IPFS helper,
-- call MCP tools for model export, dataset query preparation, and proof generation.
+- fetch the current verified on-chain bundle through a dedicated skill,
+- prepare one ChestMNIST sample through a separate skill,
+- run the proof step through a separate EZKL skill,
+- retain verified bundle and selected sample state across a chat session.
 
 Inside Compose, the agent automatically uses `OLLAMA_BASE_URL=http://ollama:11434`.
 
@@ -190,11 +203,13 @@ Run the MCP server directly:
 
 The MCP server does not reimplement proof logic. It wraps the existing scripts in `zk_inference`.
 
-The exposed tools separate sample preparation from proof generation:
+The main public MCP tools are now the skill-oriented entry points:
 
-- `create_single_image_query(...)` selects a dataset sample and writes the `input.json` that EZKL will use.
-- `run_ezkl(...)` consumes an existing `input.json`; it does not choose a new sample on its own.
-- `generate_zk_inference_proof()` in the chat agent assumes a sample was already prepared in the current session and fails instead of regenerating one implicitly.
+- `fetch_latest_verified_model_bundle()` resolves the current on-chain bundle, downloads it, decrypts it, verifies the signature, and exports the verified model.
+- `generate_random_chestmnist_image(...)` prepares one ChestMNIST sample and writes the EZKL input artifacts.
+- `generate_zk_inference_proof()` runs EZKL against the already prepared artifacts.
+
+Only these three MCP tools are public. Lower-level functions such as the bundle fetch, query creation, and EZKL execution still exist internally as Python helpers, but they are no longer exposed as separate MCP tools.
 
 ## Debug IPFS Scan
 
