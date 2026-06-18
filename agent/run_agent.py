@@ -17,14 +17,15 @@ from typing import Any
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 try:
+    from .agent_skills import (
+        describe_agent_skills,
+        format_selection_summary,
+        format_verified_bundle_summary,
+        resolve_preferred_sample_index,
+    )
     from .blockchain_source import (
         DEFAULT_ENV_FILE,
-        fetch_onchain_bundle,
-        load_env_file,
-        normalize_host_rpc_url,
         normalize_ipfs_api_url,
-        read_current_bundle_from_contract,
-        verify_download_with_registry,
     )
     from .ipfs_bundle import (
         DEFAULT_DOWNLOAD_DIR,
@@ -34,14 +35,15 @@ try:
         fetch_bundle,
     )
 except ImportError:
+    from agent_skills import (
+        describe_agent_skills,
+        format_selection_summary,
+        format_verified_bundle_summary,
+        resolve_preferred_sample_index,
+    )
     from blockchain_source import (
         DEFAULT_ENV_FILE,
-        fetch_onchain_bundle,
-        load_env_file,
-        normalize_host_rpc_url,
         normalize_ipfs_api_url,
-        read_current_bundle_from_contract,
-        verify_download_with_registry,
     )
     from ipfs_bundle import (
         DEFAULT_DOWNLOAD_DIR,
@@ -73,29 +75,21 @@ API_HOME_HTML = """<!doctype html>
 </body>
 </html>
 """
+PUBLIC_SKILL_NAMES = (
+    "fetch_latest_verified_model_bundle",
+    "generate_random_chestmnist_image",
+    "generate_zk_inference_proof",
+)
 
 
 def deterministic_pipeline(args: argparse.Namespace) -> dict[str, Any]:
-    ipfs_api_url = normalize_ipfs_api_url(args.ipfs_api_url)
-    if args.source == "contract":
-        env_file = load_env_file(args.env_file)
-        rpc_url = normalize_host_rpc_url(args.rpc_url or env_file.get("RPC_URL", "http://127.0.0.1:8545"))
-        gm_storage_address = args.gm_storage_address or env_file.get("GM_STORAGE_ADDRESS", "")
-        registry_address = args.registry_address or env_file.get("REGISTRY_ADDRESS", "")
-        with service_edge("agent.read_contract_bundle", source="agent", target="smart-contracts"):
-            bundle = read_current_bundle_from_contract(rpc_url, gm_storage_address, registry_address=registry_address)
-        with service_edge("agent.fetch_ipfs_bundle", source="agent", target="ipfs-kubo"):
-            download = fetch_onchain_bundle(bundle, args.download_dir, ipfs_api_url=ipfs_api_url)
-        with service_edge("agent.verify_registry", source="agent", target="smart-contracts"):
-            verification = verify_download_with_registry(bundle, download, rpc_url, registry_address)
-        if not verification["ok"]:
-            return {
-                "bundle": bundle,
-                "download": download,
-                "verification": verification,
-                "proof_run": {"ok": False, "stage": "signature_verification"},
-            }
-    else:
+    if args.zk_inference_url:
+        import mcp_server
+
+        mcp_server.ZK_INFERENCE_URL = args.zk_inference_url
+
+    if args.source != "contract":
+        ipfs_api_url = normalize_ipfs_api_url(args.ipfs_api_url)
         with service_edge("agent.discover_ipfs_bundle", source="agent", target="ipfs-kubo"):
             bundle = discover_latest(
                 api_url=ipfs_api_url,
@@ -108,39 +102,42 @@ def deterministic_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             "ok": None,
             "skipped": "source=ipfs-scan has no on-chain last aggregator context",
         }
+        return {
+            "bundle": bundle,
+            "download": download,
+            "verification": verification,
+            "proof_run": {"ok": False, "stage": "contract_source_required"},
+        }
 
-    if args.zk_inference_url:
-        import mcp_server
-
-        mcp_server.ZK_INFERENCE_URL = args.zk_inference_url
-
-    from mcp_server import export_model, create_single_image_query, run_ezkl
-
-    # 1. Export the model
-    export_run = export_model(model_path=download["model_path"], out_dir=args.workdir)
-    if not export_run.get("ok", True):
-        return {"bundle": bundle, "download": download, "verification": verification, "proof_run": export_run}
-
-    # 2. Prepare the single image query
-    query_run = create_single_image_query(
-        index=args.index,
-        out_dir=args.query_dir,
-        input_json=str(Path(args.workdir) / "input.json"),
-    )
-    if not query_run.get("ok", True):
-        return {"bundle": bundle, "download": download, "verification": verification, "proof_run": query_run}
-
-    # 3. Run the EZKL proof generation and verification
-    proof_run = run_ezkl(
-        workdir=args.workdir,
-        model=export_run.get("onnx_path", "model_logits.onnx"),
-        data="input.json",
-        skip_calibration=args.skip_calibration,
+    from mcp_server import (
+        fetch_latest_verified_model_bundle,
+        generate_random_chestmnist_image,
+        generate_zk_inference_proof,
     )
 
-    # Combine metadata for the proof run result
-    full_proof_run = {**export_run, **query_run, **proof_run}
-    return {"bundle": bundle, "download": download, "verification": verification, "proof_run": full_proof_run}
+    bundle_result = json.loads(fetch_latest_verified_model_bundle(out_dir=args.workdir))
+    selection_result = json.loads(
+        generate_random_chestmnist_image(
+            index=args.index,
+            query_dir=args.query_dir,
+            input_json=str(Path(args.workdir) / "input.json"),
+        )
+    )
+    proof_result = json.loads(
+        generate_zk_inference_proof(
+            workdir=args.workdir,
+            model="model_logits.onnx",
+            data="input.json",
+            skip_calibration=args.skip_calibration,
+        )
+    )
+    return {
+        "bundle": bundle_result.get("bundle", {}),
+        "download": bundle_result.get("download", {}),
+        "verification": bundle_result.get("verification", {}),
+        "selection": selection_result.get("selection", {}),
+        "proof_run": proof_result,
+    }
 
 
 def _local_langchain_tools():
@@ -156,162 +153,13 @@ def _local_langchain_tools():
         return state
 
     def _session_snapshot_dir() -> Path:
-        session_id = str(_session_state().get("id", "")).strip() or "unknown"
-        path = AGENT_STATE_DIR / "sessions" / session_id
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def _latest_verified_bundle() -> dict[str, Any]:
-        bundle_state = _session_state().get("latest_bundle")
-        if not isinstance(bundle_state, dict):
-            raise RuntimeError(
-                "No verified model bundle is available yet in this chat session. "
-                "Run the bundle fetch tool before requesting the proof."
-            )
-        verification = bundle_state.get("verification")
-        if not isinstance(verification, dict) or not verification.get("ok", False):
-            raise RuntimeError(
-                "The session model bundle is not marked as successfully verified. "
-                "Fetch a verified bundle before requesting the proof."
-            )
-        return bundle_state
-
-    def _current_onchain_bundle_payload() -> dict[str, Any]:
-        from blockchain_source import (
-            DEFAULT_ENV_FILE,
-            load_env_file,
-            normalize_host_rpc_url,
-            read_current_bundle_from_contract,
-        )
-
-        env_file = load_env_file(DEFAULT_ENV_FILE)
-        rpc_url = normalize_host_rpc_url(os.environ.get("RPC_URL") or env_file.get("RPC_URL", "http://127.0.0.1:8545"))
-        gm_storage_address = os.environ.get("GM_STORAGE_ADDRESS") or env_file.get("GM_STORAGE_ADDRESS", "")
-        registry_address = os.environ.get("REGISTRY_ADDRESS") or env_file.get("REGISTRY_ADDRESS", "")
-        bundle = read_current_bundle_from_contract(
-            rpc_url,
-            gm_storage_address,
-            registry_address=registry_address,
-        )
-        if not isinstance(bundle, dict):
-            raise RuntimeError("The on-chain bundle lookup returned an invalid payload.")
-        return {"bundle": bundle}
-
-    def _bundle_identity(bundle_state: dict[str, Any]) -> tuple[str | None, str | None]:
-        bundle = bundle_state.get("bundle", {})
-        if not isinstance(bundle, dict):
-            return None, None
-        model_cid = bundle.get("model_cid")
-        signature_cid = bundle.get("signature_cid")
-        return (
-            model_cid if isinstance(model_cid, str) else None,
-            signature_cid if isinstance(signature_cid, str) else None,
-        )
-
-    def _ensure_current_verified_bundle() -> tuple[dict[str, Any], bool]:
-        try:
-            current_state = _latest_verified_bundle()
-        except RuntimeError:
-            current_state = None
-
-        latest_payload = _current_onchain_bundle_payload()
-        latest_bundle = latest_payload.get("bundle", {})
-        latest_model_cid = latest_bundle.get("model_cid") if isinstance(latest_bundle, dict) else None
-        latest_signature_cid = latest_bundle.get("signature_cid") if isinstance(latest_bundle, dict) else None
-
-        if current_state is not None:
-            current_model_cid, current_signature_cid = _bundle_identity(current_state)
-            if current_model_cid == latest_model_cid and current_signature_cid == latest_signature_cid:
-                return current_state, False
-
-        _remember_verified_bundle(latest_payload)
-        return _latest_verified_bundle(), True
-
-    def _latest_generated_sample() -> dict[str, Any]:
-        selection = _session_state().get("latest_selection")
-        if not isinstance(selection, dict):
-            raise RuntimeError(
-                "No generated ChestMNIST sample is available yet in this chat session. "
-                "Run the image generation tool before requesting the proof."
-            )
-        index = selection.get("source_index")
-        if not isinstance(index, int):
-            raise RuntimeError("The session sample metadata is missing a valid source_index.")
-        return selection
+        return _session_snapshot_dir_for_state(_session_state())
 
     def _remember_generated_sample(sample: dict[str, Any]) -> None:
-        selection = sample.get("selection")
-        if not isinstance(selection, dict):
-            return
-        session_state = _session_state()
-        session_state["latest_selection"] = selection
-        snapshot_dir = _session_snapshot_dir()
-        (snapshot_dir / "latest_selection.json").write_text(
-            json.dumps(selection, ensure_ascii=True),
-            encoding="utf-8",
-        )
+        _remember_generated_sample_for_state(_session_state(), sample)
 
     def _remember_verified_bundle(payload: dict[str, Any]) -> None:
-        download = payload.get("download")
-        verification = payload.get("verification")
-        if not isinstance(download, dict) or not isinstance(verification, dict):
-            return
-        if not verification.get("ok", False):
-            return
-        model_path = download.get("model_path")
-        signature_path = download.get("signature_path")
-        if not isinstance(model_path, str) or not isinstance(signature_path, str):
-            return
-        stored_bundle = {
-            "model_path": model_path,
-            "signature_path": signature_path,
-            "bundle": payload.get("bundle", {}),
-            "verification": verification,
-            "export": payload.get("export", {}),
-        }
-        session_state = _session_state()
-        session_state["latest_bundle"] = stored_bundle
-        snapshot_dir = _session_snapshot_dir()
-        (snapshot_dir / "latest_bundle.json").write_text(
-            json.dumps(stored_bundle, ensure_ascii=True),
-            encoding="utf-8",
-        )
-
-    def _normalize_optional_index(index: Any) -> int | None:
-        if index is None:
-            return None
-        if isinstance(index, dict):
-            return None
-        if isinstance(index, str):
-            normalized = index.strip().lower()
-            if normalized in {"", "none", "null"}:
-                return None
-            return int(normalized)
-        return int(index)
-
-    def _default_downloaded_model_path() -> str:
-        downloads_dir = REPO_ROOT / "agent" / "downloads"
-        candidates = [path for path in downloads_dir.glob("*.bin") if path.is_file() and not path.name.endswith(".sig")]
-        if not candidates:
-            raise RuntimeError("No downloaded model bundle is available yet in agent/downloads.")
-        return str(max(candidates, key=lambda path: path.stat().st_mtime))
-
-    def _normalize_model_path(model_path: Any) -> str:
-        if model_path is None:
-            return _default_downloaded_model_path()
-        if isinstance(model_path, dict):
-            return _default_downloaded_model_path()
-        if isinstance(model_path, str):
-            normalized = model_path.strip()
-            if (
-                not normalized
-                or normalized in {"downloaded_model", "/path/to/downloaded/model", "/path/to/model"}
-                or normalized.startswith("<output of ")
-                or normalized.endswith((".pt", ".onnx", ".json"))
-            ):
-                return _default_downloaded_model_path()
-            return normalized
-        return str(model_path)
+        _remember_verified_bundle_for_state(_session_state(), payload)
 
     def _normalize_workdir(workdir: Any) -> str:
         if workdir is None or isinstance(workdir, dict):
@@ -323,97 +171,45 @@ def _local_langchain_tools():
             return normalized
         return str(workdir)
 
-    def _normalize_artifact_name(value: Any, default: str) -> str:
-        if value is None or isinstance(value, dict):
-            return default
-        if isinstance(value, str):
-            normalized = value.strip()
-            if not normalized or normalized.startswith("<output of "):
-                return default
-            return normalized
-        return str(value)
-
-    def _bundle_summary_text(payload: dict[str, Any]) -> str:
-        bundle = payload.get("bundle", {})
-        download = payload.get("download", {})
-        verification = payload.get("verification", {})
-        decryption = download.get("decryption", {})
-        decryption_round = decryption.get("round", "unknown") if isinstance(decryption, dict) else "unknown"
-        decryption_recipient = (
-            decryption.get("recipient_address", "unknown") if isinstance(decryption, dict) else "unknown"
-        )
-        decryption_key_source = (
-            decryption.get("private_key_source", "unknown") if isinstance(decryption, dict) else "unknown"
-        )
-        return "\n".join(
-            [
-                f"model_cid={bundle.get('model_cid', 'unknown')}",
-                f"signature_cid={bundle.get('signature_cid', 'unknown')}",
-                f"last_aggregator={bundle.get('last_aggregator', 'unknown')}",
-                f"encrypted_bundle={download.get('encrypted_bundle', 'unknown')}",
-                f"model_path={download.get('model_path', 'unknown')}",
-                f"signature_path={download.get('signature_path', 'unknown')}",
-                f"decryption_ok={bool(decryption)}",
-                f"decryption_round={decryption_round}",
-                f"decryption_recipient={decryption_recipient}",
-                f"decryption_key_source={decryption_key_source}",
-                f"signature_verified={verification.get('ok', 'unknown')}",
-                f"verification_error={verification.get('error') or 'none'}",
-            ]
-        )
-
     @tool
     def fetch_latest_verified_model_bundle() -> str:
-        """Fetch the latest verified model bundle and verify its on-chain signature."""
-        from mcp_server import fetch_current_onchain_model_bundle
+        """Resolve the current on-chain bundle, decrypt it, verify it, and export the model."""
+        from mcp_server import fetch_latest_verified_model_bundle as fetch_skill_impl
 
-        payload = json.loads(fetch_current_onchain_model_bundle())
+        payload = json.loads(fetch_skill_impl())
         _remember_verified_bundle(payload)
-        return _bundle_summary_text(payload)
+        return format_verified_bundle_summary(payload)
 
     @tool
     def generate_random_chestmnist_image(index: Any = None) -> str:
-        """Generate a ChestMNIST sample, remember it, and refresh the input.json later consumed by run_ezkl()."""
-        from mcp_server import create_single_image_query
+        """Prepare one ChestMNIST sample and the EZKL input artifacts."""
+        from mcp_server import generate_random_chestmnist_image as generate_image_impl
 
-        sample = create_single_image_query(index=_normalize_optional_index(index))
-        _remember_generated_sample(sample)
-        return _compact_json(sample)
+        requested_index = resolve_preferred_sample_index(_session_state(), index)
+        payload = json.loads(
+            generate_image_impl(
+                index=requested_index,
+                query_dir="zk_inference/single_query",
+                input_json=str(Path(_normalize_workdir("zk_inference/out")) / "input.json"),
+            )
+        )
+        if isinstance(payload.get("selection"), dict):
+            _remember_generated_sample(payload)
+        return format_selection_summary(payload)
 
     @tool
     def generate_zk_inference_proof() -> str:
-        """Build an EZKL proof from the current verified bundle and the already prepared session input.json."""
-        from mcp_server import export_model, run_ezkl
+        """Run EZKL against the current prepared artifacts."""
+        from mcp_server import generate_zk_inference_proof as generate_proof_impl
 
-        bundle_state, bundle_refreshed = _ensure_current_verified_bundle()
-        model_path = _normalize_model_path(bundle_state.get("model_path"))
-        selection = _latest_generated_sample()
-
-        export_result = bundle_state.get("export")
-        if not isinstance(export_result, dict) or not export_result.get("ok", False):
-            export_result = export_model(model_path)
-        if not export_result.get("ok", False):
-            return _compact_json({"ok": False, "stage": "export_model", "export": export_result})
-
-        ezkl_result = run_ezkl(
-            workdir=_normalize_workdir("zk_inference/out"),
-            model=_normalize_artifact_name("model_logits.onnx", "model_logits.onnx"),
-            data=_normalize_artifact_name("input.json", "input.json"),
+        payload = json.loads(
+            generate_proof_impl(
+                workdir=_normalize_workdir("zk_inference/out"),
+                model="model_logits.onnx",
+                data="input.json",
+            )
         )
-        return _compact_json(
-            {
-                "ok": bool(ezkl_result.get("ok", False)),
-                "stage": "done" if ezkl_result.get("ok", False) else "run_ezkl",
-                "model_path": model_path,
-                "signature_path": bundle_state.get("signature_path"),
-                "bundle_refreshed": bundle_refreshed,
-                "bundle_model_cid": bundle_state.get("bundle", {}).get("model_cid"),
-                "bundle_signature_cid": bundle_state.get("bundle", {}).get("signature_cid"),
-                "selection": selection,
-                "export": export_result,
-                "ezkl": ezkl_result,
-            }
-        )
+        return _compact_json(payload)
 
     return [
         fetch_latest_verified_model_bundle,
@@ -427,12 +223,13 @@ def _default_llm_prompt(args: argparse.Namespace) -> str:
         "You are VITA-FL, a local medical advisor agent for "
         "Verifiable Inference and Trust for AI Agents in Federated Learning. "
         "Answer greetings and simple conversation directly. "
-        "Use tools for bundles, samples, inference, and proofs. "
+        f"{describe_agent_skills()} "
+        "Use the available skill tools instead of composing low-level verification steps yourself. "
         "Treat GMStorage and DeviceRegistry as the source of truth for the current verified bundle. "
-        "Before proof generation, ensure the current verified on-chain bundle is available. "
+        "For proof requests, first fetch the verified bundle if needed, "
+        "then prepare a sample, then run the proof skill. "
         "Reuse remembered session artifacts when they satisfy the request. "
-        "If session image memory exists, use that sample for the proof and do not ask for an index. "
-        "If no session sample exists yet and the user asks for a proof, generate a ChestMNIST sample first. "
+        "If session image memory exists, reuse that sample unless the user explicitly requests a different index. "
         "Do not claim that a tool was executed unless you actually called it. "
         "When a tool is needed, call it instead of describing what you would do. "
         "Keep answers short and concrete. "
@@ -508,6 +305,52 @@ def _history_messages(
             continue
         history.append({"role": role, "content": content})
     return history
+
+
+def _session_snapshot_dir_for_state(session_state: dict[str, Any]) -> Path:
+    session_id = str(session_state.get("id", "")).strip() or "unknown"
+    path = AGENT_STATE_DIR / "sessions" / session_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _remember_generated_sample_for_state(session_state: dict[str, Any], sample: dict[str, Any]) -> None:
+    selection = sample.get("selection")
+    if not isinstance(selection, dict):
+        return
+    session_state["latest_selection"] = selection
+    snapshot_dir = _session_snapshot_dir_for_state(session_state)
+    (snapshot_dir / "latest_selection.json").write_text(
+        json.dumps(selection, ensure_ascii=True),
+        encoding="utf-8",
+    )
+
+
+def _remember_verified_bundle_for_state(session_state: dict[str, Any], payload: dict[str, Any]) -> None:
+    download = payload.get("download")
+    verification = payload.get("verification")
+    if not isinstance(download, dict) or not isinstance(verification, dict):
+        return
+    if not verification.get("ok", False):
+        return
+    model_path = download.get("model_path")
+    signature_path = download.get("signature_path")
+    if not isinstance(model_path, str) or not isinstance(signature_path, str):
+        return
+    stored_bundle = {
+        "model_path": model_path,
+        "signature_path": signature_path,
+        "bundle": payload.get("bundle", {}),
+        "verification": verification,
+        "export": payload.get("export", {}),
+        "download": download,
+    }
+    session_state["latest_bundle"] = stored_bundle
+    snapshot_dir = _session_snapshot_dir_for_state(session_state)
+    (snapshot_dir / "latest_bundle.json").write_text(
+        json.dumps(stored_bundle, ensure_ascii=True),
+        encoding="utf-8",
+    )
 
 
 class AgentRuntime:
@@ -608,34 +451,22 @@ class AgentRuntime:
                 [
                     f"Tool `{label}` completed.",
                     "",
-                    f"dataset={selection.get('dataset', 'unknown')}",
+                    f"stage={parsed.get('stage', 'unknown')}",
                     f"source_index={selection.get('source_index', 'unknown')}",
                     f"true_label={selection.get('true_label', 'unknown')}",
                     f"single_image_npy={files.get('single_image_npy', 'unknown')}",
-                    f"single_label_json={files.get('single_label_json', 'unknown')}",
-                    f"preview_pgm={files.get('preview_pgm', 'unknown')}",
                     f"ezkl_input_json={files.get('ezkl_input_json', 'unknown')}",
                 ]
             )
 
         if label == "generate_zk_inference_proof" and isinstance(parsed, dict):
-            export = parsed.get("export", {})
             ezkl = parsed.get("ezkl", {})
-            selection = parsed.get("selection", {})
-            files = selection.get("files", {})
             artifacts = ezkl.get("artifacts", {})
             return "\n".join(
                 [
                     f"Tool `{label}` completed.",
                     "",
-                    f"model_path={parsed.get('model_path', 'unknown')}",
-                    f"bundle_refreshed={parsed.get('bundle_refreshed', 'unknown')}",
-                    f"bundle_model_cid={parsed.get('bundle_model_cid', 'unknown')}",
-                    f"export_workdir={export.get('artifacts', {}).get('workdir', 'unknown')}",
-                    f"source_index={selection.get('source_index', 'unknown')}",
-                    f"true_label={selection.get('true_label', 'unknown')}",
-                    f"single_image_npy={files.get('single_image_npy', 'unknown')}",
-                    f"ezkl_input_json={files.get('ezkl_input_json', 'unknown')}",
+                    f"stage={parsed.get('stage', 'unknown')}",
                     f"proof={artifacts.get('proof', 'unknown')}",
                     f"witness={artifacts.get('witness', 'unknown')}",
                     f"settings={artifacts.get('settings', 'unknown')}",
@@ -688,6 +519,91 @@ class AgentRuntime:
                 }
             )
         return response["output"], tool_events
+
+    def _assistant_claims_tool_completion(self, content: str, tool_events: list[dict[str, str]]) -> bool:
+        if tool_events:
+            return False
+        normalized = content.strip()
+        if not normalized:
+            return False
+        if normalized.startswith("Tool `"):
+            return True
+        lowered = normalized.lower()
+        return any(skill_name in lowered for skill_name in PUBLIC_SKILL_NAMES)
+
+    def _infer_requested_skill(self, user_message: str) -> str | None:
+        lowered = user_message.strip().lower()
+        if not lowered:
+            return None
+        if "fetch_latest_verified_model_bundle" in lowered:
+            return "fetch_latest_verified_model_bundle"
+        if "generate_random_chestmnist_image" in lowered:
+            return "generate_random_chestmnist_image"
+        if "generate_zk_inference_proof" in lowered:
+            return "generate_zk_inference_proof"
+        if "bundle" in lowered and any(token in lowered for token in ("fetch", "latest", "verified")):
+            return "fetch_latest_verified_model_bundle"
+        if "chestmnist" in lowered or ("random" in lowered and "image" in lowered):
+            return "generate_random_chestmnist_image"
+        if "proof" in lowered or "ezkl" in lowered:
+            return "generate_zk_inference_proof"
+        return None
+
+    def _execute_skill_fallback(
+        self,
+        session_state: dict[str, Any],
+        user_message: str,
+    ) -> dict[str, Any] | None:
+        skill_name = self._infer_requested_skill(user_message)
+        if skill_name is None:
+            return None
+
+        if skill_name == "fetch_latest_verified_model_bundle":
+            from mcp_server import fetch_latest_verified_model_bundle
+
+            payload = json.loads(fetch_latest_verified_model_bundle())
+            _remember_verified_bundle_for_state(session_state, payload)
+            detail = format_verified_bundle_summary(payload)
+            return self._assistant_response(
+                f"Tool `{skill_name}` completed.\n\n{detail}",
+                [{"type": "tool", "label": skill_name, "detail": detail}],
+            )
+
+        if skill_name == "generate_random_chestmnist_image":
+            from mcp_server import generate_random_chestmnist_image
+
+            requested_index = resolve_preferred_sample_index(session_state, None)
+            payload = json.loads(
+                generate_random_chestmnist_image(
+                    index=requested_index,
+                    query_dir="zk_inference/single_query",
+                    input_json=str(Path("zk_inference/out") / "input.json"),
+                )
+            )
+            _remember_generated_sample_for_state(session_state, payload)
+            detail = format_selection_summary(payload)
+            return self._assistant_response(
+                f"Tool `{skill_name}` completed.\n\n{detail}",
+                [{"type": "tool", "label": skill_name, "detail": detail}],
+            )
+
+        if skill_name == "generate_zk_inference_proof":
+            from mcp_server import generate_zk_inference_proof
+
+            payload = json.loads(
+                generate_zk_inference_proof(
+                    workdir="zk_inference/out",
+                    model="model_logits.onnx",
+                    data="input.json",
+                )
+            )
+            detail = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+            return self._assistant_response(
+                self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
+                [{"type": "tool", "label": skill_name, "detail": detail}],
+            )
+
+        return None
 
     async def _run_agent_with_timeout(
         self,
@@ -768,7 +684,17 @@ class AgentRuntime:
                 CURRENT_SESSION_STATE.reset(token)
             if response is not None:
                 content, tool_events = self._extract_agent_reply(response)
-                if timed_out and tool_events:
+                if self._assistant_claims_tool_completion(content, tool_events):
+                    fallback_message = self._execute_skill_fallback(session_state, user_message)
+                    if fallback_message is not None:
+                        assistant_message = fallback_message
+                    else:
+                        assistant_message = self._assistant_response(
+                            "The model claimed a tool result without executing a real skill call. "
+                            "Please retry with an explicit skill request.",
+                            [{"type": "error", "label": "Hallucinated Tool Call", "detail": content}],
+                        )
+                elif timed_out and tool_events:
                     assistant_message = self._assistant_response(
                         self._fallback_content_from_events(tool_events),
                         tool_events,

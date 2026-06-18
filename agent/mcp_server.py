@@ -13,6 +13,21 @@ from typing import Any
 from prometheus_client import Gauge
 
 try:
+    from .agent_skills import (
+        normalize_optional_index,
+        run_fetch_latest_verified_model_bundle_skill,
+        run_generate_random_chestmnist_image_skill,
+        run_generate_zk_inference_proof_skill,
+    )
+except ImportError:
+    from agent_skills import (
+        normalize_optional_index,
+        run_fetch_latest_verified_model_bundle_skill,
+        run_generate_random_chestmnist_image_skill,
+        run_generate_zk_inference_proof_skill,
+    )
+
+try:
     from mcp.server.fastmcp import FastMCP
 except ImportError:  # pragma: no cover - used by deterministic local mode
     FastMCP = None
@@ -25,9 +40,9 @@ MCP_TOOL_CALLS_CURRENT = Gauge(
     ["tool_name"],
 )
 PUBLIC_MCP_TOOL_NAMES = (
-    "fetch_current_onchain_model_bundle",
-    "create_single_image_query",
-    "run_ezkl",
+    "fetch_latest_verified_model_bundle",
+    "generate_random_chestmnist_image",
+    "generate_zk_inference_proof",
 )
 
 
@@ -67,15 +82,6 @@ def _normalize_model_path(model_path: Any) -> str:
     ):
         return _latest_downloaded_model_path()
     return normalized
-
-
-def _normalize_optional_index(index: Any) -> int | None:
-    if index is None or isinstance(index, dict):
-        return None
-    normalized = str(index).strip().lower()
-    if normalized in {"", "none", "null"}:
-        return None
-    return int(normalized)
 
 
 def _normalize_artifact_name(value: Any, default: str) -> str:
@@ -154,18 +160,16 @@ def export_model(model_path: str, out_dir: str = "zk_inference/out") -> dict[str
         return _remote_call("export-model", payload)
 
 
-@mcp.tool()
-def create_single_image_query(
+def _create_single_image_query(
     index: int | None = None,
     images: str | None = None,
     labels: str | None = None,
     out_dir: str = "zk_inference/single_query",
     input_json: str = "zk_inference/out/input.json",
 ) -> dict[str, Any]:
-    """Prepare one dataset image and write the EZKL input.json consumed by run_ezkl()."""
-    record_mcp_tool_call("create_single_image_query")
+    """Internal helper: prepare one dataset image and write the EZKL input.json."""
     payload = {
-        "index": _normalize_optional_index(index),
+        "index": normalize_optional_index(index),
         "images": images,
         "labels": labels,
         "out_dir": out_dir,
@@ -177,15 +181,13 @@ def create_single_image_query(
         return _remote_call("create-query", payload)
 
 
-@mcp.tool()
-def run_ezkl(
+def _run_ezkl(
     workdir: str = "zk_inference/out",
     model: str = "model_logits.onnx",
     data: str = "input.json",
     skip_calibration: bool = True,
 ) -> dict[str, Any]:
-    """Run EZKL against an existing input artifact, usually the input.json written by create_single_image_query()."""
-    record_mcp_tool_call("run_ezkl")
+    """Internal helper: run EZKL against an existing prepared input artifact."""
     payload = {
         "workdir": workdir or "zk_inference/out",
         "model": _normalize_artifact_name(model, "model_logits.onnx"),
@@ -198,10 +200,8 @@ def run_ezkl(
         return _remote_call("run-ezkl", payload, timeout=600)
 
 
-@mcp.tool()
-def fetch_current_onchain_model_bundle(out_dir: str = "zk_inference/out") -> str:
-    """Read current CIDs, fetch both IPFS artifacts, verify them, and export the model for later EZKL runs."""
-    record_mcp_tool_call("fetch_current_onchain_model_bundle")
+def _fetch_current_onchain_model_bundle(out_dir: str = "zk_inference/out") -> dict[str, Any]:
+    """Internal helper: resolve current CIDs, fetch artifacts, verify them, and export the model."""
     try:
         from .blockchain_source import (
             load_env_file,
@@ -237,7 +237,59 @@ def fetch_current_onchain_model_bundle(out_dir: str = "zk_inference/out") -> str
     payload: dict[str, Any] = {"bundle": bundle, "download": download, "verification": verification}
     if verification.get("ok", False):
         payload["export"] = export_model(download.get("model_path"), out_dir=out_dir)
-    return json.dumps(payload, indent=2)
+    return payload
+
+
+@mcp.tool()
+def fetch_latest_verified_model_bundle(out_dir: str = "zk_inference/out") -> str:
+    """Skill-oriented bundle fetch: resolve, decrypt, verify, and export the current on-chain model bundle."""
+    record_mcp_tool_call("fetch_latest_verified_model_bundle")
+    result = run_fetch_latest_verified_model_bundle_skill(
+        out_dir=out_dir,
+        fetch_bundle_fn=lambda *, out_dir: _fetch_current_onchain_model_bundle(out_dir=out_dir),
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def generate_random_chestmnist_image(
+    index: int | None = None,
+    query_dir: str = "zk_inference/single_query",
+    input_json: str = "zk_inference/out/input.json",
+) -> str:
+    """Skill-oriented sample preparation: choose a ChestMNIST sample and write the EZKL input artifacts."""
+    record_mcp_tool_call("generate_random_chestmnist_image")
+    result = run_generate_random_chestmnist_image_skill(
+        index=normalize_optional_index(index),
+        out_dir=query_dir,
+        input_json=input_json,
+        create_query_fn=_create_single_image_query,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def generate_zk_inference_proof(
+    workdir: str = "zk_inference/out",
+    model: str = "model_logits.onnx",
+    data: str = "input.json",
+    skip_calibration: bool = True,
+) -> str:
+    """Skill-oriented proof execution: run EZKL against already prepared artifacts."""
+    record_mcp_tool_call("generate_zk_inference_proof")
+    result = run_generate_zk_inference_proof_skill(
+        workdir=workdir,
+        model=_normalize_artifact_name(model, "model_logits.onnx"),
+        data=_normalize_artifact_name(data, "input.json"),
+        skip_calibration=skip_calibration,
+        run_ezkl_fn=lambda **payload: _run_ezkl(
+            workdir=payload.get("workdir", "zk_inference/out"),
+            model=_normalize_artifact_name(payload.get("model"), "model_logits.onnx"),
+            data=_normalize_artifact_name(payload.get("data"), "input.json"),
+            skip_calibration=bool(payload.get("skip_calibration", True)),
+        ),
+    )
+    return json.dumps(result, indent=2)
 
 
 if __name__ == "__main__":

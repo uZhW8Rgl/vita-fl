@@ -1,1 +1,1 @@
-"""LangChain/MCP agent glue for the thesis ZK inference pipeline."""
+"""Skill-based agent package for the thesis ZK inference pipeline."""
