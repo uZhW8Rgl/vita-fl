@@ -22,8 +22,8 @@
   "panels": [
     {
       "datasource": {
-        "type": "loki",
-        "uid": "Loki"
+        "type": "prometheus",
+        "uid": "Prometheus"
       },
       "gridPos": {
         "h": 4,
@@ -38,7 +38,9 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -47,11 +49,10 @@
       "targets": [
         {
           "datasource": {
-            "type": "loki",
-            "uid": "Loki"
+            "type": "prometheus",
+            "uid": "Prometheus"
           },
-          "expr": "sum(count_over_time({compose_service=~\"VM-.*\"} |= \"Starting local training\" [$__range]))",
-          "queryType": "range",
+          "expr": "dfl_training_starts_total",
           "refId": "A"
         }
       ],
@@ -60,8 +61,8 @@
     },
     {
       "datasource": {
-        "type": "loki",
-        "uid": "Loki"
+        "type": "prometheus",
+        "uid": "Prometheus"
       },
       "gridPos": {
         "h": 4,
@@ -76,7 +77,9 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -85,11 +88,10 @@
       "targets": [
         {
           "datasource": {
-            "type": "loki",
-            "uid": "Loki"
+            "type": "prometheus",
+            "uid": "Prometheus"
           },
-          "expr": "sum(count_over_time({compose_service=~\"VM-.*\"} |= \"Transfer complete\" [$__range]))",
-          "queryType": "range",
+          "expr": "dfl_model_transfers_total",
           "refId": "A"
         }
       ],
@@ -98,8 +100,8 @@
     },
     {
       "datasource": {
-        "type": "loki",
-        "uid": "Loki"
+        "type": "prometheus",
+        "uid": "Prometheus"
       },
       "gridPos": {
         "h": 4,
@@ -114,7 +116,9 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -123,424 +127,14 @@
       "targets": [
         {
           "datasource": {
-            "type": "loki",
-            "uid": "Loki"
+            "type": "prometheus",
+            "uid": "Prometheus"
           },
-          "expr": "sum(count_over_time({compose_service=~\"VM-.*\"} |= \"Aggregation complete\" [$__range]))",
-          "queryType": "range",
+          "expr": "dfl_aggregations_total",
           "refId": "A"
         }
       ],
       "title": "Aggregations",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 2,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 50
-              },
-              {
-                "color": "green",
-                "value": 70
-              }
-            ]
-          },
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 24,
-        "x": 0,
-        "y": 4
-      },
-      "id": 9,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "avg by (compose_service) (last_over_time({compose_service=~\"VM-.*\"} |= \"Accuracy:\" | regexp \"Accuracy: (?P<accuracy>[0-9.]+)%\" | unwrap accuracy [$__range]))",
-          "legendFormat": "{{compose_service}}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Latest Worker Accuracy",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "lineWidth": 1,
-            "showPoints": "auto"
-          },
-          "decimals": 2,
-          "unit": "percent"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 8
-      },
-      "id": 7,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "avg by (compose_service) (avg_over_time({compose_service=~\"VM-.*\"} |= \"Accuracy:\" | regexp \"Accuracy: (?P<accuracy>[0-9.]+)%\" | unwrap accuracy [1m]))",
-          "legendFormat": "{{compose_service}}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Worker Accuracy",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "tempo",
-        "uid": "Tempo"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "links": []
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "id": 6,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": ["sum"],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "Start time"
-          }
-        ]
-      },
-      "pluginVersion": "11.6.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "tempo",
-            "uid": "Tempo"
-          },
-          "limit": 20,
-          "query": "{ resource.service.name =~ \"dfl-.*\" }",
-          "queryType": "traceql",
-          "refId": "A",
-          "tableType": "traces"
-        }
-      ],
-      "title": "Tempo Trace Search",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "lineWidth": 1,
-            "showPoints": "never"
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 16
-      },
-      "id": 5,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "sum by (compose_service) (count_over_time({compose_service=~\"VM-.*\"} |= \"Starting local training\" [1m]))",
-          "legendFormat": "{{compose_service}} training",
-          "queryType": "range",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "sum by (compose_service) (count_over_time({compose_service=~\"VM-.*\"} |= \"Transfer complete\" [1m]))",
-          "legendFormat": "{{compose_service}} transfer",
-          "queryType": "range",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "sum by (compose_service) (count_over_time({compose_service=~\"VM-.*\"} |= \"Aggregation complete\" [1m]))",
-          "legendFormat": "{{compose_service}} aggregation",
-          "queryType": "range",
-          "refId": "C"
-        }
-      ],
-      "title": "Round Activity From Logs",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 16
-      },
-      "id": 10,
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showCommonLabels": false,
-        "showLabels": true,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "{compose_service=~\"VM-.*|smart-contracts|otel-collector|tempo\"} |~ \"Error|ERROR|failed|FAILED|reverted|timeout|Timeout|Penalizing\"",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Failures, Penalties And Timeouts",
-      "type": "logs"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 6,
-          "unit": "ether"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 24,
-        "x": 0,
-        "y": 24
-      },
-      "id": 13,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "sum by (compose_service) (sum_over_time({compose_service=~\"VM-.*\"} |= \"\\\"kind\\\":\\\"gas_cost\\\"\" | json | scope=\"worker\" | unwrap costEth [$__range]))",
-          "legendFormat": "{{compose_service}}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Worker Cost ETH",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 2,
-          "unit": "currencyEUR"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 24,
-        "x": 0,
-        "y": 28
-      },
-      "id": 14,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "sum by (compose_service) (sum_over_time({compose_service=~\"VM-.*\"} |= \"\\\"kind\\\":\\\"gas_cost\\\"\" | json | scope=\"worker\" | unwrap costEur [$__range]))",
-          "legendFormat": "{{compose_service}}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Worker Cost EUR",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "decimals": 0,
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 24,
-        "x": 0,
-        "y": 32
-      },
-      "id": 15,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "last_over_time({compose_service=~\"VM-.*\"} |= \"\\\"kind\\\":\\\"worker_score\\\"\" | json | unwrap score [$__range])",
-          "legendFormat": "{{compose_service}}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "Current Worker Scores",
       "type": "stat"
     },
     {
@@ -568,7 +162,9 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -612,7 +208,9 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -633,11 +231,541 @@
       ],
       "title": "Current Aggregator",
       "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 4
+      },
+      "id": 18,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_global_model_latest_accuracy_percent",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Global Accuracy",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 4,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 4
+      },
+      "id": 20,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_global_model_latest_loss",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Loss",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 4,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 4
+      },
+      "id": 21,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_global_model_latest_macro_f1",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Macro F1",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 4,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 4
+      },
+      "id": 22,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_global_model_latest_macro_auroc",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Macro AUROC",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ether"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 13,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_worker_cost_eth_total",
+          "refId": "A"
+        }
+      ],
+      "title": "Worker Cost ETH",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "currencyEUR"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_worker_cost_eur_total",
+          "refId": "A"
+        }
+      ],
+      "title": "Worker Cost EUR",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "id": 19,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_global_model_evaluation_info",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Global Model Evaluation Rounds",
+      "type": "table",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "experiment_id": true,
+              "label_count": true,
+              "sample_count": true,
+              "source_round": true
+            },
+            "indexByName": {
+              "round": 0,
+              "participant_count": 1,
+              "expected_models": 2,
+              "aggregated_model_count": 3,
+              "dataset": 4,
+              "accuracy_percent": 5,
+              "loss": 6,
+              "micro_f1": 7,
+              "macro_f1": 8,
+              "macro_auroc": 9,
+              "exact_match_percent": 10,
+              "recorded_at_unix_ms": 11
+            },
+            "renameByName": {
+              "round": "Round",
+              "source_round": "Source Round",
+              "participant_count": "Participants",
+              "expected_models": "Expected Models",
+              "aggregated_model_count": "Models",
+              "accuracy_percent": "Accuracy (%)",
+              "loss": "Loss",
+              "micro_f1": "Micro F1",
+              "macro_f1": "Macro F1",
+              "macro_auroc": "Macro AUROC",
+              "exact_match_percent": "Exact Match (%)",
+              "dataset": "Dataset",
+              "experiment_id": "Experiment",
+              "recorded_at_unix_ms": "Recorded At"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 6,
+          "unit": "ether"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 23,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_worker_cost_eth_by_worker",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Worker Cost ETH by Worker",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "account": true,
+              "device_id": true
+            },
+            "indexByName": {
+              "worker": 0,
+              "Value": 1
+            },
+            "renameByName": {
+              "Value": "Cost ETH",
+              "worker": "Worker"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "unit": "currencyEUR"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 24,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_worker_cost_eur_by_worker",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Worker Cost EUR by Worker",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "account": true,
+              "device_id": true
+            },
+            "indexByName": {
+              "worker": 0,
+              "Value": 1
+            },
+            "renameByName": {
+              "Value": "Cost EUR",
+              "worker": "Worker"
+            }
+          }
+        }
+      ],
+      "type": "table"
     }
   ],
   "refresh": "5s",
   "schemaVersion": 39,
-  "tags": ["dfl", "training", "observability"],
+  "tags": [
+    "dfl",
+    "training",
+    "observability"
+  ],
   "templating": {
     "list": []
   },

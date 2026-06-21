@@ -19,7 +19,7 @@ The current prototype combines:
 - [compose.yml](./compose.yml): Docker Compose entry point for local end-to-end runs.
 - [.env.example](./.env.example): Example runtime configuration; copy this to `.env` before running Docker Compose.
 - [data](./data): Shared local input artifacts and helpers, including dataset files, RSA worker keys, the TDX quote, and single-image sample extraction utilities.
-- [observability](./observability): Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector configuration.
+- [observability](./observability): Grafana and Prometheus configuration.
 - [smart_contracts](./smart_contracts/README.md): Focused Foundry project with DFL contracts and TDX/DCAP attestation deployment logic.
 - [dfl/node_server](./dfl/node_server/README.md): Node.js orchestration layer used by each worker.
 - [dfl/neural_network](./dfl/neural_network/README.md): Python/PyTorch CNN training, transfer, aggregation, and model serialization.
@@ -73,8 +73,7 @@ flowchart TB
 
     subgraph Observability["Observability Layer"]
       direction LR
-      OTel["otel-collector"]
-      Stores["Tempo / Loki / Prometheus"]
+      Stores["Prometheus"]
       Grafana["Grafana"]
     end
   end
@@ -108,8 +107,7 @@ flowchart TB
 
   Pipeline --> Artifacts
 
-  Workers --> OTel
-  OTel --> Stores
+  Workers --> Stores
   Stores --> Grafana
 
   Artifacts --> MCP
@@ -160,12 +158,12 @@ sequenceDiagram
 | --- | --- | --- |
 | `compose.yml` | Local orchestration for infrastructure, contracts, workers, agent, and proof service | `docker compose up --build` |
 | `smart_contracts` | DFL coordination, device registry, model metadata, and TDX/DCAP deployment scripts | `smart_contracts/starter_docker.sh` |
-| `dfl/node_server` | Worker orchestration, contract interaction, timing logic, and tracing | `dfl/start_node_neural_network.sh` |
+| `dfl/node_server` | Worker orchestration, contract interaction, timing logic, and metrics | `dfl/start_node_neural_network.sh` |
 | `dfl/neural_network` | PyTorch training, local model transfer, aggregation, and serialization | `dfl/neural_network/cli.py` |
 | `ipfs` | Local content-addressed storage for global model artifacts | Kubo API on `127.0.0.1:5001` |
 | `agent` | Contract-based model lookup, artifact fetching, signature verification, and proof orchestration | `agent/run_agent.py` |
 | `zk_inference` | ONNX export, single-query generation, EZKL witness/proof generation, and verification | `zk_inference/server.py` |
-| `observability` | Local logs, traces, metrics, and dashboarding | Grafana on `127.0.0.1:3000` |
+| `observability` | Local metrics and dashboarding | Grafana on `127.0.0.1:3300` |
 
 ## Design Notes
 
@@ -185,6 +183,13 @@ docker compose down --volumes --remove-orphans
 KEEP_ALIVE=0 docker compose up --build --force-recreate
 ```
 
+If Docker reports `Conflict. The container name "/ipfs_local" is already in use`, a separate Kubo/IPFS container is already running on your machine with the same fixed name and host ports. Stop and remove that old container before starting this stack:
+
+```bash
+docker stop ipfs_local
+docker rm ipfs_local
+```
+
 The `.env` file is intentionally ignored by Git. Start from `.env.example`, review the values for your local setup, and keep machine-specific changes in `.env`.
 
 This is the recommended demo run for the thesis prototype. It rebuilds the active services, launches the local infrastructure, deploys the contracts, runs the DFL flow, stores the new global model in IPFS, and updates the on-chain metadata.
@@ -192,7 +197,7 @@ This is the recommended demo run for the thesis prototype. It rebuilds the activ
 After the stack is up, the browser frontend is available at:
 
 - `http://127.0.0.1:8089` for the thesis agent website with the chat UI and embedded Grafana dashboard
-- `http://127.0.0.1:3000` for the standalone Grafana instance
+- `http://127.0.0.1:3300` for the standalone Grafana instance
 
 ## Demo Outcome
 
@@ -201,7 +206,7 @@ When the run completes successfully, you should have:
 - a local Anvil chain with deployed DFL and attestation contracts,
 - a local IPFS node with the global model and signature pinned,
 - completed worker runs for training and aggregation,
-- observability data in Grafana, Prometheus, Loki, and Tempo,
+- observability data in Grafana and Prometheus,
 - the website at `http://127.0.0.1:8089` with the agent chat and dashboard view,
 - and a ready-to-run verifiable inference path through `agent/run_agent.py`.
 
@@ -232,7 +237,7 @@ The local stack starts:
 - Kubo as local IPFS node,
 - the `smart-contracts` deployment container,
 - three DFL worker containers,
-- Grafana, Prometheus, Loki, Tempo, Promtail, and OpenTelemetry Collector.
+- Grafana and Prometheus.
 
 The root `.env` file provides the local timing, account, contract, IPFS, and dataset configuration. Use `.env.example` as the tracked template and keep local edits in `.env`. `IPFS_PROVIDER` is a strict switch: `kubo` uses only the local Kubo API/gateway, while `pinata` uses only the configured Pinata gateway/JWT path. The local Docker flow also uses RSA keys from `data/rsa_keys`, dataset artifacts under `data/mnist` or `data/chestmnist`, and the TDX quote from `data/phala_tdx_quote`.
 
@@ -295,19 +300,9 @@ The sequence diagram above visualizes this flow.
 
 The local stack exposes:
 
-- Grafana: <http://127.0.0.1:3000>
+- Grafana: <http://127.0.0.1:3300>
 - Prometheus: <http://127.0.0.1:9090>
-- Loki: <http://127.0.0.1:3100>
-- Tempo: <http://127.0.0.1:3200>
-- OpenTelemetry Collector OTLP HTTP: <http://127.0.0.1:4318>
-
-In Grafana, open `Explore`, choose the `Tempo` datasource, and search:
-
-```text
-{ resource.service.name = "dfl-node-worker" }
-```
-
-Useful trace attributes include `dfl.round`, `dfl.role`, `dfl.account`, and `dfl.duration_ms`.
+The Grafana dashboards use Prometheus metrics exported by the control API and the local services.
 
 ## Useful Commands
 

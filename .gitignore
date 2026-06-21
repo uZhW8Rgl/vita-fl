@@ -24,3 +24,5 @@ zk_inference/out/
 zk_inference/single_query/
 agent/downloads/
 ollama-data/
+data/evaluation/*.csv
+data/evaluation/*.jsonl

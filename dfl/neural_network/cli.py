@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import os
 import random
 import struct
 import sys
 import threading
+import time
 from pathlib import Path
-from typing import Iterable, List
+from typing import Any, Iterable, List
 
 import numpy as np
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 torch.backends.nnpack.enabled = False
 torch.backends.nnpack.set_flags(False)
@@ -131,6 +135,10 @@ def results_dir() -> Path:
     return data_dir() / "results_iid"
 
 
+def evaluation_dir() -> Path:
+    return data_dir() / "evaluation"
+
+
 def received_models_dir() -> Path:
     return node_server_dir() / "received_models"
 
@@ -147,22 +155,6 @@ def input_data_file(name: str) -> Path:
     ]
     for candidate in candidates:
         if candidate.exists():
-            return candidate
-    return candidates[0]
-
-
-def initial_model_file() -> Path:
-    candidates = [
-        data_dir() / "random_start.bin",
-        data_dir() / "gm.bin",
-        data_dir() / "backup.bin",
-        repo_root() / "data" / "initial_gm" / current_dataset_name() / "aggregated.bin",
-        repo_root() / "data" / "mnist" / "data" / "random_start.bin",
-        repo_root() / "data" / "mnist" / "data" / "backup.bin",
-    ]
-    expected_size = model_byte_size()
-    for candidate in candidates:
-        if candidate.exists() and candidate.stat().st_size == expected_size:
             return candidate
     return candidates[0]
 
@@ -241,14 +233,6 @@ def random_model() -> FederatedCNN:
         for param in model.parameters():
             param.uniform_(-0.5, 0.5)
     return model
-
-
-def load_or_random(path: Path) -> FederatedCNN:
-    if path.exists() and path.stat().st_size == model_byte_size():
-        return read_model_bin(path)
-    if path.exists():
-        print(f"Ignoring incompatible model file {path} (bytes={path.stat().st_size}, expected={model_byte_size()})")
-    return random_model()
 
 
 def read_idx_labels(path: Path, limit: int = NUM_TRAIN_IMAGES) -> torch.Tensor:
@@ -351,8 +335,415 @@ def batch_accuracy_stats(logits: torch.Tensor, labels: torch.Tensor) -> tuple[in
     return correct, total
 
 
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float | None:
+    if denominator == 0:
+        return None
+    return float(numerator) / float(denominator)
+
+
+def _safe_percent(numerator: float, denominator: float) -> float | None:
+    ratio = _safe_ratio(numerator, denominator)
+    return None if ratio is None else ratio * 100.0
+
+
+def _mean_defined(values: Iterable[float | None]) -> float | None:
+    defined = [float(value) for value in values if value is not None and np.isfinite(float(value))]
+    if not defined:
+        return None
+    return float(sum(defined) / len(defined))
+
+
+def _json_ready(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _json_ready(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(v) for v in value]
+    if isinstance(value, np.generic):
+        return _json_ready(value.item())
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    return value
+
+
+def _csv_value(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, float) and not np.isfinite(value):
+        return ""
+    if isinstance(value, np.generic):
+        return _csv_value(value.item())
+    return value
+
+
+def _append_csv_rows(path: Path, fieldnames: list[str], rows: Iterable[dict[str, Any]]) -> None:
+    materialized = list(rows)
+    if not materialized:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not path.exists() or path.stat().st_size == 0
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        if write_header:
+            writer.writeheader()
+        for row in materialized:
+            writer.writerow({field: _csv_value(row.get(field)) for field in fieldnames})
+
+
+def _append_jsonl(path: Path, row: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_json_ready(row), sort_keys=True) + "\n")
+
+
+def _write_sample_metrics_enabled() -> bool:
+    value = os.environ.get("DFL_EVAL_WRITE_SAMPLE_METRICS", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _binary_auc(scores: np.ndarray, labels: np.ndarray) -> float | None:
+    y = labels.astype(np.int64).reshape(-1)
+    s = scores.astype(np.float64).reshape(-1)
+    positives = int(y.sum())
+    negatives = int(y.size - positives)
+    if positives == 0 or negatives == 0:
+        return None
+
+    order = np.argsort(s, kind="mergesort")
+    sorted_scores = s[order]
+    ranks = np.empty(y.size, dtype=np.float64)
+    start = 0
+    while start < y.size:
+        end = start + 1
+        while end < y.size and sorted_scores[end] == sorted_scores[start]:
+            end += 1
+        ranks[order[start:end]] = (start + 1 + end) / 2.0
+        start = end
+
+    pos_rank_sum = float(ranks[y == 1].sum())
+    auc = (pos_rank_sum - positives * (positives + 1) / 2.0) / (positives * negatives)
+    return float(auc)
+
+
+def _base_metric_row(
+    *,
+    round_id: int | None,
+    source_round: int | None,
+    participant_count: int | None,
+    aggregated_model_count: int | None,
+    expected_models: int | None,
+) -> dict[str, Any]:
+    return {
+        "timestamp_unix_ms": int(time.time() * 1000),
+        "experiment_id": os.environ.get("DFL_EXPERIMENT_ID", "local"),
+        "dataset": current_dataset_name(),
+        "round": round_id,
+        "source_round": source_round,
+        "participant_count": participant_count,
+        "aggregated_model_count": aggregated_model_count,
+        "expected_models": expected_models,
+    }
+
+
+def _summary_fieldnames() -> list[str]:
+    return [
+        "kind",
+        "timestamp_unix_ms",
+        "experiment_id",
+        "dataset",
+        "round",
+        "source_round",
+        "participant_count",
+        "aggregated_model_count",
+        "expected_models",
+        "sample_count",
+        "label_count",
+        "metric_granularity",
+        "accuracy_percent",
+        "correct_predictions",
+        "total_predictions",
+        "exact_match_percent",
+        "loss",
+        "micro_f1",
+        "macro_f1",
+        "macro_auroc",
+        "label_metrics_path",
+        "sample_metrics_path",
+    ]
+
+
+def _label_fieldnames() -> list[str]:
+    return [
+        "kind",
+        "timestamp_unix_ms",
+        "experiment_id",
+        "dataset",
+        "round",
+        "source_round",
+        "participant_count",
+        "aggregated_model_count",
+        "expected_models",
+        "label_index",
+        "label_name",
+        "sample_count",
+        "positive_count",
+        "negative_count",
+        "true_positive",
+        "true_negative",
+        "false_positive",
+        "false_negative",
+        "accuracy_percent",
+        "precision",
+        "recall",
+        "f1",
+        "auroc",
+    ]
+
+
+def _sample_fieldnames() -> list[str]:
+    return [
+        "kind",
+        "timestamp_unix_ms",
+        "experiment_id",
+        "dataset",
+        "round",
+        "source_round",
+        "participant_count",
+        "aggregated_model_count",
+        "expected_models",
+        "sample_index",
+        "sample_accuracy_percent",
+        "exact_match",
+        "sample_loss",
+        "true_label",
+        "predicted_label",
+        "true_class_probability",
+        "positive_label_count",
+        "predicted_positive_label_count",
+        "mean_probability",
+    ]
+
+
+def _evaluate_multilabel(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    base: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    probabilities = torch.sigmoid(logits).detach().cpu().numpy()
+    y_true = labels.detach().cpu().numpy().astype(np.int64)
+    y_pred = (probabilities >= 0.5).astype(np.int64)
+    correct_matrix = y_pred == y_true
+
+    loss_matrix = F.binary_cross_entropy_with_logits(logits, labels, reduction="none").detach().cpu().numpy()
+    sample_losses = loss_matrix.mean(axis=1)
+    sample_accuracy = correct_matrix.mean(axis=1)
+    exact_matches = correct_matrix.all(axis=1)
+
+    label_rows: list[dict[str, Any]] = []
+    tp_total = tn_total = fp_total = fn_total = 0
+    for label_idx in range(y_true.shape[1]):
+        truth = y_true[:, label_idx]
+        pred = y_pred[:, label_idx]
+        tp = int(((pred == 1) & (truth == 1)).sum())
+        tn = int(((pred == 0) & (truth == 0)).sum())
+        fp = int(((pred == 1) & (truth == 0)).sum())
+        fn = int(((pred == 0) & (truth == 1)).sum())
+        tp_total += tp
+        tn_total += tn
+        fp_total += fp
+        fn_total += fn
+        precision = _safe_ratio(tp, tp + fp)
+        recall = _safe_ratio(tp, tp + fn)
+        f1 = None if precision is None or recall is None or precision + recall == 0 else 2 * precision * recall / (precision + recall)
+        label_rows.append({
+            **base,
+            "kind": "global_model_label_evaluation",
+            "label_index": label_idx,
+            "label_name": f"label_{label_idx}",
+            "sample_count": int(truth.size),
+            "positive_count": int(truth.sum()),
+            "negative_count": int(truth.size - truth.sum()),
+            "true_positive": tp,
+            "true_negative": tn,
+            "false_positive": fp,
+            "false_negative": fn,
+            "accuracy_percent": _safe_percent(tp + tn, truth.size),
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "auroc": _binary_auc(probabilities[:, label_idx], truth),
+        })
+
+    micro_precision = _safe_ratio(tp_total, tp_total + fp_total)
+    micro_recall = _safe_ratio(tp_total, tp_total + fn_total)
+    micro_f1 = (
+        None
+        if micro_precision is None or micro_recall is None or micro_precision + micro_recall == 0
+        else 2 * micro_precision * micro_recall / (micro_precision + micro_recall)
+    )
+    correct = int(correct_matrix.sum())
+    total = int(correct_matrix.size)
+    summary = {
+        **base,
+        "kind": "global_model_evaluation",
+        "timestamp_unix_ms": base.get("timestamp_unix_ms"),
+        "sample_count": int(y_true.shape[0]),
+        "label_count": int(y_true.shape[1]),
+        "metric_granularity": "label_wise_multilabel",
+        "accuracy_percent": _safe_percent(correct, total),
+        "correct_predictions": correct,
+        "total_predictions": total,
+        "exact_match_percent": _safe_percent(int(exact_matches.sum()), int(exact_matches.size)),
+        "loss": float(sample_losses.mean()) if sample_losses.size else None,
+        "micro_f1": micro_f1,
+        "macro_f1": _mean_defined(row["f1"] for row in label_rows),
+        "macro_auroc": _mean_defined(row["auroc"] for row in label_rows),
+    }
+
+    sample_rows: list[dict[str, Any]] = []
+    if _write_sample_metrics_enabled():
+        for sample_idx in range(y_true.shape[0]):
+            sample_rows.append({
+                **base,
+                "kind": "global_model_sample_evaluation",
+                "sample_index": sample_idx,
+                "sample_accuracy_percent": float(sample_accuracy[sample_idx] * 100.0),
+                "exact_match": int(exact_matches[sample_idx]),
+                "sample_loss": float(sample_losses[sample_idx]),
+                "positive_label_count": int(y_true[sample_idx].sum()),
+                "predicted_positive_label_count": int(y_pred[sample_idx].sum()),
+                "mean_probability": float(probabilities[sample_idx].mean()),
+            })
+
+    return summary, label_rows, sample_rows
+
+
+def _evaluate_multiclass(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    base: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    probabilities = torch.softmax(logits, dim=1).detach().cpu().numpy()
+    y_true = labels.detach().cpu().numpy().astype(np.int64)
+    y_pred = probabilities.argmax(axis=1).astype(np.int64)
+    correct_mask = y_pred == y_true
+    sample_losses = F.cross_entropy(logits, labels, reduction="none").detach().cpu().numpy()
+
+    label_rows: list[dict[str, Any]] = []
+    tp_total = tn_total = fp_total = fn_total = 0
+    for label_idx in range(OUTPUT_SIZE):
+        truth = (y_true == label_idx).astype(np.int64)
+        pred = (y_pred == label_idx).astype(np.int64)
+        tp = int(((pred == 1) & (truth == 1)).sum())
+        tn = int(((pred == 0) & (truth == 0)).sum())
+        fp = int(((pred == 1) & (truth == 0)).sum())
+        fn = int(((pred == 0) & (truth == 1)).sum())
+        tp_total += tp
+        tn_total += tn
+        fp_total += fp
+        fn_total += fn
+        precision = _safe_ratio(tp, tp + fp)
+        recall = _safe_ratio(tp, tp + fn)
+        f1 = None if precision is None or recall is None or precision + recall == 0 else 2 * precision * recall / (precision + recall)
+        label_rows.append({
+            **base,
+            "kind": "global_model_label_evaluation",
+            "label_index": label_idx,
+            "label_name": str(label_idx),
+            "sample_count": int(y_true.size),
+            "positive_count": int(truth.sum()),
+            "negative_count": int(truth.size - truth.sum()),
+            "true_positive": tp,
+            "true_negative": tn,
+            "false_positive": fp,
+            "false_negative": fn,
+            "accuracy_percent": _safe_percent(tp + tn, truth.size),
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "auroc": _binary_auc(probabilities[:, label_idx], truth),
+        })
+
+    micro_precision = _safe_ratio(tp_total, tp_total + fp_total)
+    micro_recall = _safe_ratio(tp_total, tp_total + fn_total)
+    micro_f1 = (
+        None
+        if micro_precision is None or micro_recall is None or micro_precision + micro_recall == 0
+        else 2 * micro_precision * micro_recall / (micro_precision + micro_recall)
+    )
+    correct = int(correct_mask.sum())
+    total = int(y_true.size)
+    summary = {
+        **base,
+        "kind": "global_model_evaluation",
+        "timestamp_unix_ms": base.get("timestamp_unix_ms"),
+        "sample_count": total,
+        "label_count": OUTPUT_SIZE,
+        "metric_granularity": "sample_wise_multiclass",
+        "accuracy_percent": _safe_percent(correct, total),
+        "correct_predictions": correct,
+        "total_predictions": total,
+        "exact_match_percent": _safe_percent(correct, total),
+        "loss": float(sample_losses.mean()) if sample_losses.size else None,
+        "micro_f1": micro_f1,
+        "macro_f1": _mean_defined(row["f1"] for row in label_rows),
+        "macro_auroc": _mean_defined(row["auroc"] for row in label_rows),
+    }
+
+    sample_rows: list[dict[str, Any]] = []
+    if _write_sample_metrics_enabled():
+        for sample_idx in range(y_true.size):
+            sample_rows.append({
+                **base,
+                "kind": "global_model_sample_evaluation",
+                "sample_index": sample_idx,
+                "sample_accuracy_percent": 100.0 if correct_mask[sample_idx] else 0.0,
+                "exact_match": int(correct_mask[sample_idx]),
+                "sample_loss": float(sample_losses[sample_idx]),
+                "true_label": int(y_true[sample_idx]),
+                "predicted_label": int(y_pred[sample_idx]),
+                "true_class_probability": float(probabilities[sample_idx, y_true[sample_idx]]),
+            })
+
+    return summary, label_rows, sample_rows
+
+
+def _persist_evaluation_metrics(
+    summary: dict[str, Any],
+    label_rows: list[dict[str, Any]],
+    sample_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    out_dir = evaluation_dir()
+    summary_csv = out_dir / "global_model_round_summary.csv"
+    summary_jsonl = out_dir / "global_model_round_summary.jsonl"
+    label_csv = out_dir / "global_model_label_metrics.csv"
+    sample_csv = out_dir / "global_model_sample_metrics.csv"
+
+    persisted_summary = {
+        **summary,
+        "label_metrics_path": str(label_csv),
+        "sample_metrics_path": str(sample_csv) if sample_rows else "",
+    }
+    _append_csv_rows(summary_csv, _summary_fieldnames(), [persisted_summary])
+    _append_jsonl(summary_jsonl, persisted_summary)
+    _append_csv_rows(label_csv, _label_fieldnames(), label_rows)
+    if sample_rows:
+        _append_csv_rows(sample_csv, _sample_fieldnames(), sample_rows)
+    return persisted_summary
+
+
 def train_model(epochs: int, aggregator_public_key_der_hex: str) -> None:
-    model = load_or_random(initial_model_file())
+    gm_path = data_dir() / "gm.bin"
+    print(f"Starting local training from on-chain resolved global model: {gm_path}")
+    model = read_model_bin(gm_path)
     images, labels = load_training_dataset()
     num_images = int(images.shape[0])
     optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
@@ -531,27 +922,48 @@ def start_server(
         print("ZMQ server stopped")
 
 
-def start_client(server_ip: str, device_id: str) -> None:
+def start_client(server_ip: str, device_id: str, timeout_ms: int | None = None) -> None:
     ensure_zmq()
     context = zmq.Context()
     sock = context.socket(zmq.REQ)
-    sock.connect(f"tcp://{server_ip}:5555")
-    filename = f"wb_client_{device_id}.enc"
-    package = (data_dir() / "lm.bin.enc").read_bytes()
-    sock.send_multipart([filename.encode("utf-8"), package])
-    reply = sock.recv_string()
-    print(f"Server: {reply}")
-    if reply != "File received and decrypted":
-        raise RuntimeError(f"model transfer failed: {reply}")
+    timeout = int(timeout_ms or os.environ.get("MODEL_TRANSFER_TIMEOUT_MS", "20000"))
+    sock.setsockopt(zmq.SNDTIMEO, timeout)
+    sock.setsockopt(zmq.RCVTIMEO, timeout)
+    sock.setsockopt(zmq.LINGER, 0)
+    try:
+        sock.connect(f"tcp://{server_ip}:5555")
+        filename = f"wb_client_{device_id}.enc"
+        package = (data_dir() / "lm.bin.enc").read_bytes()
+        sock.send_multipart([filename.encode("utf-8"), package])
+        reply = sock.recv_string()
+        print(f"Server: {reply}")
+        if reply != "File received and decrypted":
+            raise RuntimeError(f"model transfer failed: {reply}")
+    except zmq.Again as exc:
+        raise TimeoutError(f"model transfer to {server_ip}:5555 timed out after {timeout}ms") from exc
+    finally:
+        sock.close()
+        context.term()
 
 
-def aggregate(num_files: int | None = None) -> None:
+def aggregate(
+    num_files: int | None = None,
+    *,
+    round_id: int | None = None,
+    source_round: int | None = None,
+    expected_models: int | None = None,
+    participant_count: int | None = None,
+) -> dict[str, Any]:
     model_paths = sorted(received_models_dir().glob("*.bin"), key=lambda p: p.name)
     if num_files is not None and len(model_paths) != num_files:
         print(f"Aggregating {len(model_paths)} received model file(s), expected {num_files}.")
     else:
         print(f"Aggregating {len(model_paths)} received model file(s).")
 
+    round_id = _optional_int(round_id)
+    source_round = _optional_int(source_round)
+    expected_models = _optional_int(expected_models)
+    participant_count = _optional_int(participant_count)
     models: List[FederatedCNN] = [read_model_bin(path) for path in model_paths]
     if not models:
         raise ValueError("aggregate requires at least one model")
@@ -564,7 +976,15 @@ def aggregate(num_files: int | None = None) -> None:
     write_model_bin(avg_model, out_path)
     sign_file(out_path, private_key_path())
     print("Federated averaging complete")
-    run_test(out_path)
+    metrics = run_test(
+        out_path,
+        round_id=round_id,
+        source_round=source_round,
+        aggregated_model_count=len(model_paths),
+        expected_models=expected_models,
+        participant_count=participant_count,
+    )
+    return {"model_path": str(out_path), "metrics": metrics}
 
 
 def sign_file(path: Path, key_file: Path) -> None:
@@ -575,27 +995,54 @@ def sign_file(path: Path, key_file: Path) -> None:
     print(f"Global model signature written: {sig_path} (bytes={len(signature)})")
 
 
-def run_test(model_path: Path) -> None:
+def run_test(
+    model_path: Path,
+    *,
+    round_id: int | None = None,
+    source_round: int | None = None,
+    aggregated_model_count: int | None = None,
+    expected_models: int | None = None,
+    participant_count: int | None = None,
+) -> dict[str, Any]:
     test_images, test_labels = test_dataset_paths()
     if not test_images.exists():
-        return
+        return {}
     if test_labels is not None and not test_labels.exists():
-        return
+        return {}
     model = read_model_bin(model_path)
     model.eval()
     images, labels = load_test_dataset()
     limit = int(images.shape[0])
-    correct = 0
-    total_predictions = 0
+    logits_by_batch: list[torch.Tensor] = []
     with torch.no_grad():
         for start in range(0, limit, BATCH_SIZE):
             batch_logits = model(images[start : start + BATCH_SIZE])
-            batch_labels = labels[start : start + BATCH_SIZE]
-            batch_correct, batch_total = batch_accuracy_stats(batch_logits, batch_labels)
-            correct += batch_correct
-            total_predictions += batch_total
-    accuracy_percent = (correct / total_predictions) * 100 if total_predictions else 0.0
+            logits_by_batch.append(batch_logits.detach().cpu())
+
+    logits = torch.cat(logits_by_batch, dim=0)
+    base = _base_metric_row(
+        round_id=round_id,
+        source_round=source_round,
+        participant_count=participant_count,
+        aggregated_model_count=aggregated_model_count,
+        expected_models=expected_models,
+    )
+    if is_multilabel_dataset():
+        summary, label_rows, sample_rows = _evaluate_multilabel(logits, labels, base)
+    else:
+        summary, label_rows, sample_rows = _evaluate_multiclass(logits, labels, base)
+
+    persisted_summary = _persist_evaluation_metrics(summary, label_rows, sample_rows)
+    correct = int(persisted_summary.get("correct_predictions") or 0)
+    total_predictions = int(persisted_summary.get("total_predictions") or 0)
+    accuracy_percent = float(persisted_summary.get("accuracy_percent") or 0.0)
     print(f"Test accuracy: {accuracy_percent:.2f}% ({correct}/{total_predictions})")
+    if persisted_summary.get("macro_f1") is not None:
+        print(f"Macro F1: {float(persisted_summary['macro_f1']):.4f}")
+    if persisted_summary.get("macro_auroc") is not None:
+        print(f"Macro AUROC: {float(persisted_summary['macro_auroc']):.4f}")
+    print(json.dumps(_json_ready(persisted_summary), separators=(",", ":"), sort_keys=True))
+    return persisted_summary
 
 
 def save_random() -> None:
@@ -618,6 +1065,10 @@ def main(argv: Iterable[str] | None = None) -> int:
     sub.add_parser("get_random_wb")
     aggregate_parser = sub.add_parser("aggregate")
     aggregate_parser.add_argument("num_files", type=int)
+    aggregate_parser.add_argument("--round-id", type=int)
+    aggregate_parser.add_argument("--source-round", type=int)
+    aggregate_parser.add_argument("--expected-models", type=int)
+    aggregate_parser.add_argument("--participant-count", type=int)
     sub.add_parser("simulate")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
@@ -630,7 +1081,13 @@ def main(argv: Iterable[str] | None = None) -> int:
     elif args.command == "get_random_wb":
         save_random()
     elif args.command == "aggregate":
-        aggregate(args.num_files)
+        aggregate(
+            args.num_files,
+            round_id=args.round_id,
+            source_round=args.source_round,
+            expected_models=args.expected_models,
+            participant_count=args.participant_count,
+        )
     elif args.command == "simulate":
         raise NotImplementedError("simulate is not part of the Node runtime path yet")
     return 0

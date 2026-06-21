@@ -94,12 +94,22 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, 200, {"ok": True})
                 return
             if self.path == "/client":
-                start_client(str(payload["server_ip"]), str(payload["device_id"]))
+                start_client(
+                    str(payload["server_ip"]),
+                    str(payload["device_id"]),
+                    int(payload.get("timeout_ms") or os.environ.get("MODEL_TRANSFER_TIMEOUT_MS", "20000")),
+                )
                 _json_response(self, 200, {"ok": True})
                 return
             if self.path == "/aggregate":
-                aggregate(int(payload["num_files"]))
-                _json_response(self, 200, {"ok": True})
+                result = aggregate(
+                    int(payload["num_files"]),
+                    round_id=payload.get("round_id"),
+                    source_round=payload.get("source_round"),
+                    expected_models=payload.get("expected_models"),
+                    participant_count=payload.get("participant_count"),
+                )
+                _json_response(self, 200, {"ok": True, **result})
                 return
             if self.path == "/random":
                 save_random()

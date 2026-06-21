@@ -48,15 +48,57 @@ const logJson = (label, payload) => {
     console.log(label, JSON.stringify(payload, jsonReplacer));
 };
 const ethEurPrice = Number(process.env.ETH_EUR_PRICE || "3000");
+const transactionCostCsvPath = process.env.DFL_TRANSACTION_COST_CSV || "./data/evaluation/transaction_costs.csv";
+const transactionCostCsvHeader = [
+    "timestamp_unix_ms",
+    "scope",
+    "operation",
+    "phase",
+    "transactionHash",
+    "blockNumber",
+    "from",
+    "to",
+    "contractAddress",
+    "gasUsed",
+    "effectiveGasPriceWei",
+    "effectiveGasPriceGwei",
+    "costEth",
+    "costEur",
+    "ethEurPrice",
+    "account",
+    "deviceId",
+];
+const csvValue = (value) => {
+    const text = value === undefined || value === null ? "" : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+};
+const appendTransactionCostCsv = (event) => {
+    try {
+        const directory = transactionCostCsvPath.replace(/\/[^/]*$/, "");
+        if (directory && directory !== transactionCostCsvPath) {
+            fs.mkdirSync(directory, { recursive: true });
+        }
+        if (!fs.existsSync(transactionCostCsvPath)) {
+            fs.appendFileSync(transactionCostCsvPath, `${transactionCostCsvHeader.join(",")}\n`);
+        }
+        const row = transactionCostCsvHeader.map((field) => csvValue(event[field] ?? "")).join(",");
+        fs.appendFileSync(transactionCostCsvPath, `${row}\n`);
+    }
+    catch (error) {
+        console.warn("Could not append transaction cost CSV:", error?.message || String(error));
+    }
+};
 const logTransactionCost = (scope, operation, receipt, fallbackGasPriceWei) => {
     const gasUsed = BigInt(receipt?.gasUsed?.toString?.() ?? receipt?.gasUsed ?? 0);
     const effectiveGasPriceWei = BigInt(receipt?.effectiveGasPrice?.toString?.() ?? receipt?.effectiveGasPrice ?? fallbackGasPriceWei ?? 0);
     const costWei = gasUsed * effectiveGasPriceWei;
     const costEth = Number(costWei) / 1e18;
-    console.log(JSON.stringify({
+    const event = {
+        timestamp_unix_ms: Date.now(),
         kind: "gas_cost",
         scope,
         operation,
+        phase: "",
         gasUsed: Number(gasUsed),
         effectiveGasPriceWei: Number(effectiveGasPriceWei),
         effectiveGasPriceGwei: Number(effectiveGasPriceWei) / 1e9,
@@ -67,7 +109,12 @@ const logTransactionCost = (scope, operation, receipt, fallbackGasPriceWei) => {
         blockNumber: Number(receipt?.blockNumber?.toString?.() ?? receipt?.blockNumber ?? 0),
         from: receipt?.from,
         to: receipt?.to,
-    }, jsonReplacer));
+        contractAddress: receipt?.contractAddress,
+        account: process.env.ACCOUNT_ADDRESS,
+        deviceId: process.env.DEVICE_ID,
+    };
+    console.log(JSON.stringify(event, jsonReplacer));
+    appendTransactionCostCsv(event);
 };
 const withGasBuffer = (gasEstimate, percent = 30n) => {
     const estimate = BigInt(gasEstimate);

@@ -220,10 +220,12 @@ log_broadcast_gas_cost() {
         return 0
     fi
 
-    ETH_EUR_PRICE="$ETH_EUR_PRICE" PHASE="$phase" python3 - "$broadcast_file" <<'PY' || true
+    ETH_EUR_PRICE="$ETH_EUR_PRICE" PHASE="$phase" TRANSACTION_COST_CSV="${TRANSACTION_COST_CSV:-/dfl/data/evaluation/transaction_costs.csv}" python3 - "$broadcast_file" <<'PY' || true
+import csv
 import json
 import os
 import sys
+import time
 
 
 def to_int(value):
@@ -240,12 +242,35 @@ with open(sys.argv[1], encoding="utf-8") as fh:
 
 eth_eur_price = float(os.environ.get("ETH_EUR_PRICE", "3000"))
 phase = os.environ["PHASE"]
+csv_path = os.environ.get("TRANSACTION_COST_CSV", "")
+csv_header = [
+    "timestamp_unix_ms",
+    "scope",
+    "operation",
+    "phase",
+    "transactionHash",
+    "blockNumber",
+    "from",
+    "to",
+    "contractAddress",
+    "gasUsed",
+    "effectiveGasPriceWei",
+    "effectiveGasPriceGwei",
+    "costEth",
+    "costEur",
+    "ethEurPrice",
+    "account",
+    "deviceId",
+]
+
+csv_rows = []
 
 for receipt in data.get("receipts", []):
     gas_used = to_int(receipt.get("gasUsed"))
     gas_price = to_int(receipt.get("effectiveGasPrice"))
     cost_eth = gas_used * gas_price / 10**18
-    print(json.dumps({
+    event = {
+        "timestamp_unix_ms": int(time.time() * 1000),
         "kind": "gas_cost",
         "scope": "smart_contracts_init",
         "phase": phase,
@@ -261,7 +286,20 @@ for receipt in data.get("receipts", []):
         "from": receipt.get("from"),
         "to": receipt.get("to"),
         "contractAddress": receipt.get("contractAddress"),
-    }, separators=(",", ":")))
+        "account": "",
+        "deviceId": "",
+    }
+    print(json.dumps(event, separators=(",", ":")))
+    csv_rows.append({field: event.get(field, "") for field in csv_header})
+
+if csv_path and csv_rows:
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    write_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
+    with open(csv_path, "a", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=csv_header)
+        if write_header:
+            writer.writeheader()
+        writer.writerows(csv_rows)
 PY
 }
 

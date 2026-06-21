@@ -3,11 +3,12 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getCurrentGM, getCurrentState, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getLastRoundsAggregator, registerDeviceWithTeeQuote, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, penalizeContribution } from "./bc_client.js";
+import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getLastRoundsAggregator, registerDeviceWithTeeQuote, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
 import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
 import { recordRoundEvent, recordRoundSpan } from "./telemetry.js";
 import fs from 'fs/promises';
+import { readFileSync } from 'fs';
 import { DstackClient } from '@phala/dstack-sdk';
 import crypto from 'crypto';
 const __filename = fileURLToPath(import.meta.url);
@@ -16,17 +17,65 @@ const deviceID = process.env.DEVICE_ID;
 let currentState = "";
 let aggregatorServerRunning = false;
 const pythonServiceUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
-const rsaPublicKey = process.env.RSA_PUBLIC_KEY.replace(/\\n/g, '\n') || "";
-const rsaPrivateKey = process.env.RSA_PRIVATE_KEY.replace(/\\n/g, '\n') || "";
+function loadPemFromEnvOrFile(envName, fileEnvName, fallbackFileName) {
+    const inline = process.env[envName];
+    if (inline && inline.trim()) {
+        return inline.replace(/\\n/g, '\n');
+    }
+    const candidates = [
+        process.env[fileEnvName],
+        path.resolve(__dirname, "..", fallbackFileName),
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+        try {
+            return readFileSync(candidate, 'utf8');
+        }
+        catch {
+            // Try the next configured location.
+        }
+    }
+    return "";
+}
+const rsaPublicKey = loadPemFromEnvOrFile('RSA_PUBLIC_KEY', 'RSA_PUBLIC_KEY_FILE', 'public_key.pem');
+const rsaPrivateKey = loadPemFromEnvOrFile('RSA_PRIVATE_KEY', 'RSA_PRIVATE_KEY_FILE', 'private_key.pem');
 let localTdxRegistrationDone = false;
 const timingConfig = deriveTimingConfig(process.env);
 const modelSubmissionDeadlineMs = timingConfig.modelSubmissionDeadlineMs;
 const gmUpdateTimeoutMs = timingConfig.gmUpdateTimeoutMs;
 const gmUpdateTimeoutLoops = timingConfig.gmUpdateTimeoutLoops;
+const gmUpdatePollMs = timingConfig.gmUpdatePollMs;
+const modelTransferTimeoutMs = timingConfig.modelTransferTimeoutMs;
+const modelTransferRetryDelayMs = timingConfig.modelTransferRetryDelayMs;
 for (const warning of validateTimingConfig(timingConfig)) {
     console.warn("Timing config warning:", warning);
 }
 let missedGMUpdateLoops = 0;
+function sameAddress(left, right) {
+    return String(left || '').toLowerCase() === String(right || '').toLowerCase();
+}
+function targetRound() {
+    return Number(process.env.ROUND || 0);
+}
+async function assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel) {
+    const current = {
+        modelCid: String(await getCurrentGM() || ""),
+        sigCid: String(await getCurrentGMSignature() || ""),
+        keyBundleCid: String(await getCurrentGMKeyBundle() || ""),
+    };
+    const fetched = {
+        modelCid: String(fetchedGlobalModel?.modelCid || ""),
+        sigCid: String(fetchedGlobalModel?.sigCid || ""),
+        keyBundleCid: String(fetchedGlobalModel?.keyBundleCid || ""),
+    };
+    if (!fetched.modelCid ||
+        fetched.modelCid !== current.modelCid ||
+        fetched.sigCid !== current.sigCid ||
+        fetched.keyBundleCid !== current.keyBundleCid) {
+        throw new Error("Fetched global model is no longer the current on-chain model; skipping local training.");
+    }
+    console.log("Fetched global model matches current on-chain CIDs.");
+    return current;
+}
 async function traceEvent(name, attributes = {}) {
     const round = Number(await getRound().catch(() => 0));
     await recordRoundEvent(name, {
@@ -63,6 +112,39 @@ async function traceOperation(name, attributes, operation) {
             },
         });
         throw error;
+    }
+}
+async function waitForSubmittedRoundToAdvance(currentRound) {
+    console.log(`Model already submitted for round ${currentRound}. Waiting for round advance instead of retraining.`);
+    await traceEvent("worker.round_already_submitted.waiting", {
+        role: "worker",
+        round: currentRound,
+    });
+    try {
+        const nextRound = await waitForRoundAdvance(currentRound, {
+            pollMs: gmUpdatePollMs,
+            timeoutMs: gmUpdateTimeoutMs,
+        });
+        missedGMUpdateLoops = 0;
+        console.log(`Round advanced from ${currentRound} to ${nextRound}.`);
+    }
+    catch (e) {
+        missedGMUpdateLoops++;
+        console.warn(`Round ${currentRound} did not advance within timeout. Missed update loop ${missedGMUpdateLoops}/${gmUpdateTimeoutLoops}.`);
+        if (missedGMUpdateLoops >= gmUpdateTimeoutLoops) {
+            console.warn("Reporting aggregator timeout onchain.");
+            await traceEvent("worker.aggregator_timeout.reported", {
+                role: "worker",
+                missed_loops: missedGMUpdateLoops,
+            });
+            try {
+                await reportAggregatorTimeout();
+            }
+            catch (reportError) {
+                console.error("Error reporting aggregator timeout:", reportError);
+            }
+            missedGMUpdateLoops = 0;
+        }
     }
 }
 async function callPythonService(endpoint, payload = {}, { timeoutMs = 0 } = {}) {
@@ -113,6 +195,9 @@ function normalizeHexBytes(input) {
     return `0x${hex}`;
 }
 function rsaPublicKeyDerHex() {
+    if (!rsaPublicKey.trim()) {
+        throw new Error('RSA_PUBLIC_KEY or RSA_PUBLIC_KEY_FILE is required for device registration.');
+    }
     const key = crypto.createPublicKey(rsaPublicKey);
     const der = key.export({ format: 'der', type: 'spki' });
     return `0x${Buffer.from(der).toString('hex')}`;
@@ -336,11 +421,11 @@ const stateMachine = async () => {
     else {
         await registerWithLocalTdxQuote();
     }
-    while (Number(await getRound()) < Number(process.env.ROUND)) {
+    while (Number(await getRound()) < targetRound()) {
         let state = await getCurrentState();
         switch (state["0"]) {
             case "TRAINING":
-                if (state[1] === process.env.ACCOUNT_ADDRESS) {
+                if (sameAddress(state[1], process.env.ACCOUNT_ADDRESS)) {
                     console.log("I am the aggregator");
                     await traceEvent("state.training.aggregator", { role: "aggregator" });
                     const currentRound = Number(await getRound());
@@ -397,10 +482,16 @@ const stateMachine = async () => {
                     await traceEvent("state.training.worker", { role: "worker", aggregator: String(state["1"]) });
                     const currentRound = Number(await getRound());
                     console.log("Round %d.", currentRound);
+                    if (await hasSubmittedModel(currentRound, process.env.ACCOUNT_ADDRESS)) {
+                        await waitForSubmittedRoundToAdvance(currentRound);
+                        await sleep(2000);
+                        continue;
+                    }
                     console.log("Fetching the global model from IPFS ...");
                     await traceEvent("worker.fetch_global_model.started", { role: "worker" });
+                    let fetchedGlobalModel;
                     try {
-                        await traceOperation("worker.fetch_global_model", { role: "worker" }, () => getCurrentModel());
+                        fetchedGlobalModel = await traceOperation("worker.fetch_global_model", { role: "worker" }, () => getCurrentModel());
                     }
                     catch (error) {
                         if (!isMissingRoundKeyError(error)) {
@@ -412,11 +503,25 @@ const stateMachine = async () => {
                             round: currentRound,
                             reason: "missing_round_key",
                         });
-                        await waitForRoundAdvance(currentRound, { pollMs: 5000 });
+                        await waitForRoundAdvance(currentRound, { pollMs: gmUpdatePollMs });
                         continue;
                     }
                     await traceEvent("worker.fetch_global_model.finished", { role: "worker" });
-                    const prevGM = await getCurrentGM();
+                    let currentGlobalModel;
+                    try {
+                        currentGlobalModel = await assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel);
+                    }
+                    catch (error) {
+                        console.warn(error?.message || String(error));
+                        await traceEvent("worker.fetch_global_model.stale", {
+                            role: "worker",
+                            round: currentRound,
+                            error: error?.message || String(error),
+                        });
+                        await sleep(2000);
+                        continue;
+                    }
+                    const prevGM = currentGlobalModel.modelCid;
                     const lastSignerAddress = await getLastRoundsAggregator();
                     const lastSignersPubKey = await getDevicePublicKey(lastSignerAddress);
                     const sigOk = await verifyDownloadedGlobalModelSignature({
@@ -443,6 +548,16 @@ const stateMachine = async () => {
                     }
                     console.log("Local training complete.");
                     await traceEvent("worker.training.finished", { role: "worker" });
+                    const latestState = await getCurrentState();
+                    if (sameAddress(latestState[1], process.env.ACCOUNT_ADDRESS)) {
+                        console.log("I became the aggregator before model transfer. Returning to the state loop to start the aggregator server.");
+                        await traceEvent("worker.promoted_to_aggregator_before_transfer", {
+                            role: "aggregator",
+                            previous_aggregator: String(state["1"]),
+                        });
+                        continue;
+                    }
+                    state = latestState;
                     console.log("Is the device authorized? ", await isAuthorized(process.env.ACCOUNT_ADDRESS));
                     console.log("Starting the zerompq client ...");
                     await traceEvent("worker.model_transfer.started", { role: "worker", aggregator: String(state["1"]) });
@@ -453,15 +568,21 @@ const stateMachine = async () => {
                         }, () => callPythonService('/client', {
                             server_ip: String(state["1"]),
                             device_id: String(process.env.ACCOUNT_ADDRESS),
-                        }));
-                        await traceOperation("worker.submit_model", {
-                            role: "worker",
-                            aggregator: String(state["1"]),
-                        }, async () => submitModel(await localModelPackageHash()));
-                        await traceOperation("worker.set_contribution", {
-                            role: "worker",
-                            aggregator: String(state["1"]),
-                        }, () => setContribution([process.env.ACCOUNT_ADDRESS]));
+                            timeout_ms: modelTransferTimeoutMs,
+                        }, { timeoutMs: modelTransferTimeoutMs + 5000 }));
+                        if (await hasSubmittedModel(currentRound, process.env.ACCOUNT_ADDRESS)) {
+                            console.log(`Model submission already recorded for round ${currentRound}; skipping duplicate submit/contribution transactions.`);
+                        }
+                        else {
+                            await traceOperation("worker.submit_model", {
+                                role: "worker",
+                                aggregator: String(state["1"]),
+                            }, async () => submitModel(await localModelPackageHash()));
+                            await traceOperation("worker.set_contribution", {
+                                role: "worker",
+                                aggregator: String(state["1"]),
+                            }, () => setContribution([process.env.ACCOUNT_ADDRESS]));
+                        }
                         await traceEvent("worker.model_transfer.finished", { role: "worker", aggregator: String(state["1"]) });
                     }
                     catch (e) {
@@ -471,14 +592,15 @@ const stateMachine = async () => {
                             aggregator: String(state["1"]),
                             error: e?.message || String(e),
                         });
-                        return;
+                        await sleep(modelTransferRetryDelayMs);
+                        continue;
                     }
                     console.log("Top contributor:", await getTopContributor());
                     console.log("Transfer complete. Send local model to aggregator.");
-                    console.log("Rounds left: ", (Number(process.env.ROUND) - Number(await getRound())));
+                    console.log("Rounds left: ", (targetRound() - Number(await getRound())));
                     console.log("Waiting till next round.");
                     try {
-                        const newGM = await waitForGMUpdate(prevGM, { pollMs: 5000, timeoutMs: gmUpdateTimeoutMs });
+                        const newGM = await waitForGMUpdate(prevGM, { pollMs: gmUpdatePollMs, timeoutMs: gmUpdateTimeoutMs });
                         missedGMUpdateLoops = 0;
                         console.log("New Global Model detected:", newGM);
                     }
@@ -504,7 +626,7 @@ const stateMachine = async () => {
                     continue;
                 }
             case "AGGREGATING":
-                if (state[1] === process.env.ACCOUNT_ADDRESS) {
+                if (sameAddress(state[1], process.env.ACCOUNT_ADDRESS)) {
                     currentState = "AGGREGATING";
                     console.log("I am the aggregator");
                     console.log("Starting the aggregation process ...");
@@ -559,13 +681,35 @@ const stateMachine = async () => {
                         if (count < expected) {
                             console.log(`Aggregating with ${count}/${expected} models.`);
                         }
-                        await traceOperation("aggregator.aggregation", {
+                        const globalModelRound = currentRound + 1;
+                        const participantCount = Number(process.env.WORKER_COUNT || expected + 1);
+                        const aggregateResult = await traceOperation("aggregator.aggregation", {
                             role: "aggregator",
                             model_count: count,
                             expected_models: expected,
                         }, () => callPythonService('/aggregate', {
                             num_files: Number(count),
+                            round_id: globalModelRound,
+                            source_round: currentRound,
+                            expected_models: expected,
+                            participant_count: participantCount,
                         }, { timeoutMs: 3 * 60 * 1000 }));
+                        const metrics = aggregateResult?.metrics;
+                        if (metrics && typeof metrics === "object") {
+                            console.log("Global model evaluation metrics:", metrics);
+                            await traceEvent("aggregator.global_model_evaluation", {
+                                role: "aggregator",
+                                global_model_round: Number(metrics.round ?? globalModelRound),
+                                source_round: currentRound,
+                                participant_count: Number(metrics.participant_count ?? participantCount),
+                                aggregated_model_count: Number(metrics.aggregated_model_count ?? count),
+                                expected_models: expected,
+                                accuracy_percent: Number(metrics.accuracy_percent ?? 0),
+                                loss: Number(metrics.loss ?? 0),
+                                macro_f1: Number(metrics.macro_f1 ?? 0),
+                                macro_auroc: Number(metrics.macro_auroc ?? 0),
+                            });
+                        }
                     }
                     catch (e) {
                         console.error("Error during aggregation:", e);
@@ -579,7 +723,7 @@ const stateMachine = async () => {
                 }
                 break;
             case "UPDATING":
-                if (state[1] === process.env.ACCOUNT_ADDRESS) {
+                if (sameAddress(state[1], process.env.ACCOUNT_ADDRESS)) {
                     currentState = "UPDATING";
                     console.log("I am the aggregator");
                     console.log("Starting the updating process ...");
@@ -597,20 +741,29 @@ const stateMachine = async () => {
                     await stageCleaning();
                     console.log("Passed cleaning");
                     await incrementRound();
-                    console.log("Rounds left: ", (Number(process.env.ROUND) - Number(await getRound())));
-                    await setCurrentState("TRAINING");
-                    console.log("Set state to TRAINING for next round");
+                    const nextRound = Number(await getRound());
+                    console.log("Rounds left: ", (targetRound() - nextRound));
+                    if (nextRound >= targetRound()) {
+                        console.log(`Reached configured final round ${targetRound()}. Skipping next aggregator selection and stopping the worker loop.`);
+                        await traceEvent("training.completed", {
+                            role: "aggregator",
+                            final_round: nextRound,
+                        });
+                        return;
+                    }
                     try {
                         await traceOperation("aggregator.selection", { role: "aggregator" }, () => triggerAggregatorSelection());
                         console.log("Triggered new aggregator selection");
                         await traceEvent("aggregator.selection.triggered", { role: "aggregator" });
                     }
                     catch (e) {
-                        console.error("Aggregator selection failed; keeping current aggregator alive for retry:", e);
+                        console.error("Aggregator selection failed; falling back to current aggregator for next round:", e);
                         await traceEvent("aggregator.selection.failed", {
                             role: "aggregator",
                             error: e?.message || String(e),
                         });
+                        await setCurrentState("TRAINING");
+                        console.log("Set state to TRAINING for next round with the current aggregator");
                         await sleep(2000);
                     }
                     continue;
@@ -698,11 +851,15 @@ async function waitForGMUpdate(prevCid, { pollMs = 3000, timeoutMs = 10 * 60 * 1
         await sleep(pollMs);
     }
 }
-async function waitForRoundAdvance(prevRound, { pollMs = 3000 } = {}) {
+async function waitForRoundAdvance(prevRound, { pollMs = 3000, timeoutMs = 0 } = {}) {
+    const start = Date.now();
     while (true) {
         const currentRound = Number(await getRound());
         if (currentRound > Number(prevRound)) {
             return currentRound;
+        }
+        if (timeoutMs > 0 && Date.now() - start > timeoutMs) {
+            throw new Error(`Timeout waiting for round to advance beyond ${prevRound}.`);
         }
         await sleep(pollMs);
     }

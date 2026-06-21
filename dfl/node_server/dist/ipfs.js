@@ -213,4 +213,5 @@ export const getCurrentModel = async () => {
         outSignaturePath: "./data/gm.bin.sig",
     });
     console.log("Encrypted global model bundle fetched + decrypted");
+    return { modelCid, sigCid, keyBundleCid };
 };

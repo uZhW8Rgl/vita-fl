@@ -22,8 +22,8 @@
   "panels": [
     {
       "datasource": {
-        "type": "loki",
-        "uid": "Loki"
+        "type": "prometheus",
+        "uid": "Prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -54,11 +54,10 @@
       "targets": [
         {
           "datasource": {
-            "type": "loki",
-            "uid": "Loki"
+            "type": "prometheus",
+            "uid": "Prometheus"
           },
-          "expr": "sum(sum_over_time({compose_service=\"smart-contracts\"} |= \"\\\"kind\\\":\\\"gas_cost\\\"\" | json | scope=\"smart_contracts_init\" | unwrap costEth [$__range]))",
-          "queryType": "range",
+          "expr": "dfl_contract_init_cost_eth_total",
           "refId": "A"
         }
       ],
@@ -67,8 +66,8 @@
     },
     {
       "datasource": {
-        "type": "loki",
-        "uid": "Loki"
+        "type": "prometheus",
+        "uid": "Prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -99,52 +98,15 @@
       "targets": [
         {
           "datasource": {
-            "type": "loki",
-            "uid": "Loki"
+            "type": "prometheus",
+            "uid": "Prometheus"
           },
-          "expr": "sum(sum_over_time({compose_service=\"smart-contracts\"} |= \"\\\"kind\\\":\\\"gas_cost\\\"\" | json | scope=\"smart_contracts_init\" | unwrap costEur [$__range]))",
-          "queryType": "range",
+          "expr": "dfl_contract_init_cost_eur_total",
           "refId": "A"
         }
       ],
       "title": "Contract Init Cost EUR",
       "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "loki",
-        "uid": "Loki"
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 4
-      },
-      "id": 3,
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showCommonLabels": false,
-        "showLabels": true,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "loki",
-            "uid": "Loki"
-          },
-          "expr": "{compose_service=~\"smart-contracts|anvil|ipfs\"}",
-          "queryType": "range",
-          "refId": "A"
-        }
-      ],
-      "title": "All Runtime Logs",
-      "type": "logs"
     }
   ],
   "refresh": "5s",

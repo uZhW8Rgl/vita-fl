@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 import os
 import re
 import shutil
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -19,14 +21,25 @@ from fastapi import FastAPI, HTTPException, Response
 WORKSPACE_ROOT = Path(os.environ.get("TRAINING_WORKSPACE_ROOT", "/workspace")).resolve()
 TRAINING_ENV_FILE = WORKSPACE_ROOT / ".env"
 TRAINING_COMPOSE_FILE = WORKSPACE_ROOT / "compose.yml"
+EVALUATION_SUMMARY_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "global_model_round_summary.csv"
+TRANSACTION_COST_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "transaction_costs.csv"
+CONTROL_API_STARTED_AT_UNIX_MS = int(time.time() * 1000)
 TRAINING_CONFIG_KEYS = ("ROUND", "EPOCH", "WORKER_COUNT", "CLIENT_LIMIT")
 CONTRACT_TIMEOUT_SECONDS = 600
 OBSERVABILITY_VOLUME_NAMES = (
     "grafana-data",
     "prometheus-data",
-    "loki-data",
-    "tempo-data",
-    "promtail-positions",
+)
+OBSERVABILITY_SERVICES = [
+    "grafana",
+    "prometheus",
+]
+EVALUATION_ARTIFACT_PATTERNS = (
+    "global_model_round_summary.csv",
+    "global_model_round_summary.jsonl",
+    "global_model_label_metrics.csv",
+    "global_model_sample_metrics.csv",
+    "transaction_costs.csv",
 )
 STATIC_CONTAINER_NAMES = {
     "anvil": "anvil",
@@ -96,6 +109,250 @@ def read_env_values(env_file: Path = TRAINING_ENV_FILE) -> dict[str, str]:
     return values
 
 
+def _prometheus_label_value(value: Any) -> str:
+    return str(value or "").replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+
+def _prometheus_float(value: Any) -> float | None:
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        parsed = float(text)
+        if parsed != parsed or parsed in (float("inf"), float("-inf")):
+            return None
+        return parsed
+    except (TypeError, ValueError):
+        return None
+
+
+def read_evaluation_summary_records(
+    path: Path = EVALUATION_SUMMARY_CSV,
+    min_timestamp_unix_ms: int | None = None,
+) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        records = list(csv.DictReader(handle))
+    if min_timestamp_unix_ms is None:
+        return records
+    fresh_records: list[dict[str, str]] = []
+    for record in records:
+        timestamp = _prometheus_float(record.get("timestamp_unix_ms"))
+        if timestamp is not None and timestamp >= min_timestamp_unix_ms:
+            fresh_records.append(record)
+    return fresh_records
+
+
+def read_transaction_cost_records(path: Path = TRANSACTION_COST_CSV) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        records = list(csv.DictReader(handle))
+
+    deduplicated: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, record in enumerate(records):
+        transaction_hash = (record.get("transactionHash") or "").strip()
+        scope = (record.get("scope") or "").strip()
+        if scope == "scope" or transaction_hash == "transactionHash":
+            continue
+        key = (scope, transaction_hash or f"row-{index}")
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(record)
+    return deduplicated
+
+
+def _worker_display_name(device_id: str, account: str) -> str:
+    device_id = (device_id or "").strip()
+    if device_id:
+        if device_id.upper().startswith("VM-"):
+            return device_id.upper()
+        if device_id.isdigit():
+            return f"VM-{device_id}"
+        return device_id
+    account = (account or "").strip()
+    if account and account != "unknown":
+        return account
+    return "unknown"
+
+
+def _evaluation_labels(record: dict[str, str]) -> str:
+    labels = {
+        "experiment_id": record.get("experiment_id", "local"),
+        "dataset": record.get("dataset", "unknown"),
+        "round": record.get("round", ""),
+        "recorded_at_unix_ms": record.get("timestamp_unix_ms", ""),
+        "participant_count": record.get("participant_count", ""),
+        "aggregated_model_count": record.get("aggregated_model_count", ""),
+    }
+    return ",".join(f'{key}="{_prometheus_label_value(value)}"' for key, value in labels.items())
+
+
+def append_evaluation_metrics(payload_lines: list[str], records: list[dict[str, str]]) -> None:
+    payload_lines.extend([
+        "# HELP dfl_global_model_evaluation_info Global model evaluation metadata, one time series per evaluated round.",
+        "# TYPE dfl_global_model_evaluation_info gauge",
+    ])
+    for record in records:
+        info_labels = {
+            "experiment_id": record.get("experiment_id", "local"),
+            "dataset": record.get("dataset", "unknown"),
+            "round": record.get("round", ""),
+            "source_round": record.get("source_round", ""),
+            "recorded_at_unix_ms": record.get("timestamp_unix_ms", ""),
+            "participant_count": record.get("participant_count", ""),
+            "aggregated_model_count": record.get("aggregated_model_count", ""),
+            "expected_models": record.get("expected_models", ""),
+            "sample_count": record.get("sample_count", ""),
+            "label_count": record.get("label_count", ""),
+            "accuracy_percent": record.get("accuracy_percent", ""),
+            "loss": record.get("loss", ""),
+            "micro_f1": record.get("micro_f1", ""),
+            "macro_f1": record.get("macro_f1", ""),
+            "macro_auroc": record.get("macro_auroc", ""),
+            "exact_match_percent": record.get("exact_match_percent", ""),
+        }
+        labels = ",".join(f'{key}="{_prometheus_label_value(value)}"' for key, value in info_labels.items())
+        payload_lines.append(f"dfl_global_model_evaluation_info{{{labels}}} 1")
+
+    metric_map = {
+        "expected_models": "dfl_global_model_evaluation_expected_models",
+        "aggregated_model_count": "dfl_global_model_evaluation_aggregated_model_count",
+        "accuracy_percent": "dfl_global_model_evaluation_accuracy_percent",
+        "loss": "dfl_global_model_evaluation_loss",
+        "micro_f1": "dfl_global_model_evaluation_micro_f1",
+        "macro_f1": "dfl_global_model_evaluation_macro_f1",
+        "macro_auroc": "dfl_global_model_evaluation_macro_auroc",
+        "exact_match_percent": "dfl_global_model_evaluation_exact_match_percent",
+    }
+    for field, metric_name in metric_map.items():
+        payload_lines.extend([
+            "",
+            f"# HELP {metric_name} Global model evaluation field '{field}' by evaluated round.",
+            f"# TYPE {metric_name} gauge",
+        ])
+        for record in records:
+            value = _prometheus_float(record.get(field))
+            if value is None:
+                continue
+            payload_lines.append(f"{metric_name}{{{_evaluation_labels(record)}}} {value}")
+
+    expected_training_starts = 0.0
+    aggregated_model_count = 0.0
+    for record in records:
+        expected_training_starts += _prometheus_float(record.get("expected_models")) or 0.0
+        aggregated_model_count += _prometheus_float(record.get("aggregated_model_count")) or 0.0
+
+    run_totals = {
+        "dfl_training_starts_total": expected_training_starts,
+        "dfl_model_transfers_total": aggregated_model_count,
+        "dfl_aggregations_total": float(len(records)),
+    }
+    for metric_name, value in run_totals.items():
+        payload_lines.extend([
+            "",
+            f"# HELP {metric_name} Current training-run total derived from one evaluation record per aggregated round.",
+            f"# TYPE {metric_name} gauge",
+            f"{metric_name} {value}",
+        ])
+
+    if records:
+        latest = records[-1]
+        latest_round = _prometheus_float(latest.get("round"))
+        latest_accuracy = _prometheus_float(latest.get("accuracy_percent"))
+        latest_loss = _prometheus_float(latest.get("loss"))
+        latest_macro_f1 = _prometheus_float(latest.get("macro_f1"))
+        latest_macro_auroc = _prometheus_float(latest.get("macro_auroc"))
+        latest_values = {
+            "dfl_global_model_latest_round": latest_round,
+            "dfl_global_model_latest_accuracy_percent": latest_accuracy,
+            "dfl_global_model_latest_loss": latest_loss,
+            "dfl_global_model_latest_macro_f1": latest_macro_f1,
+            "dfl_global_model_latest_macro_auroc": latest_macro_auroc,
+        }
+        for metric_name, value in latest_values.items():
+            if value is None:
+                continue
+            payload_lines.extend([
+                "",
+                f"# HELP {metric_name} Latest global model evaluation value mirrored from the round summary CSV.",
+                f"# TYPE {metric_name} gauge",
+                f"{metric_name} {value}",
+            ])
+
+
+def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict[str, str]]) -> None:
+    totals: dict[str, dict[str, float]] = {}
+    worker_totals: dict[tuple[str, str, str], dict[str, float]] = {}
+    for record in records:
+        scope = record.get("scope") or "unknown"
+        scope_totals = totals.setdefault(scope, {"eth": 0.0, "eur": 0.0, "transactions": 0.0})
+        cost_eth = _prometheus_float(record.get("costEth")) or 0.0
+        cost_eur = _prometheus_float(record.get("costEur")) or 0.0
+        scope_totals["eth"] += cost_eth
+        scope_totals["eur"] += cost_eur
+        scope_totals["transactions"] += 1.0
+        if scope == "worker":
+            account = record.get("account") or record.get("from") or "unknown"
+            device_id = record.get("deviceId") or "unknown"
+            worker_key = (_worker_display_name(device_id, account), account, device_id)
+            worker_values = worker_totals.setdefault(worker_key, {"eth": 0.0, "eur": 0.0, "transactions": 0.0})
+            worker_values["eth"] += cost_eth
+            worker_values["eur"] += cost_eur
+            worker_values["transactions"] += 1.0
+
+    metric_specs = {
+        "dfl_transaction_cost_eth_total": ("eth", "Total transaction cost in ETH by scope."),
+        "dfl_transaction_cost_eur_total": ("eur", "Total transaction cost in EUR by scope."),
+        "dfl_transaction_count_total": ("transactions", "Total number of unique transactions by scope."),
+    }
+    for metric_name, (field, help_text) in metric_specs.items():
+        payload_lines.extend([
+            "",
+            f"# HELP {metric_name} {help_text}",
+            f"# TYPE {metric_name} gauge",
+        ])
+        for scope, values in totals.items():
+            payload_lines.append(
+                f'{metric_name}{{scope="{_prometheus_label_value(scope)}"}} {values[field]}'
+            )
+
+    worker = totals.get("worker", {})
+    contract_init = totals.get("smart_contracts_init", {})
+    fixed_totals = {
+        "dfl_worker_cost_eth_total": worker.get("eth", 0.0),
+        "dfl_worker_cost_eur_total": worker.get("eur", 0.0),
+        "dfl_contract_init_cost_eth_total": contract_init.get("eth", 0.0),
+        "dfl_contract_init_cost_eur_total": contract_init.get("eur", 0.0),
+    }
+    for metric_name, value in fixed_totals.items():
+        payload_lines.extend([
+            "",
+            f"# HELP {metric_name} Transaction cost total derived from deduplicated CSV records.",
+            f"# TYPE {metric_name} gauge",
+            f"{metric_name} {value}",
+        ])
+
+    worker_metric_specs = {
+        "dfl_worker_cost_eth_by_worker": ("eth", "Worker transaction cost in ETH by worker."),
+        "dfl_worker_cost_eur_by_worker": ("eur", "Worker transaction cost in EUR by worker."),
+        "dfl_worker_transaction_count_by_worker": ("transactions", "Worker transaction count by worker."),
+    }
+    for metric_name, (field, help_text) in worker_metric_specs.items():
+        payload_lines.extend([
+            "",
+            f"# HELP {metric_name} {help_text}",
+            f"# TYPE {metric_name} gauge",
+        ])
+        for (worker, account, device_id), values in worker_totals.items():
+            payload_lines.append(
+                f'{metric_name}{{worker="{_prometheus_label_value(worker)}",account="{_prometheus_label_value(account)}",device_id="{_prometheus_label_value(device_id)}"}} {values[field]}'
+            )
+
+
 def read_training_config(
     env_file: Path = TRAINING_ENV_FILE, compose_file: Path = TRAINING_COMPOSE_FILE
 ) -> dict[str, Any]:
@@ -109,12 +366,14 @@ def read_training_config(
         worker_count = max(1, min(worker_count, max_worker_count))
     else:
         worker_count = max(1, worker_count)
+    max_client_limit = max(1, worker_count - 1)
+    client_limit = max(1, min(_safe_int(values.get("CLIENT_LIMIT"), max_client_limit), max_client_limit))
 
     return {
         "rounds": max(1, _safe_int(values.get("ROUND"), 5)),
         "epoch": max(1, _safe_int(values.get("EPOCH"), 1)),
         "worker_count": worker_count,
-        "client_limit": max(1, _safe_int(values.get("CLIENT_LIMIT"), 1)),
+        "client_limit": client_limit,
         "max_worker_count": max_worker_count,
         "available_workers": available_workers,
     }
@@ -129,7 +388,10 @@ def normalize_training_config(payload: dict[str, Any]) -> dict[str, int]:
     worker_count = max(
         1, min(_safe_int(payload.get("worker_count"), int(current["worker_count"])), max_worker_count)
     )
-    client_limit = max(1, _safe_int(payload.get("client_limit"), int(current["client_limit"])))
+    max_client_limit = max(1, worker_count - 1)
+    client_limit = max(
+        1, min(_safe_int(payload.get("client_limit"), int(current["client_limit"])), max_client_limit)
+    )
 
     return {
         "rounds": rounds,
@@ -231,16 +493,7 @@ def compose_ps_state(service_name: str, output: str, container_id: str = "") -> 
     data_lines = [line for line in lines if not line.lower().startswith(("name ", "name\t"))]
     text = "\n".join(data_lines).strip()
     if not text:
-        return {
-            "service": service_name,
-            "exists": False,
-            "status": "missing",
-            "running": False,
-            "exit_code": None,
-            "health": None,
-            "container_id": container_id or None,
-            "container_name": STATIC_CONTAINER_NAMES.get(service_name),
-        }
+        return missing_service_state(service_name, container_id)
 
     lowered = text.lower()
     status = "unknown"
@@ -270,6 +523,108 @@ def compose_ps_state(service_name: str, output: str, container_id: str = "") -> 
         "container_id": container_id or None,
         "container_name": STATIC_CONTAINER_NAMES.get(service_name),
     }
+
+
+def missing_service_state(service_name: str, container_id: str = "") -> dict[str, Any]:
+    return {
+        "service": service_name,
+        "exists": False,
+        "status": "missing",
+        "running": False,
+        "exit_code": None,
+        "health": None,
+        "container_id": container_id or None,
+        "container_name": STATIC_CONTAINER_NAMES.get(service_name),
+    }
+
+
+def _parse_compose_ps_json(output: str) -> list[dict[str, Any]]:
+    text = output.strip()
+    if not text:
+        return []
+
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, list):
+            return [record for record in payload if isinstance(record, dict)]
+        if isinstance(payload, dict):
+            return [payload]
+    except json.JSONDecodeError:
+        pass
+
+    records: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            records.append(payload)
+    return records
+
+
+def _compose_json_state(service_name: str, record: dict[str, Any]) -> dict[str, Any]:
+    status_text = str(record.get("Status") or "")
+    lowered_status = status_text.lower()
+    status = str(record.get("State") or "unknown").lower()
+    if "exited" in lowered_status:
+        status = "exited"
+    elif "restarting" in lowered_status:
+        status = "restarting"
+    elif "up" in lowered_status or status == "running":
+        status = "running"
+
+    exit_code = record.get("ExitCode")
+    try:
+        exit_code = int(exit_code) if exit_code not in {None, ""} else None
+    except (TypeError, ValueError):
+        exit_code = None
+
+    return {
+        "service": service_name,
+        "exists": True,
+        "status": status,
+        "running": status == "running",
+        "exit_code": exit_code,
+        "health": record.get("Health") or None,
+        "container_id": record.get("ID") or None,
+        "container_name": record.get("Name") or record.get("Names") or STATIC_CONTAINER_NAMES.get(service_name),
+    }
+
+
+async def compose_ps_state_map(service_names: list[str]) -> tuple[dict[str, dict[str, Any]], bool]:
+    ps_result = await run_subprocess(
+        compose_command("ps", "-a", "--format", "json", include_profile=False),
+        cwd=WORKSPACE_ROOT,
+        check=False,
+    )
+    if ps_result["returncode"] != 0:
+        return {}, False
+
+    wanted = set(service_names)
+    states: dict[str, dict[str, Any]] = {}
+    for record in _parse_compose_ps_json(ps_result["stdout"]):
+        service_name = str(record.get("Service") or "")
+        if service_name in wanted:
+            states[service_name] = _compose_json_state(service_name, record)
+    return states, True
+
+
+async def inspect_worker_services(worker_services: list[str]) -> list[dict[str, Any]]:
+    if not worker_services:
+        return []
+
+    worker_state_map, json_available = await compose_ps_state_map(worker_services)
+    if json_available:
+        return [worker_state_map.get(service) or missing_service_state(service) for service in worker_services]
+
+    semaphore = asyncio.Semaphore(32)
+
+    async def inspect_with_limit(service_name: str) -> dict[str, Any]:
+        async with semaphore:
+            return await inspect_service(service_name)
+
+    return list(await asyncio.gather(*(inspect_with_limit(service) for service in worker_services)))
 
 
 def _post_json(url: str, payload: dict[str, Any], timeout: float = 2.0) -> dict[str, Any] | None:
@@ -489,12 +844,22 @@ async def wait_for_service_ready(service_name: str, timeout_seconds: int) -> dic
 async def collect_runtime_status() -> dict[str, Any]:
     env_values = read_env_values()
     worker_services = _available_worker_services()
-    contract_state = await inspect_service("smart-contracts")
-    anvil_state = await inspect_service("anvil")
-    ipfs_state = await inspect_service("ipfs")
-    agent_state = await inspect_service("agent")
-    zk_inference_state = await inspect_service("zk-inference")
-    worker_states = [await inspect_service(service) for service in worker_services]
+    static_services = ["smart-contracts", "anvil", "ipfs", "agent", "zk-inference"]
+    service_state_map, json_available = await compose_ps_state_map([*static_services, *worker_services])
+    if json_available:
+        contract_state = service_state_map.get("smart-contracts") or missing_service_state("smart-contracts")
+        anvil_state = service_state_map.get("anvil") or missing_service_state("anvil")
+        ipfs_state = service_state_map.get("ipfs") or missing_service_state("ipfs")
+        agent_state = service_state_map.get("agent") or missing_service_state("agent")
+        zk_inference_state = service_state_map.get("zk-inference") or missing_service_state("zk-inference")
+        worker_states = [service_state_map.get(service) or missing_service_state(service) for service in worker_services]
+    else:
+        contract_state = await inspect_service("smart-contracts")
+        anvil_state = await inspect_service("anvil")
+        ipfs_state = await inspect_service("ipfs")
+        agent_state = await inspect_service("agent")
+        zk_inference_state = await inspect_service("zk-inference")
+        worker_states = await inspect_worker_services(worker_services)
     running_workers = [state["service"] for state in worker_states if state["running"]]
 
     anvil_ready = probe_anvil_ready(env_values)
@@ -504,7 +869,8 @@ async def collect_runtime_status() -> dict[str, Any]:
     current_aggregator = read_current_aggregator(env_values) if chain_contracts_ready else {"address": None, "vm": None}
 
     contract_completed_successfully = contract_state["status"] == "exited" and contract_state["exit_code"] == 0
-    contract_initialized = contract_completed_successfully and chain_contracts_ready
+    contract_failed = contract_state["status"] == "exited" and contract_state["exit_code"] not in {None, 0}
+    contract_initialized = contract_completed_successfully
     contract_running = contract_state["running"]
     training_started = contract_initialized and bool(
         running_workers or agent_state["running"] or zk_inference_state["running"]
@@ -518,6 +884,7 @@ async def collect_runtime_status() -> dict[str, Any]:
         "base_runtime_ready": (anvil_state["running"] or anvil_ready) and (ipfs_state["running"] or ipfs_ready),
         "chain_contracts_ready": chain_contracts_ready,
         "contract_completed_successfully": contract_completed_successfully,
+        "contract_failed": contract_failed,
         "current_round": current_round,
         "current_aggregator_address": current_aggregator["address"],
         "current_aggregator_vm": current_aggregator["vm"],
@@ -544,7 +911,15 @@ async def reset_services(service_names: list[str]) -> list[dict[str, Any]]:
 
 
 async def reset_observability_volumes() -> list[dict[str, Any]]:
-    docker_bin = resolve_docker_bin()
+    try:
+        docker_bin = resolve_docker_bin()
+    except RuntimeError as exc:
+        return [{
+            "command": ["docker", "volume", "rm", "-f", *OBSERVABILITY_VOLUME_NAMES],
+            "returncode": 0,
+            "stdout": "Skipped old observability volume cleanup because the Docker CLI is unavailable.",
+            "stderr": str(exc),
+        }]
     project_name = compose_project_name()
     logs: list[dict[str, Any]] = []
 
@@ -556,6 +931,84 @@ async def reset_observability_volumes() -> list[dict[str, Any]]:
                 check=False,
             )
         )
+    return logs
+
+
+async def clear_evaluation_artifacts() -> list[dict[str, Any]]:
+    removed: list[str] = []
+    errors: list[str] = []
+    evaluation_dir = WORKSPACE_ROOT / "data" / "evaluation"
+    evaluation_dir.mkdir(parents=True, exist_ok=True)
+    for pattern in EVALUATION_ARTIFACT_PATTERNS:
+        for path in evaluation_dir.glob(pattern):
+            try:
+                path.unlink()
+                removed.append(str(path.relative_to(WORKSPACE_ROOT)))
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                errors.append(f"{path}: {exc}")
+    return [{
+        "command": ["clear-evaluation-artifacts"],
+        "returncode": 1 if errors else 0,
+        "stdout": "\n".join(removed),
+        "stderr": "\n".join(errors),
+    }]
+
+
+async def wait_for_http_url(url: str, timeout_seconds: int) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_error: str | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            await asyncio.to_thread(lambda: urllib.request.urlopen(url, timeout=2).read())
+            return
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error = str(exc)
+            await asyncio.sleep(2)
+    raise RuntimeError(f"Timed out waiting for {url}. Last error: {last_error}")
+
+
+async def reset_observability_state() -> list[dict[str, Any]]:
+    logs: list[dict[str, Any]] = []
+    logs.extend(await reset_services(OBSERVABILITY_SERVICES))
+    logs.extend(await reset_observability_volumes())
+    logs.extend(await clear_evaluation_artifacts())
+    logs.append(
+        await run_subprocess(
+            compose_command("up", "-d", *OBSERVABILITY_SERVICES),
+            cwd=WORKSPACE_ROOT,
+            check=True,
+        )
+    )
+    await wait_for_http_url("http://grafana:3000/api/health", 120)
+    return logs
+
+
+async def ensure_observability_services() -> list[dict[str, Any]]:
+    logs = [
+        await run_subprocess(
+            compose_command("up", "-d", *OBSERVABILITY_SERVICES),
+            cwd=WORKSPACE_ROOT,
+            check=True,
+        )
+    ]
+    await wait_for_http_url("http://grafana:3000/api/health", 120)
+    return logs
+
+
+async def reset_grafana_view_values() -> list[dict[str, Any]]:
+    logs: list[dict[str, Any]] = []
+    logs.extend(await clear_evaluation_artifacts())
+    logs.extend(await reset_services(["prometheus"]))
+    logs.append(
+        await run_subprocess(
+            compose_command("up", "-d", "prometheus"),
+            cwd=WORKSPACE_ROOT,
+            check=True,
+        )
+    )
+    await wait_for_http_url("http://prometheus:9090/-/ready", 120)
     return logs
 
 
@@ -600,13 +1053,10 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
     inactive_workers = available_workers[config["worker_count"] :]
 
     logs = await reset_services(["agent", "zk-inference", *available_workers])
+    logs.extend(await reset_observability_state())
     base_services = [
         "anvil",
         "ipfs",
-        "loki",
-        "promtail",
-        "tempo",
-        "otel-collector",
     ]
     if use_local_ollama():
         base_services.append("ollama")
@@ -688,28 +1138,19 @@ async def reset_training_services() -> dict[str, Any]:
         "smart-contracts",
         "anvil",
         "ipfs",
-        "grafana",
-        "prometheus",
-        "loki",
-        "promtail",
-        "tempo",
-        "otel-collector",
+        *OBSERVABILITY_SERVICES,
         "ollama-init",
         "ollama",
     ]
     logs = await reset_services(reset_targets)
     logs.extend(await reset_observability_volumes())
+    logs.extend(await clear_evaluation_artifacts())
     logs.append(
         await run_subprocess(
             compose_command(
                 "up",
                 "-d",
-                "grafana",
-                "prometheus",
-                "loki",
-                "promtail",
-                "tempo",
-                "otel-collector",
+                *OBSERVABILITY_SERVICES,
                 "anvil",
                 "ipfs",
             ),
@@ -717,6 +1158,7 @@ async def reset_training_services() -> dict[str, Any]:
             check=True,
         )
     )
+    await wait_for_http_url("http://grafana:3000/api/health", 120)
     await wait_for_service_ready("anvil", 120)
     await wait_for_service_ready("ipfs", 120)
     logs.append(
@@ -744,6 +1186,8 @@ async def metrics() -> Response:
     env_values = read_env_values()
     current_round = read_chain_round(env_values)
     current_aggregator = read_current_aggregator(env_values)
+    evaluation_records = read_evaluation_summary_records()
+    transaction_cost_records = read_transaction_cost_records()
     round_value = current_round if current_round is not None else 0
     aggregator_vm = current_aggregator["vm"] or "unknown"
     payload_lines = [
@@ -756,6 +1200,8 @@ async def metrics() -> Response:
         f'dfl_current_aggregator{{aggregator_vm="{aggregator_vm}"}} 1',
         "",
     ]
+    append_evaluation_metrics(payload_lines, evaluation_records)
+    append_transaction_cost_metrics(payload_lines, transaction_cost_records)
     payload = "\n".join(payload_lines)
     return Response(content=payload, media_type="text/plain; version=0.0.4")
 
@@ -769,6 +1215,28 @@ async def get_control_status() -> dict[str, Any]:
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/observability/ensure")
+async def ensure_observability() -> dict[str, Any]:
+    try:
+        logs = await ensure_observability_services()
+        return {"ok": True, "logs": logs[-1:]}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/observability/reset-values")
+async def reset_observability_values() -> dict[str, Any]:
+    if operation_lock.locked():
+        raise HTTPException(status_code=409, detail="Another control operation is already running.")
+
+    async with operation_lock:
+        try:
+            logs = await reset_grafana_view_values()
+            return {"ok": True, "status": await collect_runtime_status(), "logs": logs[-3:]}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/control/contracts/initialize")

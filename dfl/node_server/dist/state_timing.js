@@ -3,6 +3,8 @@ const DEFAULT_GM_UPDATE_TIMEOUT_MS = 30 * 1000;
 const DEFAULT_GM_UPDATE_TIMEOUT_LOOPS = 3;
 const DEFAULT_AGGREGATION_UPDATE_ESTIMATE_MS = 30 * 1000;
 const DEFAULT_GM_UPDATE_POLL_MS = 5 * 1000;
+const DEFAULT_MODEL_TRANSFER_TIMEOUT_MS = 20 * 1000;
+const DEFAULT_MODEL_TRANSFER_RETRY_DELAY_MS = 5 * 1000;
 
 function parsePositiveInteger(value, fallback) {
     const parsed = Number(value);
@@ -31,6 +33,14 @@ export function deriveTimingConfig(env = {}) {
         gmUpdatePollMs: parsePositiveInteger(
             env.GM_UPDATE_POLL_MS,
             DEFAULT_GM_UPDATE_POLL_MS,
+        ),
+        modelTransferTimeoutMs: parsePositiveInteger(
+            env.MODEL_TRANSFER_TIMEOUT_MS,
+            DEFAULT_MODEL_TRANSFER_TIMEOUT_MS,
+        ),
+        modelTransferRetryDelayMs: parsePositiveInteger(
+            env.MODEL_TRANSFER_RETRY_DELAY_MS,
+            DEFAULT_MODEL_TRANSFER_RETRY_DELAY_MS,
         ),
     };
 }

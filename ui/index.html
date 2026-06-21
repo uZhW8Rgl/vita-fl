@@ -221,9 +221,28 @@
     }
 
     .training-step-value {
+      width: 100%;
+      min-width: 0;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 7px 6px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      font: inherit;
       text-align: center;
       font-size: 1.1rem;
       font-weight: 700;
+    }
+
+    .training-step-value:focus {
+      outline: none;
+      border-color: rgba(130, 209, 232, 0.72);
+      background: rgba(130, 209, 232, 0.1);
+    }
+
+    .training-step-value:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
     }
 
     .training-note {
@@ -251,6 +270,7 @@
     }
 
     .training-step-btn:disabled,
+    .training-step-value:disabled,
     .training-action-btn:disabled {
       cursor: not-allowed;
       opacity: 0.55;
@@ -711,7 +731,7 @@
                     <div class="training-item-label">Rounds</div>
                     <div class="training-stepper">
                       <button class="training-step-btn" data-training-field="rounds" data-training-delta="-1" type="button">-</button>
-                      <div class="training-step-value" id="training-rounds">-</div>
+                      <input class="training-step-value" id="training-rounds" data-training-input="rounds" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="1">
                       <button class="training-step-btn" data-training-field="rounds" data-training-delta="1" type="button">+</button>
                     </div>
                   </div>
@@ -719,7 +739,7 @@
                     <div class="training-item-label">Epoch</div>
                     <div class="training-stepper">
                       <button class="training-step-btn" data-training-field="epoch" data-training-delta="-1" type="button">-</button>
-                      <div class="training-step-value" id="training-epoch">-</div>
+                      <input class="training-step-value" id="training-epoch" data-training-input="epoch" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="1">
                       <button class="training-step-btn" data-training-field="epoch" data-training-delta="1" type="button">+</button>
                     </div>
                   </div>
@@ -727,7 +747,7 @@
                     <div class="training-item-label">Workers</div>
                     <div class="training-stepper">
                       <button class="training-step-btn" data-training-field="worker_count" data-training-delta="-1" type="button">-</button>
-                      <div class="training-step-value" id="training-worker-count">-</div>
+                      <input class="training-step-value" id="training-worker-count" data-training-input="worker_count" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="1">
                       <button class="training-step-btn" data-training-field="worker_count" data-training-delta="1" type="button">+</button>
                     </div>
                   </div>
@@ -735,7 +755,7 @@
                     <div class="training-item-label">Client Limit</div>
                     <div class="training-stepper">
                       <button class="training-step-btn" data-training-field="client_limit" data-training-delta="-1" type="button">-</button>
-                      <div class="training-step-value" id="training-client-limit">-</div>
+                      <input class="training-step-value" id="training-client-limit" data-training-input="client_limit" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="1">
                       <button class="training-step-btn" data-training-field="client_limit" data-training-delta="1" type="button">+</button>
                     </div>
                   </div>
@@ -744,6 +764,7 @@
                 <div class="training-actions">
                   <button class="training-action-btn primary" id="training-start" type="button">Start Training</button>
                   <button class="training-action-btn" id="training-reset" type="button">Reset</button>
+                  <button class="training-action-btn" id="grafana-values-reset" type="button">Reset Grafana Values</button>
                 </div>
               </div>
               <iframe
@@ -776,9 +797,46 @@
   </div>
 
   <script>
-    const contractDashboardUrl = "__GRAFANA_CONTRACT_DASHBOARD_URL__";
-    const trainingDashboardUrl = "__GRAFANA_TRAINING_DASHBOARD_URL__";
-    const agentDashboardUrl = "__GRAFANA_AGENT_DASHBOARD_URL__";
+    function currentGrafanaBaseUrl() {
+      const protocol = window.location.protocol || "http:";
+      const hostname = window.location.hostname || "localhost";
+      return `${protocol}//${hostname}:3300`;
+    }
+
+    function resolveDashboardUrl(configuredUrl, fallbackPath) {
+      const value = String(configuredUrl || "").trim();
+      if (!value) {
+        return `${currentGrafanaBaseUrl()}${fallbackPath}`;
+      }
+      if (value.startsWith("/")) {
+        return `${currentGrafanaBaseUrl()}${value}`;
+      }
+      if (!/^https?:\/\//.test(value)) {
+        return `${currentGrafanaBaseUrl()}${fallbackPath}`;
+      }
+      try {
+        const url = new URL(value);
+        if (["localhost", "127.0.0.1", "0.0.0.0"].includes(url.hostname) && window.location.hostname) {
+          url.hostname = window.location.hostname;
+        }
+        return url.toString();
+      } catch (_error) {
+        return `${currentGrafanaBaseUrl()}${fallbackPath}`;
+      }
+    }
+
+    const contractDashboardUrl = resolveDashboardUrl(
+      "__GRAFANA_CONTRACT_DASHBOARD_URL__",
+      "/d/dfl-contract-init-overview/dfl-contract-init-overview?kiosk"
+    );
+    const trainingDashboardUrl = resolveDashboardUrl(
+      "__GRAFANA_TRAINING_DASHBOARD_URL__",
+      "/d/dfl-training-overview/dfl-training-overview?kiosk"
+    );
+    const agentDashboardUrl = resolveDashboardUrl(
+      "__GRAFANA_AGENT_DASHBOARD_URL__",
+      "/d/agent-mcp-tool-usage/agent-mcp-tool-usage?kiosk"
+    );
     const hasContractDashboardUrl = Boolean(contractDashboardUrl) && /^https?:\/\//.test(contractDashboardUrl);
     const hasTrainingDashboardUrl = Boolean(trainingDashboardUrl) && /^https?:\/\//.test(trainingDashboardUrl);
     const hasAgentDashboardUrl = Boolean(agentDashboardUrl) && /^https?:\/\//.test(agentDashboardUrl);
@@ -812,7 +870,12 @@
     const trainingNoteEl = document.getElementById("training-note");
     const trainingStartBtn = document.getElementById("training-start");
     const trainingResetBtn = document.getElementById("training-reset");
+    const grafanaValuesResetBtn = document.getElementById("grafana-values-reset");
     const trainingStepBtns = Array.from(document.querySelectorAll("[data-training-field]"));
+    const trainingInputs = Array.from(document.querySelectorAll("[data-training-input]"));
+    const trainingInputByField = Object.fromEntries(
+      trainingInputs.map((input) => [input.dataset.trainingInput, input])
+    );
     let currentSessionId = null;
     let currentMessages = [];
     let currentMode = "contracts";
@@ -836,6 +899,98 @@
       max_worker_count: 1,
       available_workers: []
     };
+    let serverTrainingConfig = { ...trainingConfig };
+    let trainingDraftDirty = false;
+    let dashboardEnsurePromise = null;
+
+    function dashboardReloadUrl(url) {
+      try {
+        const nextUrl = new URL(url);
+        nextUrl.searchParams.set("from", "now-30m");
+        nextUrl.searchParams.set("to", "now");
+        nextUrl.searchParams.set("refresh", "5s");
+        nextUrl.searchParams.set("_reload", String(Date.now()));
+        return nextUrl.toString();
+      } catch (_error) {
+        return url;
+      }
+    }
+
+    function loadDashboardFrame(frame, url) {
+      frame.src = "about:blank";
+      window.setTimeout(() => {
+        frame.src = dashboardReloadUrl(url);
+      }, 150);
+    }
+
+    async function ensureObservabilityStack() {
+      if (!dashboardEnsurePromise) {
+        dashboardEnsurePromise = fetch("/api/observability/ensure", {
+          method: "POST",
+          cache: "no-store"
+        })
+          .then((response) => readJsonResponse(response, "Grafana could not be started."))
+          .finally(() => {
+            dashboardEnsurePromise = null;
+          });
+      }
+      return dashboardEnsurePromise;
+    }
+
+    async function reloadDashboardFrames() {
+      const needsGrafana = hasContractDashboardUrl || hasTrainingDashboardUrl || hasAgentDashboardUrl;
+      if (needsGrafana) {
+        const loadingText = "Waiting for Grafana telemetry to become available...";
+        if (hasContractDashboardUrl) {
+          contractsHintEl.textContent = loadingText;
+        }
+        if (hasTrainingDashboardUrl) {
+          trainingDashboardHintEl.textContent = loadingText;
+        }
+        if (hasAgentDashboardUrl) {
+          agentDashboardHintEl.textContent = loadingText;
+        }
+        try {
+          await ensureObservabilityStack();
+        } catch (error) {
+          const message = `Grafana is not reachable yet: ${error.message || error}`;
+          if (hasContractDashboardUrl) {
+            contractsDashboardFrameEl.src = "about:blank";
+            contractsHintEl.textContent = message;
+          }
+          if (hasTrainingDashboardUrl) {
+            trainingDashboardFrameEl.src = "about:blank";
+            trainingDashboardHintEl.textContent = message;
+          }
+          if (hasAgentDashboardUrl) {
+            agentDashboardFrameEl.src = "about:blank";
+            agentDashboardHintEl.textContent = message;
+          }
+          return;
+        }
+      }
+      if (hasContractDashboardUrl) {
+        loadDashboardFrame(contractsDashboardFrameEl, contractDashboardUrl);
+        contractsHintEl.textContent = "Contract initialization telemetry is embedded from Grafana.";
+      } else {
+        contractsDashboardFrameEl.removeAttribute("src");
+        contractsHintEl.innerHTML = 'No contract dashboard URL configured yet. Set <code>GRAFANA_CONTRACT_DASHBOARD_URL</code> and rebuild the UI.';
+      }
+      if (hasTrainingDashboardUrl) {
+        loadDashboardFrame(trainingDashboardFrameEl, trainingDashboardUrl);
+        trainingDashboardHintEl.textContent = "Training telemetry is embedded from Grafana.";
+      } else {
+        trainingDashboardFrameEl.removeAttribute("src");
+        trainingDashboardHintEl.innerHTML = 'No training dashboard URL configured yet. Set <code>GRAFANA_TRAINING_DASHBOARD_URL</code> and rebuild the UI.';
+      }
+      if (hasAgentDashboardUrl) {
+        loadDashboardFrame(agentDashboardFrameEl, agentDashboardUrl);
+        agentDashboardHintEl.textContent = "Agent MCP tool telemetry is embedded from Grafana.";
+      } else {
+        agentDashboardFrameEl.removeAttribute("src");
+        agentDashboardHintEl.innerHTML = 'No agent dashboard URL configured yet. Set <code>GRAFANA_AGENT_DASHBOARD_URL</code> and rebuild the UI.';
+      }
+    }
 
     function contractsReady() {
       return Boolean(workflowState.contract_initialized);
@@ -900,8 +1055,107 @@
       for (const button of trainingStepBtns) {
         button.disabled = disabled;
       }
+      for (const input of trainingInputs) {
+        input.disabled = disabled;
+      }
       trainingStartBtn.disabled = disabled;
       trainingResetBtn.disabled = disabled;
+      grafanaValuesResetBtn.disabled = disabled;
+    }
+
+    function positiveInt(value, fallback = 1) {
+      const parsed = Number.parseInt(String(value), 10);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    }
+
+    function clampTrainingField(field, value, config = trainingConfig) {
+      const parsed = positiveInt(value, positiveInt(config[field], 1));
+      if (field === "worker_count") {
+        const maxWorkerCount = Math.max(1, positiveInt(config.max_worker_count, 1));
+        return Math.max(1, Math.min(parsed, maxWorkerCount));
+      }
+      if (field === "client_limit") {
+        const maxClientLimit = Math.max(1, positiveInt(config.worker_count, 1) - 1);
+        return Math.max(1, Math.min(parsed, maxClientLimit));
+      }
+      return Math.max(1, parsed);
+    }
+
+    function normalizeTrainingConfig(config, fallback = trainingConfig) {
+      const maxWorkerCount = Math.max(1, positiveInt(config?.max_worker_count, fallback.max_worker_count || 1));
+      const nextConfig = {
+        rounds: positiveInt(config?.rounds, fallback.rounds || 1),
+        epoch: positiveInt(config?.epoch, fallback.epoch || 1),
+        worker_count: positiveInt(config?.worker_count, fallback.worker_count || 1),
+        client_limit: positiveInt(config?.client_limit, fallback.client_limit || 1),
+        max_worker_count: maxWorkerCount,
+        available_workers: Array.isArray(config?.available_workers)
+          ? config.available_workers.slice()
+          : (Array.isArray(fallback.available_workers) ? fallback.available_workers.slice() : [])
+      };
+      nextConfig.worker_count = clampTrainingField("worker_count", nextConfig.worker_count, nextConfig);
+      nextConfig.client_limit = clampTrainingField("client_limit", nextConfig.client_limit, nextConfig);
+      return nextConfig;
+    }
+
+    function applyServerTrainingConfig(config, options = {}) {
+      const forceDraft = Boolean(options.forceDraft);
+      serverTrainingConfig = normalizeTrainingConfig(config, serverTrainingConfig);
+      if (forceDraft || !trainingDraftDirty) {
+        trainingConfig = { ...serverTrainingConfig, available_workers: serverTrainingConfig.available_workers.slice() };
+        trainingDraftDirty = false;
+        return;
+      }
+      trainingConfig = normalizeTrainingConfig({
+        ...trainingConfig,
+        max_worker_count: serverTrainingConfig.max_worker_count,
+        available_workers: serverTrainingConfig.available_workers
+      }, trainingConfig);
+    }
+
+    function setTrainingInputValue(field, value) {
+      const input = trainingInputByField[field];
+      if (!input) {
+        return;
+      }
+      if (field === "worker_count") {
+        input.max = String(Math.max(1, positiveInt(trainingConfig.max_worker_count, 1)));
+      } else if (field === "client_limit") {
+        input.max = String(Math.max(1, positiveInt(trainingConfig.worker_count, 1) - 1));
+      } else {
+        input.removeAttribute("max");
+      }
+      if (document.activeElement !== input) {
+        input.value = String(value);
+      }
+    }
+
+    function setTrainingConfigValue(field, value, options = {}) {
+      trainingConfig[field] = clampTrainingField(field, value);
+      if (field === "worker_count") {
+        trainingConfig.client_limit = clampTrainingField("client_limit", trainingConfig.client_limit);
+      }
+      trainingDraftDirty = true;
+      if (options.render !== false) {
+        renderTrainingConfig();
+      }
+    }
+
+    function commitTrainingInput(field, options = {}) {
+      const input = trainingInputByField[field];
+      if (!input) {
+        return;
+      }
+      const rawValue = input.value.trim();
+      const nextValue = rawValue ? rawValue : trainingConfig[field];
+      setTrainingConfigValue(field, nextValue, options);
+    }
+
+    function commitAllTrainingInputs() {
+      for (const input of trainingInputs) {
+        commitTrainingInput(input.dataset.trainingInput, { render: false });
+      }
+      renderTrainingConfig();
     }
 
     function syncTabs() {
@@ -949,14 +1203,16 @@
     }
 
     function renderTrainingConfig() {
-      trainingRoundsEl.textContent = String(trainingConfig.rounds);
-      trainingEpochEl.textContent = String(trainingConfig.epoch);
-      trainingWorkerCountEl.textContent = String(trainingConfig.worker_count);
-      trainingClientLimitEl.textContent = String(trainingConfig.client_limit);
+      setTrainingInputValue("rounds", trainingConfig.rounds);
+      setTrainingInputValue("epoch", trainingConfig.epoch);
+      setTrainingInputValue("worker_count", trainingConfig.worker_count);
+      setTrainingInputValue("client_limit", trainingConfig.client_limit);
       if (!contractsReady()) {
         trainingNoteEl.textContent = "Initialize the smart contracts first to unlock the training controls.";
+      } else if (trainingDraftDirty) {
+        trainingNoteEl.textContent = `Draft kept locally. Start Training will use rounds=${trainingConfig.rounds}, epoch=${trainingConfig.epoch}, workers=${trainingConfig.worker_count}, client limit=${trainingConfig.client_limit}.`;
       } else {
-        trainingNoteEl.textContent = `Available VM services in compose: ${trainingConfig.max_worker_count}. The start action uses VM-0 up to the selected worker count. CLIENT_LIMIT stays independent.`;
+        trainingNoteEl.textContent = `Available VM services in compose: ${trainingConfig.max_worker_count}. Client limit is capped to selected workers minus the active aggregator.`;
       }
       setTrainingControlsDisabled(!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady());
     }
@@ -991,7 +1247,7 @@
       try {
         const response = await fetch("/api/control/status", { cache: "no-store" });
         const payload = await readJsonResponse(response, "Control status unavailable.");
-        trainingConfig = payload.config;
+        applyServerTrainingConfig(payload.config);
         workflowState = payload.runtime;
         trainingConfigLoaded = true;
         renderWorkflow();
@@ -1009,15 +1265,7 @@
         return;
       }
       const currentValue = Number(trainingConfig[field] || 1);
-      const maxWorkerCount = Math.max(1, Number(trainingConfig.max_worker_count || 1));
-      let nextValue = currentValue + delta;
-      if (field === "worker_count") {
-        nextValue = Math.max(1, Math.min(nextValue, maxWorkerCount));
-      } else {
-        nextValue = Math.max(1, nextValue);
-      }
-      trainingConfig[field] = nextValue;
-      renderTrainingConfig();
+      setTrainingConfigValue(field, currentValue + delta);
     }
 
     async function startTrainingRun() {
@@ -1028,6 +1276,7 @@
 
       let finalStatus = "";
       trainingBusy = true;
+      commitAllTrainingInputs();
       renderTrainingConfig();
       statusEl.textContent = "Status: Starting training stack with the selected setup...";
 
@@ -1043,10 +1292,11 @@
           })
         });
         const payload = await readJsonResponse(response, "Training restart failed.");
-        trainingConfig = payload.config;
+        applyServerTrainingConfig(payload.config, { forceDraft: true });
         workflowState = payload.status;
         trainingConfigLoaded = true;
         await refreshWorkflowStatus();
+        await reloadDashboardFrames();
         const selectedWorkers = Array.isArray(payload.selected_workers) ? payload.selected_workers.join(", ") : "none";
         renderWorkflow();
         finalStatus = `Status: Training restart triggered for ${selectedWorkers}.`;
@@ -1077,7 +1327,7 @@
           method: "POST"
         });
         const payload = await readJsonResponse(response, "Training reset failed.");
-        trainingConfig = payload.config || trainingConfig;
+        applyServerTrainingConfig(payload.config || trainingConfig, { forceDraft: true });
         workflowState = payload.status || workflowState;
         trainingConfigLoaded = true;
         currentMode = "contracts";
@@ -1088,6 +1338,38 @@
       } finally {
         trainingBusy = false;
         await refreshWorkflowStatus();
+        await reloadDashboardFrames();
+        renderWorkflow();
+        if (finalStatus) {
+          statusEl.textContent = finalStatus;
+        }
+      }
+    }
+
+    async function resetGrafanaValues() {
+      if (!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady()) {
+        statusEl.textContent = "Status: Training controls are not ready yet.";
+        return;
+      }
+
+      let finalStatus = "";
+      trainingBusy = true;
+      renderTrainingConfig();
+      statusEl.textContent = "Status: Resetting Grafana values...";
+
+      try {
+        const response = await fetch("/api/observability/reset-values", {
+          method: "POST"
+        });
+        const payload = await readJsonResponse(response, "Grafana value reset failed.");
+        workflowState = payload.status || workflowState;
+        finalStatus = "Status: Grafana values reset. Training services and contracts were left untouched.";
+      } catch (error) {
+        finalStatus = `Status: ERROR :: ${error.message || error}`;
+      } finally {
+        trainingBusy = false;
+        await refreshWorkflowStatus();
+        await reloadDashboardFrames();
         renderWorkflow();
         if (finalStatus) {
           statusEl.textContent = finalStatus;
@@ -1287,12 +1569,39 @@
         adjustTrainingConfig(button.dataset.trainingField, Number(button.dataset.trainingDelta || "0"));
       });
     }
+    for (const input of trainingInputs) {
+      input.addEventListener("input", () => {
+        const field = input.dataset.trainingInput;
+        if (!input.value.trim()) {
+          trainingDraftDirty = true;
+          renderTrainingConfig();
+          return;
+        }
+        setTrainingConfigValue(field, input.value, { render: false });
+      });
+      input.addEventListener("change", () => {
+        commitTrainingInput(input.dataset.trainingInput);
+      });
+      input.addEventListener("blur", () => {
+        commitTrainingInput(input.dataset.trainingInput);
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          commitTrainingInput(input.dataset.trainingInput);
+          input.blur();
+        }
+      });
+    }
 
     trainingStartBtn.addEventListener("click", async () => {
       await startTrainingRun();
     });
     trainingResetBtn.addEventListener("click", async () => {
       await resetTrainingRun();
+    });
+    grafanaValuesResetBtn.addEventListener("click", async () => {
+      await resetGrafanaValues();
     });
 
     contractsTabBtn.addEventListener("click", () => applyMode("contracts"));
@@ -1306,27 +1615,7 @@
     });
 
     (async () => {
-      if (hasContractDashboardUrl) {
-        contractsDashboardFrameEl.src = contractDashboardUrl;
-        contractsHintEl.textContent = "Contract initialization telemetry is embedded from Grafana.";
-      } else {
-        contractsDashboardFrameEl.removeAttribute("src");
-        contractsHintEl.innerHTML = 'No contract dashboard URL configured yet. Set <code>GRAFANA_CONTRACT_DASHBOARD_URL</code> and rebuild the UI.';
-      }
-      if (hasTrainingDashboardUrl) {
-        trainingDashboardFrameEl.src = trainingDashboardUrl;
-        trainingDashboardHintEl.textContent = "Training telemetry is embedded from Grafana.";
-      } else {
-        trainingDashboardFrameEl.removeAttribute("src");
-        trainingDashboardHintEl.innerHTML = 'No training dashboard URL configured yet. Set <code>GRAFANA_TRAINING_DASHBOARD_URL</code> and rebuild the UI.';
-      }
-      if (hasAgentDashboardUrl) {
-        agentDashboardFrameEl.src = agentDashboardUrl;
-        agentDashboardHintEl.textContent = "Agent MCP tool telemetry is embedded from Grafana.";
-      } else {
-        agentDashboardFrameEl.removeAttribute("src");
-        agentDashboardHintEl.innerHTML = 'No agent dashboard URL configured yet. Set <code>GRAFANA_AGENT_DASHBOARD_URL</code> and rebuild the UI.';
-      }
+      await reloadDashboardFrames();
       applyAgentReadiness(false);
       await pollAgentHealth();
       await refreshWorkflowStatus();

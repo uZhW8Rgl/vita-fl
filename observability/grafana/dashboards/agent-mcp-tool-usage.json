@@ -70,8 +70,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "agent_mcp_tool_calls_current{tool_name=\"fetch_current_onchain_model_bundle\"}",
-          "legendFormat": "fetch_current_onchain_model_bundle",
+          "expr": "agent_mcp_tool_calls_current{tool_name=\"fetch_latest_verified_model_bundle\"}",
+          "legendFormat": "fetch_latest_verified_model_bundle",
           "range": true,
           "refId": "A"
         }
@@ -128,8 +128,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "agent_mcp_tool_calls_current{tool_name=\"create_single_image_query\"}",
-          "legendFormat": "create_single_image_query",
+          "expr": "agent_mcp_tool_calls_current{tool_name=\"generate_random_chestmnist_image\"}",
+          "legendFormat": "generate_random_chestmnist_image",
           "range": true,
           "refId": "A"
         }
@@ -186,8 +186,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "agent_mcp_tool_calls_current{tool_name=\"run_ezkl\"}",
-          "legendFormat": "run_ezkl",
+          "expr": "agent_mcp_tool_calls_current{tool_name=\"generate_zk_inference_proof\"}",
+          "legendFormat": "generate_zk_inference_proof",
           "range": true,
           "refId": "A"
         }

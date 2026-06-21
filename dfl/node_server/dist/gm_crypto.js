@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import fs from "fs/promises";
+import { readFileSync } from "fs";
 const normalizePem = (value) => value.replace(/\\n/g, "\n").trim();
 const normalizeHex = (value) => {
     const trimmed = String(value || "").trim();
@@ -15,9 +16,18 @@ const toBufferFromBase64 = (value, label) => {
     }
 };
 const loadPrivateKey = () => {
-    const pem = normalizePem(process.env.RSA_PRIVATE_KEY || "");
+    let pem = normalizePem(process.env.RSA_PRIVATE_KEY || "");
     if (!pem) {
-        throw new Error("RSA_PRIVATE_KEY is required for global model decryption/signing.");
+        const keyFile = process.env.RSA_PRIVATE_KEY_FILE || "/dfl/node_server/private_key.pem";
+        try {
+            pem = normalizePem(readFileSync(keyFile, "utf8"));
+        }
+        catch {
+            pem = "";
+        }
+    }
+    if (!pem) {
+        throw new Error("RSA_PRIVATE_KEY or RSA_PRIVATE_KEY_FILE is required for global model decryption/signing.");
     }
     return crypto.createPrivateKey(pem);
 };

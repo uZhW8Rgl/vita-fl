@@ -49,6 +49,8 @@ test('deriveTimingConfig uses safe defaults for invalid env values', () => {
     assert.equal(config.gmUpdateTimeoutMs, 30000);
     assert.equal(config.gmUpdateTimeoutLoops, 3);
     assert.equal(config.aggregationUpdateEstimateMs, 30000);
+    assert.equal(config.modelTransferTimeoutMs, 20000);
+    assert.equal(config.modelTransferRetryDelayMs, 5000);
 });
 
 test('deriveTimingConfig accepts integer timing values from env', () => {
@@ -58,12 +60,16 @@ test('deriveTimingConfig accepts integer timing values from env', () => {
         GM_UPDATE_TIMEOUT_LOOPS: '3',
         AGGREGATION_UPDATE_ESTIMATE_MS: '15000',
         GM_UPDATE_POLL_MS: '5000',
+        MODEL_TRANSFER_TIMEOUT_MS: '12000',
+        MODEL_TRANSFER_RETRY_DELAY_MS: '3000',
     });
 
     assert.equal(config.modelSubmissionDeadlineMs, 20000);
     assert.equal(config.gmUpdateTimeoutMs, 10000);
     assert.equal(config.gmUpdateTimeoutLoops, 3);
     assert.equal(config.aggregationUpdateEstimateMs, 15000);
+    assert.equal(config.modelTransferTimeoutMs, 12000);
+    assert.equal(config.modelTransferRetryDelayMs, 3000);
     assert.equal(gmUpdateWaitBudgetMs(config), 30000);
     assert.equal(recommendedGMUpdateBudgetMs(config), 40000);
 });
