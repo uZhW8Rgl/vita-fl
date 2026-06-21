@@ -52,8 +52,6 @@ except ImportError:
         discover_latest,
         fetch_bundle,
     )
-from otel_trace import service_edge
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENT_STATE_DIR = REPO_ROOT / "agent" / "state"
@@ -90,14 +88,13 @@ def deterministic_pipeline(args: argparse.Namespace) -> dict[str, Any]:
 
     if args.source != "contract":
         ipfs_api_url = normalize_ipfs_api_url(args.ipfs_api_url)
-        with service_edge("agent.discover_ipfs_bundle", source="agent", target="ipfs-kubo"):
-            bundle = discover_latest(
-                api_url=ipfs_api_url,
-                root=args.ipfs_root,
-                require_latest_model=args.require_latest_model,
-                pair_window_seconds=args.pair_window_seconds,
-            )
-            download = fetch_bundle(bundle, args.download_dir, api_url=ipfs_api_url)
+        bundle = discover_latest(
+            api_url=ipfs_api_url,
+            root=args.ipfs_root,
+            require_latest_model=args.require_latest_model,
+            pair_window_seconds=args.pair_window_seconds,
+        )
+        download = fetch_bundle(bundle, args.download_dir, api_url=ipfs_api_url)
         verification = {
             "ok": None,
             "skipped": "source=ipfs-scan has no on-chain last aggregator context",
