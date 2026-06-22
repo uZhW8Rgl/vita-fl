@@ -462,13 +462,11 @@ if [ "$ENABLE_DCAP" = "1" ]; then
     fi
     export PCCS_STORAGE=$(jq -re '.AutomataDaoStorage' "$PCCS_DEPLOYMENT_FILE")
     export PCS_DAO=$(jq -re '.AutomataPcsDao' "$PCCS_DEPLOYMENT_FILE")
-    export PCK_DAO=$(jq -re '.AutomataPckDao' "$PCCS_DEPLOYMENT_FILE")
     export ENCLAVE_ID_DAO=$(jq -re '.AutomataEnclaveIdentityDao' "$PCCS_DEPLOYMENT_FILE")
     export FMSPC_TCB_DAO=$(jq -re '.AutomataFmspcTcbDao' "$PCCS_DEPLOYMENT_FILE")
 
     require_address PCCS_STORAGE "$PCCS_STORAGE"
     require_address PCS_DAO "$PCS_DAO"
-    require_address PCK_DAO "$PCK_DAO"
     require_address ENCLAVE_ID_DAO "$ENCLAVE_ID_DAO"
     require_address FMSPC_TCB_DAO "$FMSPC_TCB_DAO"
 

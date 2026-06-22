@@ -47,13 +47,6 @@ contract DeployAutomataDao is DeploymentConfig, P256Configuration {
         console.log("[LOG] AutomataPcsDao deployed at: ", address(pcsDao));
         writeToJson("AutomataPcsDao", address(pcsDao));
 
-        // Deploy PckDao
-        AutomataPckDao pckDao = new AutomataPckDao{salt: PCK_DAO_SALT}(
-            address(pccsStorage), simulateVerify(), address(pcsDao), x509, x509Crl
-        );
-        console.log("[LOG] AutomataPckDao deployed at: ", address(pckDao));
-        writeToJson("AutomataPckDao", address(pckDao));
-
         if (legacy) {
             // Deploy EnclaveIdDao
             AutomataEnclaveIdentityDao enclaveIdDao = new AutomataEnclaveIdentityDao{salt: ENCLAVE_ID_DAO_SALT}(
@@ -75,7 +68,6 @@ contract DeployAutomataDao is DeploymentConfig, P256Configuration {
 
         // grants the DAOs permission to write to storage
         pccsStorage.grantDao(address(pcsDao));
-        pccsStorage.grantDao(address(pckDao));
     }
 
     function deployStorage() public broadcastOwner {
