@@ -9,6 +9,10 @@ interface ITdxV4Attestation {
         returns (bytes memory output);
 }
 
+interface IRtmr3ReplayPolicy {
+    function verifyReplayFromQuote(bytes calldata quote, bytes[] calldata rtmr3EventDigests) external view;
+}
+
 contract DeviceRegistry {
     struct Device {
         bool authorized;
@@ -19,6 +23,7 @@ contract DeviceRegistry {
 
     address public owner;
     ITdxV4Attestation public tdxV4Attestation;
+    IRtmr3ReplayPolicy public rtmr3ReplayPolicy;
     mapping(address => Device) public devices;
     mapping(address => bool) private knownDevice;
     address[] private deviceAddresses;
@@ -44,6 +49,10 @@ contract DeviceRegistry {
     function setTdxV4Attestation(address _tdxV4Attestation) public onlyOwner {
         require(_tdxV4Attestation != address(0), "invalid attestation address");
         tdxV4Attestation = ITdxV4Attestation(_tdxV4Attestation);
+    }
+
+    function setRtmr3ReplayPolicy(address _rtmr3ReplayPolicy) public onlyOwner {
+        rtmr3ReplayPolicy = IRtmr3ReplayPolicy(_rtmr3ReplayPolicy);
     }
 
     function authorizeAddress(address _address) public onlyOwner {
@@ -124,7 +133,12 @@ contract DeviceRegistry {
         bytes memory _public_key
     ) public {
         require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
-        tdxV4Attestation.verifyAndAttestOnChainWithRtmr3Events(quote, rtmr3EventDigests);
+        if (address(rtmr3ReplayPolicy) != address(0)) {
+            tdxV4Attestation.verifyAndAttestOnChain(quote);
+            rtmr3ReplayPolicy.verifyReplayFromQuote(quote, rtmr3EventDigests);
+        } else {
+            tdxV4Attestation.verifyAndAttestOnChainWithRtmr3Events(quote, rtmr3EventDigests);
+        }
         _registerVerifiedDevice(_address, _public_ip, _msg_broker_ip, _public_key);
     }
 

@@ -51,32 +51,11 @@ contract VerifyTDXV4Quote is Script, P256Probe {
             } catch {}
         }
 
-        try AutomataDcapTdxV4Attestation(dcapAddr).verifyAndAttestOnChain(quoteBytes) returns (bytes memory output) {
-            console2.log("TDX V4 verification succeeded");
-            console2.logBytes(output);
-            if (output.length > 0) {
-                console2.log("TCB status:", uint8(output[0]));
-            }
-        } catch {
-            (
-                uint8 stage,
-                uint8 qeTcbStatus,
-                uint8 tcbStatus,
-                uint16 pcesvn,
-                bytes6 fmspc,
-                bytes16 teeTcbSvn,
-                uint16 qeIsvProdId,
-                uint16 qeIsvSvn
-            ) = AutomataDcapTdxV4Attestation(dcapAddr).debugVerify(quoteBytes);
-            console2.log("TDX V4 verification debug stage:", stage);
-            console2.log("QE TCB status:", qeTcbStatus);
-            console2.log("TCB status:", tcbStatus);
-            console2.log("PCE SVN:", pcesvn);
-            console2.logBytes6(fmspc);
-            console2.logBytes16(teeTcbSvn);
-            console2.log("QE ISV PROD ID:", qeIsvProdId);
-            console2.log("QE ISV SVN:", qeIsvSvn);
-            revert("Failed_To_Verify_Quote()");
+        bytes memory output = AutomataDcapTdxV4Attestation(dcapAddr).verifyAndAttestOnChain(quoteBytes);
+        console2.log("TDX V4 verification succeeded");
+        console2.logBytes(output);
+        if (output.length > 0) {
+            console2.log("TCB status:", uint8(output[0]));
         }
     }
 }

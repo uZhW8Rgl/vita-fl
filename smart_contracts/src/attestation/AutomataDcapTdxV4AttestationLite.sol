@@ -22,13 +22,12 @@ import {PCKHelper, X509CertObj} from "@automata-network/on-chain-pccs/helpers/PC
 import {X509CRLHelper} from "@automata-network/on-chain-pccs/helpers/X509CRLHelper.sol";
 import {PcsDao, CA} from "@automata-network/on-chain-pccs/bases/PcsDao.sol";
 import {PEMCertChainBase, PCKCertTCB} from "automata-dcap-v3-attestation/base/PEMCertChainBase.sol";
-import {Sha384} from "./Sha384.sol";
 import {V4Parser} from "./tdx/QuoteV4Auth/V4Parser.sol";
 import {V4Struct} from "./tdx/QuoteV4Auth/V4Struct.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
 import {LibString} from "solady/utils/LibString.sol";
 
-contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable {
+contract AutomataDcapTdxV4AttestationLite is IAttestation, PEMCertChainBase, Ownable {
     using LibString for string;
 
     EnclaveIdentityDao public enclaveIdDao;
@@ -38,12 +37,8 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
     error ZK_Verification_Not_Supported();
 
     bytes public expectedRtmr3;
-    bytes32 public expectedComposeHash;
-    bytes public expectedComposeEventDigest;
 
     event ExpectedRtmr3Updated(bytes expectedRtmr3);
-    event ExpectedComposeHashUpdated(bytes32 expectedComposeHash);
-    event ExpectedComposeEventDigestUpdated(bytes expectedComposeEventDigest);
 
     constructor(
         address enclaveIdDaoAddr,
@@ -72,56 +67,22 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         emit ExpectedRtmr3Updated(parsedQuote.body.rtmr3);
     }
 
-    function setExpectedComposeHash(bytes32 _expectedComposeHash) external onlyOwner {
-        expectedComposeHash = _expectedComposeHash;
-        emit ExpectedComposeHashUpdated(_expectedComposeHash);
-    }
-
-    function setExpectedComposeEventDigest(bytes calldata _expectedComposeEventDigest) external onlyOwner {
-        require(
-            _expectedComposeEventDigest.length == 0 || _expectedComposeEventDigest.length == 48,
-            "expected compose event digest must be 48 bytes"
-        );
-        expectedComposeEventDigest = _expectedComposeEventDigest;
-        emit ExpectedComposeEventDigestUpdated(_expectedComposeEventDigest);
-    }
-
     function verifyAndAttestOnChain(bytes calldata input) external view override returns (bytes memory output) {
         bool verified;
-        (verified, output) = _verify(input, true);
+        (verified, output) = _verify(input);
         if (!verified) {
             revert Failed_To_Verify_Quote();
         }
     }
 
-    function verifyParsedQuoteAndAttestOnChain(V4Struct.ParsedV4Quote calldata parsedQuote)
-        external
-        view
-        returns (bytes memory output)
-    {
-        // Parsed quotes can be prepared off-chain to avoid the most expensive on-chain parsing work.
-        V4Struct.ParsedV4Quote memory parsedQuoteMemory = parsedQuote;
-        V4Parser.validateParsedInput(parsedQuoteMemory);
-        bool verified;
-        (verified, output) = _verifyParsedQuote(parsedQuoteMemory, true);
-        if (!verified) {
-            revert Failed_To_Verify_Quote();
-        }
-    }
-
-    function verifyAndAttestOnChainWithRtmr3Events(bytes calldata input, bytes[] calldata rtmr3EventDigests)
+    function verifyAndAttestOnChainWithRtmr3Events(bytes calldata input, bytes[] calldata)
         external
         view
         returns (bytes memory output)
     {
         bool verified;
-        (verified, output) = _verify(input, false);
+        (verified, output) = _verify(input);
         if (!verified) {
-            revert Failed_To_Verify_Quote();
-        }
-
-        (bool success, V4Struct.ParsedV4Quote memory parsedQuote) = V4Parser.parseInput(bytes(input));
-        if (!success || !_rtmr3EventsPolicySatisfied(parsedQuote.body.rtmr3, rtmr3EventDigests)) {
             revert Failed_To_Verify_Quote();
         }
     }
@@ -135,15 +96,15 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         revert ZK_Verification_Not_Supported();
     }
 
-    function _verify(bytes calldata quote, bool enforceExactRtmr3) private view returns (bool verified, bytes memory output) {
+    function _verify(bytes calldata quote) private view returns (bool verified, bytes memory output) {
         (bool success, V4Struct.ParsedV4Quote memory parsedQuote) = V4Parser.parseInput(bytes(quote));
         if (!success) {
             return (false, output);
         }
-        return _verifyParsedQuote(parsedQuote, enforceExactRtmr3);
+        return _verifyParsedQuote(parsedQuote);
     }
 
-    function _verifyParsedQuote(V4Struct.ParsedV4Quote memory parsedQuote, bool enforceExactRtmr3)
+    function _verifyParsedQuote(V4Struct.ParsedV4Quote memory parsedQuote)
         private
         view
         returns (bool verified, bytes memory output)
@@ -217,7 +178,7 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
             return (false, output);
         }
 
-        if (enforceExactRtmr3 && !_rtmr3PolicySatisfied(parsedQuote.body.rtmr3)) {
+        if (!_rtmr3PolicySatisfied(parsedQuote.body.rtmr3)) {
             return (false, output);
         }
 
@@ -230,33 +191,6 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
             return true;
         }
         return keccak256(rtmr3) == keccak256(expectedRtmr3);
-    }
-
-    function _rtmr3EventsPolicySatisfied(bytes memory quoteRtmr3, bytes[] calldata eventDigests)
-        private
-        view
-        returns (bool)
-    {
-        if (eventDigests.length == 0) {
-            return false;
-        }
-
-        bool foundExpectedComposeEvent = expectedComposeEventDigest.length == 0;
-        bytes memory replayedRtmr = new bytes(48);
-        for (uint256 i = 0; i < eventDigests.length; i++) {
-            if (eventDigests[i].length != 48) {
-                return false;
-            }
-            if (
-                expectedComposeEventDigest.length > 0
-                    && keccak256(eventDigests[i]) == keccak256(expectedComposeEventDigest)
-            ) {
-                foundExpectedComposeEvent = true;
-            }
-            replayedRtmr = Sha384.hashRtmrExtend(replayedRtmr, eventDigests[i]);
-        }
-
-        return foundExpectedComposeEvent && keccak256(replayedRtmr) == keccak256(quoteRtmr3);
     }
 
     function _verifyQeReportWithTdIdentity(

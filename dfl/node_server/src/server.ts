@@ -3,8 +3,8 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, setGlobalModel, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getPreviousAggregatorFromGMStorage, getLastRoundsAggregator, registerDeviceWithTeeQuote, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
-import { getCurrentModel, pinFile, getFileFromIPFS, updateGM } from "./ipfs.js";
+import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, setGlobalModel, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, setContribution, getTopContributor, getContribution, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getPreviousAggregatorFromGMStorage, getLastRoundsAggregator, registerDeviceWithTeeQuote, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
+import { getCurrentModel, pinFile, getFileFromIPFS, publishPendingGmUpdate, readPendingGmUpdateState, restorePendingGmUpdateStateFromLocalBundle, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
 import fs from 'fs/promises';
 import { readFileSync } from 'fs';
@@ -53,6 +53,58 @@ for (const warning of validateTimingConfig(timingConfig)) {
     console.warn("Timing config warning:", warning);
 }
 let missedGMUpdateLoops = 0;
+
+function isTransientSepoliaProviderError(error) {
+    const code = error?.code;
+    const haystacks = [
+        error?.message,
+        error?.cause?.message,
+        error?.cause,
+        error?.data?.message,
+        error?.data,
+        error?.request,
+        error?.stack,
+    ]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+    return code === 100 && haystacks.some((value) => value.includes("returned error"));
+}
+
+function isRecoverablePendingTxError(error) {
+    const haystacks = [
+        error?.message,
+        error?.cause?.message,
+        error?.cause,
+        error?.data?.message,
+        error?.data,
+        error?.request,
+        error?.stack,
+    ]
+        .filter(Boolean)
+        .map((value) => String(value).toLowerCase());
+    return haystacks.some((value) =>
+        value.includes("replacement transaction underpriced")
+        || value.includes("already known")
+        || value.includes("nonce too low")
+        || value.includes("transactionblocktimeouterror")
+        || value.includes("was not mined within")
+        || value.includes("not mined within")
+    );
+}
+
+process.on("uncaughtException", (error) => {
+    if (!isTransientSepoliaProviderError(error) && !isRecoverablePendingTxError(error)) {
+        throw error;
+    }
+    console.warn("Ignoring recoverable Sepolia/provider exception:", error?.message || String(error));
+});
+
+process.on("unhandledRejection", (reason) => {
+    if (!isTransientSepoliaProviderError(reason) && !isRecoverablePendingTxError(reason)) {
+        throw reason;
+    }
+    console.warn("Ignoring recoverable Sepolia/provider rejection:", reason?.message || String(reason));
+});
 
 function sameAddress(left, right) {
     return String(left || '').toLowerCase() === String(right || '').toLowerCase();
@@ -180,6 +232,15 @@ function rsaPublicKeyDerHex() {
 async function localModelPackageHash() {
     const data = await fs.readFile('./data/lm.bin.enc');
     return `0x${crypto.createHash('sha256').update(data).digest('hex')}`;
+}
+
+async function hasLocalModelPackage() {
+    try {
+        await fs.access('./data/lm.bin.enc');
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 async function expectedWorkerAddresses() {
@@ -355,6 +416,10 @@ function isMissingRoundKeyError(error) {
     return message.includes("No wrapped GM round key found");
 }
 
+function bootstrapModelPath() {
+    return "./data/random_start.bin";
+}
+
 async function signFileWithLocalRsaKey(inputPath, outputSignaturePath) {
     if (!rsaPrivateKey.trim()) {
         throw new Error("RSA_PRIVATE_KEY is required to sign the round-0 bootstrap rollover model.");
@@ -371,28 +436,343 @@ async function signFileWithLocalRsaKey(inputPath, outputSignaturePath) {
     await fs.writeFile(outputSignaturePath, signatureBytes);
 }
 
+async function resolveBootstrapSignerPublicKeyDerHex() {
+    if (rsaPublicKey.trim()) {
+        return rsaPublicKeyDerHex();
+    }
+
+    const onchainCandidates = [
+        await getLastRoundsAggregator().catch(() => ""),
+        process.env.INITIAL_GM_SIGNER_ADDRESS || "",
+    ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+
+    for (const candidate of onchainCandidates) {
+        const publicKey = String(await getDevicePublicKey(candidate).catch(() => "") || "").trim();
+        if (publicKey && publicKey !== "0x") {
+            return publicKey;
+        }
+    }
+
+    return "";
+}
+
 async function prepareRoundZeroBootstrapRollover() {
     console.log("Round 0 bootstrap rollover: fetching current encrypted GM bundle.");
-    await getCurrentModel();
+    try {
+        await getCurrentModel();
 
-    const lastSignerAddress = await getLastRoundsAggregator();
-    const lastSignersPubKey = await getDevicePublicKey(lastSignerAddress);
-    const sigOk = await verifyDownloadedGlobalModelSignature({
-        publicKeyDerHex: lastSignersPubKey,
-        modelPath: "./data/gm.bin",
-        sigPath: "./data/gm.bin.sig",
-    });
-    if (!sigOk) {
-        throw new Error("Round-0 bootstrap rollover signature verification failed.");
+        const lastSignersPubKey = await resolveBootstrapSignerPublicKeyDerHex();
+        const sigOk = await verifyDownloadedGlobalModelSignature({
+            publicKeyDerHex: lastSignersPubKey,
+            modelPath: "./data/gm.bin",
+            sigPath: "./data/gm.bin.sig",
+        });
+        if (!sigOk) {
+            throw new Error("Round-0 bootstrap rollover signature verification failed.");
+        }
+    } catch (error) {
+        if (!isMissingRoundKeyError(error)) {
+            throw error;
+        }
+        console.warn("Round 0 bootstrap rollover detected a legacy GM bundle without the mandatory primary-aggregator key. Rebuilding the update artifacts from the local bootstrap model snapshot.");
     }
 
     await fs.mkdir(resultsIIDDir, { recursive: true });
-    await fs.copyFile("./data/gm.bin", path.join(resultsIIDDir, "aggregated.bin"));
+    const sourceModelPath = await fs.access("./data/gm.bin").then(() => "./data/gm.bin").catch(() => bootstrapModelPath());
+    await fs.copyFile(sourceModelPath, path.join(resultsIIDDir, "aggregated.bin"));
     await signFileWithLocalRsaKey(
         path.join(resultsIIDDir, "aggregated.bin"),
         path.join(resultsIIDDir, "aggregated.bin.sig"),
     );
     console.log("Round 0 bootstrap rollover prepared aggregated.bin + aggregated.bin.sig for encrypted republish.");
+}
+
+async function ensureUpdateArtifactsForCurrentRound() {
+    const currentRound = Number(await getRound());
+    const aggregatedPath = path.join(resultsIIDDir, "aggregated.bin");
+    const aggregatedSigPath = path.join(resultsIIDDir, "aggregated.bin.sig");
+    const encryptedBundlePath = path.join(resultsIIDDir, "aggregated.bundle.enc");
+    const encryptedBundleSigPath = path.join(resultsIIDDir, "aggregated.bundle.enc.sig");
+    const encryptedBundleKeyPath = path.join(resultsIIDDir, "aggregated.bundle.keys.json");
+    const hasArtifacts = await fs.access(aggregatedPath).then(() => fs.access(aggregatedSigPath)).then(() => true).catch(() => false);
+    const hasEncryptedBundleArtifacts = await fs.access(encryptedBundlePath)
+        .then(() => fs.access(encryptedBundleSigPath))
+        .then(() => fs.access(encryptedBundleKeyPath))
+        .then(() => true)
+        .catch(() => false);
+    const pendingUpdateState = readPendingGmUpdateState();
+    if (pendingUpdateState?.modelCid && pendingUpdateState?.sigCid && pendingUpdateState?.keyBundleCid) {
+        const [latestModelCid, latestSigCid, latestKeyBundleCid] = await Promise.all([
+            getCurrentGM().catch(() => ""),
+            getCurrentGMSignature().catch(() => ""),
+            getCurrentGMKeyBundle().catch(() => ""),
+        ]);
+        if (
+            String(latestModelCid || "") === String(pendingUpdateState.modelCid)
+            && String(latestSigCid || "") === String(pendingUpdateState.sigCid)
+            && String(latestKeyBundleCid || "") === String(pendingUpdateState.keyBundleCid)
+        ) {
+            console.log(`Round ${currentRound} resumed in UPDATING after the GM publish was already finalized on-chain. Continuing with round finalization only.`);
+            return "published_resume";
+        }
+        console.log(`Round ${currentRound} resumed in UPDATING with a pending GM publish marker. Reusing the existing encrypted bundle CIDs.`);
+        return "pending_publish_resume";
+    }
+    if (hasArtifacts) {
+        return "ready";
+    }
+    if (currentRound > 0 && hasEncryptedBundleArtifacts) {
+        const [localModelCid, localSigCid, localKeyBundleCid, latestModelCid, latestSigCid, latestKeyBundleCid] = await Promise.all([
+            pinFile(encryptedBundlePath),
+            pinFile(encryptedBundleSigPath),
+            pinFile(encryptedBundleKeyPath),
+            getCurrentGM().catch(() => ""),
+            getCurrentGMSignature().catch(() => ""),
+            getCurrentGMKeyBundle().catch(() => ""),
+        ]);
+        if (
+            String(latestModelCid || "") === String(localModelCid || "")
+            && String(latestSigCid || "") === String(localSigCid || "")
+            && String(latestKeyBundleCid || "") === String(localKeyBundleCid || "")
+        ) {
+            console.log(`Round ${currentRound} resumed in UPDATING with bundle artifacts that already match the on-chain CIDs. Continuing with round finalization only.`);
+            return "published_resume";
+        }
+        await restorePendingGmUpdateStateFromLocalBundle();
+        console.log(`Round ${currentRound} resumed in UPDATING with local encrypted bundle artifacts. Reusing their pinned CIDs for publish retry.`);
+        return "pending_publish_resume";
+    }
+    if (currentRound > 0) {
+        throw new Error(`Round ${currentRound} update artifacts are missing after restart and no finalized pending GM update marker was found.`);
+    }
+    console.log("Round 0 update artifacts missing after restart. Rebuilding them from the encrypted bootstrap model.");
+    await prepareRoundZeroBootstrapRollover();
+    return "ready";
+}
+
+async function ensureAggregatingStateWithReceivedModels(expectedModels) {
+    const currentState = await getCurrentState();
+    const onchainState = String(currentState?.[0] || "");
+    const presentModels = await countAuthorizedModelFiles();
+    if (onchainState === "AGGREGATING" && presentModels > 0) {
+        console.log(`On-chain state is already AGGREGATING and ${presentModels}/${expectedModels} authorized model file(s) are present. Resuming aggregation directly.`);
+        return true;
+    }
+    return false;
+}
+
+async function aggregateCurrentRoundAsAggregator() {
+    currentState = "AGGREGATING";
+    console.log("I am the aggregator");
+    console.log("Starting the aggregation process ...");
+    await runtimeEvent("aggregator.aggregation.started", { role: "aggregator" });
+    try {
+        const currentRound = Number(await getRound());
+        const expected = Number(process.env.CLIENT_LIMIT || 1);
+        const present = await waitForModels(expected, {
+            dir: srcModelsDir,
+            pollMs: 2000,
+            timeoutMs: 1,
+        });
+        console.log(`Models present before aggregation: ${present}/${expected}`);
+
+        if (aggregatorServerRunning) {
+            console.log("Stopping aggregator server before aggregation...");
+            await stopAggregatorServer();
+        }
+
+        const count = await stageAggregation();
+        console.log(`Staged ${count} model file(s) for aggregation.`);
+        await runtimeEvent("aggregator.models.staged", {
+            role: "aggregator",
+            model_count: count,
+            expected_models: expected,
+        });
+        if (count <= 0) {
+            if (currentRound === 0) {
+                console.log("Round 0 has no worker submissions. Re-publishing the verified bootstrap model for the next encrypted round.");
+                await runOperation("aggregator.round0.bootstrap_rollover", {
+                    role: "aggregator",
+                    round: currentRound,
+                }, () => prepareRoundZeroBootstrapRollover());
+                await setCurrentState("UPDATING");
+                return;
+            }
+            console.log("No models to aggregate (count=0). Keeping round open and waiting for workers.");
+            await sleep(5000);
+            return;
+        }
+        const missingWorkers = currentRound === 0 ? [] : await getMissingAuthorizedWorkers();
+        if (missingWorkers.length > 0) {
+            console.log("Penalizing missing model submissions:", missingWorkers);
+            await penalizeContribution(missingWorkers, "missed_model_deadline");
+            await runtimeEvent("aggregator.penalty.applied", {
+                role: "aggregator",
+                reason: "missed_model_deadline",
+                count: missingWorkers.length,
+            });
+        } else if (currentRound === 0) {
+            console.log("Skipping missed-deadline penalties in round 0.");
+        }
+        if (count < expected) {
+            console.log(`Aggregating with ${count}/${expected} models.`);
+        }
+
+        const globalModelRound = currentRound + 1;
+        const participantCount = Number(process.env.WORKER_COUNT || expected + 1);
+        const aggregateResult = await runOperation("aggregator.aggregation", {
+            role: "aggregator",
+            model_count: count,
+            expected_models: expected,
+        }, () => callPythonService('/aggregate', {
+            num_files: Number(count),
+            round_id: globalModelRound,
+            source_round: currentRound,
+            expected_models: expected,
+            participant_count: participantCount,
+        }, { timeoutMs: 3 * 60 * 1000 }));
+        const metrics = aggregateResult?.metrics;
+        if (metrics && typeof metrics === "object") {
+            console.log("Global model evaluation metrics:", metrics);
+            await runtimeEvent("aggregator.global_model_evaluation", {
+                role: "aggregator",
+                global_model_round: Number(metrics.round ?? globalModelRound),
+                source_round: currentRound,
+                participant_count: Number(metrics.participant_count ?? participantCount),
+                aggregated_model_count: Number(metrics.aggregated_model_count ?? count),
+                expected_models: expected,
+                accuracy_percent: Number(metrics.accuracy_percent ?? 0),
+                loss: Number(metrics.loss ?? 0),
+                macro_f1: Number(metrics.macro_f1 ?? 0),
+                macro_auroc: Number(metrics.macro_auroc ?? 0),
+            });
+        }
+    } catch (e) {
+        console.error("Error during aggregation:", e);
+        await sleep(2000);
+        return;
+    }
+    console.log("Aggregation complete.");
+    await runtimeEvent("aggregator.aggregation.finished", { role: "aggregator" });
+    try {
+        await setCurrentState("UPDATING");
+    } catch (error) {
+        const latestState = await getCurrentState().catch(() => null);
+        if (!sameAddress(latestState?.[1], process.env.ACCOUNT_ADDRESS)) {
+            throw error;
+        }
+        console.warn("Proceeding with the update phase despite delayed UPDATING state because aggregation has already completed locally.");
+        await updateCurrentRoundAsAggregator();
+    }
+}
+
+async function updateCurrentRoundAsAggregator() {
+    currentState = "UPDATING";
+    console.log("I am the aggregator");
+    console.log("Starting the updating process ...");
+    await runtimeEvent("aggregator.update.started", { role: "aggregator" });
+    let updatePreparation = "ready";
+    try {
+        updatePreparation = await runOperation(
+            "aggregator.update.prepare_artifacts",
+            { role: "aggregator" },
+            () => ensureUpdateArtifactsForCurrentRound(),
+        );
+        if (updatePreparation === "ready") {
+            await runOperation("aggregator.update_global_model", { role: "aggregator" }, () => updateGM());
+        } else if (updatePreparation === "pending_publish_resume") {
+            await runOperation("aggregator.update_global_model.resume_publish", { role: "aggregator" }, () => publishPendingGmUpdate());
+        } else {
+            console.log("Skipping duplicate GM update because the publish step is already finalized on-chain.");
+        }
+    } catch (e) {
+        console.error("Error during updating the global model:", e);
+        return;
+    }
+    console.log("Updating complete.");
+    await runtimeEvent("aggregator.update.finished", { role: "aggregator" });
+    console.log("Current Global Model:", await getCurrentGM());
+    await stageCleaning();
+    console.log("Passed cleaning");
+    await incrementRound();
+    const nextRound = Number(await getRound());
+    console.log("Rounds left: ", (targetRound() - nextRound));
+    if (nextRound >= targetRound()) {
+        console.log(`Reached configured final round ${targetRound()}. Skipping next aggregator selection and stopping the worker loop.`);
+        await runtimeEvent("training.completed", {
+            role: "aggregator",
+            final_round: nextRound,
+        });
+        return;
+    }
+    try {
+        await runOperation("aggregator.selection", { role: "aggregator" }, () => triggerAggregatorSelection());
+        console.log("Triggered new aggregator selection");
+        await runtimeEvent("aggregator.selection.triggered", { role: "aggregator" });
+    } catch (e) {
+        console.error("Aggregator selection failed; falling back to current aggregator for next round:", e);
+        await runtimeEvent("aggregator.selection.failed", {
+            role: "aggregator",
+            error: e?.message || String(e),
+        });
+        await setCurrentState("TRAINING");
+        console.log("Set state to TRAINING for next round with the current aggregator");
+        await sleep(2000);
+    }
+}
+
+async function finalizeWorkerSubmission(currentRound, aggregatorAddress) {
+    const ownAddress = String(process.env.ACCOUNT_ADDRESS || "");
+    if (await hasSubmittedModel(currentRound, ownAddress)) {
+        console.log(`Model submission already recorded for round ${currentRound}; skipping duplicate submit transaction.`);
+    } else {
+        await runOperation("worker.submit_model", {
+            role: "worker",
+            aggregator: String(aggregatorAddress),
+        }, async () => submitModel(await localModelPackageHash()));
+    }
+
+    const contribution = Number(await getContribution(ownAddress).catch(() => 0));
+    if (contribution > 0) {
+        console.log(`Contribution already recorded for ${ownAddress}; skipping duplicate contribution transaction.`);
+        return;
+    }
+
+    await runOperation("worker.set_contribution", {
+        role: "worker",
+        aggregator: String(aggregatorAddress),
+    }, () => setContribution([ownAddress]));
+}
+
+async function resendSubmittedModelToAggregator(currentRound, aggregatorAddress) {
+    if (!await hasLocalModelPackage()) {
+        console.warn(`Model submission is already on-chain for round ${currentRound}, but ./data/lm.bin.enc is missing. Cannot re-send the local model package to the aggregator.`);
+        return false;
+    }
+
+    console.log(`Model submission is already on-chain for round ${currentRound}. Re-sending the existing local model package to aggregator ${aggregatorAddress} while the round is still in TRAINING.`);
+    await runtimeEvent("worker.model_transfer.resend_started", {
+        role: "worker",
+        aggregator: String(aggregatorAddress),
+        round: currentRound,
+    });
+    await runOperation("worker.model_transfer.resend", {
+        role: "worker",
+        aggregator: String(aggregatorAddress),
+        round: currentRound,
+    }, () => callPythonService('/client', {
+        server_ip: String(aggregatorAddress),
+        device_id: String(process.env.ACCOUNT_ADDRESS),
+        timeout_ms: modelTransferTimeoutMs,
+    }, { timeoutMs: modelTransferTimeoutMs + 5000 }));
+    await runtimeEvent("worker.model_transfer.resend_finished", {
+        role: "worker",
+        aggregator: String(aggregatorAddress),
+        round: currentRound,
+    });
+    return true;
 }
 
 const stateMachine = async () => {
@@ -446,7 +826,14 @@ const stateMachine = async () => {
                     console.log("Round %d.", currentRound);
                     if (currentRound === 0) {
                         console.log("Round 0 bootstrap phase: skipping worker submission wait and proceeding directly to aggregation.");
-                        await setCurrentState("AGGREGATING");
+                        try {
+                            await setCurrentState("AGGREGATING");
+                        } catch (error) {
+                            const resumedAggregation = await ensureAggregatingStateWithReceivedModels(0);
+                            if (!resumedAggregation) {
+                                throw error;
+                            }
+                        }
                         continue;
                     }
                     console.log("Starting the zerompq server ...");
@@ -483,7 +870,17 @@ const stateMachine = async () => {
                             await sleep(5000);
                             continue;
                         }
-                        await setCurrentState("AGGREGATING");
+                        try {
+                            await setCurrentState("AGGREGATING");
+                        } catch (error) {
+                            const resumedAggregation = await ensureAggregatingStateWithReceivedModels(expected);
+                            if (!resumedAggregation && present < expected) {
+                                throw error;
+                            }
+                            console.warn("Proceeding with aggregation despite delayed AGGREGATING state because the expected model files are already present locally.");
+                            await aggregateCurrentRoundAsAggregator();
+                            continue;
+                        }
                         continue;
                     } catch (e) {
                         console.error("Error during starting the aggregator server:", e);
@@ -495,6 +892,11 @@ const stateMachine = async () => {
                     const currentRound = Number(await getRound());
                     console.log("Round %d.", currentRound);
                     if (await hasSubmittedModel(currentRound, process.env.ACCOUNT_ADDRESS)) {
+                        try {
+                            await resendSubmittedModelToAggregator(currentRound, state["1"]);
+                        } catch (resendError) {
+                            console.warn(`Re-send of already submitted model for round ${currentRound} failed:`, resendError);
+                        }
                         await waitForSubmittedRoundToAdvance(currentRound);
                         await sleep(2000);
                         continue;
@@ -584,21 +986,39 @@ const stateMachine = async () => {
                             device_id: String(process.env.ACCOUNT_ADDRESS),
                             timeout_ms: modelTransferTimeoutMs,
                         }, { timeoutMs: modelTransferTimeoutMs + 5000 }));
-                        if (await hasSubmittedModel(currentRound, process.env.ACCOUNT_ADDRESS)) {
-                            console.log(`Model submission already recorded for round ${currentRound}; skipping duplicate submit/contribution transactions.`);
-                        } else {
-                            await runOperation("worker.submit_model", {
-                                role: "worker",
-                                aggregator: String(state["1"]),
-                            }, async () => submitModel(await localModelPackageHash()));
-                            await runOperation("worker.set_contribution", {
-                                role: "worker",
-                                aggregator: String(state["1"]),
-                            }, () => setContribution([process.env.ACCOUNT_ADDRESS]));
-                        }
+                        await finalizeWorkerSubmission(currentRound, state["1"]);
                         await runtimeEvent("worker.model_transfer.finished", { role: "worker", aggregator: String(state["1"]) });
                     } catch (e) {
                         console.error("Error during model transfer:", e);
+                        const latestTransferState = await getCurrentState().catch(() => null);
+                        const latestTransferSystemState = String(latestTransferState?.[0] || "");
+                        if (latestTransferSystemState === "AGGREGATING") {
+                            console.warn("Aggregator has already moved to AGGREGATING after the client transfer attempt. Treating the model delivery as successful and finalizing on-chain submission.");
+                            try {
+                                await finalizeWorkerSubmission(currentRound, state["1"]);
+                                await runtimeEvent("worker.model_transfer.recovered_after_timeout", {
+                                    role: "worker",
+                                    aggregator: String(state["1"]),
+                                    round: currentRound,
+                                });
+                                await waitForSubmittedRoundToAdvance(currentRound);
+                                await sleep(2000);
+                                continue;
+                            } catch (recoveryError) {
+                                console.error("Error during model transfer recovery:", recoveryError);
+                            }
+                        }
+                        if (await hasSubmittedModel(currentRound, process.env.ACCOUNT_ADDRESS).catch(() => false)) {
+                            console.warn(`Model submission for round ${currentRound} is already recorded on-chain despite the transfer error. Continuing without retraining.`);
+                            await runtimeEvent("worker.model_transfer.recovered", {
+                                role: "worker",
+                                aggregator: String(state["1"]),
+                                round: currentRound,
+                            });
+                            await waitForSubmittedRoundToAdvance(currentRound);
+                            await sleep(2000);
+                            continue;
+                        }
                         await runtimeEvent("worker.model_transfer.failed", {
                             role: "worker",
                             aggregator: String(state["1"]),
@@ -638,146 +1058,14 @@ const stateMachine = async () => {
 
             case "AGGREGATING":
                 if (sameAddress(state[1], process.env.ACCOUNT_ADDRESS)) {
-                    currentState = "AGGREGATING";
-                    console.log("I am the aggregator");
-                    console.log("Starting the aggregation process ...");
-                    await runtimeEvent("aggregator.aggregation.started", { role: "aggregator" });
-                    try {
-                        const currentRound = Number(await getRound());
-                        const expected = Number(process.env.CLIENT_LIMIT || 1);
-                        const present = await waitForModels(expected, {
-                            dir: srcModelsDir,
-                            pollMs: 2000,
-                            timeoutMs: 1,
-                        });
-                        console.log(`Models present before aggregation: ${present}/${expected}`);
-
-                        if (aggregatorServerRunning) {
-                            console.log("Stopping aggregator server before aggregation...");
-                            await stopAggregatorServer();
-                        }
-
-                        const count = await stageAggregation();
-                        console.log(`Staged ${count} model file(s) for aggregation.`);
-                        await runtimeEvent("aggregator.models.staged", {
-                            role: "aggregator",
-                            model_count: count,
-                            expected_models: expected,
-                        });
-                        if (count <= 0) {
-                            if (currentRound === 0) {
-                                console.log("Round 0 has no worker submissions. Re-publishing the verified bootstrap model for the next encrypted round.");
-                                await runOperation("aggregator.round0.bootstrap_rollover", {
-                                    role: "aggregator",
-                                    round: currentRound,
-                                }, () => prepareRoundZeroBootstrapRollover());
-                                await setCurrentState("UPDATING");
-                                continue;
-                            }
-                            console.log("No models to aggregate (count=0). Keeping round open and waiting for workers.");
-                            await sleep(5000);
-                            continue;
-                        }
-                        const missingWorkers = currentRound === 0 ? [] : await getMissingAuthorizedWorkers();
-                        if (missingWorkers.length > 0) {
-                            console.log("Penalizing missing model submissions:", missingWorkers);
-                            await penalizeContribution(missingWorkers, "missed_model_deadline");
-                            await runtimeEvent("aggregator.penalty.applied", {
-                                role: "aggregator",
-                                reason: "missed_model_deadline",
-                                count: missingWorkers.length,
-                            });
-                        } else if (currentRound === 0) {
-                            console.log("Skipping missed-deadline penalties in round 0.");
-                        }
-                        if (count < expected) {
-                            console.log(`Aggregating with ${count}/${expected} models.`);
-                        }
-
-                        const globalModelRound = currentRound + 1;
-                        const participantCount = Number(process.env.WORKER_COUNT || expected + 1);
-                        const aggregateResult = await runOperation("aggregator.aggregation", {
-                            role: "aggregator",
-                            model_count: count,
-                            expected_models: expected,
-                        }, () => callPythonService('/aggregate', {
-                            num_files: Number(count),
-                            round_id: globalModelRound,
-                            source_round: currentRound,
-                            expected_models: expected,
-                            participant_count: participantCount,
-                        }, { timeoutMs: 3 * 60 * 1000 }));
-                        const metrics = aggregateResult?.metrics;
-                        if (metrics && typeof metrics === "object") {
-                            console.log("Global model evaluation metrics:", metrics);
-                            await runtimeEvent("aggregator.global_model_evaluation", {
-                                role: "aggregator",
-                                global_model_round: Number(metrics.round ?? globalModelRound),
-                                source_round: currentRound,
-                                participant_count: Number(metrics.participant_count ?? participantCount),
-                                aggregated_model_count: Number(metrics.aggregated_model_count ?? count),
-                                expected_models: expected,
-                                accuracy_percent: Number(metrics.accuracy_percent ?? 0),
-                                loss: Number(metrics.loss ?? 0),
-                                macro_f1: Number(metrics.macro_f1 ?? 0),
-                                macro_auroc: Number(metrics.macro_auroc ?? 0),
-                            });
-                        }
-                    } catch (e) {
-                        console.error("Error during aggregation:", e);
-                        await sleep(2000);
-                        continue;
-                    }
-                    console.log("Aggregation complete.");
-                    await runtimeEvent("aggregator.aggregation.finished", { role: "aggregator" });
-                    await setCurrentState("UPDATING");
+                    await aggregateCurrentRoundAsAggregator();
                     continue;
                 }
                 break;
 
             case "UPDATING":
                 if (sameAddress(state[1], process.env.ACCOUNT_ADDRESS)) {
-                    currentState = "UPDATING";
-                    console.log("I am the aggregator");
-                    console.log("Starting the updating process ...");
-                    await runtimeEvent("aggregator.update.started", { role: "aggregator" });
-                    try {
-                        await runOperation("aggregator.update_global_model", { role: "aggregator" }, () => updateGM());
-                    } catch (e) {
-                        console.error("Error during updating the global model:", e);
-                        return;
-                    }
-                    console.log("Updating complete.");
-                    await runtimeEvent("aggregator.update.finished", { role: "aggregator" });
-                    console.log("Current Global Model:", await getCurrentGM());
-                    await stageCleaning();
-                    console.log("Passed cleaning");
-                    await incrementRound();
-                    const nextRound = Number(await getRound());
-                    console.log("Rounds left: ", (targetRound() - nextRound));
-                    if (nextRound >= targetRound()) {
-                        console.log(`Reached configured final round ${targetRound()}. Skipping next aggregator selection and stopping the worker loop.`);
-                        await runtimeEvent("training.completed", {
-                            role: "aggregator",
-                            final_round: nextRound,
-                        });
-                        return;
-                    }
-                    try {
-                        await runOperation("aggregator.selection", { role: "aggregator" }, () => triggerAggregatorSelection());
-                        console.log("Triggered new aggregator selection");
-                        await runtimeEvent("aggregator.selection.triggered", { role: "aggregator" });
-                    } catch (e) {
-                        console.error("Aggregator selection failed; falling back to current aggregator for next round:", e);
-                        await runtimeEvent("aggregator.selection.failed", {
-                            role: "aggregator",
-                            error: e?.message || String(e),
-                        });
-                        await setCurrentState("TRAINING");
-                        console.log("Set state to TRAINING for next round with the current aggregator");
-                        await sleep(2000);
-                    }
-
+                    await updateCurrentRoundAsAggregator();
                     continue;
                 }
                 //return;

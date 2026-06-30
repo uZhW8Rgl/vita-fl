@@ -62,9 +62,7 @@ contract AggregatorSelection {
 
     constructor() {
         system_state = "TRAINING";
-        current_aggregator = address(
-            0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 // First Anvil Address
-        );
+        current_aggregator = msg.sender;
         broker_endpoint = "test_endpoint";
         time_to_aggregate = 0;
         time_to_select = 0;

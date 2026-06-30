@@ -236,6 +236,32 @@
   },
   {
     "type": "function",
+    "name": "rtmr3ReplayPolicy",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IRtmr3ReplayPolicy"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setRtmr3ReplayPolicy",
+    "inputs": [
+      {
+        "name": "_rtmr3ReplayPolicy",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setTdxV4Attestation",
     "inputs": [
       {

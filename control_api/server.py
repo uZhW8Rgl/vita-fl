@@ -84,6 +84,25 @@ def _safe_int(value: str | None, default: int) -> int:
         return default
 
 
+def blockchain_provider(env_values: dict[str, str]) -> str:
+    return (env_values.get("BLOCKCHAIN_PROVIDER") or "anvil").strip().lower() or "anvil"
+
+
+def uses_local_chain(env_values: dict[str, str]) -> bool:
+    return blockchain_provider(env_values) == "anvil"
+
+
+def uses_local_ipfs(env_values: dict[str, str]) -> bool:
+    return (env_values.get("IPFS_PROVIDER") or "kubo").strip().lower() == "kubo"
+
+
+def feature_enabled(env_values: dict[str, str], key: str, default: bool = True) -> bool:
+    raw = env_values.get(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
 def _available_worker_services(compose_file: Path = TRAINING_COMPOSE_FILE) -> list[str]:
     if not compose_file.exists():
         return []
@@ -642,6 +661,8 @@ def _post_json(url: str, payload: dict[str, Any], timeout: float = 2.0) -> dict[
 
 
 def probe_anvil_ready(env_values: dict[str, str]) -> bool:
+    if not uses_local_chain(env_values):
+        return True
     rpc_url = env_values.get("RPC_URL", "http://anvil:8545").strip()
     payload = {"jsonrpc": "2.0", "method": "eth_chainId", "params": [], "id": 1}
     response = _post_json(rpc_url, payload)
@@ -649,6 +670,8 @@ def probe_anvil_ready(env_values: dict[str, str]) -> bool:
 
 
 def probe_ipfs_ready(env_values: dict[str, str]) -> bool:
+    if not uses_local_ipfs(env_values):
+        return True
     kubo_api = env_values.get("KUBO_API", "http://ipfs:5001").strip()
     try:
         request = urllib.request.Request(f"{kubo_api}/api/v0/version", data=b"", method="POST")
@@ -843,6 +866,10 @@ async def wait_for_service_ready(service_name: str, timeout_seconds: int) -> dic
 
 async def collect_runtime_status() -> dict[str, Any]:
     env_values = read_env_values()
+    local_chain = uses_local_chain(env_values)
+    local_ipfs = uses_local_ipfs(env_values)
+    agent_enabled = feature_enabled(env_values, "ENABLE_AGENT", True)
+    zk_enabled = feature_enabled(env_values, "ENABLE_ZK_INFERENCE", True)
     worker_services = _available_worker_services()
     static_services = ["smart-contracts", "anvil", "ipfs", "agent", "zk-inference"]
     service_state_map, json_available = await compose_ps_state_map([*static_services, *worker_services])
@@ -864,16 +891,22 @@ async def collect_runtime_status() -> dict[str, Any]:
 
     anvil_ready = probe_anvil_ready(env_values)
     ipfs_ready = probe_ipfs_ready(env_values)
-    chain_contracts_ready = probe_contract_deployment(env_values) if anvil_ready else False
+    chain_contracts_ready = probe_contract_deployment(env_values)
     current_round = read_chain_round(env_values) if chain_contracts_ready else None
     current_aggregator = read_current_aggregator(env_values) if chain_contracts_ready else {"address": None, "vm": None}
 
     contract_completed_successfully = contract_state["status"] == "exited" and contract_state["exit_code"] == 0
     contract_failed = contract_state["status"] == "exited" and contract_state["exit_code"] not in {None, 0}
-    contract_initialized = contract_completed_successfully
+    contract_initialized = contract_completed_successfully or (
+        chain_contracts_ready
+        and current_round is not None
+        and bool(current_aggregator.get("address"))
+    )
     contract_running = contract_state["running"]
     training_started = contract_initialized and bool(
-        running_workers or agent_state["running"] or zk_inference_state["running"]
+        running_workers
+        or (agent_enabled and agent_state["running"])
+        or (zk_enabled and zk_inference_state["running"])
     )
 
     return {
@@ -881,7 +914,8 @@ async def collect_runtime_status() -> dict[str, Any]:
         "contract_running": contract_running,
         "training_started": training_started,
         "agent_running": agent_state["running"],
-        "base_runtime_ready": (anvil_state["running"] or anvil_ready) and (ipfs_state["running"] or ipfs_ready),
+        "base_runtime_ready": (not local_chain or anvil_state["running"] or anvil_ready)
+        and (not local_ipfs or ipfs_state["running"] or ipfs_ready),
         "chain_contracts_ready": chain_contracts_ready,
         "contract_completed_successfully": contract_completed_successfully,
         "contract_failed": contract_failed,
@@ -1013,18 +1047,39 @@ async def reset_grafana_view_values() -> list[dict[str, Any]]:
 
 
 async def initialize_contract_stack() -> dict[str, Any]:
+    env_values = read_env_values()
+    local_chain = uses_local_chain(env_values)
+    local_ipfs = uses_local_ipfs(env_values)
+    agent_enabled = feature_enabled(env_values, "ENABLE_AGENT", True)
+    zk_enabled = feature_enabled(env_values, "ENABLE_ZK_INFERENCE", True)
     worker_services = _available_worker_services()
-    reset_targets = ["agent", "zk-inference", *worker_services, "smart-contracts", "anvil", "ipfs"]
+    reset_targets = [*worker_services, "smart-contracts"]
+    if agent_enabled:
+        reset_targets.append("agent")
+    if zk_enabled:
+        reset_targets.append("zk-inference")
+    if local_chain:
+        reset_targets.append("anvil")
+    if local_ipfs:
+        reset_targets.append("ipfs")
     logs = await reset_services(reset_targets)
-    logs.append(
-        await run_subprocess(
-            compose_command("up", "--build", "-d", "anvil", "ipfs"),
-            cwd=WORKSPACE_ROOT,
-            check=True,
+    local_base_services: list[str] = []
+    if local_chain:
+        local_base_services.append("anvil")
+    if local_ipfs:
+        local_base_services.append("ipfs")
+    if local_base_services:
+        logs.append(
+            await run_subprocess(
+                compose_command("up", "--build", "-d", *local_base_services),
+                cwd=WORKSPACE_ROOT,
+                check=True,
+            )
         )
-    )
-    await wait_for_service_ready("anvil", 120)
-    await wait_for_service_ready("ipfs", 120)
+    if local_chain:
+        await wait_for_service_ready("anvil", 120)
+    if local_ipfs:
+        await wait_for_service_ready("ipfs", 120)
     logs.append(
         await run_subprocess(
             compose_command("up", "--build", "-d", "smart-contracts"),
@@ -1052,22 +1107,32 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
     selected_workers = available_workers[: config["worker_count"]]
     inactive_workers = available_workers[config["worker_count"] :]
 
-    logs = await reset_services(["agent", "zk-inference", *available_workers])
+    env_values = read_env_values()
+    agent_enabled = feature_enabled(env_values, "ENABLE_AGENT", True)
+    zk_enabled = feature_enabled(env_values, "ENABLE_ZK_INFERENCE", True)
+    reset_services_list = [*available_workers]
+    if agent_enabled:
+        reset_services_list.append("agent")
+    if zk_enabled:
+        reset_services_list.append("zk-inference")
+    logs = await reset_services(reset_services_list)
     logs.extend(await reset_observability_state())
-    base_services = [
-        "anvil",
-        "ipfs",
-    ]
+    base_services: list[str] = []
+    if uses_local_chain(env_values):
+        base_services.append("anvil")
+    if uses_local_ipfs(env_values):
+        base_services.append("ipfs")
     if use_local_ollama():
         base_services.append("ollama")
 
-    logs.append(
-        await run_subprocess(
-            compose_command("up", "-d", *base_services),
-            cwd=WORKSPACE_ROOT,
-            check=True,
+    if base_services:
+        logs.append(
+            await run_subprocess(
+                compose_command("up", "-d", *base_services),
+                cwd=WORKSPACE_ROOT,
+                check=True,
+            )
         )
-    )
     if use_local_ollama():
         logs.append(
             await run_subprocess(
@@ -1080,18 +1145,19 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
                 check=True,
             )
         )
-    logs.append(
-        await run_subprocess(
-            compose_command(
-                "up",
-                "--no-deps",
-                "-d",
-                "zk-inference",
-            ),
-            cwd=WORKSPACE_ROOT,
-            check=True,
+    if zk_enabled:
+        logs.append(
+            await run_subprocess(
+                compose_command(
+                    "up",
+                    "--no-deps",
+                    "-d",
+                    "zk-inference",
+                ),
+                cwd=WORKSPACE_ROOT,
+                check=True,
+            )
         )
-    )
     logs.append(
         await run_subprocess(
             compose_command(
@@ -1105,19 +1171,20 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
             check=True,
         )
     )
-    logs.append(
-        await run_subprocess(
-            compose_command(
-                "up",
-                "--build",
-                "--no-deps",
-                "-d",
-                "agent",
-            ),
-            cwd=WORKSPACE_ROOT,
-            check=True,
+    if agent_enabled:
+        logs.append(
+            await run_subprocess(
+                compose_command(
+                    "up",
+                    "--build",
+                    "--no-deps",
+                    "-d",
+                    "agent",
+                ),
+                cwd=WORKSPACE_ROOT,
+                check=True,
+            )
         )
-    )
     if inactive_workers:
         logs.extend(await reset_services(inactive_workers))
 
@@ -1130,37 +1197,47 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
 
 
 async def reset_training_services() -> dict[str, Any]:
+    env_values = read_env_values()
+    local_chain = uses_local_chain(env_values)
+    local_ipfs = uses_local_ipfs(env_values)
+    agent_enabled = feature_enabled(env_values, "ENABLE_AGENT", True)
+    zk_enabled = feature_enabled(env_values, "ENABLE_ZK_INFERENCE", True)
     worker_services = _available_worker_services()
     reset_targets = [
-        "agent",
-        "zk-inference",
         *worker_services,
         "smart-contracts",
-        "anvil",
-        "ipfs",
         *OBSERVABILITY_SERVICES,
         "ollama-init",
         "ollama",
     ]
+    if agent_enabled:
+        reset_targets.append("agent")
+    if zk_enabled:
+        reset_targets.append("zk-inference")
+    if local_chain:
+        reset_targets.append("anvil")
+    if local_ipfs:
+        reset_targets.append("ipfs")
     logs = await reset_services(reset_targets)
     logs.extend(await reset_observability_volumes())
     logs.extend(await clear_evaluation_artifacts())
+    startup_services = [*OBSERVABILITY_SERVICES]
+    if local_chain:
+        startup_services.append("anvil")
+    if local_ipfs:
+        startup_services.append("ipfs")
     logs.append(
         await run_subprocess(
-            compose_command(
-                "up",
-                "-d",
-                *OBSERVABILITY_SERVICES,
-                "anvil",
-                "ipfs",
-            ),
+            compose_command("up", "-d", *startup_services),
             cwd=WORKSPACE_ROOT,
             check=True,
         )
     )
     await wait_for_http_url("http://grafana:3000/api/health", 120)
-    await wait_for_service_ready("anvil", 120)
-    await wait_for_service_ready("ipfs", 120)
+    if local_chain:
+        await wait_for_service_ready("anvil", 120)
+    if local_ipfs:
+        await wait_for_service_ready("ipfs", 120)
     logs.append(
         await run_subprocess(
             compose_command("up", "--build", "-d", "smart-contracts"),

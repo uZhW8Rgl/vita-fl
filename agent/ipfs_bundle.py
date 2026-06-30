@@ -61,6 +61,13 @@ def _request_bytes(api_url: str, endpoint: str, params: dict[str, str | int | bo
         return response.read()
 
 
+def _gateway_url(base_url: str, path: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/ipfs"):
+        return f"{normalized}{path}"
+    return f"{normalized}{path if path.startswith('/ipfs/') else '/ipfs/' + path.lstrip('/')}"
+
+
 def _join_ipfs_path(parent: str, child: str) -> str:
     if parent in {"", "/"}:
         return f"/{child}"
@@ -249,7 +256,11 @@ def select_latest_bundle(
 
 
 def cat_path(api_url: str, path: str) -> bytes:
-    return _request_bytes(api_url, "cat", {"arg": path})
+    if "/api/v0" in api_url or api_url.rstrip("/").endswith(":5001"):
+        return _request_bytes(api_url, "cat", {"arg": path})
+    request = urllib.request.Request(_gateway_url(api_url, path), method="GET")
+    with urllib.request.urlopen(request, timeout=120) as response:
+        return response.read()
 
 
 def fetch_bundle(bundle: dict[str, Any], out_dir: Path, api_url: str = DEFAULT_IPFS_API_URL) -> dict[str, Any]:

@@ -4,6 +4,7 @@ x-worker-build: &worker-build
   dockerfile: dfl/Dockerfile
 
 x-worker-env: &worker-env
+  BLOCKCHAIN_PROVIDER: ${BLOCKCHAIN_PROVIDER:-anvil}
   API_KEY: ${API_KEY}
   API_SECRET: ${API_SECRET}
   PINATA_JWT: ${PINATA_JWT}
@@ -13,10 +14,13 @@ x-worker-env: &worker-env
   IPFS_FETCH_TIMEOUT_MS: ${IPFS_FETCH_TIMEOUT_MS:-30000}
   IPFS_PROVIDER: ${IPFS_PROVIDER}
   DOCKER: ${DOCKER}
+  RPC_URL: ${RPC_URL}
+  RPC_URLS: ${RPC_URLS:-}
   REGISTRY_ADDRESS: ${REGISTRY_ADDRESS}
   AGGREGATOR_ADDRESS: ${AGGREGATOR_ADDRESS}
   GM_STORAGE_ADDRESS: ${GM_STORAGE_ADDRESS}
   SEPOLIA_RPC_URL: ${RPC_URL}
+  SEPOLIA_RPC_URLS: ${RPC_URLS:-}
   CLIENT_LIMIT: ${CLIENT_LIMIT}
   MODEL_SUBMISSION_DEADLINE_MS: ${MODEL_SUBMISSION_DEADLINE_MS:-60000}
   GM_UPDATE_TIMEOUT_MS: ${GM_UPDATE_TIMEOUT_MS:-30000}
@@ -28,6 +32,7 @@ x-worker-env: &worker-env
   EPOCH: ${EPOCH}
   ROUND: ${ROUND}
   ETH_EUR_PRICE: ${ETH_EUR_PRICE:-3000}
+  DFL_TRANSACTION_COST_CSV: ${DFL_TRANSACTION_COST_CSV:-./data/evaluation/transaction_costs.csv}
   PYTHON_SERVICE_URL: http://127.0.0.1:8000
   TDX_QUOTE_PATH: /dfl/node_server/attestation/phala_tdx_quote
   DATASET_NAME: ${DATASET_NAME:-mnist}
@@ -41,11 +46,6 @@ x-worker-common: &worker-common
   pull_policy: never
   platform: linux/amd64
   profiles: ["runtime"]
-  depends_on:
-    anvil:
-      condition: service_healthy
-    ipfs:
-      condition: service_healthy
   volumes:
     - ./data/evaluation:/dfl/node_server/data/evaluation
   command: ["/dfl/start_node_neural_network.sh"]
@@ -186,15 +186,14 @@ services:
     container_name: smart-contracts
     platform: linux/amd64
     restart: "no"
-    depends_on:
-      anvil:
-        condition: service_healthy
-      ipfs:
-        condition: service_healthy
     environment:
       FOUNDRY_DISABLE_NIGHTLY_WARNING: "1"
+      BLOCKCHAIN_PROVIDER: ${BLOCKCHAIN_PROVIDER:-anvil}
       IPFS_PROVIDER: ${IPFS_PROVIDER}
       DOCKER: ${DOCKER}
+      RPC_URL: ${RPC_URL}
+      ETH_WALLET_PRIVATE_KEY: ${ETH_WALLET_PRIVATE_KEY}
+      KUBO_API_URL: ${KUBO_API}
       KEEP_ALIVE: ${KEEP_ALIVE:-0}
       PCCS_FMSPC: ${PCCS_FMSPC:-20A06F000000}
       PCCS_FETCH: ${PCCS_FETCH:-1}
@@ -234,10 +233,13 @@ services:
       W18_ACCOUNT_ADDRESS: ${W18_ACCOUNT_ADDRESS}
       W19_ACCOUNT_ADDRESS: ${W19_ACCOUNT_ADDRESS}
       ETH_EUR_PRICE: ${ETH_EUR_PRICE:-3000}
+      TRANSACTION_COST_CSV: ${TRANSACTION_COST_CSV:-/dfl/data/evaluation/transaction_costs.csv}
     command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data/evaluation:/dfl/data/evaluation
+      - ./smart_contracts/broadcast:/dfl/smart_contracts/broadcast
+      - ./.env:/dfl/.env
 
   agent:
     build:
@@ -251,10 +253,11 @@ services:
     working_dir: /app
     environment:
       DOCKER: "1"
+      BLOCKCHAIN_PROVIDER: ${BLOCKCHAIN_PROVIDER:-anvil}
       DATASET_NAME: ${DATASET_NAME:-mnist}
       PYTHONUNBUFFERED: "1"
-      RPC_URL: http://anvil:8545
-      IPFS_API_URL: http://ipfs:5001
+      RPC_URL: ${RPC_URL}
+      IPFS_API_URL: ${AGENT_IPFS_URL:-http://ipfs:5001}
       ZK_INFERENCE_URL: http://zk-inference:8090
       # OLLAMA_BASE_URL: http://ollama:11434
       # OLLAMA_MODEL: gemma4:e2b
@@ -263,30 +266,23 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e2b}
       OLLAMA_NUM_PREDICT: "128"
       AGENT_CHAT_TIMEOUT_SECONDS: "360"
-      GM_STORAGE_ADDRESS: 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
-      REGISTRY_ADDRESS: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+      GM_STORAGE_ADDRESS: ${GM_STORAGE_ADDRESS}
+      REGISTRY_ADDRESS: ${REGISTRY_ADDRESS}
       ACCOUNT_ADDRESS: ${W0_ACCOUNT_ADDRESS}
       RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key.pem
       RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key.pem
       AGENT_PORT: "8089"
     command:
-      - python
-      - agent/run_agent.py
-      - --serve
-      - --llm
-      - --source
-      - contract
-      - --rpc-url
-      - http://anvil:8545
-      - --gm-storage-address
-      - 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
-      - --registry-address
-      - 0x5FbDB2315678afecb367f032d93F642f64180aa3
-      - --ipfs-api-url
-      - http://ipfs:5001
-      - --zk-inference-url
-      - http://zk-inference:8090
-      - --skip-calibration
+      - sh
+      - -lc
+      - >
+        python agent/run_agent.py --serve --llm --source contract
+        --rpc-url "$RPC_URL"
+        --gm-storage-address "$GM_STORAGE_ADDRESS"
+        --registry-address "$REGISTRY_ADDRESS"
+        --ipfs-api-url "$IPFS_API_URL"
+        --zk-inference-url "$ZK_INFERENCE_URL"
+        --skip-calibration
     volumes:
       - ./agent/downloads:/app/agent/downloads
       - ./data/rsa_keys:/dfl/keys:ro
@@ -357,6 +353,10 @@ services:
   VM-0:
     <<: *worker-common
     container_name: ${W0_ACCOUNT_ADDRESS}
+    volumes:
+      - ./data/evaluation:/dfl/node_server/data/evaluation
+      - ./data/worker_state/vm0/data:/dfl/node_server/data
+      - ./data/worker_state/vm0/received_models:/dfl/node_server/received_models
     environment:
       <<: *worker-env
       ACCOUNT_ADDRESS: ${W0_ACCOUNT_ADDRESS}
@@ -371,6 +371,10 @@ services:
   VM-1:
     <<: *worker-common
     container_name: ${W1_ACCOUNT_ADDRESS}
+    volumes:
+      - ./data/evaluation:/dfl/node_server/data/evaluation
+      - ./data/worker_state/vm1/data:/dfl/node_server/data
+      - ./data/worker_state/vm1/received_models:/dfl/node_server/received_models
     environment:
       <<: *worker-env
       ACCOUNT_ADDRESS: ${W1_ACCOUNT_ADDRESS}
@@ -385,6 +389,10 @@ services:
   VM-2:
     <<: *worker-common
     container_name: ${W2_ACCOUNT_ADDRESS}
+    volumes:
+      - ./data/evaluation:/dfl/node_server/data/evaluation
+      - ./data/worker_state/vm2/data:/dfl/node_server/data
+      - ./data/worker_state/vm2/received_models:/dfl/node_server/received_models
     environment:
       <<: *worker-env
       ACCOUNT_ADDRESS: ${W2_ACCOUNT_ADDRESS}

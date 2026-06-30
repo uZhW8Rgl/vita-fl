@@ -1,6 +1,7 @@
 import axios from "axios";
 import fs from "fs";
 import FormData from "form-data";
+import crypto from "crypto";
 
 import {
   getAuthorizedDevices,
@@ -15,6 +16,21 @@ import {
   buildEncryptedGlobalModelArtifacts,
   decryptEncryptedGlobalModelArtifacts,
 } from "./gm_crypto.js";
+
+const pendingGmUpdateStatePath = "./data/results_iid/pending_gm_update.json";
+
+function writePendingGmUpdateState(payload: Record<string, unknown>) {
+  fs.mkdirSync("./data/results_iid", { recursive: true });
+  fs.writeFileSync(pendingGmUpdateStatePath, JSON.stringify(payload, null, 2));
+}
+
+export function readPendingGmUpdateState() {
+  try {
+    return JSON.parse(fs.readFileSync(pendingGmUpdateStatePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
 
 export const pinFile = async (filePath: string) => {
     try {
@@ -177,24 +193,75 @@ export const pinFile = async (filePath: string) => {
     bundleSignaturePath: "./data/results_iid/aggregated.bundle.enc.sig",
     keyBundlePath: "./data/results_iid/aggregated.bundle.keys.json",
   });
-  
-  export const updateGM = async () => {
-    const modelPath = "./data/results_iid/aggregated.bin";
-    const sigPath = "./data/results_iid/aggregated.bin.sig";
-    const round = Number(await getRound().catch(() => 0)) + 1;
 
-    const recipients = [];
-    for (const address of await getAuthorizedDevices()) {
-      const publicKeyDerHex = await getDevicePublicKey(address);
-      if (!publicKeyDerHex || publicKeyDerHex === "0x") {
-        console.warn(`Skipping GM encryption recipient without RSA key: ${address}`);
+  const localWorkerPublicKeyDerHex = (address: string) => {
+    const normalizedAddress = String(address || "").toLowerCase();
+    for (let index = 0; index < 32; index++) {
+      const configuredAddress = String(process.env[`W${index}_ACCOUNT_ADDRESS`] || "").toLowerCase();
+      if (!configuredAddress || configuredAddress !== normalizedAddress) {
         continue;
       }
-      recipients.push({ address, publicKeyDerHex });
+      const suffix = index === 0 ? "" : `_${index}`;
+      const candidatePath = `/dfl/keys/public_key${suffix}.pem`;
+      if (!fs.existsSync(candidatePath)) {
+        return "";
+      }
+      const pem = fs.readFileSync(candidatePath, "utf8");
+      const der = crypto.createPublicKey(pem).export({ format: "der", type: "spki" });
+      return `0x${Buffer.from(der).toString("hex")}`;
     }
-    const { bundlePath, bundleSignaturePath, keyBundlePath } = encryptedBundlePaths();
-    await buildEncryptedGlobalModelArtifacts({
-      modelPath,
+    return "";
+  };
+
+  const primaryAggregatorAddress = () =>
+    String(
+      process.env.W0_ACCOUNT_ADDRESS
+      || process.env.INITIAL_GM_SIGNER_ADDRESS
+      || "",
+    ).trim();
+
+  const resolveRecipientPublicKeyDerHex = async (address: string) =>
+    localWorkerPublicKeyDerHex(address) || await getDevicePublicKey(address);
+  
+export const updateGM = async () => {
+  const modelPath = "./data/results_iid/aggregated.bin";
+  const sigPath = "./data/results_iid/aggregated.bin.sig";
+  const round = Number(await getRound().catch(() => 0)) + 1;
+  const ownAddress = String(process.env.ACCOUNT_ADDRESS || "").toLowerCase();
+
+  const recipients: Array<{ address: string; publicKeyDerHex: string }> = [];
+  const seenAddresses = new Set<string>();
+  const maybeAddRecipient = async (rawAddress: string) => {
+    const address = String(rawAddress || "");
+    const normalizedAddress = address.toLowerCase();
+    if (!normalizedAddress || seenAddresses.has(normalizedAddress)) {
+      return;
+    }
+    seenAddresses.add(normalizedAddress);
+    const publicKeyDerHex = await resolveRecipientPublicKeyDerHex(address);
+    if (!publicKeyDerHex || publicKeyDerHex === "0x") {
+      console.warn(`Skipping GM encryption recipient without RSA key: ${address}`);
+      return;
+    }
+    recipients.push({ address, publicKeyDerHex });
+  };
+
+  await maybeAddRecipient(primaryAggregatorAddress());
+  const authorizedDevices = await getAuthorizedDevices();
+  for (const rawAddress of authorizedDevices) {
+    await maybeAddRecipient(String(rawAddress || ""));
+  }
+  if (ownAddress && !seenAddresses.has(ownAddress)) {
+    const ownPublicKeyDerHex = await resolveRecipientPublicKeyDerHex(ownAddress);
+    if (ownPublicKeyDerHex && ownPublicKeyDerHex !== "0x") {
+      recipients.push({ address: String(process.env.ACCOUNT_ADDRESS || ""), publicKeyDerHex: ownPublicKeyDerHex });
+    } else {
+      console.warn(`Skipping explicit self GM encryption recipient without RSA key: ${process.env.ACCOUNT_ADDRESS || ownAddress}`);
+    }
+  }
+  const { bundlePath, bundleSignaturePath, keyBundlePath } = encryptedBundlePaths();
+  await buildEncryptedGlobalModelArtifacts({
+    modelPath,
       signaturePath: sigPath,
       encryptedBundlePath: bundlePath,
       encryptedSignaturePath: bundleSignaturePath,
@@ -219,9 +286,53 @@ export const pinFile = async (filePath: string) => {
     console.log("New encrypted GM bundle signature CID:", sigCid);
     console.log("New encrypted GM key bundle CID:", keyBundleCid);
 
+    writePendingGmUpdateState({
+      round,
+      modelCid,
+      sigCid,
+      keyBundleCid,
+      timestampUnixMs: Date.now(),
+    });
+
     await setGlobalModelAndSignatureAndKeyBundle(modelCid, sigCid, keyBundleCid);
     console.log("Encrypted global model bundle + signature + key bundle updated (on-chain)");
+    return { modelCid, sigCid, keyBundleCid };
   }
+
+export const restorePendingGmUpdateStateFromLocalBundle = async () => {
+  const { bundlePath, bundleSignaturePath, keyBundlePath } = encryptedBundlePaths();
+  if (!fs.existsSync(bundlePath) || !fs.existsSync(bundleSignaturePath) || !fs.existsSync(keyBundlePath)) {
+    return null;
+  }
+
+  const round = Number(await getRound().catch(() => 0)) + 1;
+  const modelCid = await pinFile(bundlePath);
+  const sigCid = await pinFile(bundleSignaturePath);
+  const keyBundleCid = await pinFile(keyBundlePath);
+  writePendingGmUpdateState({
+    round,
+    modelCid,
+    sigCid,
+    keyBundleCid,
+    timestampUnixMs: Date.now(),
+    restoredFromLocalBundle: true,
+  });
+  return { round, modelCid, sigCid, keyBundleCid };
+}
+
+export const publishPendingGmUpdate = async () => {
+  const pending = readPendingGmUpdateState();
+  if (!pending?.modelCid || !pending?.sigCid || !pending?.keyBundleCid) {
+    throw new Error("No pending GM update state available for publish resume.");
+  }
+  await setGlobalModelAndSignatureAndKeyBundle(
+    String(pending.modelCid),
+    String(pending.sigCid),
+    String(pending.keyBundleCid),
+  );
+  console.log("Pending encrypted global model bundle publish resumed successfully.");
+  return pending;
+}
   
   export const getCurrentModel = async () => {
     const modelCid = String(await getCurrentGM() || "");
@@ -241,6 +352,7 @@ export const pinFile = async (filePath: string) => {
     console.log("Key bundle CID:", keyBundleCid);
 
     const { bundlePath, bundleSignaturePath, keyBundlePath } = encryptedBundlePaths();
+    fs.mkdirSync("./data/results_iid", { recursive: true });
     fs.writeFileSync(bundlePath, await fetchIPFSBytes(modelCid));
     console.log(`Encrypted GM bundle written to ${bundlePath}`);
     fs.writeFileSync(bundleSignaturePath, await fetchIPFSBytes(sigCid));
