@@ -54,6 +54,19 @@ forge build
 
 The normal deployment path is `starter_docker.sh`, executed by the Docker Compose smart-contract service.
 
+For the Phala flow, this image should be published through the GitHub Actions workflow
+`Publish Smart Contracts Image` and then referenced from Terraform or the manual
+contract-runtime compose file by immutable digest:
+
+```text
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:<digest>
+```
+
+Whenever the worker digest changes, or the files under `phala/` that feed the
+runtime policy export change in a way that should be reflected inside the
+contract-runtime TEE, rebuild and republish this image before redeploying the
+runtime TEE.
+
 It performs:
 
 1. provider-specific initialization of the initial global model and signature,

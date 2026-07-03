@@ -53,6 +53,7 @@ Notes:
 
 - Fill in the worker key before applying.
 - `worker_image` should stay pinned to a `sha256` digest to preserve a stable measured compose policy.
+- `smart_contracts_image` should also be pinned to a `sha256` digest when you want the contract-runtime TEE to be reproducible.
 - The Terraform scaffold now separates `smart-contracts` and `dfl-worker` into different Phala apps / TEEs.
 - If you want SSH access, set `ssh_public_key_path`; if you also want the key stored account-wide in Phala Cloud, set `manage_account_ssh_key = true`.
 - The current scaffold injects worker configuration through the rendered compose file so it stays close to your existing manual deployment flow.
@@ -76,23 +77,31 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 ## Flow
 
 1. Publish the DFL worker image through the manual GitHub Actions workflow `Publish DFL Worker Image`.
-2. Copy the digest-pinned image reference from the workflow summary:
+2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
 ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:<digest>
 ```
 
-3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned image.
-4. Deploy the digest-pinned compose file on Phala/dstack.
-5. Fetch the TDX quote emitted by the worker.
-6. Store the quote as `data/phala_tdx_quote`.
-7. Optionally inspect its RTMR3:
+3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
+4. Publish the runtime image through the manual GitHub Actions workflow `Publish Smart Contracts Image`.
+5. Copy the digest-pinned runtime image reference from the workflow summary:
+
+```text
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:<digest>
+```
+
+6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
+7. Deploy the digest-pinned compose files on Phala/dstack.
+8. Fetch the TDX quote emitted by the worker.
+9. Store the quote as `data/phala_tdx_quote`.
+10. Optionally inspect its RTMR3:
 
 ```bash
 scripts/extract_tdx_rtmr3.py data/phala_tdx_quote
 ```
 
-8. Start the local stack.
+11. Start the local stack.
 
 ```bash
 docker compose down --volumes --remove-orphans
@@ -134,16 +143,18 @@ python scripts/verify_phala_rtmr3.py \
 ```
 
 4. Build and publish the `smart-contracts` image that will run in the separate contract-runtime TEE.
-5. Deploy the contract-runtime TEE with `anvil`, `ipfs`, and `smart-contracts`.
-6. Let `smart-contracts` load the worker-reference policy artifacts on-chain:
+5. Pin that runtime image by digest in Terraform via `smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:..."`.
+6. Deploy the contract-runtime TEE with `anvil`, `ipfs`, and `smart-contracts`.
+7. Let `smart-contracts` load the worker-reference policy artifacts on-chain:
    - expected RTMR3 from the worker reference quote
    - expected compose hash / compose event digest from the worker-reference app-code and RTMR3 event log
-7. Deploy the three worker TEEs, all using the same worker image and same measured worker compose policy.
+8. Deploy the three worker TEEs, all using the same worker image and same measured worker compose policy.
 
 Important:
 
 - The on-chain attestation policy must point to the worker TEE policy, not the contract-runtime TEE policy.
 - If you change the worker image digest or the measured worker compose file, you must refresh the worker-reference quote, app-code, and RTMR3 event log before relying on policy verification again.
+- If you change the worker digest or any Phala policy artifact consumed by `smart-contracts`, rebuild and republish the `smart-contracts` image too, then redeploy the contract-runtime TEE with the new runtime digest.
 
 Current Terraform defaults in this scaffold match that target layout:
 
