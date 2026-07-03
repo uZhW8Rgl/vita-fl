@@ -88,7 +88,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:<digest>
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:<digest>
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2f2fa4560b9c4ef1689f82b1289d002ca213bc4ddf4d14a6906f7bedce7baf09
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
@@ -143,7 +143,7 @@ python scripts/verify_phala_rtmr3.py \
 ```
 
 4. Build and publish the `smart-contracts` image that will run in the separate contract-runtime TEE.
-5. Pin that runtime image by digest in Terraform via `smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:..."`.
+5. Pin that runtime image by digest in Terraform via `smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2f2fa4560b9c4ef1689f82b1289d002ca213bc4ddf4d14a6906f7bedce7baf09"`.
 6. Deploy the contract-runtime TEE with `anvil`, `ipfs`, and `smart-contracts`.
 7. Let `smart-contracts` load the worker-reference policy artifacts on-chain:
    - expected RTMR3 from the worker reference quote

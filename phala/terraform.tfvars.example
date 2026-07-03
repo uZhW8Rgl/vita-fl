@@ -16,7 +16,7 @@ private_key        = "0xYOUR_WORKER_PRIVATE_KEY"
 # worker_app_name    = "master-thesis-dfl-worker-0"
 # worker_replicas    = 1
 # worker_image     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:..."
-# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:..."
+# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2f2fa4560b9c4ef1689f82b1289d002ca213bc4ddf4d14a6906f7bedce7baf09"
 # ssh_public_key_path = "/absolute/path/to/id_ed25519.pub"
 #
 # To add separate worker apps with different account/key pairs:
