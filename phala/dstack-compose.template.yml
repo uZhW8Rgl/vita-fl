@@ -9,6 +9,8 @@ services:
       DOCKER: phala
       NODE_ENV: production
       IPFS_PROVIDER: kubo
+      KUBO_API: "REPLACE_WITH_KUBO_API_URL"
+      KUBO_GATEWAY: "REPLACE_WITH_KUBO_GATEWAY_URL"
       PUBLIC_IP: ""
       MSG_BROKER_IP: ""
 

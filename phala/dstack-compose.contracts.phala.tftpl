@@ -1,0 +1,56 @@
+services:
+  anvil:
+    image: ${anvil_image}
+    restart: unless-stopped
+    command:
+      - anvil
+      - --host
+      - 0.0.0.0
+      - --quiet
+      - --accounts
+      - "20"
+      - --hardfork
+      - osaka
+      - --code-size-limit
+      - "999999"
+    ports:
+      - "8545:8545"
+
+  ipfs:
+    image: ${ipfs_image}
+    restart: unless-stopped
+    environment:
+      IPFS_TELEMETRY: "off"
+    ports:
+      - "5001:5001"
+      - "8080:8080"
+
+  smart-contracts:
+    image: ${smart_contracts_image}
+    restart: "no"
+    depends_on:
+      - anvil
+      - ipfs
+    environment:
+      DOCKER: phala
+      RPC_URL: http://anvil:8545
+      KUBO_API_URL: http://ipfs:5001
+      IPFS_PROVIDER: kubo
+      KEEP_ALIVE: "0"
+      PCCS_FMSPC: "${pccs_fmspc}"
+      PCCS_FETCH: "${pccs_fetch}"
+      PCCS_TEE: "${pccs_tee}"
+      P256_MODE: "${p256_mode}"
+      DEPLOY_TDX_V4_DCAP: "${deploy_tdx_v4_dcap}"
+      VERIFY_TDX_QUOTE_ONCHAIN: "${verify_tdx_quote_onchain}"
+      AGGREGATOR_TIMEOUT_REPORT_PERCENT: "${aggregator_timeout_report_percent}"
+      PCCS_QUOTE_PATH: /dfl/data/phala_tdx_quote
+      TDX_REFERENCE_QUOTE_PATH: /dfl/data/phala_tdx_quote
+      PHALA_COMPOSE_PATH: /dfl/phala/dstack-compose.template.yml
+      PHALA_APP_CODE_PATH: /dfl/phala/app_code.txt
+      PHALA_RTMR3_EVENT_LOG_PATH: /dfl/phala/rtmr3_event_log.txt
+      DATASET_NAME: "${dataset_name}"
+      W0_ACCOUNT_ADDRESS: "${account_address}"
+      W1_ACCOUNT_ADDRESS: "${account_address}"
+      INITIAL_GM_SIGNER_ADDRESS: "${account_address}"
+    command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]

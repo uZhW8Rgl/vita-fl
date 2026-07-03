@@ -11,7 +11,9 @@ echo "Wallet private key wurde gesetzt."
 
 #cargo build
 
-if [ "${DOCKER:-}" = "phala" ]; then
+if [ -n "${RPC_URL:-}" ]; then
+    export rpc_url="$RPC_URL"
+elif [ "${DOCKER:-}" = "phala" ]; then
     export rpc_url=https://61ecc557e3b36593390057d322d46e9488032c34-8545.dstack-prod5.phala.network
 else
     export rpc_url=http://anvil:8545
@@ -20,6 +22,11 @@ export RPC_URL=$rpc_url
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 KUBO_API_URL=${KUBO_API_URL:-http://ipfs:5001}
 IPFS_PROVIDER=${IPFS_PROVIDER:-kubo}
+
+using_local_runtime_services() {
+    [[ "$rpc_url" == "http://anvil:8545" || "$rpc_url" == "http://127.0.0.1:8545" ]] && \
+    [[ "$KUBO_API_URL" == "http://ipfs:5001" || "$KUBO_API_URL" == "http://127.0.0.1:5001" ]]
+}
 
 wait_for_anvil() {
     local attempts=${1:-60}
@@ -204,7 +211,7 @@ add_file_to_kubo() {
 }
 
 prepare_local_initial_gm() {
-    if [ "${DOCKER:-}" = "phala" ]; then
+    if ! using_local_runtime_services; then
         return 0
     fi
 
@@ -240,7 +247,7 @@ prepare_local_initial_gm() {
 }
 
 prepare_encrypted_initial_gm() {
-    if [ "${DOCKER:-}" = "phala" ]; then
+    if ! using_local_runtime_services; then
         return 0
     fi
 
@@ -967,24 +974,16 @@ echo "Authorization Status:"
 # [ "$(cast call --rpc-url $rpc_url $DEVICE_REGISTRY_ADDRESS "isAuthorized(address)" $ADDRESS_18)" = "0x$(printf '%063d1')" ] && echo $ADDRESS_18: yes || echo $ADDRESS_18: no
 # [ "$(cast call --rpc-url $rpc_url $DEVICE_REGISTRY_ADDRESS "isAuthorized(address)" $ADDRESS_19)" = "0x$(printf '%063d1')" ] && echo $ADDRESS_19: yes || echo $ADDRESS_19: no
 
-if [ "${DOCKER:-}" = "phala" ]; then
-    if [ "$IPFS_PROVIDER" = "kubo" ]; then
-        echo "Pinning the initial GM to the IPFS node"
-        curl --connect-timeout 5 --max-time 60 -sSf -X POST "https://61ecc557e3b36593390057d322d46e9488032c34-5001.dstack-prod5.phala.network/api/v0/pin/add?arg=${INITIAL_GM_CID}"
-        curl --connect-timeout 5 --max-time 60 -sSf -X POST "https://61ecc557e3b36593390057d322d46e9488032c34-5001.dstack-prod5.phala.network/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start"
-    fi
-else
-    if [ "$IPFS_PROVIDER" = "kubo" ]; then
-        echo "Copying the locally imported initial GM into IPFS MFS"
-        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
-            "${KUBO_API_URL}/api/v0/files/rm?arg=/start&force=true" >/dev/null || true
-        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
-            "${KUBO_API_URL}/api/v0/files/rm?arg=/start.sig&force=true" >/dev/null || true
-        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
-            "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start&parents=true"
-        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
-            "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_SIG_CID}&arg=/start.sig&parents=true"
-    fi
+if [ "$IPFS_PROVIDER" = "kubo" ] && [ -n "${INITIAL_GM_CID:-}" ] && [ -n "${INITIAL_GM_SIG_CID:-}" ]; then
+    echo "Copying the initial GM artifacts into IPFS MFS via ${KUBO_API_URL}"
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        "${KUBO_API_URL}/api/v0/files/rm?arg=/start&force=true" >/dev/null || true
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        "${KUBO_API_URL}/api/v0/files/rm?arg=/start.sig&force=true" >/dev/null || true
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start&parents=true"
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_SIG_CID}&arg=/start.sig&parents=true"
 fi
 
 prepare_encrypted_initial_gm

@@ -1,0 +1,56 @@
+services:
+  anvil:
+    image: ghcr.io/foundry-rs/foundry:nightly-dd0a687aa36ec731b6ea2cda2aa4f32e192814fa
+    restart: unless-stopped
+    command:
+      - anvil
+      - --host
+      - 0.0.0.0
+      - --quiet
+      - --accounts
+      - "20"
+      - --hardfork
+      - osaka
+      - --code-size-limit
+      - "999999"
+    ports:
+      - "8545:8545"
+
+  ipfs:
+    image: ipfs/kubo:latest
+    restart: unless-stopped
+    environment:
+      IPFS_TELEMETRY: "off"
+    ports:
+      - "5001:5001"
+      - "8080:8080"
+
+  smart-contracts:
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts:latest
+    restart: "no"
+    depends_on:
+      - anvil
+      - ipfs
+    environment:
+      DOCKER: phala
+      RPC_URL: http://anvil:8545
+      KUBO_API_URL: http://ipfs:5001
+      IPFS_PROVIDER: kubo
+      KEEP_ALIVE: "0"
+      PCCS_FMSPC: "20A06F000000"
+      PCCS_FETCH: "1"
+      PCCS_TEE: tdx
+      P256_MODE: native
+      DEPLOY_TDX_V4_DCAP: "1"
+      VERIFY_TDX_QUOTE_ONCHAIN: "1"
+      AGGREGATOR_TIMEOUT_REPORT_PERCENT: "50"
+      PCCS_QUOTE_PATH: /dfl/data/phala_tdx_quote
+      TDX_REFERENCE_QUOTE_PATH: /dfl/data/phala_tdx_quote
+      PHALA_COMPOSE_PATH: /dfl/phala/dstack-compose.worker.template.yml
+      PHALA_APP_CODE_PATH: /dfl/phala/app_code.txt
+      PHALA_RTMR3_EVENT_LOG_PATH: /dfl/phala/rtmr3_event_log.txt
+      DATASET_NAME: mnist
+      W0_ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
+      W1_ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
+      INITIAL_GM_SIGNER_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
+    command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]

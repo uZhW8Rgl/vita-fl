@@ -1,0 +1,36 @@
+services:
+  dfl-worker:
+    image: ${worker_image}
+    restart: unless-stopped
+    environment:
+      DOCKER: phala
+      NODE_ENV: production
+      IPFS_PROVIDER: kubo
+      KUBO_API: "${kubo_api_url}"
+      KUBO_GATEWAY: "${kubo_gateway_url}"
+      PUBLIC_IP: "${public_ip}"
+      MSG_BROKER_IP: "${msg_broker_ip}"
+
+      ACCOUNT_ADDRESS: "${account_address}"
+      PRIVATE_KEY: "${private_key}"
+      REGISTRY_ADDRESS: "${registry_address}"
+      AGGREGATOR_ADDRESS: "${aggregator_address}"
+      GM_STORAGE_ADDRESS: "${gm_storage_address}"
+      SEPOLIA_RPC_URL: "${rpc_url}"
+
+      CLIENT_LIMIT: "${client_limit}"
+      EPOCH: "${epoch}"
+      ROUND: "${round}"
+      MODEL_SUBMISSION_DEADLINE_MS: "${model_submission_deadline_ms}"
+      GM_UPDATE_TIMEOUT_MS: "${gm_update_timeout_ms}"
+      GM_UPDATE_TIMEOUT_LOOPS: "${gm_update_timeout_loops}"
+      AGGREGATION_UPDATE_ESTIMATE_MS: "${aggregation_update_estimate_ms}"
+      GM_UPDATE_POLL_MS: "${gm_update_poll_ms}"
+
+      RSA_PRIVATE_KEY_FILE: "${rsa_private_key_file}"
+      RSA_PUBLIC_KEY_FILE: "${rsa_public_key_file}"
+      TRAIN_IMAGES_SRC: "${train_images_src}"
+      TRAIN_LABELS_SRC: "${train_labels_src}"
+
+      PYTHON_SERVICE_URL: "${python_service_url}"
+    command: ["/dfl/start_node_neural_network.sh"]

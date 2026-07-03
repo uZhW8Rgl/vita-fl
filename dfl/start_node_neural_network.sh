@@ -68,4 +68,63 @@ while time.time() < deadline:
 raise SystemExit("Python ML service did not become healthy")
 PY
 
+python - <<'PY'
+import json
+import os
+import time
+import urllib.request
+
+rpc_url = (os.environ.get("SEPOLIA_RPC_URL") or "").strip()
+contracts = [
+    ("REGISTRY_ADDRESS", os.environ.get("REGISTRY_ADDRESS", "").strip()),
+    ("AGGREGATOR_ADDRESS", os.environ.get("AGGREGATOR_ADDRESS", "").strip()),
+    ("GM_STORAGE_ADDRESS", os.environ.get("GM_STORAGE_ADDRESS", "").strip()),
+]
+
+if not rpc_url or not all(value for _, value in contracts):
+    raise SystemExit(0)
+
+def rpc(method, params):
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        rpc_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    if "error" in body:
+        raise RuntimeError(body["error"])
+    return body.get("result")
+
+deadline = time.time() + 180
+last_missing = [name for name, _ in contracts]
+while time.time() < deadline:
+    try:
+        all_ready = True
+        current_missing = []
+        for name, address in contracts:
+            code = str(rpc("eth_getCode", [address, "latest"]) or "0x")
+            if code in ("0x", "0x0", ""):
+                all_ready = False
+                current_missing.append(name)
+        if current_missing:
+            last_missing = current_missing
+        if all_ready:
+            raise SystemExit(0)
+    except Exception:
+        pass
+    time.sleep(2)
+
+raise SystemExit(
+    f"Timed out waiting for deployed contracts on {rpc_url}: {', '.join(last_missing)}"
+)
+PY
+
 exec node /dfl/node_server/dist/server.js
