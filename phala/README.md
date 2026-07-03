@@ -96,3 +96,34 @@ The compose file is intentionally the replaceable policy input. When the worker 
 The on-chain contract verifies the TDX quote and checks that the signed RTMR3 value of registering workers equals the RTMR3 extracted from the reference quote.
 
 The compose hash is represented on-chain as policy metadata through `expectedComposeHash`. A complete image-to-RTMR3 verification additionally requires the Phala/dstack RTMR3 event log: the verifier must replay the RTMR3 measurement chain and confirm that the measured compose hash matches the expected compose policy hash.
+
+## Next Steps
+
+For the planned Phala layout with one contract-runtime TEE and three worker TEEs, the next practical sequence is:
+
+1. Deploy one worker-reference TEE first, using `dstack-compose.template.yml` with the current digest-pinned worker image.
+2. From that worker-reference deployment, export the measured artifacts:
+   - the TDX quote into `data/phala_tdx_quote`
+   - the RTMR3 event log into `phala/rtmr3_event_log.txt`
+   - the Phala app-code object into `phala/app_code.txt`
+3. Verify locally that the copied artifacts are internally consistent:
+
+```bash
+python scripts/verify_phala_rtmr3.py \
+  phala/rtmr3_event_log.txt \
+  --quote data/phala_tdx_quote \
+  --compose phala/dstack-compose.template.yml \
+  --app-code phala/app_code.txt
+```
+
+4. Build and publish the `smart-contracts` image that will run in the separate contract-runtime TEE.
+5. Deploy the contract-runtime TEE with `anvil`, `ipfs`, and `smart-contracts`.
+6. Let `smart-contracts` load the worker-reference policy artifacts on-chain:
+   - expected RTMR3 from the worker reference quote
+   - expected compose hash / compose event digest from the worker-reference app-code and RTMR3 event log
+7. Deploy the three worker TEEs, all using the same worker image and same measured worker compose policy.
+
+Important:
+
+- The on-chain attestation policy must point to the worker TEE policy, not the contract-runtime TEE policy.
+- If you change the worker image digest or the measured worker compose file, you must refresh the worker-reference quote, app-code, and RTMR3 event log before relying on policy verification again.
