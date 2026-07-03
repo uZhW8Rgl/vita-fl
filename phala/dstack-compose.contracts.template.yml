@@ -46,7 +46,7 @@ services:
       AGGREGATOR_TIMEOUT_REPORT_PERCENT: "50"
       PCCS_QUOTE_PATH: /dfl/data/phala_tdx_quote
       TDX_REFERENCE_QUOTE_PATH: /dfl/data/phala_tdx_quote
-      PHALA_COMPOSE_PATH: /dfl/phala/dstack-compose.worker.template.yml
+      PHALA_COMPOSE_PATH: /dfl/phala/dstack-compose.template.yml
       PHALA_APP_CODE_PATH: /dfl/phala/app_code.txt
       PHALA_RTMR3_EVENT_LOG_PATH: /dfl/phala/rtmr3_event_log.txt
       DATASET_NAME: mnist

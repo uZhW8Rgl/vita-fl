@@ -19,11 +19,6 @@ locals {
     anvil_image                       = var.anvil_image
     ipfs_image                        = var.ipfs_image
     account_address                   = var.account_address
-    private_key                       = var.private_key
-    registry_address                  = var.registry_address
-    aggregator_address                = var.aggregator_address
-    gm_storage_address                = var.gm_storage_address
-    sepolia_rpc_url                   = var.sepolia_rpc_url
     client_limit                      = var.client_limit
     epoch                             = var.epoch
     round                             = var.round
@@ -100,9 +95,6 @@ resource "phala_app" "dfl_worker" {
     worker_image                   = var.worker_image
     account_address                = var.account_address
     private_key                    = var.private_key
-    registry_address               = var.registry_address
-    aggregator_address             = var.aggregator_address
-    gm_storage_address             = var.gm_storage_address
     rpc_url                        = local.contracts_rpc_url
     kubo_api_url                   = local.contracts_kubo_api_url
     kubo_gateway_url               = local.contracts_kubo_gateway
@@ -127,7 +119,61 @@ resource "phala_app" "dfl_worker" {
   region    = var.region
   image     = var.os_image
   disk_size = var.worker_disk_size
-  replicas  = var.replicas
+  replicas  = var.worker_replicas
+
+  kms           = var.kms
+  listed        = var.listed
+  node_id       = var.node_id
+  custom_app_id = var.custom_app_id
+  nonce         = var.nonce
+  storage_fs    = var.storage_fs
+
+  ssh_authorized_keys = local.ssh_authorized_keys
+  pre_launch_script   = var.pre_launch_script
+
+  public_logs     = var.public_logs
+  public_sysinfo  = var.public_sysinfo
+  public_tcbinfo  = var.public_tcbinfo
+  gateway_enabled = var.worker_gateway_enabled
+  secure_time     = var.secure_time
+
+  wait_for_ready       = var.wait_for_ready
+  wait_timeout_seconds = var.wait_timeout_seconds
+}
+
+resource "phala_app" "dfl_worker_additional" {
+  for_each = nonsensitive(var.additional_workers)
+
+  name = each.value.app_name
+  docker_compose = templatefile("${path.module}/dstack-compose.worker.phala.tftpl", {
+    worker_image                   = var.worker_image
+    account_address                = each.value.account_address
+    private_key                    = each.value.private_key
+    rpc_url                        = local.contracts_rpc_url
+    kubo_api_url                   = local.contracts_kubo_api_url
+    kubo_gateway_url               = local.contracts_kubo_gateway
+    client_limit                   = var.client_limit
+    epoch                          = var.epoch
+    round                          = var.round
+    model_submission_deadline_ms   = var.model_submission_deadline_ms
+    gm_update_timeout_ms           = var.gm_update_timeout_ms
+    gm_update_timeout_loops        = var.gm_update_timeout_loops
+    aggregation_update_estimate_ms = var.aggregation_update_estimate_ms
+    gm_update_poll_ms              = var.gm_update_poll_ms
+    rsa_private_key_file           = var.rsa_private_key_file
+    rsa_public_key_file            = var.rsa_public_key_file
+    train_images_src               = var.train_images_src
+    train_labels_src               = var.train_labels_src
+    python_service_url             = var.python_service_url
+    public_ip                      = var.public_ip
+    msg_broker_ip                  = var.msg_broker_ip
+  })
+  size = var.worker_size
+
+  region    = var.region
+  image     = var.os_image
+  disk_size = var.worker_disk_size
+  replicas  = 1
 
   kms           = var.kms
   listed        = var.listed

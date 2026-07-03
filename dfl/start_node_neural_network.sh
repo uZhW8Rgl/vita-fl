@@ -72,16 +72,42 @@ python - <<'PY'
 import json
 import os
 import time
+import urllib.parse
 import urllib.request
 
-rpc_url = (os.environ.get("SEPOLIA_RPC_URL") or "").strip()
-contracts = [
-    ("REGISTRY_ADDRESS", os.environ.get("REGISTRY_ADDRESS", "").strip()),
-    ("AGGREGATOR_ADDRESS", os.environ.get("AGGREGATOR_ADDRESS", "").strip()),
-    ("GM_STORAGE_ADDRESS", os.environ.get("GM_STORAGE_ADDRESS", "").strip()),
-]
+def missing(value):
+    value = (value or "").strip()
+    return not value or value.startswith("REPLACE_WITH_")
 
-if not rpc_url or not all(value for _, value in contracts):
+rpc_url = (os.environ.get("SEPOLIA_RPC_URL") or "").strip()
+contracts = {
+    "REGISTRY_ADDRESS": os.environ.get("REGISTRY_ADDRESS", "").strip(),
+    "AGGREGATOR_ADDRESS": os.environ.get("AGGREGATOR_ADDRESS", "").strip(),
+    "GM_STORAGE_ADDRESS": os.environ.get("GM_STORAGE_ADDRESS", "").strip(),
+}
+
+kubo_api = (os.environ.get("KUBO_API") or "").rstrip("/")
+if kubo_api and (missing(rpc_url) or any(missing(value) for value in contracts.values())):
+    url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote("/runtime/contracts.json", safe="")
+    request = urllib.request.Request(url, method="POST")
+    with urllib.request.urlopen(request, timeout=5) as response:
+        manifest = json.loads(response.read().decode("utf-8"))
+
+    rpc_url = rpc_url if not missing(rpc_url) else str(manifest.get("rpc_url", "")).strip()
+    for env_name, manifest_key in (
+        ("REGISTRY_ADDRESS", "registry_address"),
+        ("AGGREGATOR_ADDRESS", "aggregator_address"),
+        ("GM_STORAGE_ADDRESS", "gm_storage_address"),
+    ):
+        if missing(contracts[env_name]):
+            resolved = str(manifest.get(manifest_key, "")).strip()
+            if resolved:
+                contracts[env_name] = resolved
+                os.environ[env_name] = resolved
+    if rpc_url:
+        os.environ["SEPOLIA_RPC_URL"] = rpc_url
+
+if not rpc_url or not all(contracts.values()):
     raise SystemExit(0)
 
 def rpc(method, params):
@@ -104,12 +130,12 @@ def rpc(method, params):
     return body.get("result")
 
 deadline = time.time() + 180
-last_missing = [name for name, _ in contracts]
+last_missing = list(contracts)
 while time.time() < deadline:
     try:
         all_ready = True
         current_missing = []
-        for name, address in contracts:
+        for name, address in contracts.items():
             code = str(rpc("eth_getCode", [address, "latest"]) or "0x")
             if code in ("0x", "0x0", ""):
                 all_ready = False

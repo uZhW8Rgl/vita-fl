@@ -73,19 +73,29 @@ def main() -> int:
     compose_event = next((event for event in events if event.get("event") == "compose-hash"), None)
     local_compose_hash = hashlib.sha256(args.compose.read_bytes()).hexdigest() if args.compose.exists() else ""
     app_code_hash = ""
+    app_code_compose_file_hash = ""
     app_code_image_pinned = False
     if args.app_code:
         app_code = extract_app_compose_object(args.app_code.read_text(encoding="utf-8"))
         app_code_bytes = json.dumps(app_code, sort_keys=True, separators=(",", ":")).encode("utf-8")
         app_code_hash = hashlib.sha256(app_code_bytes).hexdigest()
+        compose_file = str(app_code.get("docker_compose_file", ""))
+        if compose_file:
+            app_code_compose_file_hash = hashlib.sha256(compose_file.encode("utf-8")).hexdigest()
         app_code_image_pinned = "@sha256:" in str(app_code.get("docker_compose_file", ""))
 
     print(f"events: {len(events)}")
     if compose_event:
         print(f"event compose-hash: 0x{compose_event['event_payload']}")
     if app_code_hash:
-        print(f"app-code compose-hash: 0x{app_code_hash}")
-        print(f"app-code matches event: {app_code_hash == compose_event.get('event_payload') if compose_event else False}")
+        print(f"app-code object sha256: 0x{app_code_hash}")
+        print(f"app-code object matches event: {app_code_hash == compose_event.get('event_payload') if compose_event else False}")
+        if app_code_compose_file_hash:
+            print(f"app-code docker_compose_file sha256: 0x{app_code_compose_file_hash}")
+            print(
+                "app-code docker_compose_file matches local compose: "
+                f"{app_code_compose_file_hash == local_compose_hash if local_compose_hash else False}"
+            )
         print(f"app-code pins image digest: {app_code_image_pinned}")
     if local_compose_hash:
         print(f"local compose sha256: 0x{local_compose_hash}")

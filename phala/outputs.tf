@@ -38,6 +38,16 @@ output "worker_status" {
   value       = phala_app.dfl_worker.status
 }
 
+output "additional_worker_app_ids" {
+  description = "Phala application IDs for additional worker apps."
+  value       = { for key, app in phala_app.dfl_worker_additional : key => app.app_id }
+}
+
+output "additional_worker_cvm_ids" {
+  description = "CVM identifiers for additional worker apps."
+  value       = { for key, app in phala_app.dfl_worker_additional : key => app.cvm_ids }
+}
+
 output "account_ssh_key_id" {
   description = "ID of the optional account-level SSH key."
   value       = var.manage_account_ssh_key && var.ssh_public_key_path != null ? phala_ssh_key.operator[0].id : null

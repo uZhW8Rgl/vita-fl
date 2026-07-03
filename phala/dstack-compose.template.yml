@@ -17,9 +17,11 @@ services:
       # Runtime configuration for the DFL prototype.
       ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
       PRIVATE_KEY: "REPLACE_WITH_WORKER_PRIVATE_KEY"
-      REGISTRY_ADDRESS: "REPLACE_WITH_REGISTRY_ADDRESS"
-      AGGREGATOR_ADDRESS: "REPLACE_WITH_AGGREGATOR_ADDRESS"
-      GM_STORAGE_ADDRESS: "REPLACE_WITH_GM_STORAGE_ADDRESS"
+      # Auto-resolved from the contract-runtime TEE's Kubo manifest at
+      # /runtime/contracts.json when the worker boots.
+      REGISTRY_ADDRESS: ""
+      AGGREGATOR_ADDRESS: ""
+      GM_STORAGE_ADDRESS: ""
       SEPOLIA_RPC_URL: "REPLACE_WITH_RPC_URL"
 
       CLIENT_LIMIT: "2"

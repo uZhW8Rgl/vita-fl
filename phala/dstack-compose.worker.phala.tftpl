@@ -13,9 +13,13 @@ services:
 
       ACCOUNT_ADDRESS: "${account_address}"
       PRIVATE_KEY: "${private_key}"
-      REGISTRY_ADDRESS: "${registry_address}"
-      AGGREGATOR_ADDRESS: "${aggregator_address}"
-      GM_STORAGE_ADDRESS: "${gm_storage_address}"
+      # Auto-resolved from the contract-runtime TEE's Kubo manifest at
+      # /runtime/contracts.json when the worker boots.
+      REGISTRY_ADDRESS: ""
+      AGGREGATOR_ADDRESS: ""
+      GM_STORAGE_ADDRESS: ""
+      # Legacy variable name in the application code; in the Phala deployment
+      # this points to the contract-runtime TEE's internal Anvil RPC endpoint.
       SEPOLIA_RPC_URL: "${rpc_url}"
 
       CLIENT_LIMIT: "${client_limit}"

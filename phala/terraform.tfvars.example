@@ -6,18 +6,29 @@
 # - os_image  = "dstack-dev-0.5.7-9b6a5239"
 # - contracts_disk_size = 20
 # - worker_disk_size    = 20
-# - replicas  = 1
+# - worker_replicas = 1
 
 account_address    = "0xYOUR_WORKER_ADDRESS"
 private_key        = "0xYOUR_WORKER_PRIVATE_KEY"
-registry_address   = "0xYOUR_REGISTRY_ADDRESS"
-aggregator_address = "0xYOUR_AGGREGATOR_ADDRESS"
-gm_storage_address = "0xYOUR_GM_STORAGE_ADDRESS"
-sepolia_rpc_url    = "https://sepolia.infura.io/v3/YOUR_KEY"
 
 # Optional overrides:
-# contracts_app_name = "master-thesis-contract-runtime"
-# worker_app_name    = "master-thesis-dfl-worker"
+# contracts_app_name = "master-thesis-contract-runtime-phala"
+# worker_app_name    = "master-thesis-dfl-worker-0"
+# worker_replicas    = 1
 # worker_image     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:..."
 # smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts:latest"
 # ssh_public_key_path = "/absolute/path/to/id_ed25519.pub"
+#
+# To add separate worker apps with different account/key pairs:
+# additional_workers = {
+#   worker1 = {
+#     app_name        = "master-thesis-dfl-worker-1"
+#     account_address = "0x..."
+#     private_key     = "0x..."
+#   }
+#   worker2 = {
+#     app_name        = "master-thesis-dfl-worker-2"
+#     account_address = "0x..."
+#     private_key     = "0x..."
+#   }
+# }

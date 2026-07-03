@@ -81,6 +81,30 @@ require_address() {
     fi
 }
 
+publish_runtime_contract_manifest() {
+    if [ "$IPFS_PROVIDER" != "kubo" ]; then
+        return 0
+    fi
+
+    require_address DEVICE_REGISTRY_ADDRESS "$DEVICE_REGISTRY_ADDRESS"
+    require_address AGGREGATOR_SELECTION_ADDRESS "$AGGREGATOR_SELECTION_ADDRESS"
+    require_address GMSTORAGE "$GMSTORAGE"
+
+    local manifest_file
+    manifest_file=$(mktemp)
+    cat >"$manifest_file" <<EOF
+{"registry_address":"$DEVICE_REGISTRY_ADDRESS","aggregator_address":"$AGGREGATOR_SELECTION_ADDRESS","gm_storage_address":"$GMSTORAGE","rpc_url":"$rpc_url","chain_id":"$CHAIN_ID"}
+EOF
+
+    echo "Publishing runtime contract manifest to Kubo MFS: /runtime/contracts.json"
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        "${KUBO_API_URL}/api/v0/files/mkdir?arg=/runtime&parents=true" >/dev/null || true
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        -F "file=@${manifest_file}" \
+        "${KUBO_API_URL}/api/v0/files/write?arg=/runtime/contracts.json&create=true&truncate=true&parents=true" >/dev/null
+    rm -f "$manifest_file"
+}
+
 authorize_pccs_reader() {
     local caller=$1
 
@@ -879,6 +903,8 @@ echo "===================================================="
 #cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_1 $AGGREGATOR_SELECTION_ADDRESS "setGMStorageAddress(address)" $GMSTORAGE
 cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_0 \
     $AGGREGATOR_SELECTION_ADDRESS "setGMStorageAddress(address)" $GMSTORAGE
+
+publish_runtime_contract_manifest
 
 
 echo "GMStorage Addresse wurde in AggregatorSelection gesetzt"

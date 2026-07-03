@@ -28,25 +28,37 @@ terraform plan
 terraform apply
 ```
 
+If you already keep the deployment values in the repository-root `.env`, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
+
+```bash
+bash phala/tf-env.sh init
+bash phala/tf-env.sh plan -input=false
+bash phala/tf-env.sh apply
+```
+
+The wrapper reads these values from `.env`:
+
+- `PHALA_CLOUD_API_KEY`
+- `W0_ACCOUNT_ADDRESS`
+- `W0_PRIVATE_KEY`
+
 Minimal `terraform.tfvars`:
 
 ```hcl
 account_address    = "0xYOUR_WORKER_ADDRESS"
 private_key        = "0xYOUR_WORKER_PRIVATE_KEY"
-registry_address   = "0xYOUR_REGISTRY_ADDRESS"
-aggregator_address = "0xYOUR_AGGREGATOR_ADDRESS"
-gm_storage_address = "0xYOUR_GM_STORAGE_ADDRESS"
-sepolia_rpc_url    = "https://sepolia.infura.io/v3/YOUR_KEY"
 ```
 
 Notes:
 
-- Fill in the contract addresses, worker key, and Sepolia RPC URL before applying.
+- Fill in the worker key before applying.
 - `worker_image` should stay pinned to a `sha256` digest to preserve a stable measured compose policy.
 - The Terraform scaffold now separates `smart-contracts` and `dfl-worker` into different Phala apps / TEEs.
 - If you want SSH access, set `ssh_public_key_path`; if you also want the key stored account-wide in Phala Cloud, set `manage_account_ssh_key = true`.
 - The current scaffold injects worker configuration through the rendered compose file so it stays close to your existing manual deployment flow.
 - The default minimal hardware profile is now `tdx.small` with `20 GB` disk.
+- The contract-runtime TEE runs its own local `anvil`; the worker TEE talks to that internal runtime endpoint, not to Sepolia.
+- The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
 
 ### Where Hardware Is Selected
 
@@ -56,7 +68,7 @@ The Phala hardware and placement are chosen through the following Terraform inpu
 - `region`: deployment region such as `US-WEST-1`
 - `os_image`: the Phala base image slug
 - `disk_size`: attached storage size in GB
-- `replicas`: how many identical CVMs should run
+- `worker_replicas`: how many identical worker CVMs should run
 - `node_id` (optional): pinning to one specific worker node
 
 In this scaffold those values are wired into `resource "phala_app" "contract_runtime"` and `resource "phala_app" "dfl_worker"` in `main.tf`.
@@ -87,15 +99,20 @@ docker compose down --volumes --remove-orphans
 KEEP_ALIVE=0 docker compose up --build --force-recreate
 ```
 
-During deployment, `starter_docker.sh` sends `data/phala_tdx_quote` to `AutomataDcapTdxV4Attestation`. The contract parses the reference quote on-chain, extracts its signed RTMR3 value, and stores it as the expected workload measurement. The script also checks that `dstack-compose.template.yml` pins the worker image by immutable `sha256` digest and records the hash of this compose policy on-chain as `expectedComposeHash`.
+During deployment, `starter_docker.sh` sends `data/phala_tdx_quote` to `AutomataDcapTdxV4Attestation`. The contract parses the reference quote on-chain, extracts its signed RTMR3 value, and stores it as the expected workload measurement. The script also checks that the worker compose policy pins the image by immutable `sha256` digest and records the measured compose policy on-chain as `expectedComposeHash`.
 
-The compose file is intentionally the replaceable policy input. When the worker image changes, update `dstack-compose.template.yml`, deploy that exact file on Phala/dstack, fetch the new quote, and rerun the local deployment. The local deployment will derive the new `expectedComposeHash` from the current file.
+For Phala/dstack, the measured `compose-hash` is not just the SHA-256 of `dstack-compose.template.yml`. In practice there are two related hashes:
+
+- the RTMR3 `compose-hash` event: SHA-256 of the normalized app-code object exported from Phala into `phala/app_code.txt`
+- the raw compose-file hash: SHA-256 of the `docker_compose_file` text, which can match your local `dstack-compose.template.yml`
+
+The local deployment therefore prefers `phala/app_code.txt` when deriving `expectedComposeHash`. If that export is missing, it falls back to the raw compose file hash. When the worker image changes, update `dstack-compose.template.yml`, deploy that exact worker app on Phala/dstack, then refresh `data/phala_tdx_quote`, `phala/app_code.txt`, and `phala/rtmr3_event_log.txt` before rerunning the local deployment.
 
 ## What This Verifies
 
 The on-chain contract verifies the TDX quote and checks that the signed RTMR3 value of registering workers equals the RTMR3 extracted from the reference quote.
 
-The compose hash is represented on-chain as policy metadata through `expectedComposeHash`. A complete image-to-RTMR3 verification additionally requires the Phala/dstack RTMR3 event log: the verifier must replay the RTMR3 measurement chain and confirm that the measured compose hash matches the expected compose policy hash.
+The compose hash is represented on-chain as policy metadata through `expectedComposeHash`. A complete image-to-RTMR3 verification additionally requires the Phala/dstack RTMR3 event log: the verifier must replay the RTMR3 measurement chain, confirm that the measured app-code object hash matches the expected compose policy hash, and then compare the replayed RTMR3 with the quote.
 
 ## Next Steps
 
@@ -127,3 +144,11 @@ Important:
 
 - The on-chain attestation policy must point to the worker TEE policy, not the contract-runtime TEE policy.
 - If you change the worker image digest or the measured worker compose file, you must refresh the worker-reference quote, app-code, and RTMR3 event log before relying on policy verification again.
+
+Current Terraform defaults in this scaffold match that target layout:
+
+- `contracts_app_name = "master-thesis-contract-runtime-phala"`
+- `worker_app_name = "master-thesis-dfl-worker-phala"`
+- `worker_replicas = 3`
+- `contracts_size = "tdx.small"`
+- `worker_size = "tdx.small"`

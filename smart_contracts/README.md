@@ -83,9 +83,16 @@ During deployment, `starter_docker.sh` calls:
 setExpectedRtmr3FromQuote(bytes referenceQuote)
 ```
 
-The contract parses the reference quote on-chain, extracts RTMR3, and rejects every later worker registration quote whose extracted RTMR3 does not match. `starter_docker.sh` also checks that `phala/dstack-compose.template.yml` pins the worker image by immutable `sha256` digest and records the hash of that compose policy on-chain as `expectedComposeHash`.
+The contract parses the reference quote on-chain, extracts RTMR3, and rejects every later worker registration quote whose extracted RTMR3 does not match. `starter_docker.sh` also checks that the worker compose policy pins the image by immutable `sha256` digest and records the measured compose policy hash on-chain as `expectedComposeHash`.
 
-The compose file is the replaceable workload policy input. If the worker image changes, update the digest-pinned image reference in `phala/dstack-compose.template.yml`, deploy that exact file on Phala/dstack, fetch the new quote, and rerun the local deployment.
+For Phala/dstack this needs one subtle distinction:
+
+- the RTMR3 `compose-hash` event is the SHA-256 of the normalized Phala app-code object from `phala/app_code.txt`
+- the plain SHA-256 of `phala/dstack-compose.template.yml` is only the raw compose-file hash
+
+`starter_docker.sh` therefore prefers `phala/app_code.txt` when present and only falls back to the raw compose-file hash if no app-code export is available.
+
+The compose policy is still the replaceable workload input. If the worker image changes, update the digest-pinned image reference in `phala/dstack-compose.template.yml`, deploy that exact worker app on Phala/dstack, fetch the new quote/app-code/event log, and rerun the local deployment.
 
 A complete image-to-RTMR3 verification additionally requires the Phala/dstack RTMR3 event log. With that log, a verifier can replay the RTMR3 measurement chain, compare the measured compose hash with `expectedComposeHash`, and then compare the replayed RTMR3 with the signed RTMR3 in the quote.
 

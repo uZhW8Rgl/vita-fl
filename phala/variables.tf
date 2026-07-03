@@ -8,13 +8,24 @@ variable "phala_cloud_api_key" {
 variable "contracts_app_name" {
   description = "Name of the Phala Cloud app that runs anvil, ipfs, and smart-contract initialization."
   type        = string
-  default     = "master-thesis-contract-runtime"
+  default     = "master-thesis-contract-runtime-phala"
 }
 
 variable "worker_app_name" {
   description = "Name of the Phala Cloud app that runs the DFL worker."
   type        = string
-  default     = "master-thesis-dfl-worker"
+  default     = "master-thesis-dfl-worker-0"
+}
+
+variable "additional_workers" {
+  description = "Additional DFL worker apps with independent account/key pairs."
+  type = map(object({
+    app_name        = string
+    account_address = string
+    private_key     = string
+  }))
+  sensitive = true
+  default   = {}
 }
 
 variable "contracts_size" {
@@ -38,7 +49,7 @@ variable "region" {
 variable "os_image" {
   description = "Phala OS image slug for the CVM."
   type        = string
-  default     = "dstack-dev-0.5.7-9b6a5239"
+  default     = "dstack-dev-0.5.7"
 }
 
 variable "contracts_disk_size" {
@@ -53,8 +64,8 @@ variable "worker_disk_size" {
   default     = 20
 }
 
-variable "replicas" {
-  description = "Number of CVM replicas."
+variable "worker_replicas" {
+  description = "Number of worker CVM replicas."
   type        = number
   default     = 1
 }
@@ -221,27 +232,6 @@ variable "account_address" {
 
 variable "private_key" {
   description = "Worker private key."
-  type        = string
-  sensitive   = true
-}
-
-variable "registry_address" {
-  description = "Registry contract address."
-  type        = string
-}
-
-variable "aggregator_address" {
-  description = "Aggregator contract address."
-  type        = string
-}
-
-variable "gm_storage_address" {
-  description = "Global-model storage contract address."
-  type        = string
-}
-
-variable "sepolia_rpc_url" {
-  description = "Sepolia RPC endpoint."
   type        = string
   sensitive   = true
 }
