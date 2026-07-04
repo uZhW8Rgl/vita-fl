@@ -2,10 +2,12 @@ services:
   anvil:
     image: ${anvil_image}
     restart: unless-stopped
-    command:
+    environment:
+      ANVIL_IP_ADDR: "0.0.0.0"
+      FOUNDRY_DISABLE_NIGHTLY_WARNING: "1"
+    entrypoint:
       - anvil
-      - --host
-      - 0.0.0.0
+    command:
       - --quiet
       - --accounts
       - "20"
@@ -15,6 +17,11 @@ services:
       - "999999"
     ports:
       - "8545:8545"
+    healthcheck:
+      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
 
   ipfs:
     image: ${ipfs_image}
@@ -24,33 +31,50 @@ services:
     ports:
       - "5001:5001"
       - "8080:8080"
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
 
   smart-contracts:
     image: ${smart_contracts_image}
     restart: "no"
     depends_on:
-      - anvil
-      - ipfs
+      anvil:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
     environment:
       DOCKER: phala
+      BLOCKCHAIN_PROVIDER: "${blockchain_provider}"
       RPC_URL: http://anvil:8545
       KUBO_API_URL: http://ipfs:5001
       IPFS_PROVIDER: kubo
-      KEEP_ALIVE: "0"
+      KEEP_ALIVE: "${keep_alive}"
+      ETH_WALLET_PRIVATE_KEY: "${eth_wallet_private_key}"
+      INITIAL_GM_CID: "${initial_gm_cid}"
+      INITIAL_GM_SIG_CID: "${initial_gm_sig_cid}"
+      ETH_EUR_PRICE: "${eth_eur_price}"
+      TRANSACTION_COST_CSV: "${transaction_cost_csv}"
       PCCS_FMSPC: "${pccs_fmspc}"
       PCCS_FETCH: "${pccs_fetch}"
       PCCS_TEE: "${pccs_tee}"
       P256_MODE: "${p256_mode}"
+      P256_VERIFIER_ADDRESS: "${p256_verifier_address}"
       DEPLOY_TDX_V4_DCAP: "${deploy_tdx_v4_dcap}"
       VERIFY_TDX_QUOTE_ONCHAIN: "${verify_tdx_quote_onchain}"
       AGGREGATOR_TIMEOUT_REPORT_PERCENT: "${aggregator_timeout_report_percent}"
-      PCCS_QUOTE_PATH: /dfl/data/phala_tdx_quote
-      TDX_REFERENCE_QUOTE_PATH: /dfl/data/phala_tdx_quote
-      PHALA_COMPOSE_PATH: /dfl/phala/dstack-compose.template.yml
-      PHALA_APP_CODE_PATH: /dfl/phala/app_code.txt
-      PHALA_RTMR3_EVENT_LOG_PATH: /dfl/phala/rtmr3_event_log.txt
+      MODEL_TRANSFER_TIMEOUT_MS: "${model_transfer_timeout_ms}"
+      MODEL_TRANSFER_RETRY_DELAY_MS: "${model_transfer_retry_delay_ms}"
+      PCCS_QUOTE_PATH: "${pccs_quote_path}"
+      TDX_QUOTE_PATH: "${tdx_quote_path}"
+      TDX_REFERENCE_QUOTE_PATH: "${tdx_reference_quote_path}"
+      PHALA_COMPOSE_PATH: "${phala_compose_path}"
+      PHALA_APP_CODE_PATH: "${phala_app_code_path}"
+      PHALA_RTMR3_EVENT_LOG_PATH: "${phala_rtmr3_event_log_path}"
       DATASET_NAME: "${dataset_name}"
-      W0_ACCOUNT_ADDRESS: "${account_address}"
-      W1_ACCOUNT_ADDRESS: "${account_address}"
-      INITIAL_GM_SIGNER_ADDRESS: "${account_address}"
+      W0_ACCOUNT_ADDRESS: "${w0_account_address}"
+      W1_ACCOUNT_ADDRESS: "${w1_account_address}"
+      INITIAL_GM_SIGNER_ADDRESS: "${initial_gm_signer_address}"
     command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]

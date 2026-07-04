@@ -7,6 +7,10 @@ __pycache__/
 *.pyc
 node_modules/
 .env
+.env.old
+.env.shared
+.env.anvil
+.env.sepolia
 cache/
 smart_contracts/out/
 smart_contracts/cache/

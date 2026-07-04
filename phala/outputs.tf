@@ -48,6 +48,30 @@ output "additional_worker_cvm_ids" {
   value       = { for key, app in phala_app.dfl_worker_additional : key => app.cvm_ids }
 }
 
+output "all_worker_app_ids" {
+  description = "Phala application IDs for all worker TEEs, including worker0."
+  value = merge(
+    { worker0 = phala_app.dfl_worker.app_id },
+    { for key, app in phala_app.dfl_worker_additional : key => app.app_id }
+  )
+}
+
+output "all_worker_cvm_ids" {
+  description = "CVM identifiers for all worker TEEs, including worker0."
+  value = merge(
+    { worker0 = phala_app.dfl_worker.cvm_ids },
+    { for key, app in phala_app.dfl_worker_additional : key => app.cvm_ids }
+  )
+}
+
+output "all_worker_statuses" {
+  description = "Current deployment status for all worker TEEs, including worker0."
+  value = merge(
+    { worker0 = phala_app.dfl_worker.status },
+    { for key, app in phala_app.dfl_worker_additional : key => app.status }
+  )
+}
+
 output "account_ssh_key_id" {
   description = "ID of the optional account-level SSH key."
   value       = var.manage_account_ssh_key && var.ssh_public_key_path != null ? phala_ssh_key.operator[0].id : null

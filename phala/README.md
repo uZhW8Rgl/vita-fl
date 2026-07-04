@@ -28,7 +28,7 @@ terraform plan
 terraform apply
 ```
 
-If you already keep the deployment values in the repository-root `.env`, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
+If you already keep the deployment values in repository-root env files, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
 
 ```bash
 bash phala/tf-env.sh init
@@ -36,11 +36,26 @@ bash phala/tf-env.sh plan -input=false
 bash phala/tf-env.sh apply
 ```
 
-The wrapper reads these values from `.env`:
+The wrapper prefers `.env.anvil` by default, falls back to `.env` if needed, and can be pointed at a custom file with `PHALA_ENV_FILE=/path/to/file`.
+
+The wrapper reads these values from the selected env file:
 
 - `PHALA_CLOUD_API_KEY`
 - `W0_ACCOUNT_ADDRESS`
 - `W0_PRIVATE_KEY`
+
+It also forwards the current Anvil/DFL profile settings into Terraform, including:
+
+- `W1_ACCOUNT_ADDRESS`, `W1_PRIVATE_KEY`, `W2_ACCOUNT_ADDRESS`, `W2_PRIVATE_KEY`, ... when `WORKER_COUNT` is greater than `1`
+- `INITIAL_GM_SIGNER_ADDRESS`
+- `CLIENT_LIMIT`, `EPOCH`, `ROUND`
+- `MODEL_SUBMISSION_DEADLINE_MS`, `GM_UPDATE_TIMEOUT_MS`, `GM_UPDATE_TIMEOUT_LOOPS`
+- `AGGREGATION_UPDATE_ESTIMATE_MS`, `GM_UPDATE_POLL_MS`
+- `DATASET_NAME`
+- `PCCS_FMSPC`, `PCCS_FETCH`, `PCCS_TEE`, `P256_MODE`
+- `DEPLOY_TDX_V4_DCAP`, `VERIFY_TDX_QUOTE_ONCHAIN`, `AGGREGATOR_TIMEOUT_REPORT_PERCENT`
+
+This means a Phala deployment can now be driven directly from `.env.anvil` without first rebuilding a combined `.env`.
 
 Minimal `terraform.tfvars`:
 
@@ -116,6 +131,27 @@ For Phala/dstack, the measured `compose-hash` is not just the SHA-256 of `dstack
 - the raw compose-file hash: SHA-256 of the `docker_compose_file` text, which can match your local `dstack-compose.template.yml`
 
 The local deployment therefore prefers `phala/app_code.txt` when deriving `expectedComposeHash`. If that export is missing, it falls back to the raw compose file hash. When the worker image changes, update `dstack-compose.template.yml`, deploy that exact worker app on Phala/dstack, then refresh `data/phala_tdx_quote`, `phala/app_code.txt`, and `phala/rtmr3_event_log.txt` before rerunning the local deployment.
+
+## Manual Runtime-Only Redeploy
+
+If you only want to rebuild the contract-runtime TEE manually in the Phala UI, use:
+
+- `phala/dstack-compose.contracts.runtime-only.yml`
+
+That file is a fully rendered runtime compose for the current `phala` image set and current local DFL values.
+
+Important caveat:
+
+- the worker TEEs currently reference the runtime TEE by its concrete Phala endpoint URL for `KUBO_API`, `KUBO_GATEWAY`, and `SEPOLIA_RPC_URL`
+- if the runtime app is recreated and gets a new endpoint, the workers must be updated to the new runtime endpoint before they can talk to Anvil/IPFS again
+- this is the main reason a full Terraform apply currently wants to replace the workers too
+
+So the safe manual order is:
+
+1. Redeploy the runtime app with `dstack-compose.contracts.runtime-only.yml`.
+2. Note the new runtime endpoint.
+3. Update the worker app compose files so `KUBO_API`, `KUBO_GATEWAY`, and `SEPOLIA_RPC_URL` point at that new runtime endpoint.
+4. Redeploy the workers only if the runtime endpoint changed.
 
 ## What This Verifies
 

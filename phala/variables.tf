@@ -103,7 +103,7 @@ variable "nonce" {
 variable "storage_fs" {
   description = "Optional storage filesystem."
   type        = string
-  default     = null
+  default     = "zfs"
 }
 
 variable "pre_launch_script" {
@@ -115,19 +115,19 @@ variable "pre_launch_script" {
 variable "public_logs" {
   description = "Expose container logs publicly."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "public_sysinfo" {
   description = "Expose system information publicly."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "public_tcbinfo" {
   description = "Expose TCB attestation information publicly."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "gateway_enabled" {
@@ -234,6 +234,67 @@ variable "private_key" {
   description = "Worker private key."
   type        = string
   sensitive   = true
+}
+
+variable "runtime_w1_account_address" {
+  description = "Optional second worker address injected into the contract-runtime compose."
+  type        = string
+  default     = null
+}
+
+variable "initial_gm_signer_address" {
+  description = "Optional initial GM signer address injected into the contract-runtime compose."
+  type        = string
+  default     = null
+}
+
+variable "blockchain_provider" {
+  description = "Blockchain provider selector injected into the contract-runtime compose."
+  type        = string
+  default     = "anvil"
+}
+
+variable "eth_wallet_private_key" {
+  description = "Wallet private key used by the contract-runtime initialization container."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "initial_gm_cid" {
+  description = "Initial global model CID injected into the contract-runtime compose."
+  type        = string
+  default     = ""
+}
+
+variable "initial_gm_sig_cid" {
+  description = "Initial global model signature CID injected into the contract-runtime compose."
+  type        = string
+  default     = ""
+}
+
+variable "eth_eur_price" {
+  description = "ETH/EUR conversion value used when exporting transaction costs."
+  type        = string
+  default     = "3000"
+}
+
+variable "transaction_cost_csv" {
+  description = "Transaction-cost CSV path used by the contract-runtime initialization container."
+  type        = string
+  default     = "/dfl/data/evaluation/transaction_costs.csv"
+}
+
+variable "model_transfer_timeout_ms" {
+  description = "Model transfer timeout in milliseconds."
+  type        = string
+  default     = "20000"
+}
+
+variable "model_transfer_retry_delay_ms" {
+  description = "Delay between model transfer retries in milliseconds."
+  type        = string
+  default     = "5000"
 }
 
 variable "client_limit" {
@@ -344,6 +405,12 @@ variable "p256_mode" {
   default     = "native"
 }
 
+variable "p256_verifier_address" {
+  description = "Optional explicit P256 verifier address."
+  type        = string
+  default     = ""
+}
+
 variable "deploy_tdx_v4_dcap" {
   description = "Whether to deploy the TDX v4 DCAP verifier during initialization."
   type        = string
@@ -362,6 +429,48 @@ variable "aggregator_timeout_report_percent" {
   default     = "50"
 }
 
+variable "keep_alive" {
+  description = "Whether the contract-runtime initialization container should stay alive after completion."
+  type        = string
+  default     = "0"
+}
+
+variable "pccs_quote_path" {
+  description = "Path inside the contract-runtime container to the reference PCCS quote."
+  type        = string
+  default     = "../data/phala_tdx_quote"
+}
+
+variable "tdx_quote_path" {
+  description = "Path inside the contract-runtime container to the generated TDX quote."
+  type        = string
+  default     = "./attestation/phala_tdx_quote"
+}
+
+variable "tdx_reference_quote_path" {
+  description = "Path inside the contract-runtime container to the reference TDX quote."
+  type        = string
+  default     = "../data/phala_tdx_quote"
+}
+
+variable "phala_compose_path" {
+  description = "Path inside the contract-runtime container to the worker compose template."
+  type        = string
+  default     = "../phala/dstack-compose.template.yml"
+}
+
+variable "phala_app_code_path" {
+  description = "Path inside the contract-runtime container to the app code measurement file."
+  type        = string
+  default     = "../phala/app_code.txt"
+}
+
+variable "phala_rtmr3_event_log_path" {
+  description = "Path inside the contract-runtime container to the RTMR3 event log."
+  type        = string
+  default     = "../phala/rtmr3_event_log.txt"
+}
+
 variable "public_ip" {
   description = "Optional public IP value injected into the worker container."
   type        = string
@@ -372,4 +481,10 @@ variable "msg_broker_ip" {
   description = "Optional message broker IP injected into the worker container."
   type        = string
   default     = ""
+}
+
+variable "runtime_endpoint_override" {
+  description = "Optional explicit Phala runtime endpoint base URL used by worker TEEs instead of the Terraform-managed contract-runtime endpoint."
+  type        = string
+  default     = null
 }

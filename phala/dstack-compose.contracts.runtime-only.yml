@@ -63,8 +63,8 @@ services:
       PHALA_COMPOSE_PATH: /dfl/phala/dstack-compose.template.yml
       PHALA_APP_CODE_PATH: /dfl/phala/app_code.txt
       PHALA_RTMR3_EVENT_LOG_PATH: /dfl/phala/rtmr3_event_log.txt
-      DATASET_NAME: mnist
-      W0_ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
-      W1_ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
-      INITIAL_GM_SIGNER_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
+      DATASET_NAME: chestmnist
+      W0_ACCOUNT_ADDRESS: "0x561c6C160021EBfD0810F013f4efCa24edB7e9E3"
+      W1_ACCOUNT_ADDRESS: "0x6004D395731f85938177d5B07aCfEc2D5D7ECcB0"
+      INITIAL_GM_SIGNER_ADDRESS: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
     command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]

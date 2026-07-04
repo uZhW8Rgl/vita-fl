@@ -18,7 +18,15 @@ locals {
     smart_contracts_image             = var.smart_contracts_image
     anvil_image                       = var.anvil_image
     ipfs_image                        = var.ipfs_image
-    account_address                   = var.account_address
+    w0_account_address                = var.account_address
+    w1_account_address                = coalesce(var.runtime_w1_account_address, var.account_address)
+    initial_gm_signer_address         = coalesce(var.initial_gm_signer_address, var.account_address)
+    blockchain_provider               = var.blockchain_provider
+    eth_wallet_private_key            = var.eth_wallet_private_key
+    initial_gm_cid                    = var.initial_gm_cid
+    initial_gm_sig_cid                = var.initial_gm_sig_cid
+    eth_eur_price                     = var.eth_eur_price
+    transaction_cost_csv              = var.transaction_cost_csv
     client_limit                      = var.client_limit
     epoch                             = var.epoch
     round                             = var.round
@@ -27,6 +35,8 @@ locals {
     gm_update_timeout_loops           = var.gm_update_timeout_loops
     aggregation_update_estimate_ms    = var.aggregation_update_estimate_ms
     gm_update_poll_ms                 = var.gm_update_poll_ms
+    model_transfer_timeout_ms         = var.model_transfer_timeout_ms
+    model_transfer_retry_delay_ms     = var.model_transfer_retry_delay_ms
     rsa_private_key_file              = var.rsa_private_key_file
     rsa_public_key_file               = var.rsa_public_key_file
     train_images_src                  = var.train_images_src
@@ -39,14 +49,22 @@ locals {
     pccs_fetch                        = var.pccs_fetch
     pccs_tee                          = var.pccs_tee
     p256_mode                         = var.p256_mode
+    p256_verifier_address             = var.p256_verifier_address
     deploy_tdx_v4_dcap                = var.deploy_tdx_v4_dcap
     verify_tdx_quote_onchain          = var.verify_tdx_quote_onchain
     aggregator_timeout_report_percent = var.aggregator_timeout_report_percent
+    keep_alive                        = var.keep_alive
+    pccs_quote_path                   = var.pccs_quote_path
+    tdx_quote_path                    = var.tdx_quote_path
+    tdx_reference_quote_path          = var.tdx_reference_quote_path
+    phala_compose_path                = var.phala_compose_path
+    phala_app_code_path               = var.phala_app_code_path
+    phala_rtmr3_event_log_path        = var.phala_rtmr3_event_log_path
   })
 
   ssh_authorized_keys = var.ssh_public_key_path == null ? [] : [trimspace(file(var.ssh_public_key_path))]
 
-  contracts_endpoint_base = trimsuffix(phala_app.contract_runtime.endpoint, "/")
+  contracts_endpoint_base = trimsuffix(coalesce(var.runtime_endpoint_override, phala_app.contract_runtime.endpoint), "/")
   contracts_rpc_url       = "${local.contracts_endpoint_base}:8545"
   contracts_kubo_api_url  = "${local.contracts_endpoint_base}:5001"
   contracts_kubo_gateway  = "${local.contracts_endpoint_base}:8080"
@@ -199,6 +217,26 @@ resource "phala_cvm_power" "dfl_worker" {
   count = var.manage_power_state ? 1 : 0
 
   cvm_id = phala_app.dfl_worker.primary_cvm_id
+  state  = var.desired_power_state
+
+  wait_for_state       = true
+  wait_timeout_seconds = var.wait_timeout_seconds
+}
+
+resource "phala_cvm_power" "contract_runtime" {
+  count = var.manage_power_state ? 1 : 0
+
+  cvm_id = phala_app.contract_runtime.primary_cvm_id
+  state  = var.desired_power_state
+
+  wait_for_state       = true
+  wait_timeout_seconds = var.wait_timeout_seconds
+}
+
+resource "phala_cvm_power" "dfl_worker_additional" {
+  for_each = var.manage_power_state ? nonsensitive(var.additional_workers) : {}
+
+  cvm_id = phala_app.dfl_worker_additional[each.key].primary_cvm_id
   state  = var.desired_power_state
 
   wait_for_state       = true

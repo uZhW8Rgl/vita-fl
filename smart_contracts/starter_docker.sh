@@ -3,7 +3,7 @@
 set -euo pipefail
 
 
-export ETH_WALLET_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+export ETH_WALLET_PRIVATE_KEY=${ETH_WALLET_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
 
 echo "Wallet private key wurde gesetzt." 
 
@@ -357,7 +357,7 @@ if [ "$ENABLE_DCAP" = "1" ]; then
     export PRIVATE_KEY=$ETH_WALLET_PRIVATE_KEY
     export DCAP_IMAGE_ID=${DCAP_IMAGE_ID:-0x97f41badbcc8d79521f10cd076fa7a2ed67b84abe07c496da11a2a708c9e5f14}
 
-    if [ "${DOCKER:-}" != "phala" ]; then
+    if using_local_runtime_services; then
         FALLBACK_P256_VERIFIER_ADDRESS=0xc2b78104907F722DABAc4C69f826a522B2754De4
         P256_SOURCE_PATH="lib/p256-verifier/src/P256Verifier.sol"
         if [ ! -f "$SCRIPT_DIR/$P256_SOURCE_PATH" ]; then
