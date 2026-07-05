@@ -38,7 +38,7 @@ services:
       retries: 24
 
   smart-contracts:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:1cd9298a1026ade3a5d0ff952269dd600d15918ecdd57f6fbb321b5d5996a277
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:41e960b5139b50bf9edafafbadcb3261e7ef269b8f6fe908ae6c91db81955aba
     restart: "no"
     depends_on:
       anvil:
