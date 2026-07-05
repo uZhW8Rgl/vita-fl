@@ -300,10 +300,11 @@ function normalizeRtmr3EventDigests(eventLog) {
         }
         if (digest.startsWith('0x') || digest.startsWith('0X'))
             digest = digest.slice(2);
-        if (!/^[0-9a-fA-F]{96}$/.test(digest)) {
+        if (!/^[0-9a-fA-F]+$/.test(digest) || digest.length % 2 !== 0 || digest.length > 96) {
             throw new Error(`Invalid RTMR3 event digest for event ${event?.event || '<unknown>'}`);
         }
-        return `0x${digest}`;
+        // Legacy tappd pads event digests to the 48-byte SHA-384 RTMR input width.
+        return `0x${digest.padEnd(96, '0')}`;
     });
     if (digests.length === 0) {
         throw new Error('Phala quote response did not include RTMR3 event digests');
