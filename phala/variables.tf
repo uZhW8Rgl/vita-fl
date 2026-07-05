@@ -384,7 +384,7 @@ variable "test_labels_src" {
 variable "train_data_src" {
   description = "Path inside the container to the ChestMNIST training dataset."
   type        = string
-  default     = "/dfl/config/chestmnist/training_data/train-data.npz"
+  default     = "/dfl/config/chestmnist/training_data/train-data-0.npz"
 }
 
 variable "test_data_src" {

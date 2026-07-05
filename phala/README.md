@@ -76,7 +76,9 @@ Notes:
 - The contract-runtime TEE runs its own local `anvil`; the worker TEE talks to that internal runtime endpoint, not to Sepolia.
 - The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
 - The worker now treats `/runtime/contracts.json` as the effective runtime-ready signal. The runtime publishes that manifest only after `smart-contracts` finished its bootstrap path, which avoids startup races even when `/runtime/ready.json` is missing on Phala.
-- The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/tappd.sock`, and the Node service now talks to `tappd.sock` directly when `dstack.sock` is not present.
+- The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/tappd.sock`.
+- At runtime the worker first tries `/var/run/dstack.sock` and then falls back to direct `tappd` pRPC calls over `/var/run/tappd.sock` when `dstack.sock` is not present.
+- After changing the worker attestation code, publish a fresh `ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala` image before redeploying the Phala workers, otherwise the running CVMs still use the old logic baked into the last image.
 
 ### Where Hardware Is Selected
 
@@ -156,6 +158,22 @@ So the safe manual order is:
 2. Note the new runtime endpoint.
 3. Update the worker app compose files so `KUBO_API`, `KUBO_GATEWAY`, and `SEPOLIA_RPC_URL` point at that new runtime endpoint.
 4. Redeploy the workers only if the runtime endpoint changed.
+
+## Worker Attestation Notes
+
+The Phala worker path is now intentionally "real quote only":
+
+- no fallback to `TDX_QUOTE_PATH`
+- no mock quote registration path for Phala workers
+- the worker must be able to talk to the Phala socket exposed inside the CVM
+
+If the worker log shows errors like:
+
+- `Unix socket file /var/run/dstack.sock does not exist`
+- `write EPIPE`
+- `failed to parse response`
+
+then the first thing to verify is that the currently deployed worker image digest was built after the latest `dfl/node_server` attestation changes. Those errors usually mean the CVM still runs an older image that does not yet speak the socket/API variant exposed by Phala on that node.
 
 For explicit overrides, `phala/tf-env.sh` supports:
 

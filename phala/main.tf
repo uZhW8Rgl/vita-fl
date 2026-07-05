@@ -87,6 +87,10 @@ locals {
       ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8080.")
       : "${local.contracts_endpoint_base}:8080",
   )
+  additional_worker_indices = {
+    for worker_key, _ in nonsensitive(var.additional_workers) :
+    worker_key => tonumber(replace(worker_key, "worker", ""))
+  }
 }
 
 resource "phala_ssh_key" "operator" {
@@ -205,11 +209,11 @@ resource "phala_app" "dfl_worker_additional" {
     rsa_private_key_file           = var.rsa_private_key_file
     rsa_public_key_file            = var.rsa_public_key_file
     dataset_name                   = var.dataset_name
-    train_images_src               = var.train_images_src
-    train_labels_src               = var.train_labels_src
+    train_images_src               = replace(var.train_images_src, "-0.", format("-%d.", local.additional_worker_indices[each.key]))
+    train_labels_src               = replace(var.train_labels_src, "-0.", format("-%d.", local.additional_worker_indices[each.key]))
     test_images_src                = var.test_images_src
     test_labels_src                = var.test_labels_src
-    train_data_src                 = var.train_data_src
+    train_data_src                 = replace(var.train_data_src, "-0.", format("-%d.", local.additional_worker_indices[each.key]))
     test_data_src                  = var.test_data_src
     python_service_url             = var.python_service_url
     public_ip                      = var.public_ip
