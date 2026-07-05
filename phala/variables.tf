@@ -204,7 +204,7 @@ variable "ssh_public_key_path" {
 variable "worker_image" {
   description = "Digest-pinned DFL worker container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:57553b3853d48198b8034cd59e766d076f88c502b0f1f85cb4afe60016c687f6"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:b44509c57fb38c0a9cc531e8efc0fd6e8c02da760df7a128c6428a0d4e98474b"
 }
 
 variable "smart_contracts_image" {
@@ -367,6 +367,30 @@ variable "train_labels_src" {
   description = "Path inside the container to the training labels dataset."
   type        = string
   default     = "/dfl/config/training_data/train-labels-0.idx1-ubyte"
+}
+
+variable "test_images_src" {
+  description = "Path inside the container to the MNIST test images dataset."
+  type        = string
+  default     = "/dfl/config/test_data/t10k-images.idx3-ubyte"
+}
+
+variable "test_labels_src" {
+  description = "Path inside the container to the MNIST test labels dataset."
+  type        = string
+  default     = "/dfl/config/test_data/t10k-labels.idx1-ubyte"
+}
+
+variable "train_data_src" {
+  description = "Path inside the container to the ChestMNIST training dataset."
+  type        = string
+  default     = "/dfl/config/chestmnist/training_data/train-data.npz"
+}
+
+variable "test_data_src" {
+  description = "Path inside the container to the ChestMNIST test dataset."
+  type        = string
+  default     = "/dfl/config/chestmnist/test_data/test-data.npz"
 }
 
 variable "python_service_url" {

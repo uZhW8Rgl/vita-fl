@@ -145,8 +145,13 @@ resource "phala_app" "dfl_worker" {
     gm_update_poll_ms              = var.gm_update_poll_ms
     rsa_private_key_file           = var.rsa_private_key_file
     rsa_public_key_file            = var.rsa_public_key_file
+    dataset_name                   = var.dataset_name
     train_images_src               = var.train_images_src
     train_labels_src               = var.train_labels_src
+    test_images_src                = var.test_images_src
+    test_labels_src                = var.test_labels_src
+    train_data_src                 = var.train_data_src
+    test_data_src                  = var.test_data_src
     python_service_url             = var.python_service_url
     public_ip                      = var.public_ip
     msg_broker_ip                  = var.msg_broker_ip
@@ -199,8 +204,13 @@ resource "phala_app" "dfl_worker_additional" {
     gm_update_poll_ms              = var.gm_update_poll_ms
     rsa_private_key_file           = var.rsa_private_key_file
     rsa_public_key_file            = var.rsa_public_key_file
+    dataset_name                   = var.dataset_name
     train_images_src               = var.train_images_src
     train_labels_src               = var.train_labels_src
+    test_images_src                = var.test_images_src
+    test_labels_src                = var.test_labels_src
+    train_data_src                 = var.train_data_src
+    test_data_src                  = var.test_data_src
     python_service_url             = var.python_service_url
     public_ip                      = var.public_ip
     msg_broker_ip                  = var.msg_broker_ip

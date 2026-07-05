@@ -24,13 +24,6 @@ if [ ! -f "${TDX_QUOTE_PATH}" ] && [ -f "/dfl/node_server/attestation/phala_tdx_
   export TDX_QUOTE_PATH=/dfl/node_server/attestation/phala_tdx_quote
 fi
 
-# Phala currently exposes the attestation service on some hosts via tappd.sock
-# while the Node SDK still expects dstack.sock. Mirror the real host socket into
-# the legacy path instead of falling back to any mock/local quote path.
-if [ -S /var/run/tappd.sock ] && [ ! -S /var/run/dstack.sock ]; then
-  ln -sf /var/run/tappd.sock /var/run/dstack.sock
-fi
-
 case "$DATASET_NAME" in
   mnist)
     cp "${TRAIN_IMAGES_SRC}" /dfl/node_server/data/train-images.idx3-ubyte

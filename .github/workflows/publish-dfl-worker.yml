@@ -1,6 +1,12 @@
 name: Publish DFL Worker Image
 
 on:
+  push:
+    branches:
+      - phala
+    paths:
+      - "dfl/**"
+      - ".github/workflows/publish-dfl-worker.yml"
   workflow_dispatch:
     inputs:
       image_tag:
@@ -47,7 +53,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag || 'phala' }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha,scope=dfl-worker-rtmr
           cache-to: type=gha,scope=dfl-worker-rtmr,mode=max
@@ -57,7 +63,7 @@ jobs:
           echo "## Published DFL worker image" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Image tag:" >> "$GITHUB_STEP_SUMMARY"
-          echo "\`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag || 'phala' }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Digest-pinned reference for Phala/dstack:" >> "$GITHUB_STEP_SUMMARY"
           echo "\`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"

@@ -3,7 +3,7 @@ services:
     # Replace the digest after running the "Publish DFL Worker Image" workflow.
     # The digest-pinned image reference is what becomes part of the measured
     # Phala/dstack application configuration.
-    image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:57553b3853d48198b8034cd59e766d076f88c502b0f1f85cb4afe60016c687f6
+    image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:b44509c57fb38c0a9cc531e8efc0fd6e8c02da760df7a128c6428a0d4e98474b
     restart: unless-stopped
     volumes:
       - /var/run/tappd.sock:/var/run/tappd.sock
@@ -46,8 +46,4 @@ services:
     command:
       - /bin/bash
       - -lc
-      - |
-        if [ -S /var/run/tappd.sock ] && [ ! -S /var/run/dstack.sock ]; then
-          ln -sf /var/run/tappd.sock /var/run/dstack.sock
-        fi
-        exec /dfl/start_node_neural_network.sh
+      - exec /dfl/start_node_neural_network.sh

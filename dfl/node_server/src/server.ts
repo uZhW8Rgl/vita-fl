@@ -7,8 +7,8 @@ import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, setGlobalMo
 import { getCurrentModel, pinFile, getFileFromIPFS, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
 import fs from 'fs/promises';
-import { readFileSync } from 'fs';
-import { DstackClient } from '@phala/dstack-sdk';
+import { existsSync, readFileSync } from 'fs';
+import { DstackClient, TappdClient } from '@phala/dstack-sdk';
 import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -180,6 +180,37 @@ function rsaPublicKeyDerHex() {
 async function localModelPackageHash() {
     const data = await fs.readFile('./data/lm.bin.enc');
     return `0x${crypto.createHash('sha256').update(data).digest('hex')}`;
+}
+
+async function fetchLivePhalaQuote(reportData) {
+    const dstackSock = '/var/run/dstack.sock';
+    const tappdSock = '/var/run/tappd.sock';
+
+    if (existsSync(dstackSock)) {
+        const client = new DstackClient(dstackSock);
+        const info = await client.info();
+        console.log('App ID:', info.app_id);
+        console.log('Instance ID:', info.instance_id);
+        console.log('App Name:', info.app_name);
+        console.log('TCB Info:', info.tcb_info);
+        const quote = await client.getQuote(reportData);
+        return {
+            quoteHex: normalizeHexBytes(quote.quote),
+            rtmr3EventDigests: normalizeRtmr3EventDigests(quote.event_log),
+        };
+    }
+
+    if (existsSync(tappdSock)) {
+        console.log('Using legacy Phala tappd.sock attestation path.');
+        const client = new TappdClient(tappdSock);
+        const quote = await client.tdxQuote(reportData, 'raw');
+        return {
+            quoteHex: normalizeHexBytes(quote.quote),
+            rtmr3EventDigests: normalizeRtmr3EventDigests(quote.event_log),
+        };
+    }
+
+    throw new Error('Neither /var/run/dstack.sock nor /var/run/tappd.sock is available for Phala attestation.');
 }
 
 async function expectedWorkerAddresses() {
@@ -398,14 +429,6 @@ async function prepareRoundZeroBootstrapRollover() {
 const stateMachine = async () => {
     if (process.env.DOCKER === "phala") {
         console.log("Fetching TDX Quote ...");
-        const client = new DstackClient();
-
-        // Get TEE instance information
-        const info = await client.info();
-        console.log('App ID:', info.app_id);
-        console.log('Instance ID:', info.instance_id);
-        console.log('App Name:', info.app_name);
-        console.log('TCB Info:', info.tcb_info);
 
         // Generate remote attestation quote
         const applicationData = JSON.stringify({
@@ -415,10 +438,7 @@ const stateMachine = async () => {
         });
 
         const reportData = crypto.createHash('sha256').update(applicationData).digest();
-        const quote = await client.getQuote(reportData);
-        const quoteHex = normalizeHexBytes(quote.quote);
-        const rtmr3EventDigests = normalizeRtmr3EventDigests(quote.event_log);
-        console.log('TDX Quote:', quote.quote);
+        const { quoteHex, rtmr3EventDigests } = await fetchLivePhalaQuote(reportData);
         console.log(`Registering with live Phala TDX quote and ${rtmr3EventDigests.length} RTMR3 event digests ...`);
 
         await registerDeviceWithTeeQuoteAndRtmr3Events(

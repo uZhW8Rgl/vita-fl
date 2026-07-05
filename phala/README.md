@@ -76,7 +76,7 @@ Notes:
 - The contract-runtime TEE runs its own local `anvil`; the worker TEE talks to that internal runtime endpoint, not to Sepolia.
 - The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
 - The worker now treats `/runtime/contracts.json` as the effective runtime-ready signal. The runtime publishes that manifest only after `smart-contracts` finished its bootstrap path, which avoids startup races even when `/runtime/ready.json` is missing on Phala.
-- The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/tappd.sock` and the startup script mirrors it to `/var/run/dstack.sock` for the Node SDK.
+- The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/tappd.sock`, and the Node service now talks to `tappd.sock` directly when `dstack.sock` is not present.
 
 ### Where Hardware Is Selected
 
@@ -93,11 +93,12 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 
 ## Flow
 
-1. Publish the DFL worker image through the manual GitHub Actions workflow `Publish DFL Worker Image`.
+1. Publish the DFL worker image through the GitHub Actions workflow `Publish DFL Worker Image`.
+   On branch `phala`, pushes that touch `dfl/**` trigger the workflow automatically and keep the default `phala` tag.
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:57553b3853d48198b8034cd59e766d076f88c502b0f1f85cb4afe60016c687f6
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:b44509c57fb38c0a9cc531e8efc0fd6e8c02da760df7a128c6428a0d4e98474b
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.

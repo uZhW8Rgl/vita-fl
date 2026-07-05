@@ -32,18 +32,19 @@ services:
       GM_UPDATE_TIMEOUT_LOOPS: "${gm_update_timeout_loops}"
       AGGREGATION_UPDATE_ESTIMATE_MS: "${aggregation_update_estimate_ms}"
       GM_UPDATE_POLL_MS: "${gm_update_poll_ms}"
+      DATASET_NAME: "${dataset_name}"
 
       RSA_PRIVATE_KEY_FILE: "${rsa_private_key_file}"
       RSA_PUBLIC_KEY_FILE: "${rsa_public_key_file}"
       TRAIN_IMAGES_SRC: "${train_images_src}"
       TRAIN_LABELS_SRC: "${train_labels_src}"
+      TEST_IMAGES_SRC: "${test_images_src}"
+      TEST_LABELS_SRC: "${test_labels_src}"
+      TRAIN_DATA_SRC: "${train_data_src}"
+      TEST_DATA_SRC: "${test_data_src}"
 
       PYTHON_SERVICE_URL: "${python_service_url}"
     command:
       - /bin/bash
       - -lc
-      - |
-        if [ -S /var/run/tappd.sock ] && [ ! -S /var/run/dstack.sock ]; then
-          ln -sf /var/run/tappd.sock /var/run/dstack.sock
-        fi
-        exec /dfl/start_node_neural_network.sh
+      - exec /dfl/start_node_neural_network.sh
