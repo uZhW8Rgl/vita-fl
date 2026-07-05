@@ -75,6 +75,7 @@ Notes:
 - The default minimal hardware profile is now `tdx.small` with `20 GB` disk.
 - The contract-runtime TEE runs its own local `anvil`; the worker TEE talks to that internal runtime endpoint, not to Sepolia.
 - The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
+- The worker now waits for `/runtime/ready.json` before reading `/runtime/contracts.json`, so it only starts after `smart_contracts` has finished its bootstrap work.
 - The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/tappd.sock` and the startup script mirrors it to `/var/run/dstack.sock` for the Node SDK.
 
 ### Where Hardware Is Selected
@@ -96,7 +97,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:<digest>
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:368f0718e1c4b88711a50ac31d80343d5baeee9de47b81c37e3328b20c8b59ef
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.

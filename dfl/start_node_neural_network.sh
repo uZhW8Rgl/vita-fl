@@ -103,11 +103,36 @@ contracts = {
 }
 
 kubo_api = (os.environ.get("KUBO_API") or "").rstrip("/")
+if kubo_api:
+    ready_url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote("/runtime/ready.json", safe="")
+    ready_deadline = time.time() + 600
+    while time.time() < ready_deadline:
+        try:
+            request = urllib.request.Request(ready_url, method="POST")
+            with urllib.request.urlopen(request, timeout=5) as response:
+                ready_manifest = json.loads(response.read().decode("utf-8"))
+            if ready_manifest.get("status") == "ready":
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+    else:
+        raise SystemExit(f"Timed out waiting for runtime ready marker via {ready_url}")
+
 if kubo_api and (missing(rpc_url) or any(missing(value) for value in contracts.values())):
     url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote("/runtime/contracts.json", safe="")
-    request = urllib.request.Request(url, method="POST")
-    with urllib.request.urlopen(request, timeout=5) as response:
-        manifest = json.loads(response.read().decode("utf-8"))
+    manifest_deadline = time.time() + 300
+    manifest = None
+    while time.time() < manifest_deadline:
+        try:
+            request = urllib.request.Request(url, method="POST")
+            with urllib.request.urlopen(request, timeout=5) as response:
+                manifest = json.loads(response.read().decode("utf-8"))
+            break
+        except Exception:
+            time.sleep(2)
+    if manifest is None:
+        raise SystemExit(f"Timed out waiting for runtime contract manifest via {url}")
 
     rpc_url = rpc_url if not missing(rpc_url) else str(manifest.get("rpc_url", "")).strip()
     for env_name, manifest_key in (

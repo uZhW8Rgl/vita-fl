@@ -65,8 +65,19 @@ wait_for_kubo() {
     return 1
 }
 
+clear_runtime_ready_marker() {
+    if [ "$IPFS_PROVIDER" != "kubo" ]; then
+        return 0
+    fi
+
+    echo "Clearing stale runtime ready marker from Kubo MFS: /runtime/ready.json"
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        "${KUBO_API_URL}/api/v0/files/rm?arg=/runtime/ready.json&force=true" >/dev/null || true
+}
+
 wait_for_anvil
 wait_for_kubo
+clear_runtime_ready_marker
 
 CHAIN_ID=$(cast chain-id --rpc-url $rpc_url)
 ETH_EUR_PRICE=${ETH_EUR_PRICE:-3000}
@@ -103,6 +114,26 @@ EOF
         -F "file=@${manifest_file}" \
         "${KUBO_API_URL}/api/v0/files/write?arg=/runtime/contracts.json&create=true&truncate=true&parents=true" >/dev/null
     rm -f "$manifest_file"
+}
+
+publish_runtime_ready_marker() {
+    if [ "$IPFS_PROVIDER" != "kubo" ]; then
+        return 0
+    fi
+
+    local ready_file
+    ready_file=$(mktemp)
+    cat >"$ready_file" <<EOF
+{"status":"ready","chain_id":"$CHAIN_ID","rpc_url":"$rpc_url","timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+EOF
+
+    echo "Publishing runtime ready marker to Kubo MFS: /runtime/ready.json"
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        "${KUBO_API_URL}/api/v0/files/mkdir?arg=/runtime&parents=true" >/dev/null || true
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        -F "file=@${ready_file}" \
+        "${KUBO_API_URL}/api/v0/files/write?arg=/runtime/ready.json&create=true&truncate=true&parents=true" >/dev/null
+    rm -f "$ready_file"
 }
 
 authorize_pccs_reader() {
@@ -1013,6 +1044,7 @@ if [ "$IPFS_PROVIDER" = "kubo" ] && [ -n "${INITIAL_GM_CID:-}" ] && [ -n "${INIT
 fi
 
 prepare_encrypted_initial_gm
+publish_runtime_ready_marker
 
 KEEP_ALIVE=${KEEP_ALIVE:-0}
 if [ "$KEEP_ALIVE" = "1" ]; then
