@@ -77,7 +77,7 @@ Notes:
 - The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
 - The worker now treats `/runtime/contracts.json` as the effective runtime-ready signal. The runtime publishes that manifest only after `smart-contracts` finished its bootstrap path, which avoids startup races even when `/runtime/ready.json` is missing on Phala.
 - The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/tappd.sock`.
-- At runtime the worker first tries `/var/run/dstack.sock` and then falls back to direct `tappd` pRPC calls over `/var/run/tappd.sock` when `dstack.sock` is not present.
+- At runtime the worker first tries `/var/run/dstack.sock` and then uses the SDK's legacy `TappdClient` over `/var/run/tappd.sock` when `dstack.sock` is not present.
 - After changing the worker attestation code, publish a fresh `ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala` image before redeploying the Phala workers, otherwise the running CVMs still use the old logic baked into the last image.
 
 ### Where Hardware Is Selected
@@ -100,7 +100,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:b44509c57fb38c0a9cc531e8efc0fd6e8c02da760df7a128c6428a0d4e98474b
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:52775767380cfa2648f35a4078bad43ee3455ad8421df945c792578ced320905
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.

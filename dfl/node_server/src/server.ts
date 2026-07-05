@@ -1,7 +1,6 @@
 // @ts-nocheck
 // code adapted from pinata docs https://docs.pinata.cloud/quickstart/node-js
 import 'dotenv/config';
-import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, setGlobalModel, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getPreviousAggregatorFromGMStorage, getLastRoundsAggregator, registerDeviceWithTeeQuote, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
@@ -9,7 +8,7 @@ import { getCurrentModel, pinFile, getFileFromIPFS, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
 import fs from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
-import { DstackClient } from '@phala/dstack-sdk';
+import { DstackClient, TappdClient } from '@phala/dstack-sdk';
 import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -203,7 +202,12 @@ async function fetchLivePhalaQuote(reportData) {
 
     if (existsSync(tappdSock)) {
         console.log('Using legacy Phala tappd.sock attestation path.');
-        return fetchLivePhalaQuoteFromTappd(tappdSock, reportData);
+        const client = new TappdClient(tappdSock);
+        const quote = await client.tdxQuote(reportData, 'raw');
+        return {
+            quoteHex: normalizeHexBytes(quote.quote),
+            rtmr3EventDigests: normalizeRtmr3EventDigests(quote.event_log),
+        };
     }
 
     throw new Error('Neither /var/run/dstack.sock nor /var/run/tappd.sock is available for Phala attestation.');
@@ -296,130 +300,6 @@ async function registerWithLocalTdxQuote() {
     console.log("Device registered with onchain TDX quote verification.");
 }
 
-async function unixSocketJsonRequest(socketPath, requestPath, { method = 'GET', body = null } = {}) {
-    return new Promise((resolve, reject) => {
-        const payload = body == null ? null : JSON.stringify(body);
-        const req = http.request({
-            socketPath,
-            path: requestPath,
-            method,
-            headers: payload ? {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(payload),
-            } : undefined,
-        }, (res) => {
-            const chunks = [];
-            res.on('data', chunk => chunks.push(chunk));
-            res.on('end', () => {
-                const text = Buffer.concat(chunks).toString('utf8').trim();
-                if ((res.statusCode || 0) >= 400) {
-                    reject(new Error(`Unix socket request ${requestPath} failed (${res.statusCode}): ${text}`));
-                    return;
-                }
-                if (!text) {
-                    resolve({});
-                    return;
-                }
-                try {
-                    resolve(JSON.parse(text));
-                } catch {
-                    reject(new Error(`Unix socket request ${requestPath} returned non-JSON: ${text}`));
-                }
-            });
-        });
-        req.on('error', reject);
-        if (payload) req.write(payload);
-        req.end();
-    });
-}
-
-function normalizeQuoteBytes(input) {
-    if (Buffer.isBuffer(input)) {
-        return `0x${input.toString('hex')}`;
-    }
-
-    const text = String(input || '').trim();
-    if (!text) {
-        throw new Error('Phala quote response did not include quote bytes');
-    }
-
-    try {
-        return normalizeHexBytes(text);
-    } catch {
-        // Fallback to base64 for tappd pRPC responses.
-    }
-
-    if (/^[A-Za-z0-9+/=]+$/.test(text)) {
-        const bytes = Buffer.from(text, 'base64');
-        if (bytes.length > 0) {
-            return `0x${bytes.toString('hex')}`;
-        }
-    }
-
-    throw new Error(`Unsupported quote encoding returned by Phala tappd: ${text.slice(0, 64)}`);
-}
-
-function unwrapTappdResponse(response) {
-    const candidates = [response];
-    if (response && typeof response === 'object') {
-        for (const key of ['result', 'data', 'payload', 'message']) {
-            if (response[key] && typeof response[key] === 'object') {
-                candidates.push(response[key]);
-            }
-        }
-    }
-
-    for (const candidate of candidates) {
-        if (!candidate || typeof candidate !== 'object') continue;
-        const quote = candidate.quote ?? candidate.quote_hex ?? candidate.quoteHex;
-        const eventLog = candidate.event_log ?? candidate.eventLog;
-        if (quote && eventLog) {
-            return { quote, eventLog };
-        }
-    }
-
-    throw new Error(`Phala tappd quote response did not include quote/event log fields: ${JSON.stringify(response).slice(0, 400)}`);
-}
-
-async function fetchLivePhalaQuoteFromTappd(socketPath, reportData) {
-    const info = await unixSocketJsonRequest(socketPath, '/prpc/Tappd.Info');
-    if (info?.app_id) console.log('App ID:', info.app_id);
-    if (info?.instance_id) console.log('Instance ID:', info.instance_id);
-    if (info?.app_name) console.log('App Name:', info.app_name);
-    if (info?.tcb_info) console.log('TCB Info:', info.tcb_info);
-
-    const reportHex = reportData.toString('hex');
-    const reportHexPrefixed = `0x${reportHex}`;
-    const reportBase64 = reportData.toString('base64');
-    const attempts = [
-        { description: 'snake_case hex', body: { report_data: reportHexPrefixed, hash_algorithm: 'raw' } },
-        { description: 'snake_case hex no prefix', body: { report_data: reportHex, hash_algorithm: 'raw' } },
-        { description: 'camelCase hex', body: { reportData: reportHexPrefixed, hashAlgorithm: 'raw' } },
-        { description: 'camelCase hex no prefix', body: { reportData: reportHex, hashAlgorithm: 'raw' } },
-        { description: 'snake_case base64', body: { report_data: reportBase64, hash_algorithm: 'raw' } },
-        { description: 'camelCase base64', body: { reportData: reportBase64, hashAlgorithm: 'raw' } },
-    ];
-
-    const errors = [];
-    for (const attempt of attempts) {
-        try {
-            const response = await unixSocketJsonRequest(socketPath, '/prpc/Tappd.TdxQuote', {
-                method: 'POST',
-                body: attempt.body,
-            });
-            const { quote, eventLog } = unwrapTappdResponse(response);
-            return {
-                quoteHex: normalizeQuoteBytes(quote),
-                rtmr3EventDigests: normalizeRtmr3EventDigests(eventLog),
-            };
-        } catch (error) {
-            errors.push(`${attempt.description}: ${error?.message || String(error)}`);
-        }
-    }
-
-    throw new Error(`All tappd quote request formats failed. ${errors.join(' | ')}`);
-}
-
 function normalizeRtmr3EventDigests(eventLog) {
     let events = eventLog;
     if (typeof events === 'string') {
@@ -431,7 +311,15 @@ function normalizeRtmr3EventDigests(eventLog) {
     const digests = events
         .filter(event => Number(event?.imr) === 3)
         .map(event => {
-            let digest = String(event?.digest || '').trim();
+            const rawDigest = event?.digest;
+            let digest;
+            if (Buffer.isBuffer(rawDigest) || Array.isArray(rawDigest) || ArrayBuffer.isView(rawDigest)) {
+                digest = Buffer.from(rawDigest).toString('hex');
+            } else if (rawDigest?.type === 'Buffer' && Array.isArray(rawDigest.data)) {
+                digest = Buffer.from(rawDigest.data).toString('hex');
+            } else {
+                digest = String(rawDigest || '').trim();
+            }
             if (digest.startsWith('0x') || digest.startsWith('0X')) digest = digest.slice(2);
             if (!/^[0-9a-fA-F]{96}$/.test(digest)) {
                 throw new Error(`Invalid RTMR3 event digest for event ${event?.event || '<unknown>'}`);

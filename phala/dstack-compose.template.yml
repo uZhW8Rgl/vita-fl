@@ -3,7 +3,7 @@ services:
     # Replace the digest after running the "Publish DFL Worker Image" workflow.
     # The digest-pinned image reference is what becomes part of the measured
     # Phala/dstack application configuration.
-    image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:b44509c57fb38c0a9cc531e8efc0fd6e8c02da760df7a128c6428a0d4e98474b
+    image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:52775767380cfa2648f35a4078bad43ee3455ad8421df945c792578ced320905
     restart: unless-stopped
     volumes:
       - /var/run/tappd.sock:/var/run/tappd.sock
