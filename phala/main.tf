@@ -65,9 +65,28 @@ locals {
   ssh_authorized_keys = var.ssh_public_key_path == null ? [] : [trimspace(file(var.ssh_public_key_path))]
 
   contracts_endpoint_base = trimsuffix(coalesce(var.runtime_endpoint_override, phala_app.contract_runtime.endpoint), "/")
-  contracts_rpc_url       = "${local.contracts_endpoint_base}:8545"
-  contracts_kubo_api_url  = "${local.contracts_endpoint_base}:5001"
-  contracts_kubo_gateway  = "${local.contracts_endpoint_base}:8080"
+
+  # Phala gateway URLs can already encode the exposed service port in the
+  # hostname itself, e.g. https://<app>-5001.dstack-.... In that case we must
+  # replace the embedded port marker instead of appending :5001/:8080/:8545.
+  contracts_rpc_url = coalesce(
+    var.runtime_rpc_url_override,
+    can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
+      ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8545.")
+      : "${local.contracts_endpoint_base}:8545",
+  )
+  contracts_kubo_api_url = coalesce(
+    var.runtime_kubo_api_url_override,
+    can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
+      ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-5001.")
+      : "${local.contracts_endpoint_base}:5001",
+  )
+  contracts_kubo_gateway = coalesce(
+    var.runtime_kubo_gateway_url_override,
+    can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
+      ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8080.")
+      : "${local.contracts_endpoint_base}:8080",
+  )
 }
 
 resource "phala_ssh_key" "operator" {

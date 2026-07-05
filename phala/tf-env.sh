@@ -166,6 +166,9 @@ append_var_if_set "phala_compose_path" "PHALA_COMPOSE_PATH"
 append_var_if_set "phala_app_code_path" "PHALA_APP_CODE_PATH"
 append_var_if_set "phala_rtmr3_event_log_path" "PHALA_RTMR3_EVENT_LOG_PATH"
 append_var_if_set "runtime_endpoint_override" "PHALA_RUNTIME_ENDPOINT_OVERRIDE"
+append_var_if_set "runtime_rpc_url_override" "PHALA_RUNTIME_RPC_URL"
+append_var_if_set "runtime_kubo_api_url_override" "PHALA_RUNTIME_KUBO_API_URL"
+append_var_if_set "runtime_kubo_gateway_url_override" "PHALA_RUNTIME_KUBO_GATEWAY_URL"
 
 if [ -n "$(read_env_value "PUBLIC_IP")" ]; then
   terraform_args+=(-var="public_ip=$(read_env_value "PUBLIC_IP")")

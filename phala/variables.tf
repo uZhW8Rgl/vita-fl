@@ -204,7 +204,7 @@ variable "ssh_public_key_path" {
 variable "worker_image" {
   description = "Digest-pinned DFL worker container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:368f0718e1c4b88711a50ac31d80343d5baeee9de47b81c37e3328b20c8b59ef"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:57553b3853d48198b8034cd59e766d076f88c502b0f1f85cb4afe60016c687f6"
 }
 
 variable "smart_contracts_image" {
@@ -485,6 +485,24 @@ variable "msg_broker_ip" {
 
 variable "runtime_endpoint_override" {
   description = "Optional explicit Phala runtime endpoint base URL used by worker TEEs instead of the Terraform-managed contract-runtime endpoint."
+  type        = string
+  default     = null
+}
+
+variable "runtime_rpc_url_override" {
+  description = "Optional explicit runtime RPC URL used by worker TEEs instead of deriving it from the contract-runtime endpoint."
+  type        = string
+  default     = null
+}
+
+variable "runtime_kubo_api_url_override" {
+  description = "Optional explicit runtime Kubo API URL used by worker TEEs instead of deriving it from the contract-runtime endpoint."
+  type        = string
+  default     = null
+}
+
+variable "runtime_kubo_gateway_url_override" {
+  description = "Optional explicit runtime Kubo gateway URL used by worker TEEs instead of deriving it from the contract-runtime endpoint."
   type        = string
   default     = null
 }

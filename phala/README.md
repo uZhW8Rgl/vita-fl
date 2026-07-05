@@ -75,7 +75,7 @@ Notes:
 - The default minimal hardware profile is now `tdx.small` with `20 GB` disk.
 - The contract-runtime TEE runs its own local `anvil`; the worker TEE talks to that internal runtime endpoint, not to Sepolia.
 - The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
-- The worker now waits for `/runtime/ready.json` before reading `/runtime/contracts.json`, so it only starts after `smart_contracts` has finished its bootstrap work.
+- The worker now treats `/runtime/contracts.json` as the effective runtime-ready signal. The runtime publishes that manifest only after `smart-contracts` finished its bootstrap path, which avoids startup races even when `/runtime/ready.json` is missing on Phala.
 - The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/tappd.sock` and the startup script mirrors it to `/var/run/dstack.sock` for the Node SDK.
 
 ### Where Hardware Is Selected
@@ -97,7 +97,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:368f0718e1c4b88711a50ac31d80343d5baeee9de47b81c37e3328b20c8b59ef
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:57553b3853d48198b8034cd59e766d076f88c502b0f1f85cb4afe60016c687f6
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
@@ -147,6 +147,7 @@ Important caveat:
 - the worker TEEs currently reference the runtime TEE by its concrete Phala endpoint URL for `KUBO_API`, `KUBO_GATEWAY`, and `SEPOLIA_RPC_URL`
 - if the runtime app is recreated and gets a new endpoint, the workers must be updated to the new runtime endpoint before they can talk to Anvil/IPFS again
 - this is the main reason a full Terraform apply currently wants to replace the workers too
+- Phala can encode the exposed service port directly in the hostname, e.g. `https://<app>-5001.dstack-...`; worker wiring must replace that embedded port marker with `-8545`, `-5001`, and `-8080` rather than appending `:8545`, `:5001`, or `:8080`
 
 So the safe manual order is:
 
@@ -154,6 +155,15 @@ So the safe manual order is:
 2. Note the new runtime endpoint.
 3. Update the worker app compose files so `KUBO_API`, `KUBO_GATEWAY`, and `SEPOLIA_RPC_URL` point at that new runtime endpoint.
 4. Redeploy the workers only if the runtime endpoint changed.
+
+For explicit overrides, `phala/tf-env.sh` supports:
+
+- `PHALA_RUNTIME_ENDPOINT_OVERRIDE`
+- `PHALA_RUNTIME_RPC_URL`
+- `PHALA_RUNTIME_KUBO_API_URL`
+- `PHALA_RUNTIME_KUBO_GATEWAY_URL`
+
+If only `PHALA_RUNTIME_ENDPOINT_OVERRIDE` is set and it already contains an embedded Phala port hostname such as `...-5001.dstack-...`, Terraform now derives the matching `-8545`, `-5001`, and `-8080` hostnames automatically.
 
 ## What This Verifies
 

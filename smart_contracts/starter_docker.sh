@@ -935,9 +935,6 @@ echo "===================================================="
 cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_0 \
     $AGGREGATOR_SELECTION_ADDRESS "setGMStorageAddress(address)" $GMSTORAGE
 
-publish_runtime_contract_manifest
-
-
 echo "GMStorage Addresse wurde in AggregatorSelection gesetzt"
 
 AGGREGATOR_TIMEOUT_REPORT_PERCENT=${AGGREGATOR_TIMEOUT_REPORT_PERCENT:-50}
@@ -1044,6 +1041,9 @@ if [ "$IPFS_PROVIDER" = "kubo" ] && [ -n "${INITIAL_GM_CID:-}" ] && [ -n "${INIT
 fi
 
 prepare_encrypted_initial_gm
+# Publish the runtime contract manifest only once the full bootstrap path
+# completed, so workers don't resolve endpoints before the runtime is ready.
+publish_runtime_contract_manifest
 publish_runtime_ready_marker
 
 KEEP_ALIVE=${KEEP_ALIVE:-0}
