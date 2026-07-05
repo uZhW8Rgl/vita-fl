@@ -2,6 +2,8 @@ services:
   dfl-worker:
     image: ${worker_image}
     restart: unless-stopped
+    volumes:
+      - /var/run/tappd.sock:/var/run/tappd.sock
     environment:
       DOCKER: phala
       NODE_ENV: production
@@ -37,4 +39,11 @@ services:
       TRAIN_LABELS_SRC: "${train_labels_src}"
 
       PYTHON_SERVICE_URL: "${python_service_url}"
-    command: ["/dfl/start_node_neural_network.sh"]
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        if [ -S /var/run/tappd.sock ] && [ ! -S /var/run/dstack.sock ]; then
+          ln -sf /var/run/tappd.sock /var/run/dstack.sock
+        fi
+        exec /dfl/start_node_neural_network.sh

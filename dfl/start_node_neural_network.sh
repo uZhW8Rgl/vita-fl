@@ -10,9 +10,25 @@ trap cleanup INT TERM EXIT
 
 DATASET_NAME=${DATASET_NAME:-mnist}
 BOOTSTRAP_MODEL_SRC=${BOOTSTRAP_MODEL_SRC:-/dfl/initial_gm/${DATASET_NAME}/aggregated.bin}
+PYTHON_BIN=${PYTHON_BIN:-/opt/venv/bin/python}
+if [ ! -x "${PYTHON_BIN}" ]; then
+  PYTHON_BIN=$(command -v python3 || true)
+fi
+if [ -z "${PYTHON_BIN}" ]; then
+  echo "Neither /opt/venv/bin/python nor python3 is available in the worker container." >&2
+  exit 1
+fi
+
 export TDX_QUOTE_PATH=${TDX_QUOTE_PATH:-/dfl/node_server/attestation/phala_tdx_quote}
 if [ ! -f "${TDX_QUOTE_PATH}" ] && [ -f "/dfl/node_server/attestation/phala_tdx_quote" ]; then
   export TDX_QUOTE_PATH=/dfl/node_server/attestation/phala_tdx_quote
+fi
+
+# Phala currently exposes the attestation service on some hosts via tappd.sock
+# while the Node SDK still expects dstack.sock. Mirror the real host socket into
+# the legacy path instead of falling back to any mock/local quote path.
+if [ -S /var/run/tappd.sock ] && [ ! -S /var/run/dstack.sock ]; then
+  ln -sf /var/run/tappd.sock /var/run/dstack.sock
 fi
 
 case "$DATASET_NAME" in
@@ -34,7 +50,7 @@ esac
 
 cp "${BOOTSTRAP_MODEL_SRC}" /dfl/node_server/data/random_start.bin
 if [ -n "${RSA_PRIVATE_KEY:-}" ] || [ -n "${RSA_PUBLIC_KEY:-}" ]; then
-    python - <<'PY'
+    "${PYTHON_BIN}" - <<'PY'
 import os
 from pathlib import Path
 
@@ -51,10 +67,10 @@ else
     cp "${RSA_PUBLIC_KEY_FILE}" /dfl/node_server/public_key.pem
 fi
 
-python /dfl/neural_network/start_service.py 2> >(grep -v "Could not initialize NNPACK" >&2) &
+"${PYTHON_BIN}" /dfl/neural_network/start_service.py 2> >(grep -v "Could not initialize NNPACK" >&2) &
 PYTHON_PID=$!
 
-python - <<'PY'
+"${PYTHON_BIN}" - <<'PY'
 import time
 import urllib.request
 
@@ -68,7 +84,7 @@ while time.time() < deadline:
 raise SystemExit("Python ML service did not become healthy")
 PY
 
-python - <<'PY'
+"${PYTHON_BIN}" - <<'PY'
 import json
 import os
 import time

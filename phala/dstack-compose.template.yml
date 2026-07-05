@@ -5,6 +5,8 @@ services:
     # Phala/dstack application configuration.
     image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:f77aa62f0741985814816a7e998a2cad50ce28db405406faccd319a3b0326c4a
     restart: unless-stopped
+    volumes:
+      - /var/run/tappd.sock:/var/run/tappd.sock
     environment:
       DOCKER: phala
       NODE_ENV: production
@@ -41,4 +43,11 @@ services:
       TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-0.idx1-ubyte
 
       PYTHON_SERVICE_URL: http://127.0.0.1:8000
-    command: ["/dfl/start_node_neural_network.sh"]
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        if [ -S /var/run/tappd.sock ] && [ ! -S /var/run/dstack.sock ]; then
+          ln -sf /var/run/tappd.sock /var/run/dstack.sock
+        fi
+        exec /dfl/start_node_neural_network.sh
