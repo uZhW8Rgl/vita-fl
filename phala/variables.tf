@@ -210,7 +210,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:41e960b5139b50bf9edafafbadcb3261e7ef269b8f6fe908ae6c91db81955aba"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:c1500963ab4fcbed23e2e36759867dcda0805d496eedbe61ced9da6d1b438cdf"
 }
 
 variable "anvil_image" {
