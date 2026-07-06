@@ -300,6 +300,48 @@ async function registerWithLocalTdxQuote() {
     console.log("Device registered with onchain TDX quote verification.");
 }
 
+function decodeEventBytes(rawValue) {
+    if (Buffer.isBuffer(rawValue) || Array.isArray(rawValue) || ArrayBuffer.isView(rawValue)) {
+        return Buffer.from(rawValue);
+    }
+
+    if (typeof rawValue === 'string') {
+        let encoded = rawValue.trim();
+        if (encoded === '') return Buffer.alloc(0);
+        if (encoded.startsWith('0x') || encoded.startsWith('0X')) encoded = encoded.slice(2);
+        if (/^[0-9a-fA-F]+$/.test(encoded) && encoded.length % 2 === 0) {
+            return Buffer.from(encoded, 'hex');
+        }
+        if (/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) && encoded.length % 4 === 0) {
+            return Buffer.from(encoded, 'base64');
+        }
+        return null;
+    }
+
+    if (rawValue && typeof rawValue === 'object') {
+        if (rawValue.type === 'Buffer' && Array.isArray(rawValue.data)) {
+            return Buffer.from(rawValue.data);
+        }
+        for (const key of ['value', 'bytes', 'hex']) {
+            if (rawValue[key] !== undefined) {
+                const decoded = decodeEventBytes(rawValue[key]);
+                if (decoded) return decoded;
+            }
+        }
+        const keys = Object.keys(rawValue);
+        if (keys.length > 0 && keys.every(key => /^\d+$/.test(key))) {
+            const values = keys
+                .sort((a, b) => Number(a) - Number(b))
+                .map(key => rawValue[key]);
+            if (values.every(value => Number.isInteger(value) && value >= 0 && value <= 255)) {
+                return Buffer.from(values);
+            }
+        }
+    }
+
+    return null;
+}
+
 function normalizeRtmr3EventDigests(eventLog) {
     let events = eventLog;
     if (typeof events === 'string') {
@@ -311,21 +353,27 @@ function normalizeRtmr3EventDigests(eventLog) {
     const digests = events
         .filter(event => Number(event?.imr) === 3)
         .map(event => {
-            const rawDigest = event?.digest;
-            let digest;
-            if (Buffer.isBuffer(rawDigest) || Array.isArray(rawDigest) || ArrayBuffer.isView(rawDigest)) {
-                digest = Buffer.from(rawDigest).toString('hex');
-            } else if (rawDigest?.type === 'Buffer' && Array.isArray(rawDigest.data)) {
-                digest = Buffer.from(rawDigest.data).toString('hex');
-            } else {
-                digest = String(rawDigest || '').trim();
+            let digest = decodeEventBytes(event?.digest);
+            if ((!digest || digest.length === 0) && Number(event?.event_type) === 0x08000001) {
+                const payload = decodeEventBytes(event?.event_payload);
+                if (!payload) {
+                    throw new Error(`Invalid RTMR3 event payload for event ${event?.event || '<unknown>'}`);
+                }
+                const eventType = Buffer.alloc(4);
+                eventType.writeUInt32LE(0x08000001);
+                digest = crypto.createHash('sha384')
+                    .update(eventType)
+                    .update(':')
+                    .update(String(event?.event || ''), 'utf8')
+                    .update(':')
+                    .update(payload)
+                    .digest();
             }
-            if (digest.startsWith('0x') || digest.startsWith('0X')) digest = digest.slice(2);
-            if (!/^[0-9a-fA-F]+$/.test(digest) || digest.length % 2 !== 0 || digest.length > 96) {
+            if (!digest || digest.length === 0 || digest.length > 48) {
                 throw new Error(`Invalid RTMR3 event digest for event ${event?.event || '<unknown>'}`);
             }
             // Legacy tappd pads event digests to the 48-byte SHA-384 RTMR input width.
-            return `0x${digest.padEnd(96, '0')}`;
+            return `0x${Buffer.concat([digest, Buffer.alloc(48 - digest.length)]).toString('hex')}`;
         });
     if (digests.length === 0) {
         throw new Error('Phala quote response did not include RTMR3 event digests');
