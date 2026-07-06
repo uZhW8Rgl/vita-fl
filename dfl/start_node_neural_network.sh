@@ -103,20 +103,41 @@ contracts = {
 }
 
 kubo_api = (os.environ.get("KUBO_API") or "").rstrip("/")
+runtime_ready = None
+manifest = None
 if kubo_api:
-    url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote("/runtime/contracts.json", safe="")
     manifest_deadline = time.time() + 600
-    manifest = None
-    while time.time() < manifest_deadline:
-        try:
-            request = urllib.request.Request(url, method="POST")
-            with urllib.request.urlopen(request, timeout=5) as response:
-                manifest = json.loads(response.read().decode("utf-8"))
-            break
-        except Exception:
+
+    def read_mfs_json(path, validator):
+        url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote(path, safe="")
+        while time.time() < manifest_deadline:
+            try:
+                request = urllib.request.Request(url, method="POST")
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    value = json.loads(response.read().decode("utf-8"))
+                if validator(value):
+                    return value
+            except Exception:
+                pass
             time.sleep(2)
-    if manifest is None:
-        raise SystemExit(f"Timed out waiting for runtime contract manifest via {url}")
+        raise SystemExit(f"Timed out waiting for valid runtime data via {url}")
+
+    print("Waiting for contract runtime ready marker ...", flush=True)
+    runtime_ready = read_mfs_json(
+        "/runtime/ready.json",
+        lambda value: value.get("status") == "ready",
+    )
+    manifest = read_mfs_json(
+        "/runtime/contracts.json",
+        lambda value: all(
+            not missing(value.get(key))
+            for key in (
+                "registry_address",
+                "aggregator_address",
+                "gm_storage_address",
+            )
+        ),
+    )
 
     rpc_url = rpc_url if not missing(rpc_url) else str(manifest.get("rpc_url", "")).strip()
     for env_name, manifest_key in (
@@ -159,6 +180,19 @@ def rpc(method, params):
     if "error" in body:
         raise RuntimeError(body["error"])
     return body.get("result")
+
+live_chain_id = str(int(str(rpc("eth_chainId", []) or "0x0"), 16))
+for source, value in (
+    ("runtime ready marker", runtime_ready),
+    ("runtime contract manifest", manifest),
+):
+    if value is None:
+        continue
+    expected_chain_id = str(value.get("chain_id", "")).strip()
+    if expected_chain_id and expected_chain_id != live_chain_id:
+        raise SystemExit(
+            f"Chain ID mismatch: {source} has {expected_chain_id}, RPC has {live_chain_id}"
+        )
 
 deadline = time.time() + 180
 last_missing = list(contracts)
