@@ -756,17 +756,70 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
     const gasPrice = await web3.eth.getGasPrice();
-    const gasEstimate = await contract.methods
-        .registerDeviceWithRtmr3Events(quoteHex, rtmr3EventDigests, address, publicIp, brokerIp, publicKeyBytesHex)
-        .estimateGas({ from: account.address });
+    const registration = contract.methods.registerDeviceWithRtmr3Events(
+        quoteHex,
+        rtmr3EventDigests,
+        address,
+        publicIp,
+        brokerIp,
+        publicKeyBytesHex
+    );
+    const calldata = registration.encodeABI();
+    const hexByteLength = (value) => {
+        if (typeof value !== "string" || !/^0x[0-9a-fA-F]*$/.test(value) || value.length % 2 !== 0) {
+            throw new Error("Invalid hex value in TDX registration payload");
+        }
+        return (value.length - 2) / 2;
+    };
+    console.log("TDX registration payload:", {
+        quoteBytes: hexByteLength(quoteHex),
+        eventDigestBytes: rtmr3EventDigests.map(hexByteLength),
+        publicKeyBytes: hexByteLength(publicKeyBytesHex),
+        calldataBytes: hexByteLength(calldata),
+    });
+
+    try {
+        const attestationAddress = await contract.methods.tdxV4Attestation().call();
+        const debugAbi = [{
+            type: "function",
+            name: "debugVerify",
+            inputs: [{ name: "input", type: "bytes" }],
+            outputs: [
+                { name: "stage", type: "uint8" },
+                { name: "qeTcbStatus", type: "uint8" },
+                { name: "tcbStatus", type: "uint8" },
+                { name: "pcesvn", type: "uint16" },
+                { name: "fmspc", type: "bytes6" },
+                { name: "teeTcbSvn", type: "bytes16" },
+                { name: "qeIsvProdId", type: "uint16" },
+                { name: "qeIsvSvn", type: "uint16" },
+            ],
+            stateMutability: "view",
+        }];
+        const attestation = new web3.eth.Contract(debugAbi, attestationAddress);
+        const debugResult = await attestation.methods.debugVerify(quoteHex).call({ from: account.address });
+        console.log("TDX debug verification:", {
+            attestationAddress,
+            stage: String(debugResult.stage ?? debugResult[0]),
+            qeTcbStatus: String(debugResult.qeTcbStatus ?? debugResult[1]),
+            tcbStatus: String(debugResult.tcbStatus ?? debugResult[2]),
+            pcesvn: String(debugResult.pcesvn ?? debugResult[3]),
+            fmspc: String(debugResult.fmspc ?? debugResult[4]),
+            teeTcbSvn: String(debugResult.teeTcbSvn ?? debugResult[5]),
+            qeIsvProdId: String(debugResult.qeIsvProdId ?? debugResult[6]),
+            qeIsvSvn: String(debugResult.qeIsvSvn ?? debugResult[7]),
+        });
+    } catch (error) {
+        console.error("TDX debug verification call failed:", serializeError(error));
+    }
+
+    const gasEstimate = await registration.estimateGas({ from: account.address });
     const tx = {
         from: account.address,
         to: device_registry_address,
         gas: gasEstimate,
         gasPrice: gasPrice,
-        data: contract.methods
-            .registerDeviceWithRtmr3Events(quoteHex, rtmr3EventDigests, address, publicIp, brokerIp, publicKeyBytesHex)
-            .encodeABI(),
+        data: calldata,
     };
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
