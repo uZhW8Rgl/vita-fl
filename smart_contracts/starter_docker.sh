@@ -414,6 +414,8 @@ if [ "$ENABLE_DCAP" = "1" ]; then
         fi
 
         NATIVE_P256_VERIFIER_ADDRESS=0x0000000000000000000000000000000000000100
+        P256_PROBE_INPUT=0xbb5a52f42f9c9261ed4361f59422a1e30036e7c32b270c8807a419feca6050232ba3a8be6b94d5ec80a6d9d1190a436effe50d85a1eee859b8cc6af9bd5c2e184cd60b855d442f5b3c7b11eb6c4e0ae7525fe710fab9aa7c77a67f79e6fadd762927b10512bae3eddcfe467828128bad2903269919f7086069c8c4df6c732838c7787964eaac00e5921fb1498a60f4606766b3d9685001558d1a974e7341513e
+        P256_PROBE_EXPECTED=0x0000000000000000000000000000000000000000000000000000000000000001
         install_p256_verifier() {
             local verifier=$1
             cast rpc --rpc-url $rpc_url anvil_setCode "$verifier" "$P256_RUNTIME"
@@ -422,9 +424,16 @@ if [ "$ENABLE_DCAP" = "1" ]; then
         probe_p256_route() {
             local verifier=$1
             local output
-            output=$(P256_VERIFIER_ADDRESS=$verifier forge script script/ProbeP256Verifier.s.sol --rpc-url $rpc_url)
-            printf '%s\n' "$output" >&2
-            printf '%s\n' "$output" | sed -n 's/.*P256 effective route: //p' | tail -n 1
+            output=$(cast call --rpc-url "$rpc_url" "$verifier" --data "$P256_PROBE_INPUT" 2>/dev/null || true)
+            if [ "$output" != "$P256_PROBE_EXPECTED" ]; then
+                printf '%s\n' "unavailable"
+            elif [ "$verifier" = "$NATIVE_P256_VERIFIER_ADDRESS" ]; then
+                printf '%s\n' "native-precompile"
+            elif [ "$verifier" = "$FALLBACK_P256_VERIFIER_ADDRESS" ]; then
+                printf '%s\n' "fallback-contract"
+            else
+                printf '%s\n' "configured-address"
+            fi
         }
 
         P256_MODE=${P256_MODE:-native}

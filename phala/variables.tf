@@ -426,7 +426,7 @@ variable "pccs_tee" {
 variable "p256_mode" {
   description = "P256 verifier mode for the DCAP deployment flow."
   type        = string
-  default     = "native"
+  default     = "fallback"
 }
 
 variable "p256_verifier_address" {
