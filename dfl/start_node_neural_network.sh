@@ -77,12 +77,19 @@ while time.time() < deadline:
 raise SystemExit("Python ML service did not become healthy")
 PY
 
+RUNTIME_ENV_FILE=$(mktemp)
+export RUNTIME_ENV_FILE
+trap 'rm -f "${RUNTIME_ENV_FILE}"' EXIT
+
 "${PYTHON_BIN}" - <<'PY'
 import json
 import os
+import re
+import shlex
 import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 def missing(value):
     value = (value or "").strip()
@@ -126,7 +133,13 @@ if kubo_api:
         os.environ["SEPOLIA_RPC_URL"] = rpc_url
 
 if not rpc_url or not all(contracts.values()):
-    raise SystemExit(0)
+    raise SystemExit("Runtime RPC URL or contract addresses are missing")
+
+if not re.match(r"^https?://[A-Za-z0-9._:/-]+$", rpc_url):
+    raise SystemExit(f"Invalid runtime RPC URL: {rpc_url}")
+for name, address in contracts.items():
+    if not re.match(r"^0x[0-9a-fA-F]{40}$", address):
+        raise SystemExit(f"Invalid {name}: {address}")
 
 def rpc(method, params):
     payload = json.dumps({
@@ -149,6 +162,7 @@ def rpc(method, params):
 
 deadline = time.time() + 180
 last_missing = list(contracts)
+ready = False
 while time.time() < deadline:
     try:
         all_ready = True
@@ -161,14 +175,31 @@ while time.time() < deadline:
         if current_missing:
             last_missing = current_missing
         if all_ready:
-            raise SystemExit(0)
+            ready = True
+            break
     except Exception:
         pass
     time.sleep(2)
 
-raise SystemExit(
-    f"Timed out waiting for deployed contracts on {rpc_url}: {', '.join(last_missing)}"
+if not ready:
+    raise SystemExit(
+        f"Timed out waiting for deployed contracts on {rpc_url}: {', '.join(last_missing)}"
+    )
+
+runtime_env = {
+    "SEPOLIA_RPC_URL": rpc_url,
+    **contracts,
+}
+Path(os.environ["RUNTIME_ENV_FILE"]).write_text(
+    "".join(f"export {name}={shlex.quote(value)}\n" for name, value in runtime_env.items()),
+    encoding="utf-8",
 )
 PY
+
+# The manifest resolver runs in a child process, so explicitly import its
+# validated values into the shell environment inherited by Node.
+source "${RUNTIME_ENV_FILE}"
+rm -f "${RUNTIME_ENV_FILE}"
+trap - EXIT
 
 exec node /dfl/node_server/dist/server.js

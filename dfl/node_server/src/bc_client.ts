@@ -751,6 +751,9 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     brokerIp,
     publicKeyBytesHex
 ) => {
+    if (!device_registry_address) {
+        throw new Error("REGISTRY_ADDRESS is required for TDX device registration");
+    }
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
