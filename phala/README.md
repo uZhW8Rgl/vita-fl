@@ -108,7 +108,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:7d2a4835af6577c0814f619cfe074b0
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2d9c1bfb80957f4ed39cee932a965dcfd10db7acf08c0b42f0cf4802fb78d172
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:902c46afb695fb914bd631710cae23668f19c76d8631b14d0a4b4843b05a7790
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
@@ -135,7 +135,15 @@ For Phala/dstack, the measured `compose-hash` is not just the SHA-256 of `dstack
 - the RTMR3 `compose-hash` event: SHA-256 of the normalized app-code object exported from Phala into `phala/app_code.txt`
 - the raw compose-file hash: SHA-256 of the `docker_compose_file` text, which can match your local `dstack-compose.template.yml`
 
-The deployment enforces one fixed compose hash by default. You can override it with `PHALA_EXPECTED_COMPOSE_HASH`; otherwise it is recalculated from `PHALA_COMPOSE_PATH`. This branch should keep `TDX_REFERENCE_QUOTE_PATH` and `PHALA_RTMR3_EVENT_DIGESTS` empty so no mock/reference quote or preloaded worker RTMR3 digest is used.
+The deployment enforces one fixed compose hash by default. You can override it with `PHALA_EXPECTED_COMPOSE_HASH`; otherwise it is recalculated from the normalized Phala app-code export at `PHALA_APP_CODE_PATH` when available, falling back to `PHALA_COMPOSE_PATH`. This branch should keep `TDX_REFERENCE_QUOTE_PATH` and `PHALA_RTMR3_EVENT_DIGESTS` empty so no mock/reference quote or preloaded worker RTMR3 digest is used.
+
+When the worker image digest changes, refresh the local Phala measurement exports before rebuilding the smart-contracts image. A live worker publishes its current RTMR3 event log and app-code export into the runtime Kubo MFS under `/phala-artifacts/latest`. Pull those into the repository with:
+
+```bash
+scripts/fetch_phala_worker_artifacts.sh "$KUBO_API"
+```
+
+This overwrites `phala/app_code.txt` and `phala/rtmr3_event_log.txt` with the latest live worker artifacts. After that, rebuild and redeploy `master-thesis-smart-contracts:phala` so the contract runtime stores the compose hash for the currently deployed worker image. If the Phala socket path exposes the live event log but not a readable app-code file, `starter_docker.sh` can still derive the expected compose hash from the live `compose-hash` event in `PHALA_RTMR3_EVENT_LOG_PATH`; this is not a mock quote path.
 
 ## Manual Runtime-Only Redeploy
 

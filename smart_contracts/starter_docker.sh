@@ -586,7 +586,51 @@ if [ "$ENABLE_DCAP" = "1" ]; then
                     cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
                         $DCAP_TDX_V4_ADDRESS "setExpectedComposeHash(bytes32)" "0x$EXPECTED_COMPOSE_HASH"
                 else
-                    EXPECTED_COMPOSE_HASH=$(sha256sum "$PHALA_COMPOSE_PATH" | awk '{print $1}')
+                    PHALA_APP_CODE_PATH=${PHALA_APP_CODE_PATH:-../phala/app_code.txt}
+                    if [ -f "$PHALA_APP_CODE_PATH" ]; then
+                        EXPECTED_COMPOSE_HASH=$(python3 -c 'import hashlib,json,sys
+text=open(sys.argv[1], encoding="utf-8").read()
+start=text.index("{")
+marker="\n\nis_registered"
+end=text.index(marker) if marker in text else text.rindex("}") + 1
+obj=json.loads(text[start:end])
+print(hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()).hexdigest())' "$PHALA_APP_CODE_PATH")
+                    elif [ -f "${PHALA_RTMR3_EVENT_LOG_PATH:-}" ]; then
+                        EXPECTED_COMPOSE_HASH=$(python3 -c 'import base64,json,re,sys
+def decode(value):
+    if isinstance(value, str):
+        text=value.strip()
+        if text.startswith(("0x","0X")):
+            text=text[2:]
+        if re.fullmatch(r"[0-9a-fA-F]+", text) and len(text) % 2 == 0:
+            return bytes.fromhex(text)
+        return base64.b64decode(text)
+    if isinstance(value, list):
+        return bytes(value)
+    if isinstance(value, dict):
+        if value.get("type") == "Buffer" and isinstance(value.get("data"), list):
+            return bytes(value["data"])
+        for key in ("value", "bytes", "hex", "data"):
+            if key in value:
+                return decode(value[key])
+    raise ValueError("unsupported compose-hash payload encoding")
+text=open(sys.argv[1], encoding="utf-8").read()
+for match in re.finditer(r"\{[^{}]*\}", text, flags=re.S):
+    try:
+        obj=json.loads(match.group(0))
+    except json.JSONDecodeError:
+        continue
+    if obj.get("imr") == 3 and obj.get("event") == "compose-hash":
+        payload=decode(obj.get("event_payload"))
+        if len(payload) != 32:
+            raise SystemExit("Invalid compose-hash event payload length")
+        print(payload.hex())
+        break
+else:
+    raise SystemExit("No compose-hash event found in PHALA_RTMR3_EVENT_LOG_PATH")' "$PHALA_RTMR3_EVENT_LOG_PATH")
+                    else
+                        EXPECTED_COMPOSE_HASH=$(sha256sum "$PHALA_COMPOSE_PATH" | awk '{print $1}')
+                    fi
                     echo "Recording expected Phala compose policy hash on TDX verifier: sha256:$EXPECTED_COMPOSE_HASH"
                     cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
                         $DCAP_TDX_V4_ADDRESS "setExpectedComposeHash(bytes32)" "0x$EXPECTED_COMPOSE_HASH"

@@ -182,6 +182,112 @@ async function localModelPackageHash() {
     return `0x${crypto.createHash('sha256').update(data).digest('hex')}`;
 }
 
+function serializePhalaEventLog(eventLog) {
+    if (typeof eventLog === 'string') {
+        return eventLog.endsWith('\n') ? eventLog : `${eventLog}\n`;
+    }
+    if (Array.isArray(eventLog)) {
+        return `${eventLog.map(event => JSON.stringify(event)).join('\n')}\n`;
+    }
+    return `${JSON.stringify(eventLog, null, 2)}\n`;
+}
+
+function workerArtifactName() {
+    const raw = process.env.DEVICE_ID !== undefined
+        ? `worker-${process.env.DEVICE_ID}`
+        : String(process.env.ACCOUNT_ADDRESS || 'worker').toLowerCase();
+    return raw.replace(/[^a-zA-Z0-9._-]/g, '-');
+}
+
+async function readFirstExistingText(paths) {
+    for (const candidate of paths.filter(Boolean)) {
+        try {
+            return {
+                path: candidate,
+                text: await fs.readFile(candidate, 'utf8'),
+            };
+        } catch (error) {
+            if (error?.code !== 'ENOENT') {
+                console.warn(`Could not read Phala app-code candidate ${candidate}:`, error?.message || error);
+            }
+        }
+    }
+    return null;
+}
+
+function appCodeFromDstackInfo(info) {
+    if (!info || typeof info !== 'object') return null;
+    for (const key of ['app_code', 'appCode', 'app_compose', 'appCompose', 'compose', 'docker_compose_file']) {
+        if (info[key] === undefined) continue;
+        if (typeof info[key] === 'string') return info[key];
+        return `${JSON.stringify(info[key], null, 2)}\n`;
+    }
+    return null;
+}
+
+async function discoverLivePhalaAppCode(info) {
+    const fromInfo = appCodeFromDstackInfo(info);
+    if (fromInfo) {
+        return { source: 'dstack.info', text: fromInfo.endsWith('\n') ? fromInfo : `${fromInfo}\n` };
+    }
+    const discovered = await readFirstExistingText([
+        process.env.PHALA_LIVE_APP_CODE_PATH,
+        '/dstack/app_code.txt',
+        '/dstack/app-code.txt',
+        '/dstack/app_compose.json',
+        '/dstack/app-compose.json',
+        '/etc/dstack/app_code.txt',
+        '/etc/dstack/app-compose.json',
+        './app_code.txt',
+        './app-compose.json',
+    ]);
+    return discovered ? { source: discovered.path, text: discovered.text } : null;
+}
+
+async function kuboMfsWriteText(apiBase, mfsPath, text) {
+    const form = new FormData();
+    form.append('file', new Blob([text], { type: 'text/plain' }), 'file');
+    const url = `${apiBase}/api/v0/files/write?arg=${encodeURIComponent(mfsPath)}&create=true&truncate=true&parents=true`;
+    const response = await fetch(url, { method: 'POST', body: form });
+    if (!response.ok) {
+        throw new Error(`Kubo MFS write failed for ${mfsPath} (${response.status}): ${await response.text()}`);
+    }
+}
+
+async function publishLivePhalaArtifacts(quote, info = null) {
+    if (process.env.PHALA_PUBLISH_ATTESTATION_ARTIFACTS === '0') return;
+    const kuboApi = String(process.env.KUBO_API || '').replace(/\/+$/, '');
+    if (!kuboApi) {
+        console.warn('KUBO_API is unset; skipping live Phala attestation artifact export.');
+        return;
+    }
+
+    const workerName = workerArtifactName();
+    const eventLogText = serializePhalaEventLog(quote.event_log);
+    const appCode = await discoverLivePhalaAppCode(info);
+    const writes = [
+        [`/phala-artifacts/${workerName}/rtmr3_event_log.txt`, eventLogText],
+        ['/phala-artifacts/latest/rtmr3_event_log.txt', eventLogText],
+    ];
+    if (appCode) {
+        writes.push([`/phala-artifacts/${workerName}/app_code.txt`, appCode.text]);
+        writes.push(['/phala-artifacts/latest/app_code.txt', appCode.text]);
+    }
+    if (info) {
+        writes.push([`/phala-artifacts/${workerName}/dstack_info.json`, `${JSON.stringify(info, null, 2)}\n`]);
+    }
+
+    for (const [mfsPath, text] of writes) {
+        await kuboMfsWriteText(kuboApi, mfsPath, text);
+    }
+    console.log('Published live Phala attestation artifacts to Kubo MFS:', {
+        worker: workerName,
+        appCodeSource: appCode?.source || null,
+        basePath: `/phala-artifacts/${workerName}`,
+        latestPath: '/phala-artifacts/latest',
+    });
+}
+
 async function fetchLivePhalaQuote(reportData) {
     const dstackSock = '/var/run/dstack.sock';
     const tappdSock = '/var/run/tappd.sock';
@@ -194,6 +300,9 @@ async function fetchLivePhalaQuote(reportData) {
         console.log('App Name:', info.app_name);
         console.log('TCB Info:', info.tcb_info);
         const quote = await client.getQuote(reportData);
+        await publishLivePhalaArtifacts(quote, info).catch(error => {
+            console.warn('Could not publish live Phala attestation artifacts:', error?.message || error);
+        });
         const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
         return {
             quoteHex: normalizeHexBytes(quote.quote),
@@ -206,6 +315,9 @@ async function fetchLivePhalaQuote(reportData) {
         console.log('Using legacy Phala tappd.sock attestation path.');
         const client = new TappdClient(tappdSock);
         const quote = await client.tdxQuote(reportData, 'raw');
+        await publishLivePhalaArtifacts(quote).catch(error => {
+            console.warn('Could not publish live Phala attestation artifacts:', error?.message || error);
+        });
         const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
         return {
             quoteHex: normalizeHexBytes(quote.quote),
