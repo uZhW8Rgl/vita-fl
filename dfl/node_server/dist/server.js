@@ -325,9 +325,8 @@ function normalizeRtmr3EventDigests(eventLog) {
     if (!Array.isArray(events)) {
         throw new Error('Phala quote response did not include an RTMR event log array');
     }
-    const digests = events
-        .filter(event => Number(event?.imr) === 3)
-        .map(event => {
+    const rtmr3Events = events.filter(event => Number(event?.imr) === 3);
+    const digests = rtmr3Events.map(event => {
         let digest = decodeEventBytes(event?.digest);
         if ((!digest || digest.length === 0) && Number(event?.event_type) === 0x08000001) {
             const payload = decodeEventBytes(event?.event_payload);
@@ -352,6 +351,17 @@ function normalizeRtmr3EventDigests(eventLog) {
     });
     if (digests.length === 0) {
         throw new Error('Phala quote response did not include RTMR3 event digests');
+    }
+    const composeEventIndex = rtmr3Events.findIndex(event => event?.event === 'compose-hash');
+    if (composeEventIndex >= 0) {
+        const payload = decodeEventBytes(rtmr3Events[composeEventIndex]?.event_payload);
+        console.log('Live RTMR3 compose event:', {
+            digest: digests[composeEventIndex],
+            composeHash: payload ? `0x${payload.toString('hex')}` : null,
+        });
+    }
+    else {
+        console.warn('Live RTMR3 event log does not contain a compose-hash event.');
     }
     return digests;
 }

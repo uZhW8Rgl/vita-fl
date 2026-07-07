@@ -350,33 +350,42 @@ function normalizeRtmr3EventDigests(eventLog) {
     if (!Array.isArray(events)) {
         throw new Error('Phala quote response did not include an RTMR event log array');
     }
-    const digests = events
-        .filter(event => Number(event?.imr) === 3)
-        .map(event => {
-            let digest = decodeEventBytes(event?.digest);
-            if ((!digest || digest.length === 0) && Number(event?.event_type) === 0x08000001) {
-                const payload = decodeEventBytes(event?.event_payload);
-                if (!payload) {
-                    throw new Error(`Invalid RTMR3 event payload for event ${event?.event || '<unknown>'}`);
-                }
-                const eventType = Buffer.alloc(4);
-                eventType.writeUInt32LE(0x08000001);
-                digest = crypto.createHash('sha384')
-                    .update(eventType)
-                    .update(':')
-                    .update(String(event?.event || ''), 'utf8')
-                    .update(':')
-                    .update(payload)
-                    .digest();
+    const rtmr3Events = events.filter(event => Number(event?.imr) === 3);
+    const digests = rtmr3Events.map(event => {
+        let digest = decodeEventBytes(event?.digest);
+        if ((!digest || digest.length === 0) && Number(event?.event_type) === 0x08000001) {
+            const payload = decodeEventBytes(event?.event_payload);
+            if (!payload) {
+                throw new Error(`Invalid RTMR3 event payload for event ${event?.event || '<unknown>'}`);
             }
-            if (!digest || digest.length === 0 || digest.length > 48) {
-                throw new Error(`Invalid RTMR3 event digest for event ${event?.event || '<unknown>'}`);
-            }
-            // Legacy tappd pads event digests to the 48-byte SHA-384 RTMR input width.
-            return `0x${Buffer.concat([digest, Buffer.alloc(48 - digest.length)]).toString('hex')}`;
-        });
+            const eventType = Buffer.alloc(4);
+            eventType.writeUInt32LE(0x08000001);
+            digest = crypto.createHash('sha384')
+                .update(eventType)
+                .update(':')
+                .update(String(event?.event || ''), 'utf8')
+                .update(':')
+                .update(payload)
+                .digest();
+        }
+        if (!digest || digest.length === 0 || digest.length > 48) {
+            throw new Error(`Invalid RTMR3 event digest for event ${event?.event || '<unknown>'}`);
+        }
+        // Legacy tappd pads event digests to the 48-byte SHA-384 RTMR input width.
+        return `0x${Buffer.concat([digest, Buffer.alloc(48 - digest.length)]).toString('hex')}`;
+    });
     if (digests.length === 0) {
         throw new Error('Phala quote response did not include RTMR3 event digests');
+    }
+    const composeEventIndex = rtmr3Events.findIndex(event => event?.event === 'compose-hash');
+    if (composeEventIndex >= 0) {
+        const payload = decodeEventBytes(rtmr3Events[composeEventIndex]?.event_payload);
+        console.log('Live RTMR3 compose event:', {
+            digest: digests[composeEventIndex],
+            composeHash: payload ? `0x${payload.toString('hex')}` : null,
+        });
+    } else {
+        console.warn('Live RTMR3 event log does not contain a compose-hash event.');
     }
     return digests;
 }
