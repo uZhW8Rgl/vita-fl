@@ -557,14 +557,17 @@ if [ "$ENABLE_DCAP" = "1" ]; then
 	        echo "$TDX_CREATE_JSON"
 	        export DCAP_TDX_V4_ADDRESS=$(printf '%s' "$TDX_CREATE_JSON" | jq -re '.deployedTo // .deployed_to')
 	        echo "AutomataDcapTdxV4Attestation: $DCAP_TDX_V4_ADDRESS"
-            TDX_REFERENCE_QUOTE_PATH=${TDX_REFERENCE_QUOTE_PATH:-../data/phala_tdx_quote}
-            if [ -f "$TDX_REFERENCE_QUOTE_PATH" ]; then
+            TDX_REFERENCE_QUOTE_PATH=${TDX_REFERENCE_QUOTE_PATH:-}
+            if [ "${PHALA_ENFORCE_REFERENCE_RTMR3:-0}" = "1" ] && [ -f "$TDX_REFERENCE_QUOTE_PATH" ]; then
                 TDX_REFERENCE_QUOTE_HEX=$(tr -d '[:space:]' < "$TDX_REFERENCE_QUOTE_PATH")
                 TDX_REFERENCE_QUOTE_HEX=${TDX_REFERENCE_QUOTE_HEX#0x}
                 TDX_REFERENCE_QUOTE_HEX=${TDX_REFERENCE_QUOTE_HEX#0X}
                 echo "Configuring expected RTMR3 policy from reference quote: $TDX_REFERENCE_QUOTE_PATH"
                 cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
                     $DCAP_TDX_V4_ADDRESS "setExpectedRtmr3FromQuote(bytes)" "0x$TDX_REFERENCE_QUOTE_HEX"
+            elif [ "${PHALA_ENFORCE_REFERENCE_RTMR3:-0}" = "1" ]; then
+                echo "PHALA_ENFORCE_REFERENCE_RTMR3=1 requires TDX_REFERENCE_QUOTE_PATH to point to an existing quote file."
+                exit 1
             fi
             PHALA_COMPOSE_PATH=${PHALA_COMPOSE_PATH:-../phala/dstack-compose.template.yml}
             if [ -f "$PHALA_COMPOSE_PATH" ]; then
@@ -572,23 +575,23 @@ if [ "$ENABLE_DCAP" = "1" ]; then
                     echo "Phala compose policy must pin the worker image by immutable sha256 digest: $PHALA_COMPOSE_PATH"
                     exit 1
                 fi
-                PHALA_APP_CODE_PATH=${PHALA_APP_CODE_PATH:-../phala/app_code.txt}
-                if [ -f "$PHALA_APP_CODE_PATH" ]; then
-                    EXPECTED_COMPOSE_HASH=$(python3 -c 'import hashlib,json,sys
-text=open(sys.argv[1], encoding="utf-8").read()
-start=text.index("{")
-marker="\n\nis_registered"
-end=text.index(marker) if marker in text else text.rindex("}") + 1
-obj=json.loads(text[start:end])
-print(hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()).hexdigest())' "$PHALA_APP_CODE_PATH")
+                if [ -n "${PHALA_EXPECTED_COMPOSE_HASH:-}" ]; then
+                    EXPECTED_COMPOSE_HASH=${PHALA_EXPECTED_COMPOSE_HASH#0x}
+                    EXPECTED_COMPOSE_HASH=${EXPECTED_COMPOSE_HASH#0X}
+                    if ! printf '%s' "$EXPECTED_COMPOSE_HASH" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+                        echo "Invalid PHALA_EXPECTED_COMPOSE_HASH; expected 32-byte hex digest."
+                        exit 1
+                    fi
+                    echo "Recording expected Phala compose policy hash on TDX verifier: sha256:$EXPECTED_COMPOSE_HASH"
+                    cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
+                        $DCAP_TDX_V4_ADDRESS "setExpectedComposeHash(bytes32)" "0x$EXPECTED_COMPOSE_HASH"
                 else
                     EXPECTED_COMPOSE_HASH=$(sha256sum "$PHALA_COMPOSE_PATH" | awk '{print $1}')
+                    echo "Recording expected Phala compose policy hash on TDX verifier: sha256:$EXPECTED_COMPOSE_HASH"
+                    cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
+                        $DCAP_TDX_V4_ADDRESS "setExpectedComposeHash(bytes32)" "0x$EXPECTED_COMPOSE_HASH"
                 fi
-                echo "Recording expected Phala compose policy hash on TDX verifier: sha256:$EXPECTED_COMPOSE_HASH"
-                cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
-                    $DCAP_TDX_V4_ADDRESS "setExpectedComposeHash(bytes32)" "0x$EXPECTED_COMPOSE_HASH"
             fi
-            PHALA_RTMR3_EVENT_LOG_PATH=${PHALA_RTMR3_EVENT_LOG_PATH:-../phala/rtmr3_event_log.txt}
             if [ -n "${PHALA_RTMR3_EVENT_DIGESTS:-}" ]; then
                 echo "Recording expected Phala compose RTMR3 event digest allowlist on TDX verifier."
                 for EXPECTED_COMPOSE_EVENT_DIGEST in $(printf '%s' "$PHALA_RTMR3_EVENT_DIGESTS" | tr ',;' '  '); do
@@ -603,7 +606,7 @@ print(hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).enco
                         $DCAP_TDX_V4_ADDRESS "setExpectedComposeEventDigestAllowed(bytes,bool)" \
                         "0x$EXPECTED_COMPOSE_EVENT_DIGEST" true
                 done
-            elif [ -f "$PHALA_RTMR3_EVENT_LOG_PATH" ]; then
+            elif [ "${PHALA_ENFORCE_RTMR3_EVENT_LOG:-0}" = "1" ] && [ -f "${PHALA_RTMR3_EVENT_LOG_PATH:-}" ]; then
                 EXPECTED_COMPOSE_EVENT_DIGEST=$(python3 -c 'import json,re,sys
 text=open(sys.argv[1], encoding="utf-8").read()
 for match in re.finditer(r"\{[^{}]*\}", text, flags=re.S):

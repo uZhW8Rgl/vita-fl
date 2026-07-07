@@ -473,20 +473,29 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         bool hasAllowedComposeEvents = expectedComposeEventDigestAllowedCount > 0;
         bool hasExpectedComposeHash = expectedComposeHash != bytes32(0);
         bytes memory expectedComposeHashEventDigest;
+        bytes memory liveComposeHashEventDigest;
+        bool requireLiveComposeHashEvent = composeHash != bytes32(0);
         if (hasExpectedComposeHash) {
             if (composeHash != expectedComposeHash) {
                 return false;
             }
             expectedComposeHashEventDigest = _composeHashEventDigest(composeHash);
         }
+        if (requireLiveComposeHashEvent) {
+            liveComposeHashEventDigest = _composeHashEventDigest(composeHash);
+        }
 
-        bool foundExpectedComposeEvent = !hasSingleExpectedComposeEvent && !hasAllowedComposeEvents && !hasExpectedComposeHash;
+        bool foundExpectedComposeEvent =
+            !hasSingleExpectedComposeEvent && !hasAllowedComposeEvents && !hasExpectedComposeHash && !requireLiveComposeHashEvent;
         bytes memory replayedRtmr = new bytes(48);
         for (uint256 i = 0; i < eventDigests.length; i++) {
             if (eventDigests[i].length != 48) {
                 return false;
             }
             bytes32 eventDigestHash = keccak256(eventDigests[i]);
+            if (requireLiveComposeHashEvent && eventDigestHash == keccak256(liveComposeHashEventDigest)) {
+                foundExpectedComposeEvent = true;
+            }
             if (hasSingleExpectedComposeEvent && eventDigestHash == keccak256(expectedComposeEventDigest)) {
                 foundExpectedComposeEvent = true;
             }

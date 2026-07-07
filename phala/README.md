@@ -108,7 +108,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:7d2a4835af6577c0814f619cfe074b0
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:64f0ac3d1ce001dc32e4bdf7cf1f39a0607a6a021e7b792c715f48fc52df7c29
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2d9c1bfb80957f4ed39cee932a965dcfd10db7acf08c0b42f0cf4802fb78d172
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
@@ -128,14 +128,14 @@ docker compose down --volumes --remove-orphans
 KEEP_ALIVE=0 docker compose up --build --force-recreate
 ```
 
-During deployment, `starter_docker.sh` sends `data/phala_tdx_quote` to `AutomataDcapTdxV4Attestation`. The contract parses the reference quote on-chain, extracts its signed RTMR3 value, and stores it as the expected workload measurement. The script also checks that the worker compose policy pins the image by immutable `sha256` digest and records the measured compose policy on-chain as `expectedComposeHash`.
+During deployment, `starter_docker.sh` checks that the worker compose policy pins the image by immutable `sha256` digest, hashes that worker compose file, and stores the resulting compose hash on-chain. For Phala runs it does not preload a worker-specific RTMR3 value from a reference quote; workers submit their live RTMR3 event digest chain during registration.
 
 For Phala/dstack, the measured `compose-hash` is not just the SHA-256 of `dstack-compose.template.yml`. In practice there are two related hashes:
 
 - the RTMR3 `compose-hash` event: SHA-256 of the normalized app-code object exported from Phala into `phala/app_code.txt`
 - the raw compose-file hash: SHA-256 of the `docker_compose_file` text, which can match your local `dstack-compose.template.yml`
 
-The local deployment therefore prefers `phala/app_code.txt` when deriving `expectedComposeHash`. If that export is missing, it falls back to the raw compose file hash. When the worker image changes, update `dstack-compose.template.yml`, deploy that exact worker app on Phala/dstack, then refresh `data/phala_tdx_quote`, `phala/app_code.txt`, and `phala/rtmr3_event_log.txt` before rerunning the local deployment.
+The deployment enforces one fixed compose hash by default. You can override it with `PHALA_EXPECTED_COMPOSE_HASH`; otherwise it is recalculated from `PHALA_COMPOSE_PATH`. This branch should keep `TDX_REFERENCE_QUOTE_PATH` and `PHALA_RTMR3_EVENT_DIGESTS` empty so no mock/reference quote or preloaded worker RTMR3 digest is used.
 
 ## Manual Runtime-Only Redeploy
 
@@ -188,20 +188,21 @@ If only `PHALA_RUNTIME_ENDPOINT_OVERRIDE` is set and it already contains an embe
 
 The on-chain contract verifies the TDX quote and replays the submitted Phala/dstack RTMR3 event digests until they reproduce the signed RTMR3 value inside the quote.
 
-The workload policy is represented on-chain as `expectedComposeHash`. During registration, the worker submits the live `compose-hash` event payload from the Phala quote response. The attestation contract recomputes the Phala `compose-hash` event digest from that payload, checks that this event is present in the replayed RTMR3 chain, and checks that the payload equals `expectedComposeHash`.
+During registration, the worker submits the live `compose-hash` event payload from the Phala quote response. The attestation contract recomputes the Phala `compose-hash` event digest from that payload, checks that this event is present in the replayed RTMR3 chain, verifies that the replayed RTMR3 equals the signed RTMR3 inside the quote, and requires the live compose hash to equal the on-chain expected compose hash.
 
-This means worker-specific `app-id` and `instance-id` events may still produce different final RTMR3 values, but those final RTMR3 values no longer need to be known in advance. The stable part is the measured compose/app-code policy.
+This means worker-specific `app-id` and `instance-id` events may still produce different final RTMR3 values, but those final RTMR3 values no longer need to be known in advance. The compose hash itself is fixed by policy.
 
 ## Next Steps
 
 For the planned Phala layout with one contract-runtime TEE and three worker TEEs, the next practical sequence is:
 
-1. Deploy a worker TEE using the current digest-pinned worker image.
-2. From that matching worker deployment, export the measured artifacts used for local consistency checks:
+1. Deploy the contract-runtime TEE with `anvil`, `ipfs`, and `smart-contracts`.
+2. Deploy the three worker TEEs, all using the digest-pinned worker image.
+3. Optional: from a worker deployment, export measured artifacts for local consistency checks:
    - the TDX quote into `data/phala_tdx_quote`
    - the RTMR3 event log into `phala/rtmr3_event_log.txt`
    - the Phala app-code object into `phala/app_code.txt`
-3. Verify locally that the copied artifacts are internally consistent:
+4. Optional: verify locally that the copied artifacts are internally consistent:
 
 ```bash
 python scripts/verify_phala_rtmr3.py \
@@ -211,19 +212,12 @@ python scripts/verify_phala_rtmr3.py \
   --app-code phala/app_code.txt
 ```
 
-4. Build and publish the `smart-contracts` image that will run in the separate contract-runtime TEE.
-5. Pin that runtime image by digest in Terraform via `smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:64f0ac3d1ce001dc32e4bdf7cf1f39a0607a6a021e7b792c715f48fc52df7c29"`.
-6. Deploy the contract-runtime TEE with `anvil`, `ipfs`, and `smart-contracts`.
-7. Let `smart-contracts` load the worker policy artifacts on-chain:
-   - expected RTMR3 from the worker reference quote for legacy exact-RTMR3 flows
-   - expected compose/app-code hash for the live Phala event-replay flow
-8. Deploy the three worker TEEs, all using the same worker image and same measured worker compose policy.
+5. If you enable fixed policy enforcement, rebuild and publish the `smart-contracts` image after changing the worker digest or policy artifact.
 
 Important:
 
-- The on-chain attestation policy must point to the worker TEE policy, not the contract-runtime TEE policy.
-- If you change the worker image digest or the measured worker compose/app-code policy, refresh the app-code export before relying on policy verification again.
-- `PHALA_RTMR3_EVENT_DIGESTS` remains available as a legacy allowlist fallback, but the preferred Phala path verifies the submitted live `compose-hash` event payload instead of preloading per-worker RTMR3 event digests.
+- The on-chain attestation policy verifies the live worker quote and event replay, not the contract-runtime TEE quote.
+- `PHALA_ENFORCE_REFERENCE_RTMR3` and `PHALA_RTMR3_EVENT_DIGESTS` remain available only for legacy debugging; keep them unset for this branch so no reference/mock quote or preloaded per-worker RTMR3 digest is used.
 - If you change the worker digest or any Phala policy artifact consumed by `smart-contracts`, rebuild and republish the `smart-contracts` image too, then redeploy the contract-runtime TEE with the new runtime digest.
 
 Current Terraform defaults in this scaffold match that target layout:

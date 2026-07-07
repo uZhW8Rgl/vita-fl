@@ -210,7 +210,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:64f0ac3d1ce001dc32e4bdf7cf1f39a0607a6a021e7b792c715f48fc52df7c29"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2d9c1bfb80957f4ed39cee932a965dcfd10db7acf08c0b42f0cf4802fb78d172"
 }
 
 variable "anvil_image" {
@@ -468,13 +468,13 @@ variable "pccs_quote_path" {
 variable "tdx_quote_path" {
   description = "Path inside the contract-runtime container to the generated TDX quote."
   type        = string
-  default     = "./attestation/phala_tdx_quote"
+  default     = ""
 }
 
 variable "tdx_reference_quote_path" {
   description = "Path inside the contract-runtime container to the reference TDX quote."
   type        = string
-  default     = "../data/phala_tdx_quote"
+  default     = ""
 }
 
 variable "phala_compose_path" {

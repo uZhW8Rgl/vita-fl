@@ -38,7 +38,7 @@ services:
       retries: 24
 
   smart-contracts:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:64f0ac3d1ce001dc32e4bdf7cf1f39a0607a6a021e7b792c715f48fc52df7c29
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2d9c1bfb80957f4ed39cee932a965dcfd10db7acf08c0b42f0cf4802fb78d172
     restart: "no"
     depends_on:
       anvil:
@@ -59,7 +59,7 @@ services:
       VERIFY_TDX_QUOTE_ONCHAIN: "1"
       AGGREGATOR_TIMEOUT_REPORT_PERCENT: "50"
       PCCS_QUOTE_PATH: /dfl/data/phala_tdx_quote
-      TDX_REFERENCE_QUOTE_PATH: /dfl/data/phala_tdx_quote
+      TDX_REFERENCE_QUOTE_PATH: ""
       PHALA_COMPOSE_PATH: /dfl/phala/dstack-compose.template.yml
       PHALA_APP_CODE_PATH: /dfl/phala/app_code.txt
       PHALA_RTMR3_EVENT_LOG_PATH: /dfl/phala/rtmr3_event_log.txt
