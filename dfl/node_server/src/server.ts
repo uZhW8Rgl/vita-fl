@@ -194,9 +194,11 @@ async function fetchLivePhalaQuote(reportData) {
         console.log('App Name:', info.app_name);
         console.log('TCB Info:', info.tcb_info);
         const quote = await client.getQuote(reportData);
+        const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
         return {
             quoteHex: normalizeHexBytes(quote.quote),
-            rtmr3EventDigests: normalizeRtmr3EventDigests(quote.event_log),
+            rtmr3EventDigests: rtmr3Policy.digests,
+            composeHash: rtmr3Policy.composeHash,
         };
     }
 
@@ -204,9 +206,11 @@ async function fetchLivePhalaQuote(reportData) {
         console.log('Using legacy Phala tappd.sock attestation path.');
         const client = new TappdClient(tappdSock);
         const quote = await client.tdxQuote(reportData, 'raw');
+        const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
         return {
             quoteHex: normalizeHexBytes(quote.quote),
-            rtmr3EventDigests: normalizeRtmr3EventDigests(quote.event_log),
+            rtmr3EventDigests: rtmr3Policy.digests,
+            composeHash: rtmr3Policy.composeHash,
         };
     }
 
@@ -342,7 +346,7 @@ function decodeEventBytes(rawValue) {
     return null;
 }
 
-function normalizeRtmr3EventDigests(eventLog) {
+function normalizeRtmr3EventPolicy(eventLog) {
     let events = eventLog;
     if (typeof events === 'string') {
         events = JSON.parse(events);
@@ -378,16 +382,21 @@ function normalizeRtmr3EventDigests(eventLog) {
         throw new Error('Phala quote response did not include RTMR3 event digests');
     }
     const composeEventIndex = rtmr3Events.findIndex(event => event?.event === 'compose-hash');
+    let composeHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
     if (composeEventIndex >= 0) {
         const payload = decodeEventBytes(rtmr3Events[composeEventIndex]?.event_payload);
+        if (!payload || payload.length !== 32) {
+            throw new Error('Invalid RTMR3 compose-hash event payload');
+        }
+        composeHash = `0x${payload.toString('hex')}`;
         console.log('Live RTMR3 compose event:', {
             digest: digests[composeEventIndex],
-            composeHash: payload ? `0x${payload.toString('hex')}` : null,
+            composeHash,
         });
     } else {
         console.warn('Live RTMR3 event log does not contain a compose-hash event.');
     }
-    return digests;
+    return { digests, composeHash };
 }
 
 function derHexToBuffer(derHex) {
@@ -504,12 +513,13 @@ const stateMachine = async () => {
         });
 
         const reportData = crypto.createHash('sha256').update(applicationData).digest();
-        const { quoteHex, rtmr3EventDigests } = await fetchLivePhalaQuote(reportData);
+        const { quoteHex, rtmr3EventDigests, composeHash } = await fetchLivePhalaQuote(reportData);
         console.log(`Registering with live Phala TDX quote and ${rtmr3EventDigests.length} RTMR3 event digests ...`);
 
         await registerDeviceWithTeeQuoteAndRtmr3Events(
             quoteHex,
             rtmr3EventDigests,
+            composeHash,
             process.env.ACCOUNT_ADDRESS,
             process.env.PUBLIC_IP || "",
             process.env.MSG_BROKER_IP || "",

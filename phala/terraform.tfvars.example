@@ -16,7 +16,8 @@ private_key        = "0xYOUR_WORKER_PRIVATE_KEY"
 # worker_app_name    = "master-thesis-dfl-worker-0"
 # worker_replicas    = 1
 # worker_image     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:..."
-# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2df349641a6547f89b2fbe0894f35a8047ab966426faa26a0e009ed1ca5cdc1e"
+# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:64f0ac3d1ce001dc32e4bdf7cf1f39a0607a6a021e7b792c715f48fc52df7c29"
+# Legacy fallback only; preferred Phala path verifies the live compose-hash payload.
 # phala_rtmr3_event_digests = "worker0_compose_digest,worker1_compose_digest,worker2_compose_digest"
 # manage_power_state = true
 # desired_power_state = "running" # or "stopped"

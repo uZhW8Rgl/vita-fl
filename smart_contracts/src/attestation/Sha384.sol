@@ -7,16 +7,27 @@ library Sha384 {
     function hashRtmrExtend(bytes memory currentRtmr, bytes memory eventDigest) internal pure returns (bytes memory) {
         require(currentRtmr.length == RTMR_SIZE, "current RTMR must be 48 bytes");
         require(eventDigest.length == RTMR_SIZE, "event digest must be 48 bytes");
-        uint64[80] memory w;
-        bytes memory input = abi.encodePacked(currentRtmr, eventDigest);
+        return hash(abi.encodePacked(currentRtmr, eventDigest));
+    }
 
-        for (uint256 i = 0; i < 12; i++) {
-            w[i] = _readUint64(input, i * 8);
+    function hash(bytes memory input) internal pure returns (bytes memory) {
+        require(input.length <= 111, "SHA-384 helper supports one block");
+        uint64[80] memory w;
+        bytes memory blockInput = new bytes(128);
+
+        for (uint256 i = 0; i < input.length; i++) {
+            blockInput[i] = input[i];
         }
-        w[12] = 0x8000000000000000;
-        w[13] = 0;
-        w[14] = 0;
-        w[15] = 768;
+        blockInput[input.length] = bytes1(0x80);
+
+        uint256 bitLength = input.length * 8;
+        for (uint256 i = 0; i < 8; i++) {
+            blockInput[127 - i] = bytes1(uint8(bitLength >> (8 * i)));
+        }
+
+        for (uint256 i = 0; i < 16; i++) {
+            w[i] = _readUint64(blockInput, i * 8);
+        }
 
         for (uint256 i = 16; i < 80; i++) {
             unchecked {

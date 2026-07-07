@@ -746,6 +746,7 @@ export const registerDeviceWithTeeQuote = async (quoteHex, address, publicIp, br
 export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     quoteHex,
     rtmr3EventDigests,
+    composeHash,
     address,
     publicIp,
     brokerIp,
@@ -762,6 +763,7 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     const registration = contract.methods.registerDeviceWithRtmr3Events(
         quoteHex,
         rtmr3EventDigests,
+        composeHash,
         address,
         publicIp,
         brokerIp,
@@ -777,6 +779,7 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     console.log("TDX registration payload:", {
         quoteBytes: hexByteLength(quoteHex),
         eventDigestBytes: rtmr3EventDigests.map(hexByteLength),
+        composeHashBytes: hexByteLength(composeHash),
         publicKeyBytes: hexByteLength(publicKeyBytesHex),
         calldataBytes: hexByteLength(calldata),
     });
@@ -785,8 +788,12 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
         const attestationAddress = await contract.methods.tdxV4Attestation().call();
         const debugAbi = [{
             type: "function",
-            name: "debugVerify",
-            inputs: [{ name: "input", type: "bytes" }],
+            name: "debugVerifyWithRtmr3Events",
+            inputs: [
+                { name: "input", type: "bytes" },
+                { name: "rtmr3EventDigests", type: "bytes[]" },
+                { name: "composeHash", type: "bytes32" },
+            ],
             outputs: [
                 { name: "stage", type: "uint8" },
                 { name: "qeTcbStatus", type: "uint8" },
@@ -800,7 +807,9 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
             stateMutability: "view",
         }];
         const attestation = new web3.eth.Contract(debugAbi, attestationAddress);
-        const debugResult = await attestation.methods.debugVerify(quoteHex).call({ from: account.address });
+        const debugResult = await attestation.methods
+            .debugVerifyWithRtmr3Events(quoteHex, rtmr3EventDigests, composeHash)
+            .call({ from: account.address });
         console.log("TDX debug verification:", {
             attestationAddress,
             stage: String(debugResult.stage ?? debugResult[0]),

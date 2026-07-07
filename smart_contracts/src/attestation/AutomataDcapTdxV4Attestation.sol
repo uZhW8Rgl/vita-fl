@@ -161,6 +161,15 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         view
         returns (bytes memory output)
     {
+        return verifyAndAttestOnChainWithRtmr3Events(input, rtmr3EventDigests, bytes32(0));
+    }
+
+    function verifyAndAttestOnChainWithRtmr3Events(
+        bytes calldata input,
+        bytes[] calldata rtmr3EventDigests,
+        bytes32 composeHash
+    ) public view returns (bytes memory output)
+    {
         bool verified;
         (verified, output) = _verify(input, false);
         if (!verified) {
@@ -168,7 +177,7 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         }
 
         (bool success, V4Struct.ParsedV4Quote memory parsedQuote) = V4Parser.parseInput(bytes(input));
-        if (!success || !_rtmr3EventsPolicySatisfied(parsedQuote.body.rtmr3, rtmr3EventDigests)) {
+        if (!success || !_rtmr3EventsPolicySatisfied(parsedQuote.body.rtmr3, rtmr3EventDigests, composeHash)) {
             revert Failed_To_Verify_Quote();
         }
     }
@@ -206,6 +215,48 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
             qeIsvProdId,
             qeIsvSvn
         ) = _debugVerify(input);
+    }
+
+    function debugVerifyWithRtmr3Events(
+        bytes calldata input,
+        bytes[] calldata rtmr3EventDigests,
+        bytes32 composeHash
+    )
+        external
+        view
+        returns (
+            uint8 stage,
+            uint8 qeTcbStatus,
+            uint8 tcbStatus,
+            uint16 pcesvn,
+            bytes6 fmspc,
+            bytes16 teeTcbSvn,
+            uint16 qeIsvProdId,
+            uint16 qeIsvSvn
+        )
+    {
+        (bool success, V4Struct.ParsedV4Quote memory parsedQuote) = V4Parser.parseInput(bytes(input));
+        if (!success) {
+            return (DEBUG_STAGE_PARSE_FAILED, 0, 0, 0, 0x000000000000, 0x0, 0, 0);
+        }
+
+        (
+            stage,
+            qeTcbStatus,
+            tcbStatus,
+            pcesvn,
+            fmspc,
+            teeTcbSvn,
+            qeIsvProdId,
+            qeIsvSvn
+        ) = _debugVerifyParsedQuote(parsedQuote, false);
+
+        if (
+            stage == DEBUG_STAGE_OK
+                && !_rtmr3EventsPolicySatisfied(parsedQuote.body.rtmr3, rtmr3EventDigests, composeHash)
+        ) {
+            stage = DEBUG_STAGE_RTMR3_POLICY_FAILED;
+        }
     }
 
     function _verify(bytes calldata quote, bool enforceExactRtmr3) private view returns (bool verified, bytes memory output) {
@@ -409,7 +460,7 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         return keccak256(rtmr3) == keccak256(expectedRtmr3);
     }
 
-    function _rtmr3EventsPolicySatisfied(bytes memory quoteRtmr3, bytes[] calldata eventDigests)
+    function _rtmr3EventsPolicySatisfied(bytes memory quoteRtmr3, bytes[] calldata eventDigests, bytes32 composeHash)
         private
         view
         returns (bool)
@@ -420,7 +471,16 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
 
         bool hasSingleExpectedComposeEvent = expectedComposeEventDigest.length > 0;
         bool hasAllowedComposeEvents = expectedComposeEventDigestAllowedCount > 0;
-        bool foundExpectedComposeEvent = !hasSingleExpectedComposeEvent && !hasAllowedComposeEvents;
+        bool hasExpectedComposeHash = expectedComposeHash != bytes32(0);
+        bytes memory expectedComposeHashEventDigest;
+        if (hasExpectedComposeHash) {
+            if (composeHash != expectedComposeHash) {
+                return false;
+            }
+            expectedComposeHashEventDigest = _composeHashEventDigest(composeHash);
+        }
+
+        bool foundExpectedComposeEvent = !hasSingleExpectedComposeEvent && !hasAllowedComposeEvents && !hasExpectedComposeHash;
         bytes memory replayedRtmr = new bytes(48);
         for (uint256 i = 0; i < eventDigests.length; i++) {
             if (eventDigests[i].length != 48) {
@@ -433,10 +493,17 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
             if (hasAllowedComposeEvents && expectedComposeEventDigestAllowed[eventDigestHash]) {
                 foundExpectedComposeEvent = true;
             }
+            if (hasExpectedComposeHash && keccak256(eventDigests[i]) == keccak256(expectedComposeHashEventDigest)) {
+                foundExpectedComposeEvent = true;
+            }
             replayedRtmr = Sha384.hashRtmrExtend(replayedRtmr, eventDigests[i]);
         }
 
         return foundExpectedComposeEvent && keccak256(replayedRtmr) == keccak256(quoteRtmr3);
+    }
+
+    function _composeHashEventDigest(bytes32 composeHash) private pure returns (bytes memory) {
+        return Sha384.hash(abi.encodePacked(bytes4(0x01000008), ":", "compose-hash", ":", composeHash));
     }
 
     function _verifyQeReportWithTdIdentity(

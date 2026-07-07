@@ -59,7 +59,7 @@ For the Phala flow, this image should be published through the GitHub Actions wo
 contract-runtime compose file by immutable digest:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2df349641a6547f89b2fbe0894f35a8047ab966426faa26a0e009ed1ca5cdc1e
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:64f0ac3d1ce001dc32e4bdf7cf1f39a0607a6a021e7b792c715f48fc52df7c29
 ```
 
 Whenever the worker digest changes, or the files under `phala/` that feed the
@@ -96,7 +96,9 @@ During deployment, `starter_docker.sh` calls:
 setExpectedRtmr3FromQuote(bytes referenceQuote)
 ```
 
-The contract parses the reference quote on-chain, extracts RTMR3, and rejects every later worker registration quote whose extracted RTMR3 does not match. `starter_docker.sh` also checks that the worker compose policy pins the image by immutable `sha256` digest and records the measured compose policy hash on-chain as `expectedComposeHash`.
+The contract parses the reference quote on-chain, extracts RTMR3, and keeps that value for legacy exact-RTMR3 checks. The live Phala path uses the RTMR3 event log instead: the worker submits the live RTMR3 event digests and the `compose-hash` event payload from its quote response. The contract replays the event digests, compares the replayed RTMR3 with the quote, recomputes the Phala `compose-hash` event digest from the submitted payload, and checks that the payload equals the on-chain `expectedComposeHash`.
+
+`starter_docker.sh` also checks that the worker compose policy pins the image by immutable `sha256` digest and records the measured compose policy hash on-chain as `expectedComposeHash`.
 
 For Phala/dstack this needs one subtle distinction:
 
@@ -107,7 +109,7 @@ For Phala/dstack this needs one subtle distinction:
 
 The compose policy is still the replaceable workload input. If the worker image changes, update the digest-pinned image reference in `phala/dstack-compose.template.yml`, deploy that exact worker app on Phala/dstack, fetch the new quote/app-code/event log, and rerun the local deployment.
 
-A complete image-to-RTMR3 verification additionally requires the Phala/dstack RTMR3 event log. With that log, a verifier can replay the RTMR3 measurement chain, compare the measured compose hash with `expectedComposeHash`, and then compare the replayed RTMR3 with the signed RTMR3 in the quote.
+A complete image-to-RTMR3 verification additionally requires the Phala/dstack RTMR3 event log. With that log, a verifier can replay the RTMR3 measurement chain, bind the submitted `compose-hash` payload to an actual event in the chain, compare the measured compose hash with `expectedComposeHash`, and then compare the replayed RTMR3 with the signed RTMR3 in the quote.
 
 ## Generated Artifacts
 

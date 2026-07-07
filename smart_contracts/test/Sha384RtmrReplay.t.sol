@@ -5,6 +5,16 @@ import {Test} from "forge-std/Test.sol";
 import {Sha384} from "../src/attestation/Sha384.sol";
 
 contract Sha384RtmrReplayTest is Test {
+    function testPhalaComposeHashEventDigest() public pure {
+        bytes32 composeHash = 0x3ffb565cd839ce58a10c635b84aa4d9bcf29488e0a97779df94a1102fc2f5b15;
+        bytes memory digest = Sha384.hash(abi.encodePacked(bytes4(0x01000008), ":", "compose-hash", ":", composeHash));
+
+        assertEq(
+            digest,
+            hex"a71a08c276737e800de0b4ad8ce3a948ab53043ef16b138e75bdeaf4358060a923593a2158c494d10c83d0d2024c91c0"
+        );
+    }
+
     function testReplayPhalaRtmr3EventLog() public pure {
         bytes[] memory digests = new bytes[](10);
         digests[0] =

@@ -210,7 +210,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2df349641a6547f89b2fbe0894f35a8047ab966426faa26a0e009ed1ca5cdc1e"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:64f0ac3d1ce001dc32e4bdf7cf1f39a0607a6a021e7b792c715f48fc52df7c29"
 }
 
 variable "anvil_image" {
@@ -496,7 +496,7 @@ variable "phala_rtmr3_event_log_path" {
 }
 
 variable "phala_rtmr3_event_digests" {
-  description = "Comma-separated allowlist of live Phala RTMR3 compose event digests for worker TEEs."
+  description = "Legacy fallback: comma-separated allowlist of live Phala RTMR3 compose event digests for worker TEEs. Preferred path uses live compose-hash payload verification."
   type        = string
   default     = ""
 }

@@ -7,6 +7,11 @@ interface ITdxV4Attestation {
         external
         view
         returns (bytes memory output);
+    function verifyAndAttestOnChainWithRtmr3Events(
+        bytes calldata input,
+        bytes[] calldata rtmr3EventDigests,
+        bytes32 composeHash
+    ) external view returns (bytes memory output);
 }
 
 contract DeviceRegistry {
@@ -118,13 +123,14 @@ contract DeviceRegistry {
     function registerDeviceWithRtmr3Events(
         bytes calldata quote,
         bytes[] calldata rtmr3EventDigests,
+        bytes32 composeHash,
         address _address,
         string memory _public_ip,
         string memory _msg_broker_ip,
         bytes memory _public_key
     ) public {
         require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
-        tdxV4Attestation.verifyAndAttestOnChainWithRtmr3Events(quote, rtmr3EventDigests);
+        tdxV4Attestation.verifyAndAttestOnChainWithRtmr3Events(quote, rtmr3EventDigests, composeHash);
         _registerVerifiedDevice(_address, _public_ip, _msg_broker_ip, _public_key);
     }
 

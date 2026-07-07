@@ -211,6 +211,11 @@
         "internalType": "bytes[]"
       },
       {
+        "name": "composeHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
         "name": "_address",
         "type": "address",
         "internalType": "address"
