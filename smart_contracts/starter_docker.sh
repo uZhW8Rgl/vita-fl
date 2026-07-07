@@ -575,28 +575,24 @@ if [ "$ENABLE_DCAP" = "1" ]; then
                     echo "Phala compose policy must pin the worker image by immutable sha256 digest: $PHALA_COMPOSE_PATH"
                     exit 1
                 fi
-                if [ -n "${PHALA_EXPECTED_COMPOSE_HASH:-}" ]; then
+                if [ "${PHALA_ENFORCE_COMPOSE_HASH:-0}" = "1" ] || [ -n "${PHALA_EXPECTED_COMPOSE_HASH:-}" ]; then
+                    if [ "${PHALA_ENFORCE_COMPOSE_HASH:-0}" != "1" ] && [ -n "${PHALA_EXPECTED_COMPOSE_HASH:-}" ]; then
+                        echo "PHALA_EXPECTED_COMPOSE_HASH was set; enabling fixed compose-hash policy."
+                    fi
                     EXPECTED_COMPOSE_HASH=${PHALA_EXPECTED_COMPOSE_HASH#0x}
                     EXPECTED_COMPOSE_HASH=${EXPECTED_COMPOSE_HASH#0X}
-                    if ! printf '%s' "$EXPECTED_COMPOSE_HASH" | grep -Eq '^[0-9a-fA-F]{64}$'; then
-                        echo "Invalid PHALA_EXPECTED_COMPOSE_HASH; expected 32-byte hex digest."
-                        exit 1
-                    fi
-                    echo "Recording expected Phala compose policy hash on TDX verifier: sha256:$EXPECTED_COMPOSE_HASH"
-                    cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
-                        $DCAP_TDX_V4_ADDRESS "setExpectedComposeHash(bytes32)" "0x$EXPECTED_COMPOSE_HASH"
-                else
-                    PHALA_APP_CODE_PATH=${PHALA_APP_CODE_PATH:-../phala/app_code.txt}
-                    if [ -f "$PHALA_APP_CODE_PATH" ]; then
-                        EXPECTED_COMPOSE_HASH=$(python3 -c 'import hashlib,json,sys
+                    if [ -z "$EXPECTED_COMPOSE_HASH" ]; then
+                        PHALA_APP_CODE_PATH=${PHALA_APP_CODE_PATH:-../phala/app_code.txt}
+                        if [ -f "$PHALA_APP_CODE_PATH" ]; then
+                            EXPECTED_COMPOSE_HASH=$(python3 -c 'import hashlib,json,sys
 text=open(sys.argv[1], encoding="utf-8").read()
 start=text.index("{")
 marker="\n\nis_registered"
 end=text.index(marker) if marker in text else text.rindex("}") + 1
 obj=json.loads(text[start:end])
 print(hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()).hexdigest())' "$PHALA_APP_CODE_PATH")
-                    elif [ -f "${PHALA_RTMR3_EVENT_LOG_PATH:-}" ]; then
-                        EXPECTED_COMPOSE_HASH=$(python3 -c 'import base64,json,re,sys
+                        elif [ -f "${PHALA_RTMR3_EVENT_LOG_PATH:-}" ]; then
+                            EXPECTED_COMPOSE_HASH=$(python3 -c 'import base64,json,re,sys
 def decode(value):
     if isinstance(value, str):
         text=value.strip()
@@ -628,12 +624,19 @@ for match in re.finditer(r"\{[^{}]*\}", text, flags=re.S):
         break
 else:
     raise SystemExit("No compose-hash event found in PHALA_RTMR3_EVENT_LOG_PATH")' "$PHALA_RTMR3_EVENT_LOG_PATH")
-                    else
-                        EXPECTED_COMPOSE_HASH=$(sha256sum "$PHALA_COMPOSE_PATH" | awk '{print $1}')
+                        else
+                            EXPECTED_COMPOSE_HASH=$(sha256sum "$PHALA_COMPOSE_PATH" | awk '{print $1}')
+                        fi
+                    fi
+                    if ! printf '%s' "$EXPECTED_COMPOSE_HASH" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+                        echo "Invalid expected compose hash; expected 32-byte hex digest."
+                        exit 1
                     fi
                     echo "Recording expected Phala compose policy hash on TDX verifier: sha256:$EXPECTED_COMPOSE_HASH"
                     cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
                         $DCAP_TDX_V4_ADDRESS "setExpectedComposeHash(bytes32)" "0x$EXPECTED_COMPOSE_HASH"
+                else
+                    echo "Fixed Phala compose-hash policy disabled; workers must submit a live compose-hash event that replays to the quote RTMR3."
                 fi
             fi
             if [ -n "${PHALA_RTMR3_EVENT_DIGESTS:-}" ]; then

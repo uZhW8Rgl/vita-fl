@@ -61,6 +61,7 @@ locals {
     phala_app_code_path               = var.phala_app_code_path
     phala_rtmr3_event_log_path        = var.phala_rtmr3_event_log_path
     phala_rtmr3_event_digests         = var.phala_rtmr3_event_digests
+    phala_enforce_compose_hash        = var.phala_enforce_compose_hash
   })
 
   ssh_authorized_keys = var.ssh_public_key_path == null ? [] : [trimspace(file(var.ssh_public_key_path))]

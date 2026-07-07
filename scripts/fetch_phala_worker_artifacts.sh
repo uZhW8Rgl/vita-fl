@@ -25,7 +25,12 @@ fetch_mfs_file() {
   curl -fsS -X POST "${KUBO_API_URL}/api/v0/files/read?arg=${encoded_path}" -o "${output_path}"
 }
 
-fetch_mfs_file "/phala-artifacts/latest/app_code.txt" "${OUTPUT_DIR}/app_code.txt"
+if fetch_mfs_file "/phala-artifacts/latest/app_code.txt" "${OUTPUT_DIR}/app_code.txt"; then
+  echo "Updated ${OUTPUT_DIR}/app_code.txt."
+else
+  echo "No live app_code.txt export found in Kubo; keeping existing ${OUTPUT_DIR}/app_code.txt." >&2
+fi
+
 fetch_mfs_file "/phala-artifacts/latest/rtmr3_event_log.txt" "${OUTPUT_DIR}/rtmr3_event_log.txt"
 
-echo "Updated ${OUTPUT_DIR}/app_code.txt and ${OUTPUT_DIR}/rtmr3_event_log.txt from ${KUBO_API_URL}."
+echo "Updated ${OUTPUT_DIR}/rtmr3_event_log.txt from ${KUBO_API_URL}."

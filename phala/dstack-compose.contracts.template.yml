@@ -38,7 +38,7 @@ services:
       retries: 24
 
   smart-contracts:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:902c46afb695fb914bd631710cae23668f19c76d8631b14d0a4b4843b05a7790
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:857ccde2761aa19cbf357f7d1d1b27a0869a5d583d747d3ed46ecd8b7812a435
     restart: "no"
     depends_on:
       anvil:
@@ -64,6 +64,7 @@ services:
       PHALA_APP_CODE_PATH: /dfl/phala/app_code.txt
       PHALA_RTMR3_EVENT_LOG_PATH: /dfl/phala/rtmr3_event_log.txt
       PHALA_RTMR3_EVENT_DIGESTS: ""
+      PHALA_ENFORCE_COMPOSE_HASH: "0"
       DATASET_NAME: mnist
       W0_ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
       W1_ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
