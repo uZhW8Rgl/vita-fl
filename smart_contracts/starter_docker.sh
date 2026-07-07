@@ -589,7 +589,21 @@ print(hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).enco
                     $DCAP_TDX_V4_ADDRESS "setExpectedComposeHash(bytes32)" "0x$EXPECTED_COMPOSE_HASH"
             fi
             PHALA_RTMR3_EVENT_LOG_PATH=${PHALA_RTMR3_EVENT_LOG_PATH:-../phala/rtmr3_event_log.txt}
-            if [ -f "$PHALA_RTMR3_EVENT_LOG_PATH" ]; then
+            if [ -n "${PHALA_RTMR3_EVENT_DIGESTS:-}" ]; then
+                echo "Recording expected Phala compose RTMR3 event digest allowlist on TDX verifier."
+                for EXPECTED_COMPOSE_EVENT_DIGEST in $(printf '%s' "$PHALA_RTMR3_EVENT_DIGESTS" | tr ',;' '  '); do
+                    EXPECTED_COMPOSE_EVENT_DIGEST=${EXPECTED_COMPOSE_EVENT_DIGEST#0x}
+                    EXPECTED_COMPOSE_EVENT_DIGEST=${EXPECTED_COMPOSE_EVENT_DIGEST#0X}
+                    if ! printf '%s' "$EXPECTED_COMPOSE_EVENT_DIGEST" | grep -Eq '^[0-9a-fA-F]{96}$'; then
+                        echo "Invalid PHALA_RTMR3_EVENT_DIGESTS entry; expected 48-byte hex digest."
+                        exit 1
+                    fi
+                    echo "Allowing Phala compose RTMR3 event digest: sha384:$EXPECTED_COMPOSE_EVENT_DIGEST"
+                    cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
+                        $DCAP_TDX_V4_ADDRESS "setExpectedComposeEventDigestAllowed(bytes,bool)" \
+                        "0x$EXPECTED_COMPOSE_EVENT_DIGEST" true
+                done
+            elif [ -f "$PHALA_RTMR3_EVENT_LOG_PATH" ]; then
                 EXPECTED_COMPOSE_EVENT_DIGEST=$(python3 -c 'import json,re,sys
 text=open(sys.argv[1], encoding="utf-8").read()
 for match in re.finditer(r"\{[^{}]*\}", text, flags=re.S):

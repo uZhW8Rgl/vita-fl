@@ -60,6 +60,7 @@ locals {
     phala_compose_path                = var.phala_compose_path
     phala_app_code_path               = var.phala_app_code_path
     phala_rtmr3_event_log_path        = var.phala_rtmr3_event_log_path
+    phala_rtmr3_event_digests         = var.phala_rtmr3_event_digests
   })
 
   ssh_authorized_keys = var.ssh_public_key_path == null ? [] : [trimspace(file(var.ssh_public_key_path))]
@@ -72,20 +73,20 @@ locals {
   contracts_rpc_url = coalesce(
     var.runtime_rpc_url_override,
     can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
-      ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8545.")
-      : "${local.contracts_endpoint_base}:8545",
+    ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8545.")
+    : "${local.contracts_endpoint_base}:8545",
   )
   contracts_kubo_api_url = coalesce(
     var.runtime_kubo_api_url_override,
     can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
-      ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-5001.")
-      : "${local.contracts_endpoint_base}:5001",
+    ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-5001.")
+    : "${local.contracts_endpoint_base}:5001",
   )
   contracts_kubo_gateway = coalesce(
     var.runtime_kubo_gateway_url_override,
     can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
-      ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8080.")
-      : "${local.contracts_endpoint_base}:8080",
+    ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8080.")
+    : "${local.contracts_endpoint_base}:8080",
   )
   additional_worker_indices = {
     for worker_key, _ in nonsensitive(var.additional_workers) :

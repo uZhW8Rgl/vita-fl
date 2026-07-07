@@ -59,7 +59,7 @@ For the Phala flow, this image should be published through the GitHub Actions wo
 contract-runtime compose file by immutable digest:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:0a6d5b3c24a0bbcaa3756863f35e701a99f92a1cd5160adbbf4ab127b20e3400
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:2df349641a6547f89b2fbe0894f35a8047ab966426faa26a0e009ed1ca5cdc1e
 ```
 
 Whenever the worker digest changes, or the files under `phala/` that feed the

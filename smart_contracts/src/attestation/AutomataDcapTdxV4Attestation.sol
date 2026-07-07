@@ -51,10 +51,13 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
     bytes public expectedRtmr3;
     bytes32 public expectedComposeHash;
     bytes public expectedComposeEventDigest;
+    mapping(bytes32 => bool) public expectedComposeEventDigestAllowed;
+    uint256 public expectedComposeEventDigestAllowedCount;
 
     event ExpectedRtmr3Updated(bytes expectedRtmr3);
     event ExpectedComposeHashUpdated(bytes32 expectedComposeHash);
     event ExpectedComposeEventDigestUpdated(bytes expectedComposeEventDigest);
+    event ExpectedComposeEventDigestAllowed(bytes expectedComposeEventDigest, bool allowed);
 
     constructor(
         address enclaveIdDaoAddr,
@@ -108,6 +111,26 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         );
         expectedComposeEventDigest = _expectedComposeEventDigest;
         emit ExpectedComposeEventDigestUpdated(_expectedComposeEventDigest);
+    }
+
+    function setExpectedComposeEventDigestAllowed(bytes calldata _expectedComposeEventDigest, bool allowed)
+        external
+        onlyOwner
+    {
+        require(_expectedComposeEventDigest.length == 48, "expected compose event digest must be 48 bytes");
+        bytes32 digestHash = keccak256(_expectedComposeEventDigest);
+        bool wasAllowed = expectedComposeEventDigestAllowed[digestHash];
+
+        if (wasAllowed != allowed) {
+            expectedComposeEventDigestAllowed[digestHash] = allowed;
+            if (allowed) {
+                expectedComposeEventDigestAllowedCount++;
+            } else {
+                expectedComposeEventDigestAllowedCount--;
+            }
+        }
+
+        emit ExpectedComposeEventDigestAllowed(_expectedComposeEventDigest, allowed);
     }
 
     function verifyAndAttestOnChain(bytes calldata input) external view override returns (bytes memory output) {
@@ -395,16 +418,19 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
             return false;
         }
 
-        bool foundExpectedComposeEvent = expectedComposeEventDigest.length == 0;
+        bool hasSingleExpectedComposeEvent = expectedComposeEventDigest.length > 0;
+        bool hasAllowedComposeEvents = expectedComposeEventDigestAllowedCount > 0;
+        bool foundExpectedComposeEvent = !hasSingleExpectedComposeEvent && !hasAllowedComposeEvents;
         bytes memory replayedRtmr = new bytes(48);
         for (uint256 i = 0; i < eventDigests.length; i++) {
             if (eventDigests[i].length != 48) {
                 return false;
             }
-            if (
-                expectedComposeEventDigest.length > 0
-                    && keccak256(eventDigests[i]) == keccak256(expectedComposeEventDigest)
-            ) {
+            bytes32 eventDigestHash = keccak256(eventDigests[i]);
+            if (hasSingleExpectedComposeEvent && eventDigestHash == keccak256(expectedComposeEventDigest)) {
+                foundExpectedComposeEvent = true;
+            }
+            if (hasAllowedComposeEvents && expectedComposeEventDigestAllowed[eventDigestHash]) {
                 foundExpectedComposeEvent = true;
             }
             replayedRtmr = Sha384.hashRtmrExtend(replayedRtmr, eventDigests[i]);
