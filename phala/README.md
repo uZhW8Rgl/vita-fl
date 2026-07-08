@@ -74,6 +74,7 @@ Notes:
 - The current scaffold injects worker configuration through the rendered compose file so it stays close to your existing manual deployment flow.
 - The default minimal hardware profile is now `tdx.small` with `20 GB` disk.
 - The contract-runtime TEE runs its own local `anvil`; the worker TEE talks to that internal runtime endpoint, not to Sepolia.
+- The contract-runtime compose receives `WORKER_ACCOUNT_ADDRESSES` from Terraform and the `smart-contracts` bootstrap funds those accounts on the embedded Anvil before workers register. This keeps `.env.anvil` worker keys usable even when they are not part of Anvil's initially funded account list.
 - The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
 - The worker now treats `/runtime/contracts.json` as the effective runtime-ready signal. The runtime publishes that manifest only after `smart-contracts` finished its bootstrap path, which avoids startup races even when `/runtime/ready.json` is missing on Phala.
 - The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/dstack.sock` and keeps `/var/run/tappd.sock` only for compatibility.
@@ -109,7 +110,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:6fe449c372ca85cc56377e06c089420
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:857ccde2761aa19cbf357f7d1d1b27a0869a5d583d747d3ed46ecd8b7812a435
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:f587d0f41089d5cf6520b1ab9c85627a3e75cbfdc8bdb2b32d97dbd4d1bf1cec
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.

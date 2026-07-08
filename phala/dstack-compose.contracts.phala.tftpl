@@ -79,5 +79,7 @@ services:
       DATASET_NAME: "${dataset_name}"
       W0_ACCOUNT_ADDRESS: "${w0_account_address}"
       W1_ACCOUNT_ADDRESS: "${w1_account_address}"
+      WORKER_ACCOUNT_ADDRESSES: "${worker_account_addresses}"
+      WORKER_ACCOUNT_BALANCE_WEI: "10000000000000000000000"
       INITIAL_GM_SIGNER_ADDRESS: "${initial_gm_signer_address}"
     command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]

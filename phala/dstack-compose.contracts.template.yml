@@ -38,7 +38,7 @@ services:
       retries: 24
 
   smart-contracts:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:857ccde2761aa19cbf357f7d1d1b27a0869a5d583d747d3ed46ecd8b7812a435
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:f587d0f41089d5cf6520b1ab9c85627a3e75cbfdc8bdb2b32d97dbd4d1bf1cec
     restart: "no"
     depends_on:
       anvil:
@@ -69,5 +69,7 @@ services:
       DATASET_NAME: mnist
       W0_ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
       W1_ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
+      WORKER_ACCOUNT_ADDRESSES: "REPLACE_WITH_WORKER0_ADDRESS,REPLACE_WITH_WORKER1_ADDRESS,REPLACE_WITH_WORKER2_ADDRESS"
+      WORKER_ACCOUNT_BALANCE_WEI: "10000000000000000000000"
       INITIAL_GM_SIGNER_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
     command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]

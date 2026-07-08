@@ -75,6 +75,53 @@ clear_runtime_ready_marker() {
         "${KUBO_API_URL}/api/v0/files/rm?arg=/runtime/ready.json&force=true" >/dev/null || true
 }
 
+fund_configured_worker_accounts() {
+    if ! using_local_runtime_services; then
+        return 0
+    fi
+
+    local balance_wei=${WORKER_ACCOUNT_BALANCE_WEI:-10000000000000000000000}
+    local balance_hex
+    balance_hex=$(cast to-hex "$balance_wei")
+    local addresses_csv=${WORKER_ACCOUNT_ADDRESSES:-}
+    local addresses=()
+    local address
+    local index
+
+    if [ -n "$addresses_csv" ]; then
+        IFS=',' read -ra addresses <<< "$addresses_csv"
+    fi
+
+    for index in $(seq 0 19); do
+        local env_name="W${index}_ACCOUNT_ADDRESS"
+        local env_value=${!env_name:-}
+        if [ -n "$env_value" ]; then
+            addresses+=("$env_value")
+        fi
+    done
+
+    if [ "${#addresses[@]}" -eq 0 ]; then
+        echo "No worker accounts configured for Anvil funding."
+        return 0
+    fi
+
+    echo "Funding configured worker accounts on local Anvil."
+    local funded_addresses=" "
+    for address in "${addresses[@]}"; do
+        address=$(printf '%s' "$address" | xargs)
+        if [ -z "$address" ]; then
+            continue
+        fi
+        require_address WORKER_ACCOUNT_ADDRESS "$address"
+        if [[ "$funded_addresses" == *" $address "* ]]; then
+            continue
+        fi
+        funded_addresses+="$address "
+        cast rpc --rpc-url "$rpc_url" anvil_setBalance "$address" "$balance_hex" >/dev/null
+        echo "Funded worker account $address with $balance_wei wei"
+    done
+}
+
 wait_for_anvil
 wait_for_kubo
 clear_runtime_ready_marker
@@ -91,6 +138,8 @@ require_address() {
         exit 1
     fi
 }
+
+fund_configured_worker_accounts
 
 publish_runtime_contract_manifest() {
     if [ "$IPFS_PROVIDER" != "kubo" ]; then

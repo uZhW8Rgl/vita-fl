@@ -14,12 +14,18 @@ provider "phala" {
 }
 
 locals {
+  worker_account_addresses = concat(
+    [var.account_address],
+    [for _, worker in nonsensitive(var.additional_workers) : worker.account_address],
+  )
+
   contracts_compose_content = templatefile("${path.module}/dstack-compose.contracts.phala.tftpl", {
     smart_contracts_image             = var.smart_contracts_image
     anvil_image                       = var.anvil_image
     ipfs_image                        = var.ipfs_image
     w0_account_address                = var.account_address
     w1_account_address                = coalesce(var.runtime_w1_account_address, var.account_address)
+    worker_account_addresses          = join(",", local.worker_account_addresses)
     initial_gm_signer_address         = coalesce(var.initial_gm_signer_address, var.account_address)
     blockchain_provider               = var.blockchain_provider
     eth_wallet_private_key            = var.eth_wallet_private_key
