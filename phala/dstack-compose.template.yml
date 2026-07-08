@@ -3,14 +3,16 @@ services:
     # Replace the digest after running the "Publish DFL Worker Image" workflow.
     # The digest-pinned image reference is what becomes part of the measured
     # Phala/dstack application configuration.
-    image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:afd37aab42c424b791ce22f89729ced08144e27c797c5e44b51a34c2d64f0b98
+    image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:6fe449c372ca85cc56377e06c0894204015669a920debcc367619c02f62de12f
     restart: unless-stopped
     volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
       - /var/run/tappd.sock:/var/run/tappd.sock
     environment:
       DOCKER: phala
       NODE_ENV: production
       IPFS_PROVIDER: kubo
+      EXPECTED_WORKER_IMAGE: "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:6fe449c372ca85cc56377e06c0894204015669a920debcc367619c02f62de12f"
       KUBO_API: "REPLACE_WITH_KUBO_API_URL"
       KUBO_GATEWAY: "REPLACE_WITH_KUBO_GATEWAY_URL"
       PUBLIC_IP: ""
