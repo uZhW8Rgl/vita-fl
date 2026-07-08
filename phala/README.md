@@ -102,7 +102,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:6fe449c372ca85cc56377e06c0894204015669a920debcc367619c02f62de12f
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:f97da8da8fc0286b4175d16c895c91cc789ef225a61ade5a706b82ba688e6b22
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
