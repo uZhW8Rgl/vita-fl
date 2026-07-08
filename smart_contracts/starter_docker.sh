@@ -136,6 +136,20 @@ EOF
     rm -f "$ready_file"
 }
 
+extract_worker_image_digest() {
+    local image_ref=${EXPECTED_WORKER_IMAGE:-${WORKER_IMAGE:-${PHALA_WORKER_IMAGE:-}}}
+
+    if [ -z "$image_ref" ] && [ -f "${PHALA_COMPOSE_PATH:-}" ]; then
+        image_ref=$(grep -E 'image:[[:space:]]*[^[:space:]]+@sha256:[0-9a-fA-F]{64}' "$PHALA_COMPOSE_PATH" | head -n 1 | sed -E 's/^[[:space:]]*image:[[:space:]]*//')
+    fi
+
+    if [ -z "$image_ref" ]; then
+        return 0
+    fi
+
+    printf '%s' "$image_ref" | sed -nE 's/^.*@sha256:([0-9a-fA-F]{64}).*$/\1/p'
+}
+
 authorize_pccs_reader() {
     local caller=$1
 
@@ -1015,6 +1029,15 @@ cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_0 \
     $AGGREGATOR_SELECTION_ADDRESS "setTimeoutReportThresholdPercent(uint256)" "$AGGREGATOR_TIMEOUT_REPORT_PERCENT"
 
 echo "Aggregator timeout report threshold wurde auf ${AGGREGATOR_TIMEOUT_REPORT_PERCENT}% gesetzt"
+
+EXPECTED_WORKER_IMAGE_DIGEST=$(extract_worker_image_digest || true)
+if [ -n "$EXPECTED_WORKER_IMAGE_DIGEST" ]; then
+    echo "Expected worker image digest set to sha256:$EXPECTED_WORKER_IMAGE_DIGEST"
+    cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_0 \
+        $DEVICE_REGISTRY_ADDRESS "setExpectedWorkerImageDigest(bytes32)" "0x$EXPECTED_WORKER_IMAGE_DIGEST"
+else
+    echo "No expected worker image digest configured; registry will not enforce image digest."
+fi
 
 
 #echo "Authorization Status:"

@@ -747,6 +747,7 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     quoteHex,
     rtmr3EventDigests,
     composeHash,
+    workerImageDigest,
     address,
     publicIp,
     brokerIp,
@@ -760,10 +761,11 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
     const gasPrice = await web3.eth.getGasPrice();
-    const registration = contract.methods.registerDeviceWithRtmr3Events(
+    const registration = contract.methods.registerDeviceWithRtmr3EventsAndImageDigest(
         quoteHex,
         rtmr3EventDigests,
         composeHash,
+        workerImageDigest,
         address,
         publicIp,
         brokerIp,
@@ -780,6 +782,7 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
         quoteBytes: hexByteLength(quoteHex),
         eventDigestBytes: rtmr3EventDigests.map(hexByteLength),
         composeHashBytes: hexByteLength(composeHash),
+        workerImageDigestBytes: hexByteLength(workerImageDigest),
         publicKeyBytes: hexByteLength(publicKeyBytesHex),
         calldataBytes: hexByteLength(calldata),
     });

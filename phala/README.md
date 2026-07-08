@@ -76,8 +76,9 @@ Notes:
 - The contract-runtime TEE runs its own local `anvil`; the worker TEE talks to that internal runtime endpoint, not to Sepolia.
 - The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
 - The worker now treats `/runtime/contracts.json` as the effective runtime-ready signal. The runtime publishes that manifest only after `smart-contracts` finished its bootstrap path, which avoids startup races even when `/runtime/ready.json` is missing on Phala.
-- The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/tappd.sock`.
-- At runtime the worker first tries `/var/run/dstack.sock` and then uses the SDK's legacy `TappdClient` over `/var/run/tappd.sock` when `dstack.sock` is not present.
+- The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/dstack.sock` and keeps `/var/run/tappd.sock` only for compatibility.
+- At runtime the worker requires a measured `app_compose` from Phala `info()`, recomputes the normalized compose hash, compares it with the live quote's `compose-hash` event payload, and verifies that the measured compose contains the expected digest-pinned worker image.
+- The legacy `tappd.sock` path is not accepted unless it also exposes `app_compose`; otherwise the worker aborts instead of trusting a mock or env-only digest.
 - After changing the worker attestation code, publish a fresh `ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala` image before redeploying the Phala workers, otherwise the running CVMs still use the old logic baked into the last image.
 
 ### Where Hardware Is Selected
@@ -196,9 +197,9 @@ If only `PHALA_RUNTIME_ENDPOINT_OVERRIDE` is set and it already contains an embe
 
 The on-chain contract verifies the TDX quote and replays the submitted Phala/dstack RTMR3 event digests until they reproduce the signed RTMR3 value inside the quote.
 
-During registration, the worker submits the live `compose-hash` event payload from the Phala quote response. The attestation contract recomputes the Phala `compose-hash` event digest from that payload, checks that this event is present in the replayed RTMR3 chain, and verifies that the replayed RTMR3 equals the signed RTMR3 inside the quote.
+During registration, the worker submits the live RTMR3 event digests, the live `compose-hash` payload from the Phala quote response, and the worker image digest extracted from the measured `app_compose`. The attestation contract recomputes the Phala `compose-hash` event digest from that payload, checks that this event is present in the replayed RTMR3 chain, verifies that the replayed RTMR3 equals the signed RTMR3 inside the quote, and the registry checks that the submitted worker image digest matches the digest stored during `smart-contracts` bootstrap.
 
-This means worker-specific `app-id`, `instance-id`, and compose measurements may still produce different final RTMR3 values, but those final RTMR3 values no longer need to be known in advance. If `PHALA_ENFORCE_COMPOSE_HASH=1` is set, all workers must additionally match the same expected compose hash.
+This means worker-specific `app-id`, `instance-id`, and compose measurements may still produce different final RTMR3 values, but those final RTMR3 values no longer need to be known in advance. The shared policy anchor is the digest-pinned worker image reference measured inside each worker's Phala app-compose preimage.
 
 ## Next Steps
 
@@ -220,7 +221,7 @@ python scripts/verify_phala_rtmr3.py \
   --app-code phala/app_code.txt
 ```
 
-5. If you enable fixed policy enforcement, rebuild and publish the `smart-contracts` image after changing the worker digest or policy artifact.
+5. After changing the worker digest, redeploy the contract-runtime compose with the updated `worker_image` value so bootstrap stores the new expected worker image digest in `DeviceRegistry`. Rebuild `smart-contracts` only when contract or bootstrap code changed.
 
 Important:
 

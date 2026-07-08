@@ -8,7 +8,7 @@ import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
 import fs from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
-import { DstackClient, TappdClient } from '@phala/dstack-sdk';
+import { DstackClient, TappdClient, getComposeHash } from '@phala/dstack-sdk';
 import crypto from 'crypto';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -207,6 +207,12 @@ async function readFirstExistingText(paths) {
 function appCodeFromDstackInfo(info) {
     if (!info || typeof info !== 'object')
         return null;
+    if (info.tcb_info?.app_compose !== undefined) {
+        const appCompose = info.tcb_info.app_compose;
+        if (typeof appCompose === 'string')
+            return appCompose;
+        return `${JSON.stringify(appCompose, null, 2)}\n`;
+    }
     for (const key of ['app_code', 'appCode', 'app_compose', 'appCompose', 'compose', 'docker_compose_file']) {
         if (info[key] === undefined)
             continue;
@@ -274,6 +280,128 @@ async function publishLivePhalaArtifacts(quote, info = null) {
         basePath: `/phala-artifacts/${workerName}`,
         latestPath: '/phala-artifacts/latest',
     });
+}
+function normalizeHashHex(value, bytes, label) {
+    if (typeof value !== 'string') {
+        throw new Error(`${label} must be a hex string`);
+    }
+    let hex = value.trim();
+    if (hex.startsWith('0x') || hex.startsWith('0X'))
+        hex = hex.slice(2);
+    if (!new RegExp(`^[0-9a-fA-F]{${bytes * 2}}$`).test(hex)) {
+        throw new Error(`Invalid ${label}; expected ${bytes}-byte hex value`);
+    }
+    return `0x${hex.toLowerCase()}`;
+}
+function parseAppCompose(appComposeRaw) {
+    if (!appComposeRaw) {
+        throw new Error('dstack info did not include app_compose');
+    }
+    if (typeof appComposeRaw === 'string') {
+        return JSON.parse(appComposeRaw);
+    }
+    if (typeof appComposeRaw === 'object') {
+        return appComposeRaw;
+    }
+    throw new Error('Unsupported app_compose encoding in dstack info');
+}
+function tcbInfoFromDstackInfo(info) {
+    return info?.tcb_info || info?.tcbInfo || info?.tcb || null;
+}
+function extractWorkerImageRefs(appCompose) {
+    const dockerComposeText = String(appCompose?.docker_compose_file || '');
+    if (!dockerComposeText) {
+        throw new Error('app_compose does not include docker_compose_file');
+    }
+    const matches = [...dockerComposeText.matchAll(/^\s*image:\s*["']?([^"'\s#]+)["']?/gm)]
+        .map(match => match[1]);
+    if (matches.length === 0) {
+        throw new Error('docker_compose_file does not include an image reference');
+    }
+    return matches;
+}
+function extractImageDigest(imageRef) {
+    const match = String(imageRef || '').match(/@sha256:([0-9a-fA-F]{64})(?:$|[^\w])/);
+    return match ? `0x${match[1].toLowerCase()}` : null;
+}
+function verifyMeasuredWorkerImage(info, liveComposeHash) {
+    const tcbInfo = tcbInfoFromDstackInfo(info);
+    const appCompose = parseAppCompose(tcbInfo?.app_compose || tcbInfo?.appCompose);
+    const measuredComposeHash = normalizeHashHex(getComposeHash(appCompose, true), 32, 'measured app_compose hash');
+    const quoteComposeHash = normalizeHashHex(liveComposeHash, 32, 'live quote compose hash');
+    if (measuredComposeHash !== quoteComposeHash) {
+        throw new Error(`dstack info compose hash ${measuredComposeHash} does not match quote compose hash ${quoteComposeHash}`);
+    }
+    const imageRefs = extractWorkerImageRefs(appCompose);
+    const expectedImageRef = process.env.EXPECTED_WORKER_IMAGE || process.env.WORKER_IMAGE || process.env.PHALA_WORKER_IMAGE || '';
+    const matchedImageRef = expectedImageRef
+        ? imageRefs.find(imageRef => imageRef === expectedImageRef)
+        : imageRefs.find(imageRef => imageRef.includes('master-thesis-dfl-worker@sha256:')) || imageRefs[0];
+    if (!matchedImageRef) {
+        throw new Error(`Measured app_compose does not contain expected worker image reference: ${expectedImageRef}`);
+    }
+    const imageDigest = extractImageDigest(matchedImageRef);
+    if (!imageDigest) {
+        throw new Error(`Measured worker image is not digest-pinned: ${matchedImageRef}`);
+    }
+    const expectedDigest = extractImageDigest(expectedImageRef);
+    if (expectedDigest && imageDigest !== expectedDigest) {
+        throw new Error(`Measured worker image digest ${imageDigest} does not match expected ${expectedDigest}`);
+    }
+    console.log('Verified measured worker image reference:', {
+        image: matchedImageRef,
+        imageDigest,
+        composeHash: measuredComposeHash,
+    });
+    return { imageRef: matchedImageRef, imageDigest };
+}
+async function fetchLivePhalaQuote(reportData) {
+    const dstackSock = '/var/run/dstack.sock';
+    const tappdSock = '/var/run/tappd.sock';
+    if (existsSync(dstackSock)) {
+        const client = new DstackClient(dstackSock);
+        const info = await client.info();
+        console.log('App ID:', info.app_id);
+        console.log('Instance ID:', info.instance_id);
+        console.log('App Name:', info.app_name);
+        console.log('TCB Info:', info.tcb_info);
+        const quote = await client.getQuote(reportData);
+        await publishLivePhalaArtifacts(quote, info).catch(error => {
+            console.warn('Could not publish live Phala attestation artifacts:', error?.message || error);
+        });
+        const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
+        const workerImage = verifyMeasuredWorkerImage(info, rtmr3Policy.composeHash);
+        return {
+            quoteHex: normalizeHexBytes(quote.quote),
+            rtmr3EventDigests: rtmr3Policy.digests,
+            composeHash: rtmr3Policy.composeHash,
+            workerImageDigest: workerImage.imageDigest,
+        };
+    }
+    if (existsSync(tappdSock)) {
+        console.log('Using legacy Phala tappd.sock attestation path.');
+        const client = new TappdClient(tappdSock);
+        const info = typeof client.info === 'function' ? await client.info().catch(error => {
+            console.warn('Legacy tappd.sock info() unavailable:', error?.message || error);
+            return null;
+        }) : null;
+        const quote = await client.tdxQuote(reportData, 'raw');
+        await publishLivePhalaArtifacts(quote, info).catch(error => {
+            console.warn('Could not publish live Phala attestation artifacts:', error?.message || error);
+        });
+        const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
+        if (!tcbInfoFromDstackInfo(info)?.app_compose && !tcbInfoFromDstackInfo(info)?.appCompose) {
+            throw new Error('Legacy tappd.sock path did not expose app_compose; mount /var/run/dstack.sock for measured image verification');
+        }
+        const workerImage = verifyMeasuredWorkerImage(info, rtmr3Policy.composeHash);
+        return {
+            quoteHex: normalizeHexBytes(quote.quote),
+            rtmr3EventDigests: rtmr3Policy.digests,
+            composeHash: rtmr3Policy.composeHash,
+            workerImageDigest: workerImage.imageDigest,
+        };
+    }
+    throw new Error('Neither /var/run/dstack.sock nor /var/run/tappd.sock is available for Phala attestation.');
 }
 async function expectedWorkerAddresses() {
     const own = String(process.env.ACCOUNT_ADDRESS || '').toLowerCase();
@@ -350,43 +478,6 @@ async function registerWithLocalTdxQuote() {
     const quoteHex = normalizeHexBytes(await fs.readFile(quotePath));
     await registerDeviceWithTeeQuote(quoteHex, process.env.ACCOUNT_ADDRESS, process.env.PUBLIC_IP || "", process.env.MSG_BROKER_IP || "", rsaPublicKeyDerHex());
     console.log("Device registered with onchain TDX quote verification.");
-}
-async function fetchLivePhalaQuote(reportData) {
-    const dstackSock = '/var/run/dstack.sock';
-    const tappdSock = '/var/run/tappd.sock';
-    if (existsSync(dstackSock)) {
-        const client = new DstackClient(dstackSock);
-        const info = await client.info();
-        console.log('App ID:', info.app_id);
-        console.log('Instance ID:', info.instance_id);
-        console.log('App Name:', info.app_name);
-        console.log('TCB Info:', info.tcb_info);
-        const quote = await client.getQuote(reportData);
-        await publishLivePhalaArtifacts(quote, info).catch(error => {
-            console.warn('Could not publish live Phala attestation artifacts:', error?.message || error);
-        });
-        const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
-        return {
-            quoteHex: normalizeHexBytes(quote.quote),
-            rtmr3EventDigests: rtmr3Policy.digests,
-            composeHash: rtmr3Policy.composeHash,
-        };
-    }
-    if (existsSync(tappdSock)) {
-        console.log('Using legacy Phala tappd.sock attestation path.');
-        const client = new TappdClient(tappdSock);
-        const quote = await client.tdxQuote(reportData, 'raw');
-        await publishLivePhalaArtifacts(quote).catch(error => {
-            console.warn('Could not publish live Phala attestation artifacts:', error?.message || error);
-        });
-        const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
-        return {
-            quoteHex: normalizeHexBytes(quote.quote),
-            rtmr3EventDigests: rtmr3Policy.digests,
-            composeHash: rtmr3Policy.composeHash,
-        };
-    }
-    throw new Error('Neither /var/run/dstack.sock nor /var/run/tappd.sock is available for Phala attestation.');
 }
 function decodeEventBytes(rawValue) {
     if (Buffer.isBuffer(rawValue) || Array.isArray(rawValue) || ArrayBuffer.isView(rawValue)) {
@@ -572,15 +663,16 @@ async function prepareRoundZeroBootstrapRollover() {
 const stateMachine = async () => {
     if (process.env.DOCKER === "phala") {
         console.log("Fetching TDX Quote ...");
+        // Generate remote attestation quote
         const applicationData = JSON.stringify({
             version: '1.0.0',
             timestamp: Date.now(),
             user_id: process.env.ACCOUNT_ADDRESS,
         });
         const reportData = crypto.createHash('sha256').update(applicationData).digest();
-        const { quoteHex, rtmr3EventDigests, composeHash } = await fetchLivePhalaQuote(reportData);
+        const { quoteHex, rtmr3EventDigests, composeHash, workerImageDigest } = await fetchLivePhalaQuote(reportData);
         console.log(`Registering with live Phala TDX quote and ${rtmr3EventDigests.length} RTMR3 event digests ...`);
-        await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventDigests, composeHash, process.env.ACCOUNT_ADDRESS, process.env.PUBLIC_IP || "", process.env.MSG_BROKER_IP || "", rsaPublicKeyDerHex());
+        await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventDigests, composeHash, workerImageDigest, process.env.ACCOUNT_ADDRESS, process.env.PUBLIC_IP || "", process.env.MSG_BROKER_IP || "", rsaPublicKeyDerHex());
         console.log("Device registered with onchain TDX quote and RTMR3 event replay verification.");
     }
     else {

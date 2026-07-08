@@ -66,6 +66,19 @@
   },
   {
     "type": "function",
+    "name": "expectedWorkerImageDigest",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getAuthorizedDevices",
     "inputs": [],
     "outputs": [
@@ -241,6 +254,67 @@
   },
   {
     "type": "function",
+    "name": "registerDeviceWithRtmr3EventsAndImageDigest",
+    "inputs": [
+      {
+        "name": "quote",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "rtmr3EventDigests",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
+      },
+      {
+        "name": "composeHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "workerImageDigest",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "_address",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_public_ip",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "_msg_broker_ip",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "_public_key",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setExpectedWorkerImageDigest",
+    "inputs": [
+      {
+        "name": "_expectedWorkerImageDigest",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setTdxV4Attestation",
     "inputs": [
       {
@@ -313,6 +387,19 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ExpectedWorkerImageDigestUpdated",
+    "inputs": [
+      {
+        "name": "expectedWorkerImageDigest",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false

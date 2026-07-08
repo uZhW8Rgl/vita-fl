@@ -53,6 +53,7 @@ locals {
     deploy_tdx_v4_dcap                = var.deploy_tdx_v4_dcap
     verify_tdx_quote_onchain          = var.verify_tdx_quote_onchain
     aggregator_timeout_report_percent = var.aggregator_timeout_report_percent
+    worker_image                      = var.worker_image
     keep_alive                        = var.keep_alive
     pccs_quote_path                   = var.pccs_quote_path
     tdx_quote_path                    = var.tdx_quote_path

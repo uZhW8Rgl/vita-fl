@@ -3,11 +3,13 @@ services:
     image: ${worker_image}
     restart: unless-stopped
     volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
       - /var/run/tappd.sock:/var/run/tappd.sock
     environment:
       DOCKER: phala
       NODE_ENV: production
       IPFS_PROVIDER: kubo
+      EXPECTED_WORKER_IMAGE: "${worker_image}"
       KUBO_API: "${kubo_api_url}"
       KUBO_GATEWAY: "${kubo_gateway_url}"
       PUBLIC_IP: "${public_ip}"

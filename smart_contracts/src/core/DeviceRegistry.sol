@@ -24,6 +24,7 @@ contract DeviceRegistry {
 
     address public owner;
     ITdxV4Attestation public tdxV4Attestation;
+    bytes32 public expectedWorkerImageDigest;
     mapping(address => Device) public devices;
     mapping(address => bool) private knownDevice;
     address[] private deviceAddresses;
@@ -33,6 +34,7 @@ contract DeviceRegistry {
     event DeviceAuthorized(address indexed device);
     event DeviceDeauthorized(address indexed device);
     event DeviceLeft(address indexed device);
+    event ExpectedWorkerImageDigestUpdated(bytes32 expectedWorkerImageDigest);
 
     constructor() {
         owner = msg.sender;
@@ -49,6 +51,11 @@ contract DeviceRegistry {
     function setTdxV4Attestation(address _tdxV4Attestation) public onlyOwner {
         require(_tdxV4Attestation != address(0), "invalid attestation address");
         tdxV4Attestation = ITdxV4Attestation(_tdxV4Attestation);
+    }
+
+    function setExpectedWorkerImageDigest(bytes32 _expectedWorkerImageDigest) public onlyOwner {
+        expectedWorkerImageDigest = _expectedWorkerImageDigest;
+        emit ExpectedWorkerImageDigestUpdated(_expectedWorkerImageDigest);
     }
 
     function authorizeAddress(address _address) public onlyOwner {
@@ -129,6 +136,22 @@ contract DeviceRegistry {
         string memory _msg_broker_ip,
         bytes memory _public_key
     ) public {
+        require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
+        tdxV4Attestation.verifyAndAttestOnChainWithRtmr3Events(quote, rtmr3EventDigests, composeHash);
+        _registerVerifiedDevice(_address, _public_ip, _msg_broker_ip, _public_key);
+    }
+
+    function registerDeviceWithRtmr3EventsAndImageDigest(
+        bytes calldata quote,
+        bytes[] calldata rtmr3EventDigests,
+        bytes32 composeHash,
+        bytes32 workerImageDigest,
+        address _address,
+        string memory _public_ip,
+        string memory _msg_broker_ip,
+        bytes memory _public_key
+    ) public {
+        require(expectedWorkerImageDigest == bytes32(0) || workerImageDigest == expectedWorkerImageDigest, "worker image digest mismatch");
         require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
         tdxV4Attestation.verifyAndAttestOnChainWithRtmr3Events(quote, rtmr3EventDigests, composeHash);
         _registerVerifiedDevice(_address, _public_ip, _msg_broker_ip, _public_key);

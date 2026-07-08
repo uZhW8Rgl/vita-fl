@@ -96,9 +96,9 @@ During deployment, `starter_docker.sh` calls:
 setExpectedRtmr3FromQuote(bytes referenceQuote)
 ```
 
-The contract parses the reference quote on-chain, extracts RTMR3, and keeps that value for legacy exact-RTMR3 checks. The live Phala path uses the RTMR3 event log instead: the worker submits the live RTMR3 event digests and the `compose-hash` event payload from its quote response. The contract replays the event digests, compares the replayed RTMR3 with the quote, recomputes the Phala `compose-hash` event digest from the submitted payload, and checks that the payload equals the on-chain `expectedComposeHash`.
+The contract parses the reference quote on-chain, extracts RTMR3, and keeps that value for legacy exact-RTMR3 checks. The live Phala path uses the RTMR3 event log instead: the worker submits the live RTMR3 event digests, the `compose-hash` event payload from its quote response, and the worker image digest extracted from measured Phala `app_compose`. The attestation contract replays the event digests, compares the replayed RTMR3 with the quote, and recomputes the Phala `compose-hash` event digest from the submitted payload. `DeviceRegistry` separately checks the submitted worker image digest against the digest stored by `starter_docker.sh`.
 
-`starter_docker.sh` also checks that the worker compose policy pins the image by immutable `sha256` digest and records the measured compose policy hash on-chain as `expectedComposeHash`.
+`starter_docker.sh` also checks that the worker compose policy pins the image by immutable `sha256` digest and records that expected worker image digest on-chain.
 
 For Phala/dstack this needs one subtle distinction:
 
@@ -107,7 +107,7 @@ For Phala/dstack this needs one subtle distinction:
 
 `starter_docker.sh` therefore prefers `phala/app_code.txt` when present and only falls back to the raw compose-file hash if no app-code export is available.
 
-The compose policy is still the replaceable workload input. If the worker image changes, update the digest-pinned image reference in `phala/dstack-compose.template.yml`, deploy that exact worker app on Phala/dstack, fetch the new quote/app-code/event log, and rerun the local deployment.
+The compose policy is still the replaceable workload input. If the worker image changes, update the digest-pinned image reference used by Terraform/Phala, redeploy the contract-runtime compose so bootstrap stores the new expected worker digest, deploy that exact worker app on Phala/dstack, fetch the new quote/app-code/event log, and rerun the local deployment. Rebuild the smart-contracts image only when contract or bootstrap code changed.
 
 A complete image-to-RTMR3 verification additionally requires the Phala/dstack RTMR3 event log. With that log, a verifier can replay the RTMR3 measurement chain, bind the submitted `compose-hash` payload to an actual event in the chain, compare the measured compose hash with `expectedComposeHash`, and then compare the replayed RTMR3 with the signed RTMR3 in the quote.
 
