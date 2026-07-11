@@ -19,9 +19,11 @@ if [ -z "${PYTHON_BIN}" ]; then
   exit 1
 fi
 
-export TDX_QUOTE_PATH=${TDX_QUOTE_PATH:-/dfl/node_server/attestation/phala_tdx_quote}
-if [ ! -f "${TDX_QUOTE_PATH}" ] && [ -f "/dfl/node_server/attestation/phala_tdx_quote" ]; then
-  export TDX_QUOTE_PATH=/dfl/node_server/attestation/phala_tdx_quote
+if [ "${DOCKER:-}" != "phala" ]; then
+  export TDX_QUOTE_PATH=${TDX_QUOTE_PATH:-/dfl/node_server/attestation/phala_tdx_quote}
+  if [ ! -f "${TDX_QUOTE_PATH}" ] && [ -f "/dfl/node_server/attestation/phala_tdx_quote" ]; then
+    export TDX_QUOTE_PATH=/dfl/node_server/attestation/phala_tdx_quote
+  fi
 fi
 
 case "$DATASET_NAME" in

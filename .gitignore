@@ -9,7 +9,7 @@ node_modules/
 .env
 .env.old
 .env.shared
-.env.anvil
+.env.phala.anvil
 .env.sepolia
 cache/
 smart_contracts/out/

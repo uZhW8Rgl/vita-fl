@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
 SHARED_ENV_FILE="${ROOT_DIR}/.env.shared"
-DEFAULT_ENV_FILE="${ROOT_DIR}/.env.anvil"
+DEFAULT_ENV_FILE="${ROOT_DIR}/.env.phala.anvil"
 FALLBACK_ENV_FILE="${ROOT_DIR}/.env"
 REPO_TERRAFORM_BIN="${SCRIPT_DIR}/bin/terraform"
 

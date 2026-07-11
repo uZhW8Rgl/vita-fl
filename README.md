@@ -19,7 +19,7 @@ The current prototype combines:
 - [compose.yml](./compose.yml): Docker Compose entry point for local end-to-end runs.
 - [.env.example](./.env.example): Legacy all-in-one example runtime configuration.
 - [.env.shared.example](./.env.shared.example): Shared configuration across local Anvil and Sepolia profiles.
-- [.env.anvil.example](./.env.anvil.example): Chain-specific values for local Anvil runs.
+- [.env.phala.anvil.example](./.env.phala.anvil.example): Chain-specific values for local Anvil runs.
 - [.env.sepolia.example](./.env.sepolia.example): Chain-specific values for Sepolia runs.
 - [data](./data): Shared local input artifacts and helpers, including dataset files, RSA worker keys, the TDX quote, and single-image sample extraction utilities.
 - [observability](./observability): Grafana and Prometheus configuration.
@@ -197,12 +197,12 @@ The `.env` file is intentionally ignored by Git. For new setups, prefer split pr
 
 ```bash
 cp .env.shared.example .env.shared
-cp .env.anvil.example .env.anvil
+cp .env.phala.anvil.example .env.phala.anvil
 cp .env.sepolia.example .env.sepolia
 ./scripts/use-env-profile.sh anvil
 ```
 
-This keeps common values in `.env.shared`, puts chain-specific values into `.env.anvil` or `.env.sepolia`, and regenerates the active `.env` from the selected profile. That avoids dangerous mixes such as a Sepolia RPC together with Anvil contract addresses.
+This keeps common values in `.env.shared`, puts chain-specific values into `.env.phala.anvil` or `.env.sepolia`, and regenerates the active `.env` from the selected profile. That avoids dangerous mixes such as a Sepolia RPC together with Anvil contract addresses.
 
 This is the recommended demo run for the thesis prototype. It rebuilds the active services, launches the local infrastructure, deploys the contracts, runs the DFL flow, stores the new global model in IPFS, and updates the on-chain metadata.
 
