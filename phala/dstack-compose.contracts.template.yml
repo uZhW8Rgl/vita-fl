@@ -24,7 +24,7 @@ services:
       retries: 24
 
   rpc-proxy:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:59ef7c8134600d193f9ee9b5a0c7d5d9e9b866832f4734fd7446b88a26ab5a74
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:5b6bafac3bd026632f4f53fe42ca2804b37849b231e34c5303d810b9433d0533
     restart: unless-stopped
     read_only: true
     cap_drop: ["ALL"]
@@ -59,7 +59,7 @@ services:
       retries: 24
 
   smart-contracts:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:59ef7c8134600d193f9ee9b5a0c7d5d9e9b866832f4734fd7446b88a26ab5a74
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:5b6bafac3bd026632f4f53fe42ca2804b37849b231e34c5303d810b9433d0533
     restart: "no"
     depends_on:
       anvil:
