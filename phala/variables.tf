@@ -18,7 +18,7 @@ variable "worker_app_name" {
 }
 
 variable "enable_tee_inference" {
-  description = "Deploy the separate attested TEE inference Phala app. Model URLs must be configured first."
+  description = "Deploy the separate attested TEE inference Phala app using W0's authorized participant credentials."
   type        = bool
   default     = false
 }
@@ -248,33 +248,11 @@ variable "smart_contracts_image" {
 variable "tee_inference_image" {
   description = "Digest-pinned TEE inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:aa5d0ed3151ca0b46e77a0ea16af336e5374745eed77277dc30608cca80e0baf"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:6ce20ad296c57b912b711479c71d5b2115c299ba7fe5a33b387a5c826d6ef880"
 
   validation {
     condition     = can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.tee_inference_image))
     error_message = "tee_inference_image must be a digest-pinned ghcr.io reference."
-  }
-}
-
-variable "tee_model_url" {
-  description = "HTTP(S) URL of the native aggregated.bin DFL model loaded by the socketless model-init service."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = !var.enable_tee_inference || can(regex("^https?://", var.tee_model_url))
-    error_message = "tee_model_url must be HTTP(S) when TEE inference is enabled."
-  }
-}
-
-variable "tee_model_manifest_url" {
-  description = "HTTP(S) URL of the canonical model-manifest.cbor matching the native DFL artifact."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = !var.enable_tee_inference || can(regex("^https?://", var.tee_model_manifest_url))
-    error_message = "tee_model_manifest_url must be HTTP(S) when TEE inference is enabled."
   }
 }
 

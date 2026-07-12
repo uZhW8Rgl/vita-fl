@@ -201,8 +201,6 @@ append_var_if_set "model_transfer_retry_delay_ms" "MODEL_TRANSFER_RETRY_DELAY_MS
 append_var_if_set "dataset_name" "DATASET_NAME"
 append_var_if_set "enable_tee_inference" "ENABLE_TEE_INFERENCE"
 append_var_if_set "tee_inference_image" "TEE_INFERENCE_IMAGE"
-append_var_if_set "tee_model_url" "TEE_MODEL_URL"
-append_var_if_set "tee_model_manifest_url" "TEE_MODEL_MANIFEST_URL"
 append_var_if_set "train_images_src" "TRAIN_IMAGES_SRC"
 append_var_if_set "train_labels_src" "TRAIN_LABELS_SRC"
 append_var_if_set "test_images_src" "TEST_IMAGES_SRC"

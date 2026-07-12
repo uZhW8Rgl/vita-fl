@@ -261,11 +261,17 @@ resource "phala_app" "tee_inference" {
 
   name = var.tee_inference_app_name
   docker_compose = templatefile("${path.module}/dstack-compose.tee-inference.phala.tftpl", {
-    tee_inference_image    = var.tee_inference_image
-    tee_model_url          = var.tee_model_url
-    tee_model_manifest_url = var.tee_model_manifest_url
+    tee_inference_image = var.tee_inference_image
+    account_address     = var.account_address
+    rpc_url             = local.contracts_rpc_url
+    kubo_api_url        = local.contracts_kubo_api_url
+    kubo_gateway_url    = local.contracts_kubo_gateway
   })
-  env  = {}
+  env = {
+    PRIVATE_KEY     = var.private_key
+    RSA_PRIVATE_KEY = file(var.rsa_private_key_path)
+    RSA_PUBLIC_KEY  = file(var.rsa_public_key_path)
+  }
   size = var.tee_inference_size
 
   region    = var.region

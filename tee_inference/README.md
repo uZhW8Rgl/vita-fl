@@ -45,14 +45,18 @@ The AIR tests include the official cyntrisec/air-v1
 unknown fields, a mismatched manifest hash, and an incompatible native model
 contract. `GET /healthz` reports the loaded model and manifest SHA-256 values.
 
-At startup, the service reads both the model and its exact canonical manifest;
-it checks the manifest's `aggregated.bin` SHA-256 and byte length before serving requests.
-The required environment variables are paths rather than trusted digest text:
+At startup, the service verifies W0's supplied RSA key against W0's authorized
+DeviceRegistry key, reads the current GMStorage CIDs, downloads and decrypts the
+encrypted IPFS bundle, verifies the aggregator signatures, and constructs the
+canonical manifest from that verified state:
 
 ```sh
 export DATASET_NAME=chestmnist
-export TEE_MODEL_PATH=/app/model/aggregated.bin
-export TEE_MODEL_MANIFEST_PATH=/app/model/model-manifest.cbor
+export ACCOUNT_ADDRESS=0x...
+export RSA_PRIVATE_KEY='-----BEGIN PRIVATE KEY-----...'
+export RPC_URL=https://...
+export KUBO_API=https://...
+export TEE_MODEL_DIR=/app/model
 PYTHONPATH=. python3 -m tee_inference.service
 ```
 
@@ -73,6 +77,6 @@ ghcr.io/uzhw8rgl/master-thesis-tee-inference:<git-commit-sha>
 It prints the digest-pinned Phala reference in the workflow summary. A manual
 `workflow_dispatch` can override `tee`; pushes to the `tee_inference` branch
 that change the service or its workflow publish automatically. The image runs
-as UID/GID 10001 and contains no model, private key, or dstack socket. Model and
-manifest must be supplied together at `/app/model` (or through the two path
-environment variables above).
+as UID/GID 10001 and contains no model or private key. W0's credentials are
+supplied only through Phala's encrypted app environment; the separate
+inference CVM receives its own dstack socket.

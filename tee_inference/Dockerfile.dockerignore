@@ -4,3 +4,6 @@
 !dfl/
 !dfl/neural_network/
 !dfl/neural_network/**
+!agent/
+!agent/blockchain_source.py
+!agent/ipfs_bundle.py
