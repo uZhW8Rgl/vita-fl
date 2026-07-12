@@ -11,6 +11,7 @@ fastapi==0.128.8
 flatbuffers==25.12.19
 h11==0.16.0
 httpcore==1.0.9
+httpx==0.28.1
 humanfriendly==10.0
 idna==3.18
 mpmath==1.3.0
@@ -27,4 +28,3 @@ sympy==1.14.0
 typing-extensions==4.16.0
 typing-inspection==0.4.2
 uvicorn==0.39.0
-
