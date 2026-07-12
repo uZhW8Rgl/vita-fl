@@ -83,7 +83,7 @@ services:
       DEPLOY_TDX_V4_DCAP: "1"
       VERIFY_TDX_QUOTE_ONCHAIN: "1"
       AGGREGATOR_TIMEOUT_REPORT_PERCENT: "50"
-      EXPECTED_WORKER_IMAGE: "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:2d6d223bdc7f422aec5d16bf6d768a4dc312cd74a735053504d244bfadd19c4f"
+      EXPECTED_WORKER_IMAGE: "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:6ea849fd7c494829e258dea99a4aba7aa4095996cdb67f66b4ccf47d2120d0e3"
       PCCS_QUOTE_PATH: /dfl/data/phala_tdx_quote
       TDX_REFERENCE_QUOTE_PATH: ""
       DATASET_NAME: mnist
