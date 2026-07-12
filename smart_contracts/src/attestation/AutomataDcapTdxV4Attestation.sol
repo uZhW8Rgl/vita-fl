@@ -23,6 +23,7 @@ import {X509CRLHelper} from "@automata-network/on-chain-pccs/helpers/X509CRLHelp
 import {PcsDao, CA} from "@automata-network/on-chain-pccs/bases/PcsDao.sol";
 import {PEMCertChainBase, PCKCertTCB} from "automata-dcap-v3-attestation/base/PEMCertChainBase.sol";
 import {Sha384} from "./Sha384.sol";
+import {Rtmr3Event} from "./Rtmr3Event.sol";
 import {V4Parser} from "./tdx/QuoteV4Auth/V4Parser.sol";
 import {V4Struct} from "./tdx/QuoteV4Auth/V4Struct.sol";
 import {Ownable} from "solady/auth/Ownable.sol";
@@ -47,17 +48,16 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
     uint8 internal constant DEBUG_STAGE_TCB_INFO_MISSING = 7;
     uint8 internal constant DEBUG_STAGE_TCB_LEVEL_FAILED = 8;
     uint8 internal constant DEBUG_STAGE_RTMR3_POLICY_FAILED = 9;
+    uint8 internal constant DEBUG_STAGE_DSTACK_MEASUREMENTS_FAILED = 10;
 
     bytes public expectedRtmr3;
-    bytes32 public expectedComposeHash;
-    bytes public expectedComposeEventDigest;
-    mapping(bytes32 => bool) public expectedComposeEventDigestAllowed;
-    uint256 public expectedComposeEventDigestAllowedCount;
+    bytes public expectedMrtd;
+    bytes public expectedRtmr0;
+    bytes public expectedRtmr1;
+    bytes public expectedRtmr2;
 
     event ExpectedRtmr3Updated(bytes expectedRtmr3);
-    event ExpectedComposeHashUpdated(bytes32 expectedComposeHash);
-    event ExpectedComposeEventDigestUpdated(bytes expectedComposeEventDigest);
-    event ExpectedComposeEventDigestAllowed(bytes expectedComposeEventDigest, bool allowed);
+    event ExpectedDstackMeasurementsUpdated(bytes mrtd, bytes rtmr0, bytes rtmr1, bytes rtmr2);
 
     constructor(
         address enclaveIdDaoAddr,
@@ -99,38 +99,28 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         emit ExpectedRtmr3Updated(parsedQuote.body.rtmr3);
     }
 
-    function setExpectedComposeHash(bytes32 _expectedComposeHash) external onlyOwner {
-        expectedComposeHash = _expectedComposeHash;
-        emit ExpectedComposeHashUpdated(_expectedComposeHash);
+    /// @notice Pins the dstack OS/boot measurement tuple independently of application RTMR3.
+    function setExpectedDstackMeasurements(
+        bytes calldata mrtd,
+        bytes calldata rtmr0,
+        bytes calldata rtmr1,
+        bytes calldata rtmr2
+    ) external onlyOwner {
+        _setExpectedDstackMeasurements(mrtd, rtmr0, rtmr1, rtmr2);
     }
 
-    function setExpectedComposeEventDigest(bytes calldata _expectedComposeEventDigest) external onlyOwner {
-        require(
-            _expectedComposeEventDigest.length == 0 || _expectedComposeEventDigest.length == 48,
-            "expected compose event digest must be 48 bytes"
+    /// @notice Extracts the owner-approved dstack OS/boot tuple from a reference quote.
+    /// @dev The reference quote is policy input; live worker quotes are still fully DCAP verified.
+    function setExpectedDstackMeasurementsFromQuote(bytes calldata quote) external onlyOwner {
+        (bool success, V4Struct.ParsedV4Quote memory parsedQuote) = V4Parser.parseInput(bytes(quote));
+        require(success, "failed to parse dstack reference quote");
+        V4Parser.validateParsedInput(parsedQuote);
+        _setExpectedDstackMeasurements(
+            parsedQuote.body.mrtd,
+            parsedQuote.body.rtmr0,
+            parsedQuote.body.rtmr1,
+            parsedQuote.body.rtmr2
         );
-        expectedComposeEventDigest = _expectedComposeEventDigest;
-        emit ExpectedComposeEventDigestUpdated(_expectedComposeEventDigest);
-    }
-
-    function setExpectedComposeEventDigestAllowed(bytes calldata _expectedComposeEventDigest, bool allowed)
-        external
-        onlyOwner
-    {
-        require(_expectedComposeEventDigest.length == 48, "expected compose event digest must be 48 bytes");
-        bytes32 digestHash = keccak256(_expectedComposeEventDigest);
-        bool wasAllowed = expectedComposeEventDigestAllowed[digestHash];
-
-        if (wasAllowed != allowed) {
-            expectedComposeEventDigestAllowed[digestHash] = allowed;
-            if (allowed) {
-                expectedComposeEventDigestAllowedCount++;
-            } else {
-                expectedComposeEventDigestAllowedCount--;
-            }
-        }
-
-        emit ExpectedComposeEventDigestAllowed(_expectedComposeEventDigest, allowed);
     }
 
     function verifyAndAttestOnChain(bytes calldata input) external view override returns (bytes memory output) {
@@ -156,28 +146,22 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         }
     }
 
-    function verifyAndAttestOnChainWithRtmr3Events(bytes calldata input, bytes[] calldata rtmr3EventDigests)
-        external
-        view
-        returns (bytes memory output)
-    {
-        return verifyAndAttestOnChainWithRtmr3Events(input, rtmr3EventDigests, bytes32(0));
-    }
-
-    function verifyAndAttestOnChainWithRtmr3Events(
+    /// @notice Verifies a quote and reconstructs RTMR3 from the actual dstack runtime event log.
+    /// @dev `composeHash` must be derived on-chain from the canonical app_compose preimage by the caller.
+    function verifyAndAttestOnChainWithRtmr3EventLog(
         bytes calldata input,
-        bytes[] calldata rtmr3EventDigests,
+        Rtmr3Event[] calldata rtmr3EventLog,
         bytes32 composeHash
-    ) public view returns (bytes memory output)
-    {
+    ) external view returns (bytes memory output) {
         bool verified;
         (verified, output) = _verify(input, false);
-        if (!verified) {
-            revert Failed_To_Verify_Quote();
-        }
+        if (!verified) revert Failed_To_Verify_Quote();
 
         (bool success, V4Struct.ParsedV4Quote memory parsedQuote) = V4Parser.parseInput(bytes(input));
-        if (!success || !_rtmr3EventsPolicySatisfied(parsedQuote.body.rtmr3, rtmr3EventDigests, composeHash)) {
+        if (
+            !success || !_dstackMeasurementsSatisfied(parsedQuote)
+                || !_rtmr3EventLogSatisfied(parsedQuote.body.rtmr3, rtmr3EventLog, composeHash)
+        ) {
             revert Failed_To_Verify_Quote();
         }
     }
@@ -217,9 +201,9 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         ) = _debugVerify(input);
     }
 
-    function debugVerifyWithRtmr3Events(
+    function debugVerifyWithRtmr3EventLog(
         bytes calldata input,
-        bytes[] calldata rtmr3EventDigests,
+        Rtmr3Event[] calldata rtmr3EventLog,
         bytes32 composeHash
     )
         external
@@ -236,26 +220,15 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         )
     {
         (bool success, V4Struct.ParsedV4Quote memory parsedQuote) = V4Parser.parseInput(bytes(input));
-        if (!success) {
-            return (DEBUG_STAGE_PARSE_FAILED, 0, 0, 0, 0x000000000000, 0x0, 0, 0);
-        }
+        if (!success) return (DEBUG_STAGE_PARSE_FAILED, 0, 0, 0, 0x000000000000, 0x0, 0, 0);
 
-        (
-            stage,
-            qeTcbStatus,
-            tcbStatus,
-            pcesvn,
-            fmspc,
-            teeTcbSvn,
-            qeIsvProdId,
-            qeIsvSvn
-        ) = _debugVerifyParsedQuote(parsedQuote, false);
-
-        if (
-            stage == DEBUG_STAGE_OK
-                && !_rtmr3EventsPolicySatisfied(parsedQuote.body.rtmr3, rtmr3EventDigests, composeHash)
-        ) {
-            stage = DEBUG_STAGE_RTMR3_POLICY_FAILED;
+        (stage, qeTcbStatus, tcbStatus, pcesvn, fmspc, teeTcbSvn, qeIsvProdId, qeIsvSvn) =
+            _debugVerifyParsedQuote(parsedQuote, false);
+        if (stage == DEBUG_STAGE_OK) {
+            if (!_dstackMeasurementsSatisfied(parsedQuote)) stage = DEBUG_STAGE_DSTACK_MEASUREMENTS_FAILED;
+            else if (!_rtmr3EventLogSatisfied(parsedQuote.body.rtmr3, rtmr3EventLog, composeHash)) {
+                stage = DEBUG_STAGE_RTMR3_POLICY_FAILED;
+            }
         }
     }
 
@@ -460,52 +433,72 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         return keccak256(rtmr3) == keccak256(expectedRtmr3);
     }
 
-    function _rtmr3EventsPolicySatisfied(bytes memory quoteRtmr3, bytes[] calldata eventDigests, bytes32 composeHash)
+    function _setExpectedDstackMeasurements(
+        bytes memory mrtd,
+        bytes memory rtmr0,
+        bytes memory rtmr1,
+        bytes memory rtmr2
+    ) private {
+        require(
+            mrtd.length == 48 && rtmr0.length == 48 && rtmr1.length == 48 && rtmr2.length == 48,
+            "dstack measurements must be 48 bytes"
+        );
+        expectedMrtd = mrtd;
+        expectedRtmr0 = rtmr0;
+        expectedRtmr1 = rtmr1;
+        expectedRtmr2 = rtmr2;
+        emit ExpectedDstackMeasurementsUpdated(mrtd, rtmr0, rtmr1, rtmr2);
+    }
+
+    function _dstackMeasurementsSatisfied(V4Struct.ParsedV4Quote memory parsedQuote)
         private
         view
         returns (bool)
     {
-        if (eventDigests.length == 0 || composeHash == bytes32(0)) {
-            return false;
-        }
+        if (
+            expectedMrtd.length != 48 || expectedRtmr0.length != 48 || expectedRtmr1.length != 48
+                || expectedRtmr2.length != 48
+        ) return false;
 
-        bool hasSingleExpectedComposeEvent = expectedComposeEventDigest.length > 0;
-        bool hasAllowedComposeEvents = expectedComposeEventDigestAllowedCount > 0;
-        bool hasExpectedComposeHash = expectedComposeHash != bytes32(0);
-        if (!hasSingleExpectedComposeEvent && !hasAllowedComposeEvents && !hasExpectedComposeHash) {
-            return false;
-        }
-        if (hasExpectedComposeHash && composeHash != expectedComposeHash) {
-            return false;
-        }
-
-        bytes memory liveComposeHashEventDigest = _composeHashEventDigest(composeHash);
-        bytes32 liveComposeHashEventDigestHash = keccak256(liveComposeHashEventDigest);
-        bool composePolicyAllowsLiveDigest = hasExpectedComposeHash
-            || (hasSingleExpectedComposeEvent && keccak256(expectedComposeEventDigest) == liveComposeHashEventDigestHash)
-            || (hasAllowedComposeEvents && expectedComposeEventDigestAllowed[liveComposeHashEventDigestHash]);
-        if (!composePolicyAllowsLiveDigest) {
-            return false;
-        }
-
-        bool foundLiveComposeEvent;
-        bytes memory replayedRtmr = new bytes(48);
-        for (uint256 i = 0; i < eventDigests.length; i++) {
-            if (eventDigests[i].length != 48) {
-                return false;
-            }
-            bytes32 eventDigestHash = keccak256(eventDigests[i]);
-            if (eventDigestHash == liveComposeHashEventDigestHash) {
-                foundLiveComposeEvent = true;
-            }
-            replayedRtmr = Sha384.hashRtmrExtend(replayedRtmr, eventDigests[i]);
-        }
-
-        return foundLiveComposeEvent && keccak256(replayedRtmr) == keccak256(quoteRtmr3);
+        return keccak256(parsedQuote.body.mrtd) == keccak256(expectedMrtd)
+            && keccak256(parsedQuote.body.rtmr0) == keccak256(expectedRtmr0)
+            && keccak256(parsedQuote.body.rtmr1) == keccak256(expectedRtmr1)
+            && keccak256(parsedQuote.body.rtmr2) == keccak256(expectedRtmr2);
     }
 
-    function _composeHashEventDigest(bytes32 composeHash) private pure returns (bytes memory) {
-        return Sha384.hash(abi.encodePacked(bytes4(0x01000008), ":", "compose-hash", ":", composeHash));
+    function _rtmr3EventLogSatisfied(
+        bytes memory quoteRtmr3,
+        Rtmr3Event[] calldata eventLog,
+        bytes32 composeHash
+    ) private pure returns (bool) {
+        if (eventLog.length == 0 || composeHash == bytes32(0)) return false;
+
+        uint256 composeEventCount;
+        bytes memory replayedRtmr = new bytes(48);
+        for (uint256 i = 0; i < eventLog.length; i++) {
+            Rtmr3Event calldata runtimeEvent = eventLog[i];
+            if (runtimeEvent.eventType != 0x08000001) return false;
+
+            if (keccak256(bytes(runtimeEvent.eventName)) == keccak256(bytes("compose-hash"))) {
+                if (runtimeEvent.eventPayload.length != 32) return false;
+                bytes calldata eventPayload = runtimeEvent.eventPayload;
+                bytes32 payloadHash;
+                assembly ("memory-safe") {
+                    payloadHash := calldataload(eventPayload.offset)
+                }
+                if (payloadHash != composeHash) return false;
+                composeEventCount++;
+            }
+
+            bytes memory eventDigest = Sha384.hash(
+                abi.encodePacked(
+                    bytes4(0x01000008), ":", runtimeEvent.eventName, ":", runtimeEvent.eventPayload
+                )
+            );
+            replayedRtmr = Sha384.hashRtmrExtend(replayedRtmr, eventDigest);
+        }
+
+        return composeEventCount == 1 && keccak256(replayedRtmr) == keccak256(quoteRtmr3);
     }
 
     function _verifyQeReportWithTdIdentity(

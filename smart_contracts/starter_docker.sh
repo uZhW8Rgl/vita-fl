@@ -252,17 +252,13 @@ EOF
 }
 
 extract_worker_image_digest() {
-    local image_ref=${EXPECTED_WORKER_IMAGE:-${WORKER_IMAGE:-${PHALA_WORKER_IMAGE:-}}}
-
-    if [ -z "$image_ref" ] && [ -f "${PHALA_COMPOSE_PATH:-}" ]; then
-        image_ref=$(grep -E 'image:[[:space:]]*[^[:space:]]+@sha256:[0-9a-fA-F]{64}' "$PHALA_COMPOSE_PATH" | head -n 1 | sed -E 's/^[[:space:]]*image:[[:space:]]*//')
-    fi
+    local image_ref=${EXPECTED_WORKER_IMAGE:-}
 
     if [ -z "$image_ref" ]; then
         return 0
     fi
 
-    printf '%s' "$image_ref" | sed -nE 's/^.*@sha256:([0-9a-fA-F]{64}).*$/\1/p'
+    printf '%s' "$image_ref" | sed -nE 's/^.+@sha256:([0-9a-fA-F]{64})$/\1/p'
 }
 
 authorize_pccs_reader() {
@@ -686,119 +682,33 @@ if [ "$ENABLE_DCAP" = "1" ]; then
 	        echo "$TDX_CREATE_JSON"
 	        export DCAP_TDX_V4_ADDRESS=$(printf '%s' "$TDX_CREATE_JSON" | jq -re '.deployedTo // .deployed_to')
 	        echo "AutomataDcapTdxV4Attestation: $DCAP_TDX_V4_ADDRESS"
-            TDX_REFERENCE_QUOTE_PATH=${TDX_REFERENCE_QUOTE_PATH:-}
-            if [ "${PHALA_ENFORCE_REFERENCE_RTMR3:-0}" = "1" ] && [ -f "$TDX_REFERENCE_QUOTE_PATH" ]; then
-                TDX_REFERENCE_QUOTE_HEX=$(tr -d '[:space:]' < "$TDX_REFERENCE_QUOTE_PATH")
-                TDX_REFERENCE_QUOTE_HEX=${TDX_REFERENCE_QUOTE_HEX#0x}
-                TDX_REFERENCE_QUOTE_HEX=${TDX_REFERENCE_QUOTE_HEX#0X}
-                echo "Configuring expected RTMR3 policy from reference quote: $TDX_REFERENCE_QUOTE_PATH"
-                cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
-                    $DCAP_TDX_V4_ADDRESS "setExpectedRtmr3FromQuote(bytes)" "0x$TDX_REFERENCE_QUOTE_HEX"
-            elif [ "${PHALA_ENFORCE_REFERENCE_RTMR3:-0}" = "1" ]; then
-                echo "PHALA_ENFORCE_REFERENCE_RTMR3=1 requires TDX_REFERENCE_QUOTE_PATH to point to an existing quote file."
-                exit 1
-            fi
-            PHALA_COMPOSE_PATH=${PHALA_COMPOSE_PATH:-../phala/dstack-compose.template.yml}
-            if [ -f "$PHALA_COMPOSE_PATH" ]; then
-                if ! grep -Eq 'image:[[:space:]]*[^[:space:]]+@sha256:[0-9a-fA-F]{64}' "$PHALA_COMPOSE_PATH"; then
-                    echo "Phala compose policy must pin the worker image by immutable sha256 digest: $PHALA_COMPOSE_PATH"
-                    exit 1
-                fi
-                if [ "${PHALA_ENFORCE_COMPOSE_HASH:-0}" = "1" ] || [ -n "${PHALA_EXPECTED_COMPOSE_HASH:-}" ]; then
-                    if [ "${PHALA_ENFORCE_COMPOSE_HASH:-0}" != "1" ] && [ -n "${PHALA_EXPECTED_COMPOSE_HASH:-}" ]; then
-                        echo "PHALA_EXPECTED_COMPOSE_HASH was set; enabling fixed compose-hash policy."
-                    fi
-                    EXPECTED_COMPOSE_HASH=${PHALA_EXPECTED_COMPOSE_HASH#0x}
-                    EXPECTED_COMPOSE_HASH=${EXPECTED_COMPOSE_HASH#0X}
-                    if [ -z "$EXPECTED_COMPOSE_HASH" ]; then
-                        PHALA_APP_CODE_PATH=${PHALA_APP_CODE_PATH:-../phala/app_code.txt}
-                        if [ -f "$PHALA_APP_CODE_PATH" ]; then
-                            EXPECTED_COMPOSE_HASH=$(python3 -c 'import hashlib,json,sys
-text=open(sys.argv[1], encoding="utf-8").read()
-start=text.index("{")
-marker="\n\nis_registered"
-end=text.index(marker) if marker in text else text.rindex("}") + 1
-obj=json.loads(text[start:end])
-print(hashlib.sha256(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()).hexdigest())' "$PHALA_APP_CODE_PATH")
-                        elif [ -f "${PHALA_RTMR3_EVENT_LOG_PATH:-}" ]; then
-                            EXPECTED_COMPOSE_HASH=$(python3 -c 'import base64,json,re,sys
-def decode(value):
-    if isinstance(value, str):
-        text=value.strip()
-        if text.startswith(("0x","0X")):
-            text=text[2:]
-        if re.fullmatch(r"[0-9a-fA-F]+", text) and len(text) % 2 == 0:
-            return bytes.fromhex(text)
-        return base64.b64decode(text)
-    if isinstance(value, list):
-        return bytes(value)
-    if isinstance(value, dict):
-        if value.get("type") == "Buffer" and isinstance(value.get("data"), list):
-            return bytes(value["data"])
-        for key in ("value", "bytes", "hex", "data"):
-            if key in value:
-                return decode(value[key])
-    raise ValueError("unsupported compose-hash payload encoding")
-text=open(sys.argv[1], encoding="utf-8").read()
-for match in re.finditer(r"\{[^{}]*\}", text, flags=re.S):
-    try:
-        obj=json.loads(match.group(0))
-    except json.JSONDecodeError:
-        continue
-    if obj.get("imr") == 3 and obj.get("event") == "compose-hash":
-        payload=decode(obj.get("event_payload"))
-        if len(payload) != 32:
-            raise SystemExit("Invalid compose-hash event payload length")
-        print(payload.hex())
-        break
-else:
-    raise SystemExit("No compose-hash event found in PHALA_RTMR3_EVENT_LOG_PATH")' "$PHALA_RTMR3_EVENT_LOG_PATH")
-                        else
-                            EXPECTED_COMPOSE_HASH=$(sha256sum "$PHALA_COMPOSE_PATH" | awk '{print $1}')
-                        fi
-                    fi
-                    if ! printf '%s' "$EXPECTED_COMPOSE_HASH" | grep -Eq '^[0-9a-fA-F]{64}$'; then
-                        echo "Invalid expected compose hash; expected 32-byte hex digest."
-                        exit 1
-                    fi
-                    echo "Recording expected Phala compose policy hash on TDX verifier: sha256:$EXPECTED_COMPOSE_HASH"
-                    cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
-                        $DCAP_TDX_V4_ADDRESS "setExpectedComposeHash(bytes32)" "0x$EXPECTED_COMPOSE_HASH"
-                else
-                    echo "Single fixed compose policy disabled; the exact multi-worker allowlist is configured after core deployment."
-                fi
-            fi
-            if [ -n "${PHALA_RTMR3_EVENT_DIGESTS:-}" ]; then
-                echo "Recording expected Phala compose RTMR3 event digest allowlist on TDX verifier."
-                for EXPECTED_COMPOSE_EVENT_DIGEST in $(printf '%s' "$PHALA_RTMR3_EVENT_DIGESTS" | tr ',;' '  '); do
-                    EXPECTED_COMPOSE_EVENT_DIGEST=${EXPECTED_COMPOSE_EVENT_DIGEST#0x}
-                    EXPECTED_COMPOSE_EVENT_DIGEST=${EXPECTED_COMPOSE_EVENT_DIGEST#0X}
-                    if ! printf '%s' "$EXPECTED_COMPOSE_EVENT_DIGEST" | grep -Eq '^[0-9a-fA-F]{96}$'; then
-                        echo "Invalid PHALA_RTMR3_EVENT_DIGESTS entry; expected 48-byte hex digest."
-                        exit 1
-                    fi
-                    echo "Allowing Phala compose RTMR3 event digest: sha384:$EXPECTED_COMPOSE_EVENT_DIGEST"
-                    cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
-                        $DCAP_TDX_V4_ADDRESS "setExpectedComposeEventDigestAllowed(bytes,bool)" \
-                        "0x$EXPECTED_COMPOSE_EVENT_DIGEST" true
-                done
-            elif [ "${PHALA_ENFORCE_RTMR3_EVENT_LOG:-0}" = "1" ] && [ -f "${PHALA_RTMR3_EVENT_LOG_PATH:-}" ]; then
-                EXPECTED_COMPOSE_EVENT_DIGEST=$(python3 -c 'import json,re,sys
-text=open(sys.argv[1], encoding="utf-8").read()
-for match in re.finditer(r"\{[^{}]*\}", text, flags=re.S):
-    try:
-        obj=json.loads(match.group(0))
-    except json.JSONDecodeError:
-        continue
-    if obj.get("imr") == 3 and obj.get("event") == "compose-hash":
-        print(obj["digest"])
-        break' "$PHALA_RTMR3_EVENT_LOG_PATH")
-                if [ -n "$EXPECTED_COMPOSE_EVENT_DIGEST" ]; then
-                    echo "Recording expected Phala compose RTMR3 event digest on TDX verifier: sha384:$EXPECTED_COMPOSE_EVENT_DIGEST"
-                    cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
-                        $DCAP_TDX_V4_ADDRESS "setExpectedComposeEventDigest(bytes)" "0x$EXPECTED_COMPOSE_EVENT_DIGEST"
-                fi
-            fi
+		        DSTACK_REFERENCE_QUOTE_PATH=${DSTACK_REFERENCE_QUOTE_PATH:-${TDX_REFERENCE_QUOTE_PATH:-${PCCS_QUOTE_PATH:-../data/phala_tdx_quote}}}
+		        if [ ! -f "$DSTACK_REFERENCE_QUOTE_PATH" ]; then
+		            echo "A dstack reference quote is required to pin MRTD and RTMR0-2: $DSTACK_REFERENCE_QUOTE_PATH"
+		            exit 1
+		        fi
+		        TDX_REFERENCE_QUOTE_HEX=$(tr -d '[:space:]' < "$DSTACK_REFERENCE_QUOTE_PATH")
+		        TDX_REFERENCE_QUOTE_HEX=${TDX_REFERENCE_QUOTE_HEX#0x}
+		        TDX_REFERENCE_QUOTE_HEX=${TDX_REFERENCE_QUOTE_HEX#0X}
+		        if ! printf '%s' "$TDX_REFERENCE_QUOTE_HEX" | grep -Eq '^[0-9a-fA-F]+$'; then
+		            echo "Invalid hex-encoded dstack reference quote: $DSTACK_REFERENCE_QUOTE_PATH"
+		            exit 1
+		        fi
+		        echo "Configuring expected dstack MRTD and RTMR0-2 from reference quote: $DSTACK_REFERENCE_QUOTE_PATH"
+		        cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
+		            $DCAP_TDX_V4_ADDRESS "setExpectedDstackMeasurementsFromQuote(bytes)" "0x$TDX_REFERENCE_QUOTE_HEX"
+
+		        if [ "${PHALA_ENFORCE_REFERENCE_RTMR3:-0}" = "1" ]; then
+		            TDX_REFERENCE_QUOTE_HEX=${TDX_REFERENCE_QUOTE_HEX#0x}
+		            TDX_REFERENCE_QUOTE_HEX=${TDX_REFERENCE_QUOTE_HEX#0X}
+		            echo "Configuring legacy exact RTMR3 policy from reference quote: $DSTACK_REFERENCE_QUOTE_PATH"
+		            cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
+		                $DCAP_TDX_V4_ADDRESS "setExpectedRtmr3FromQuote(bytes)" "0x$TDX_REFERENCE_QUOTE_HEX"
+		        fi
+            # Legacy verifier selectors can optionally enforce one reference RTMR3.
+            # registerDeviceWithAttestedAppCompose uses the structured event-log
+            # verifier and deliberately does not consult this exact-value policy.
+            echo "Compose hashes are verified from submitted app_compose and RTMR3 logs; no compose allowlist is installed."
             authorize_pccs_reader "$DCAP_TDX_V4_ADDRESS"
             cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
                 $DEVICE_REGISTRY_ADDRESS "setTdxV4Attestation(address)" $DCAP_TDX_V4_ADDRESS
@@ -1101,7 +1011,6 @@ cast send --rpc-url $rpc_url --private-key $PRIVATE_KEY_0 \
 
 echo "Aggregator timeout report threshold wurde auf ${AGGREGATOR_TIMEOUT_REPORT_PERCENT}% gesetzt"
 
-LOCAL_TDX_COMPOSE_HASH=${LOCAL_TDX_COMPOSE_HASH:-47d7ddfa97906d05b2b7e53ce888440a820598f120079ed887229ab0302982fa}
 LOCAL_TDX_IMAGE_DIGEST=${LOCAL_TDX_IMAGE_DIGEST:-7849ee527ff2efc746c58f67cd6336572d5c71743c608bbd3810079289c7c066}
 LOCAL_TDX_MOCK=${LOCAL_TDX_MOCK:-0}
 
@@ -1117,10 +1026,8 @@ if [ "$LOCAL_TDX_MOCK" = "1" ]; then
     cast send --rpc-url "$rpc_url" --private-key "$ETH_WALLET_PRIVATE_KEY" \
         "$DEVICE_REGISTRY_ADDRESS" "setTdxV4Attestation(address)" "$MOCK_TDX_V4_ADDRESS" >/dev/null
     EXPECTED_WORKER_IMAGE_DIGEST=$LOCAL_TDX_IMAGE_DIGEST
-    APPROVED_WORKER_COMPOSE_HASHES=$LOCAL_TDX_COMPOSE_HASH
 else
     EXPECTED_WORKER_IMAGE_DIGEST=$(extract_worker_image_digest || true)
-    APPROVED_WORKER_COMPOSE_HASHES=${PHALA_ALLOWED_WORKER_COMPOSE_HASHES:-${PHALA_EXPECTED_COMPOSE_HASH:-${EXPECTED_COMPOSE_HASH:-}}}
 fi
 
 EXPECTED_WORKER_IMAGE_DIGEST=${EXPECTED_WORKER_IMAGE_DIGEST#0x}
@@ -1132,32 +1039,6 @@ fi
 echo "Expected worker image digest set to sha256:$EXPECTED_WORKER_IMAGE_DIGEST"
 cast send --rpc-url "$rpc_url" --private-key "$ETH_WALLET_PRIVATE_KEY" \
     "$DEVICE_REGISTRY_ADDRESS" "setExpectedWorkerImageDigest(bytes32)" "0x$EXPECTED_WORKER_IMAGE_DIGEST" >/dev/null
-
-if [ -z "$APPROVED_WORKER_COMPOSE_HASHES" ]; then
-    echo "No approved worker compose hash configured. TDX registration remains fail-closed until PHALA_ALLOWED_WORKER_COMPOSE_HASHES is provisioned."
-fi
-
-for APPROVED_COMPOSE_HASH in $(printf '%s' "$APPROVED_WORKER_COMPOSE_HASHES" | tr ',;' '  '); do
-    APPROVED_COMPOSE_HASH=${APPROVED_COMPOSE_HASH#0x}
-    APPROVED_COMPOSE_HASH=${APPROVED_COMPOSE_HASH#0X}
-    if ! printf '%s' "$APPROVED_COMPOSE_HASH" | grep -Eq '^[0-9a-fA-F]{64}$'; then
-        echo "Invalid approved worker compose hash; expected 32-byte hex digest."
-        exit 1
-    fi
-    echo "Binding approved compose sha256:$APPROVED_COMPOSE_HASH to worker image sha256:$EXPECTED_WORKER_IMAGE_DIGEST"
-    cast send --rpc-url "$rpc_url" --private-key "$ETH_WALLET_PRIVATE_KEY" \
-        "$DEVICE_REGISTRY_ADDRESS" "setWorkerComposePolicy(bytes32,bytes32,bool)" \
-        "0x$APPROVED_COMPOSE_HASH" "0x$EXPECTED_WORKER_IMAGE_DIGEST" true >/dev/null
-
-    if [ "$LOCAL_TDX_MOCK" != "1" ] && [ -n "${DCAP_TDX_V4_ADDRESS:-}" ]; then
-        APPROVED_COMPOSE_EVENT_DIGEST=$(python3 -c 'import hashlib,sys
-compose_hash=bytes.fromhex(sys.argv[1])
-print(hashlib.sha384(bytes.fromhex("01000008") + b":" + b"compose-hash" + b":" + compose_hash).hexdigest())' "$APPROVED_COMPOSE_HASH")
-        cast send --rpc-url "$rpc_url" --private-key "$ETH_WALLET_PRIVATE_KEY" \
-            "$DCAP_TDX_V4_ADDRESS" "setExpectedComposeEventDigestAllowed(bytes,bool)" \
-            "0x$APPROVED_COMPOSE_EVENT_DIGEST" true >/dev/null
-    fi
-done
 
 allow_configured_worker_registrations
 

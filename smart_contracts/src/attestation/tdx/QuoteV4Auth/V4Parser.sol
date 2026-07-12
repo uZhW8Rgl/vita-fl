@@ -82,6 +82,9 @@ library V4Parser {
         require(parsedQuote.signedData.length == HEADER_SIZE + BODY_SIZE, "invalid signed data length");
         require(parsedQuote.rawQeReport.length == 384, "invalid QE report length");
         require(parsedQuote.body.mrtd.length == 48, "invalid mrtd length");
+        require(parsedQuote.body.rtmr0.length == 48, "invalid rtmr0 length");
+        require(parsedQuote.body.rtmr1.length == 48, "invalid rtmr1 length");
+        require(parsedQuote.body.rtmr2.length == 48, "invalid rtmr2 length");
         require(parsedQuote.body.rtmr3.length == 48, "invalid rtmr3 length");
         require(parsedQuote.body.reportData.length == 64, "invalid report data length");
         require(
@@ -113,6 +116,9 @@ library V4Parser {
         require(signedData.equals(0, headerBytes), "header mismatch");
         require(signedData.equals(HEADER_SIZE, abi.encodePacked(parsedQuote.body.teeTcbSvn)), "teeTcbSvn mismatch");
         require(signedData.equals(HEADER_SIZE + 136, parsedQuote.body.mrtd), "mrtd mismatch");
+        require(signedData.equals(HEADER_SIZE + 328, parsedQuote.body.rtmr0), "rtmr0 mismatch");
+        require(signedData.equals(HEADER_SIZE + 376, parsedQuote.body.rtmr1), "rtmr1 mismatch");
+        require(signedData.equals(HEADER_SIZE + 424, parsedQuote.body.rtmr2), "rtmr2 mismatch");
         require(signedData.equals(HEADER_SIZE + 472, parsedQuote.body.rtmr3), "rtmr3 mismatch");
         require(signedData.equals(HEADER_SIZE + 520, parsedQuote.body.reportData), "report data mismatch");
 
@@ -135,6 +141,9 @@ library V4Parser {
     function parseBody(bytes memory rawBody) internal pure returns (V4Struct.Body memory body) {
         body.teeTcbSvn = bytes16(rawBody.substring(0, 16));
         body.mrtd = rawBody.substring(136, 48);
+        body.rtmr0 = rawBody.substring(328, 48);
+        body.rtmr1 = rawBody.substring(376, 48);
+        body.rtmr2 = rawBody.substring(424, 48);
         body.rtmr3 = rawBody.substring(472, 48);
         body.reportData = rawBody.substring(520, 64);
     }

@@ -665,19 +665,26 @@ export const getDevicePublicKey = async (address) => {
     const publicKey = (result && (result.public_key ?? result[3])) ?? "0x";
     return publicKey;
 };
-export const getDeviceRegistrationReportData = async (address, publicIp, brokerIp, publicKeyBytesHex, composeHash, workerImageDigest) => {
+export const isDeviceRegistrationCurrent = async (address, publicKeyBytesHex, canonicalAppCompose) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    return Boolean(await contract.methods
+        .isDeviceRegistrationCurrent(address, publicKeyBytesHex, canonicalAppCompose)
+        .call());
+};
+export const getDeviceRegistrationReportData = async (address, publicIp, brokerIp, publicKeyBytesHex, canonicalAppCompose) => {
     if (!device_registry_address) {
         throw new Error("REGISTRY_ADDRESS is required for TDX device registration");
     }
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
-    const reportData = await contract.methods.registrationReportData(address, publicIp, brokerIp, publicKeyBytesHex, composeHash, workerImageDigest).call();
+    const reportData = await contract.methods.registrationReportData(address, publicIp, brokerIp, publicKeyBytesHex, canonicalAppCompose).call();
     if (typeof reportData !== "string" || !/^0x[0-9a-fA-F]{128}$/.test(reportData)) {
         throw new Error("DeviceRegistry returned invalid registration REPORTDATA");
     }
     return reportData;
 };
-export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3EventDigests, composeHash, workerImageDigest, address, publicIp, brokerIp, publicKeyBytesHex) => {
+export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3EventLog, canonicalAppCompose, address, publicIp, brokerIp, publicKeyBytesHex) => {
     if (!device_registry_address) {
         throw new Error("REGISTRY_ADDRESS is required for TDX device registration");
     }
@@ -689,7 +696,7 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3Ev
     }
     addAccountToWallet(account);
     const gasPrice = await web3.eth.getGasPrice();
-    const registration = contract.methods.registerDeviceWithRtmr3EventsAndImageDigest(quoteHex, rtmr3EventDigests, composeHash, workerImageDigest, address, publicIp, brokerIp, publicKeyBytesHex);
+    const registration = contract.methods.registerDeviceWithAttestedAppCompose(quoteHex, rtmr3EventLog, canonicalAppCompose, address, publicIp, brokerIp, publicKeyBytesHex);
     const calldata = registration.encodeABI();
     const hexByteLength = (value) => {
         if (typeof value !== "string" || !/^0x[0-9a-fA-F]*$/.test(value) || value.length % 2 !== 0) {
@@ -699,9 +706,8 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3Ev
     };
     console.log("TDX registration payload:", {
         quoteBytes: hexByteLength(quoteHex),
-        eventDigestBytes: rtmr3EventDigests.map(hexByteLength),
-        composeHashBytes: hexByteLength(composeHash),
-        workerImageDigestBytes: hexByteLength(workerImageDigest),
+        rtmr3Events: rtmr3EventLog.length,
+        appComposeBytes: hexByteLength(canonicalAppCompose),
         publicKeyBytes: hexByteLength(publicKeyBytesHex),
         calldataBytes: hexByteLength(calldata),
     });
@@ -710,10 +716,18 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3Ev
             const attestationAddress = await contract.methods.tdxV4Attestation().call();
             const debugAbi = [{
                 type: "function",
-                name: "debugVerifyWithRtmr3Events",
+                name: "debugVerifyWithRtmr3EventLog",
                 inputs: [
                     { name: "input", type: "bytes" },
-                    { name: "rtmr3EventDigests", type: "bytes[]" },
+                    {
+                        name: "rtmr3EventLog",
+                        type: "tuple[]",
+                        components: [
+                            { name: "eventType", type: "uint32" },
+                            { name: "eventName", type: "string" },
+                            { name: "eventPayload", type: "bytes" },
+                        ],
+                    },
                     { name: "composeHash", type: "bytes32" },
                 ],
                 outputs: [
@@ -729,8 +743,10 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3Ev
                 stateMutability: "view",
             }];
             const attestation = new web3.eth.Contract(debugAbi, attestationAddress);
+            const identity = await contract.methods.workloadIdentity(canonicalAppCompose).call();
+            const composeHash = identity.composeHash ?? identity[0];
             const debugResult = await attestation.methods
-                .debugVerifyWithRtmr3Events(quoteHex, rtmr3EventDigests, composeHash)
+                .debugVerifyWithRtmr3EventLog(quoteHex, rtmr3EventLog, composeHash)
                 .call({ from: account.address });
             console.log("TDX debug verification:", {
                 attestationAddress,

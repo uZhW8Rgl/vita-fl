@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {AppComposeImage} from "../attestation/AppComposeImage.sol";
+import {Rtmr3Event} from "../attestation/Rtmr3Event.sol";
+
 interface ITdxV4Attestation {
-    function verifyAndAttestOnChain(bytes calldata input) external view returns (bytes memory output);
-    function verifyAndAttestOnChainWithRtmr3Events(bytes calldata input, bytes[] calldata rtmr3EventDigests)
-        external
-        view
-        returns (bytes memory output);
-    function verifyAndAttestOnChainWithRtmr3Events(
+    function verifyAndAttestOnChainWithRtmr3EventLog(
         bytes calldata input,
-        bytes[] calldata rtmr3EventDigests,
+        Rtmr3Event[] calldata rtmr3EventLog,
         bytes32 composeHash
     ) external view returns (bytes memory output);
 }
@@ -20,11 +18,6 @@ contract DeviceRegistry {
         string public_ip;
         string msg_broker_ip;
         bytes public_key;
-    }
-
-    struct WorkerComposePolicy {
-        bytes32 imageDigest;
-        bool allowed;
     }
 
     uint256 private constant ATTESTATION_OUTPUT_LENGTH = 119;
@@ -46,7 +39,6 @@ contract DeviceRegistry {
     mapping(address => uint256) public registrationNonces;
     mapping(address => bytes32) public registeredComposeHashes;
     mapping(address => bytes32) public registeredImageDigests;
-    mapping(bytes32 => WorkerComposePolicy) public workerComposePolicies;
     mapping(address => bool) private knownDevice;
     address[] private deviceAddresses;
     uint256 public number;
@@ -58,7 +50,6 @@ contract DeviceRegistry {
     event RegistrationPermissionUpdated(
         address indexed device, bool allowed, bytes32 indexed challenge, uint256 deadline
     );
-    event WorkerComposePolicyUpdated(bytes32 indexed composeHash, bytes32 indexed imageDigest, bool allowed);
     event ExpectedWorkerImageDigestUpdated(bytes32 expectedWorkerImageDigest);
 
     constructor(bytes32 _deploymentId) {
@@ -107,15 +98,6 @@ contract DeviceRegistry {
         }
     }
 
-    function setWorkerComposePolicy(bytes32 composeHash, bytes32 imageDigest, bool allowed) external onlyOwner {
-        require(composeHash != bytes32(0), "invalid compose hash");
-        if (allowed) {
-            require(imageDigest != bytes32(0), "invalid image digest");
-        }
-        workerComposePolicies[composeHash] = WorkerComposePolicy(imageDigest, allowed);
-        emit WorkerComposePolicyUpdated(composeHash, imageDigest, allowed);
-    }
-
     function authorizeAddress(address _address) public onlyOwner {
         require(knownDevice[_address], "device not registered");
         devices[_address].authorized = true;
@@ -139,19 +121,16 @@ contract DeviceRegistry {
         if (!devices[_address].authorized || expectedWorkerImageDigest == bytes32(0)) {
             return false;
         }
-        bytes32 composeHash = registeredComposeHashes[_address];
         bytes32 imageDigest = registeredImageDigests[_address];
-        WorkerComposePolicy memory composePolicy = workerComposePolicies[composeHash];
-        return imageDigest == expectedWorkerImageDigest && composePolicy.allowed
-            && composePolicy.imageDigest == imageDigest;
+        return imageDigest == expectedWorkerImageDigest;
     }
 
     function isDeviceRegistrationCurrent(
         address _address,
         bytes memory _public_key,
-        bytes32 composeHash,
-        bytes32 imageDigest
+        bytes memory canonicalAppCompose
     ) external view returns (bool) {
+        (bytes32 composeHash, bytes32 imageDigest) = _workloadIdentity(canonicalAppCompose);
         return isAuthorized(_address) && registeredComposeHashes[_address] == composeHash
             && registeredImageDigests[_address] == imageDigest
             && keccak256(devices[_address].public_key) == keccak256(_public_key);
@@ -205,10 +184,22 @@ contract DeviceRegistry {
     }
 
     function registerDeviceWithRtmr3EventsAndImageDigest(
+        bytes calldata,
+        bytes[] calldata,
+        bytes32,
+        bytes32,
+        address,
+        string memory,
+        string memory,
+        bytes memory
+    ) public pure {
+        revert("app compose evidence required");
+    }
+
+    function registerDeviceWithAttestedAppCompose(
         bytes calldata quote,
-        bytes[] calldata rtmr3EventDigests,
-        bytes32 composeHash,
-        bytes32 workerImageDigest,
+        Rtmr3Event[] calldata rtmr3EventLog,
+        bytes calldata canonicalAppCompose,
         address _address,
         string memory _public_ip,
         string memory _msg_broker_ip,
@@ -220,11 +211,11 @@ contract DeviceRegistry {
         require(block.timestamp <= registrationChallengeDeadlines[_address], "registration challenge expired");
         require(_public_key.length != 0, "public key required");
         require(expectedWorkerImageDigest != bytes32(0), "worker image policy not configured");
-        require(workerImageDigest == expectedWorkerImageDigest, "worker image digest mismatch");
 
-        WorkerComposePolicy memory composePolicy = workerComposePolicies[composeHash];
-        require(composePolicy.allowed, "worker compose not allowed");
-        require(composePolicy.imageDigest == workerImageDigest, "compose/image policy mismatch");
+        // The image identity is parsed from the exact app_compose preimage on-chain. Only after
+        // the image policy passes do we derive the compose hash used to reconstruct RTMR3.
+        (bytes32 composeHash, bytes32 workerImageDigest) = _workloadIdentity(canonicalAppCompose);
+        require(workerImageDigest == expectedWorkerImageDigest, "worker image digest mismatch");
         require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
 
         uint256 nonce = registrationNonces[_address];
@@ -237,8 +228,8 @@ contract DeviceRegistry {
             workerImageDigest,
             nonce
         );
-        bytes memory output = tdxV4Attestation.verifyAndAttestOnChainWithRtmr3Events(
-            quote, rtmr3EventDigests, composeHash
+        bytes memory output = tdxV4Attestation.verifyAndAttestOnChainWithRtmr3EventLog(
+            quote, rtmr3EventLog, composeHash
         );
         _requireBoundReportData(output, binding, nonce);
 
@@ -256,9 +247,9 @@ contract DeviceRegistry {
         string memory _public_ip,
         string memory _msg_broker_ip,
         bytes memory _public_key,
-        bytes32 composeHash,
-        bytes32 workerImageDigest
+        bytes memory canonicalAppCompose
     ) public view returns (bytes memory) {
+        (bytes32 composeHash, bytes32 workerImageDigest) = _workloadIdentity(canonicalAppCompose);
         uint256 nonce = registrationNonces[_address];
         bytes32 binding = _registrationBinding(
             _address,
@@ -270,6 +261,23 @@ contract DeviceRegistry {
             nonce
         );
         return abi.encodePacked(binding, bytes32(nonce));
+    }
+
+    function workloadIdentity(bytes memory canonicalAppCompose)
+        external
+        pure
+        returns (bytes32 composeHash, bytes32 workerImageDigest)
+    {
+        return _workloadIdentity(canonicalAppCompose);
+    }
+
+    function _workloadIdentity(bytes memory canonicalAppCompose)
+        internal
+        pure
+        returns (bytes32 composeHash, bytes32 workerImageDigest)
+    {
+        workerImageDigest = AppComposeImage.imageDigest(canonicalAppCompose);
+        composeHash = sha256(canonicalAppCompose);
     }
 
     function _registrationBinding(

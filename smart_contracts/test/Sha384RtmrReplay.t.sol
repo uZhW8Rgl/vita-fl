@@ -5,6 +5,15 @@ import {Test} from "forge-std/Test.sol";
 import {Sha384} from "../src/attestation/Sha384.sol";
 
 contract Sha384RtmrReplayTest is Test {
+    function testMultiBlockSha384() public pure {
+        bytes memory input = new bytes(200);
+        for (uint256 i = 0; i < input.length; i++) input[i] = "a";
+        assertEq(
+            Sha384.hash(input),
+            hex"0691b6e978614b67d60557b2a2cddd53406508522efa21c624dbbfa8ab6e726d5c586b489c7c09f24109a64c10211d48"
+        );
+    }
+
     function testPhalaComposeHashEventDigest() public pure {
         bytes32 composeHash = 0x3ffb565cd839ce58a10c635b84aa4d9bcf29488e0a97779df94a1102fc2f5b15;
         bytes memory digest = Sha384.hash(abi.encodePacked(bytes4(0x01000008), ":", "compose-hash", ":", composeHash));

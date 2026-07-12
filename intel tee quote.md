@@ -2,7 +2,7 @@
 
 This section explains the structure of the Intel TDX quote used by the prototype, the relevant signatures, and how the values verified by the smart contracts are derived.
 
-The quote is the central attestation artifact. It binds a TDX guest measurement and user-provided report data to an Intel-backed certificate chain. In this prototype, the live quote and RTMR3 events are submitted to `DeviceRegistry.registerDeviceWithRtmr3EventsAndImageDigest(...)`. A device is registered only after DCAP verification, exact compose/image policy checks, and verification of the Registry-generated REPORTDATA commitment.
+The quote is the central attestation artifact. It binds a TDX guest measurement and user-provided report data to an Intel-backed certificate chain. In this prototype, the live quote, canonical `app_compose`, and full RTMR3 runtime event log are submitted to `DeviceRegistry.registerDeviceWithAttestedAppCompose(...)`. A device is registered only after on-chain image-digest extraction, DCAP verification, RTMR3 reconstruction, and verification of the Registry-generated REPORTDATA commitment.
 
 ## Quote Structure
 
@@ -25,7 +25,7 @@ The smart contract parser extracts the following fields:
 - `qeReportSignature`: signature over the QE report.
 - `certification`: PCK certificate chain used to authenticate the QE report signature.
 
-Phala exposes a broader set of quote measurements. The current on-chain parser keeps the verification path intentionally small: it verifies the complete signed TD report body, but only extracts the fields needed by the prototype output and TCB check. In the TDX report body, the relevant offsets are:
+Phala exposes a broader set of quote measurements. The current on-chain parser verifies the complete signed TD report body and extracts the fields needed for TCB evaluation, registration binding, dstack base-runtime policy, and application `RTMR3` replay. In the TDX report body, the relevant offsets are:
 
 | Phala field | Quote location | Meaning | Current prototype handling |
 | --- | --- | --- | --- |
@@ -33,27 +33,27 @@ Phala exposes a broader set of quote measurements. The current on-chain parser k
 | `USER DATA` | Quote header, 20 bytes | User data field in the quote header. | Parsed as `header.userData` and covered by the quote signature, but not used in registration logic. |
 | `TEE TCB SVN` | TD report body offset `0`, 16 bytes | TDX TCB security version numbers. | Extracted as `teeTcbSvn` and used for TCB status evaluation. |
 | `MRSEAM` | TD report body offset `16`, 48 bytes | Measurement of the Intel TDX module. | Covered by the quote signature, but not extracted separately. |
-| `MRTD` | TD report body offset `136`, 48 bytes | Initial measurement of the TD guest. | Extracted as `mrtd` and returned by the attestation contract. |
+| `MRTD` | TD report body offset `136`, 48 bytes | Initial measurement of the TD guest. | Extracted and required to match the owner-pinned dstack base-runtime tuple. |
 | `MRCONFIG` / `MRCONFIGID` | TD report body offset `184`, 48 bytes | TD configuration identifier. | Covered by the quote signature, but not extracted separately. |
 | `MROWNER` | TD report body offset `232`, 48 bytes | Owner-defined measurement. | Covered by the quote signature, but not extracted separately. |
 | `MROWNERCONFIG` | TD report body offset `280`, 48 bytes | Owner-defined configuration measurement. | Covered by the quote signature, but not extracted separately. |
-| `RTMR0` | TD report body offset `328`, 48 bytes | Runtime measurement register 0. | Covered by the quote signature, but not extracted separately. |
-| `RTMR1` | TD report body offset `376`, 48 bytes | Runtime measurement register 1. | Covered by the quote signature, but not extracted separately. |
-| `RTMR2` | TD report body offset `424`, 48 bytes | Runtime measurement register 2. | Covered by the quote signature, but not extracted separately. |
-| `RTMR3` | TD report body offset `472`, 48 bytes | Runtime measurement register 3. | Covered by the quote signature, but not extracted separately. |
+| `RTMR0` | TD report body offset `328`, 48 bytes | Runtime measurement register 0. | Extracted and compared with the owner-pinned dstack OS/boot tuple. |
+| `RTMR1` | TD report body offset `376`, 48 bytes | Runtime measurement register 1. | Extracted and compared with the owner-pinned dstack OS/boot tuple. |
+| `RTMR2` | TD report body offset `424`, 48 bytes | Runtime measurement register 2. | Extracted and compared with the owner-pinned dstack OS/boot tuple. |
+| `RTMR3` | TD report body offset `472`, 48 bytes | Runtime measurement register 3. | Extracted and compared with the on-chain replay of the submitted structured application events. |
 | `REPORT DATA` | TD report body offset `520`, 64 bytes | Application-controlled data bound to the quote. | Extracted as `reportData` and returned by the attestation contract. |
 
-This distinction matters: even when a field is not extracted into a Solidity struct, it is still inside `signedData = quoteHeader || tdReportBody`. Therefore, changing `MRSEAM`, `MRCONFIGID`, `MROWNER`, `MROWNERCONFIG`, or any `RTMR` value would invalidate the quote signature unless the quote was regenerated by the attestation flow. The prototype currently does not apply policy rules to those fields; it only relies on them being cryptographically covered by the accepted quote.
+This distinction matters: even when a field is not interpreted as a policy input, it is still inside `signedData = quoteHeader || tdReportBody`. Therefore, changing `MRSEAM`, `MRCONFIGID`, `MROWNER`, `MROWNERCONFIG`, or any `RTMR` value would invalidate the quote signature unless the quote were regenerated by the attestation flow. In addition to this signature coverage, the prototype now applies explicit equality policy to `MRTD` and `RTMR0`--`RTMR2` and reconstructs application-specific `RTMR3`.
 
 ## Current Prototype Scope
 
 The current prototype implements quote verification as a trust gate for worker registration. The submitted quote is parsed on-chain, structurally validated, and checked through the DCAP verification chain before the worker address and public key are stored in `DeviceRegistry`. This means the prototype currently verifies that the quote is well formed, belongs to the expected TDX quote type, is signed by a valid attestation key, and is backed by a valid PCK certificate chain and Intel collateral. The TDX TCB state is also evaluated through `teeTcbSvn`, PCK TCB values, FMSPC-based TCB Info, and QE identity information.
 
-The prototype explicitly extracts and uses only the values that are needed for this registration and provenance flow. These are `teeTcbSvn` for TCB evaluation, `mrtd` as the measured TD identity returned by the attestation contract, `reportData` as application-controlled quote data, the quote signature, the attestation key, the QE report, the QE report signature, and the PCK certificate chain. After successful verification, the contract returns `TCBStatus || mrtd || reportData || fmspc`. The registry itself does not currently enforce an allowlist for a specific `mrtd`; it primarily uses successful attestation as the condition for accepting the worker and its later model-signing public key.
+The prototype explicitly extracts and uses the values needed for this registration and provenance flow. These include `teeTcbSvn` for TCB evaluation, `mrtd` and `rtmr0`--`rtmr2` for the owner-pinned dstack base-runtime comparison, `rtmr3` for structured application-event replay, and `reportData` for registration-specific identity and freshness binding, in addition to the quote and certificate-chain signature inputs. After successful verification, the contract returns `TCBStatus || mrtd || reportData || fmspc`, while the verifier has already required the base-runtime tuple and replayed application measurement to match their respective policies.
 
-Several Phala-displayed measurements are present in the signed quote but are not yet used as separate policy inputs. This includes `MRSEAM`, `MRCONFIGID`, `MROWNER`, `MROWNERCONFIG`, and `RTMR0` to `RTMR3`. They are still protected against tampering because the complete TD report body is part of the data signed by the quote signature. However, the prototype does not currently compare these values against expected reference measurements. In other words, the implementation verifies quote authenticity and platform/TCB validity, but it does not yet implement a full measurement allowlist policy for every TDX measurement field.
+Several Phala-displayed measurements remain present in the signed quote without being separate equality-policy inputs, including `MRSEAM`, `MRCONFIGID`, `MROWNER`, and `MROWNERCONFIG`. They are still protected against tampering because the complete TD report body is part of the data signed by the quote signature. The implementation therefore combines quote authenticity and platform/TCB validation with a deliberately scoped dstack measurement policy rather than attempting to allowlist every TDX field.
 
-This leaves a clear extension point for a stricter production-oriented design: the parser could expose all TD report measurements, and `DeviceRegistry` could require exact matches or approved sets for `MRTD`, `MRCONFIGID`, `MROWNER`, and selected `RTMR` values. Such a policy would turn the current attestation gate from "valid TDX quote from an acceptable platform" into "valid TDX quote from this exact expected workload and runtime configuration."
+This leaves a clear extension point for an even stricter production-oriented design: the verifier could additionally require exact matches or approved sets for `MRSEAM`, `MRCONFIGID`, `MROWNER`, and `MROWNERCONFIG`. The current policy already constrains the dstack OS/boot basis and reconstructs the measured application identity, but it does not claim that every TDX configuration field is independently pinned.
 
 ## Can Measurements Prove That Specific Code, YAML, or an Image Ran?
 
@@ -71,78 +71,63 @@ source commit -> reproducible/signed build -> Docker image digest -> compose fil
 
 ### Phala App Code to RTMR3
 
-The current Phala-oriented verification path links the deployed application configuration to the `RTMR3` value in the quote through the Phala app-code object and the RTMR3 event log. The app-code object contains the deployed Docker Compose configuration. This configuration must pin the worker image by immutable digest, for example `ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:<digest>`. The verifier canonicalizes the app-code JSON object, computes a SHA-256 compose hash, and checks that this value is the payload of the `compose-hash` RTMR3 event. The RTMR3 event log is then replayed with the TDX extend operation:
+The current Phala-oriented verification path links the deployed application configuration to the `RTMR3` value in the quote through the exact SDK-canonical `app_compose` byte preimage and the structured RTMR3 event log. The embedded `docker_compose_file` must pin the sole `dfl-worker` service to an immutable image digest, for example `ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:<digest>`.
+
+The order of checks matters. `DeviceRegistry` first parses those bytes on-chain, extracts the image digest from the strict `services.dfl-worker.image` field, and compares the derived value with the configured image policy. Only after that succeeds does it compute `SHA-256(app_compose)`. The verifier receives ordered event fields rather than trusted event digests and reconstructs each dstack event digest itself:
 
 ```text
 rtmr3_0 = 48 zero bytes
-event_digest_i = SHA384(event_i)
+event_digest_i = SHA384(LE32(event_type_i) || ":" || event_name_i || ":" || event_payload_i)
 rtmr3_i = SHA384(rtmr3_{i-1} || event_digest_i)
 ```
 
-The final replayed `RTMR3` must match the `RTMR3` field inside the signed TDX quote. In the prototype, the off-chain helper checks the app-code and image-digest part, while the smart contract verifies quote validity and can replay the supplied RTMR3 event digests on-chain.
+The verifier additionally requires the live quote's `MRTD` and `RTMR0`--`RTMR2` to match an owner-pinned dstack OS/boot tuple extracted from a reference quote during bootstrap. That reference quote supplies only the base-runtime policy: its application `RTMR3` and Compose hash are not fixed for this selector. The verifier then requires the dstack runtime event type `0x08000001`, exactly one `compose-hash` event whose payload equals the Registry-derived SHA-256 value, and a final replayed `RTMR3` equal to the field inside the signed TDX quote. The worker performs SDK-compatible checks as a diagnostic preflight, but neither a worker-supplied image digest, a compose-hash allowlist, nor precomputed event digests are trusted by the registration decision.
 
 ```mermaid
 flowchart TB
-  AppCode["Phala app code object\nJSON from Trust Center"]
-  ComposeObject["compose_file object\ncontains docker_compose_file"]
-  ImageRef["Worker image reference\nghcr.io/...@sha256:<image-digest>"]
-  CanonicalJson["Canonical JSON\nsort keys + compact separators"]
-  ComposeHash["compose hash\nSHA256(canonical app-code JSON)"]
-  ComposeEvent["RTMR3 event: compose-hash\nevent_payload = compose hash"]
-  ComposeEventDigest["compose event digest\nSHA384(serialized compose-hash event)"]
-
-  OtherEvents["Other RTMR3 events\napp-id, instance-id, kms,\nos-image-hash, system-ready, ..."]
-  EventDigests["Ordered RTMR3 event digests\n48-byte SHA384 digests"]
-  InitialRtmr["Initial RTMR3\n48 zero bytes"]
-  Replay["RTMR3 replay\nRTMR3_i = SHA384(RTMR3_{i-1} || event_digest_i)"]
-  FinalRtmr["Final replayed RTMR3"]
-
+  AppCompose["Exact canonical app_compose bytes\ncontains docker_compose_file"]
+  StructuredEvents["Ordered RTMR3 fields\nevent type + name + payload"]
   Quote["TDX quote\nsigned TD report body"]
-  QuoteRtmr["Quote RTMR3\nTD report body offset 472"]
+  BasePolicy["Owner-pinned dstack base\nMRTD + RTMR0-2"]
+
+  ParseImage["On-chain strict image parse\nservices.dfl-worker.image"]
+  ImagePolicy["Compare derived sha256 digest\nwith expectedWorkerImageDigest"]
+  ComposeHash["Only after image match:\nSHA256(app_compose bytes)"]
+  ComposeEvent["Require unique compose-hash\npayload = derived SHA256"]
+  EventHash["On-chain event hashing\nSHA384(LE32(type) : name : payload)"]
+  Replay["On-chain RTMR3 replay\nSHA384(previous || event digest)"]
   QuoteVerification["DCAP quote verification\nquote signature, QE report,\nPCK chain, TCB status"]
-  OnchainPolicy["On-chain policy\nfinal RTMR3 matches quote\nand expected compose event digest is present"]
+  BaseCompare["Quote OS/boot tuple ==\nowner-pinned base policy"]
+  Compare["Replayed RTMR3 ==\nsigned quote RTMR3"]
   Registered["Device accepted\nDeviceRegistry stores worker key"]
 
-  AppCode --> ComposeObject
-  ComposeObject --> ImageRef
-  ComposeObject --> CanonicalJson
-  CanonicalJson --> ComposeHash
-  ComposeHash --> ComposeEvent
-  ComposeEvent --> ComposeEventDigest
+  AppCompose --> ParseImage --> ImagePolicy --> ComposeHash --> ComposeEvent
+  StructuredEvents --> ComposeEvent
+  StructuredEvents --> EventHash --> Replay --> Compare
+  ComposeEvent --> EventHash
+  Quote --> QuoteVerification --> BaseCompare --> Compare
+  BasePolicy --> BaseCompare
+  Compare --> Registered
 
-  ComposeEventDigest --> EventDigests
-  OtherEvents --> EventDigests
-  InitialRtmr --> Replay
-  EventDigests --> Replay
-  Replay --> FinalRtmr
-
-  Quote --> QuoteRtmr
-  Quote --> QuoteVerification
-  FinalRtmr --> OnchainPolicy
-  QuoteRtmr --> OnchainPolicy
-  ComposeEventDigest --> OnchainPolicy
-  QuoteVerification --> OnchainPolicy
-  OnchainPolicy --> Registered
-
-  classDef offchain fill:#fef3c7,stroke:#d97706,color:#451a03
+  classDef evidence fill:#fef3c7,stroke:#d97706,color:#451a03
   classDef onchain fill:#dcfce7,stroke:#15803d,color:#052e16
   classDef quote fill:#dbeafe,stroke:#2563eb,color:#172554
   classDef result fill:#ede9fe,stroke:#7c3aed,color:#2e1065
 
-  class AppCode,ComposeObject,ImageRef,CanonicalJson,ComposeHash,ComposeEvent offchain
-  class ComposeEventDigest,EventDigests,InitialRtmr,Replay,FinalRtmr,OnchainPolicy onchain
-  class Quote,QuoteRtmr,QuoteVerification quote
+  class AppCompose,StructuredEvents evidence
+  class ParseImage,ImagePolicy,ComposeHash,ComposeEvent,EventHash,Replay,BasePolicy,BaseCompare,Compare onchain
+  class Quote,QuoteVerification quote
   class Registered result
 ```
 
 This means the answer is conditional:
 
-- A specific YAML/configuration can be attested if the verifier recomputes its compose hash and checks it against the `RTMR3` event log and quote.
-- A specific Docker image can be attested if the YAML pins the image by SHA-256 digest and that YAML is included in the measured compose hash.
+- A specific YAML/configuration can be attested when its exact canonical byte preimage is hashed on-chain and connected to the quote through the reconstructed `compose-hash` event and RTMR3 replay.
+- A specific Docker image can be identified when the on-chain parser derives its immutable SHA-256 digest from that measured preimage before the compose hash is accepted.
 - A specific source code version can be attested only if the Docker image digest is cryptographically linked to that source version through reproducible builds or signed build provenance.
-- A quote alone is not enough to identify code semantically. It must be interpreted together with the event log, deployment metadata, expected reference measurements, and image/source provenance.
+- A quote alone is not enough to identify code semantically. It must be interpreted together with the structured event log, measured deployment preimage, configured image policy, and image/source provenance.
 
-In the current prototype, this application-measurement policy is split between an off-chain preparation/check step and an on-chain enforcement step. The off-chain helper checks that the Phala app-code object contains a digest-pinned worker image and that the canonical app-code hash matches the `compose-hash` RTMR3 event payload. The smart contract verifies the TDX quote, signature chain, TCB status, and selected fields such as `teeTcbSvn`, `mrtd`, and `reportData`. For the Phala registration path, it replays the supplied RTMR3 event digests on-chain with SHA-384 and checks that the resulting RTMR3 equals the signed quote RTMR3. The exact live compose-event digest must be owner-allowlisted, and `DeviceRegistry` additionally maps that reviewed compose hash to the permitted image digest. The contract still does not parse Docker YAML or JSON directly; instead, the deployer commits to this exact compose-to-image relation.
+The worker serializes `app_compose` with the same normalization and deterministic JSON ordering as the official dstack SDK. On-chain, `DeviceRegistry` strictly extracts the single `services.dfl-worker.image` value from its `docker_compose_file`, derives the `sha256` image digest, and compares it with `expectedWorkerImageDigest`. The narrow parser rejects any second service declaration as well as flow- or merge-style service declarations. Only then does the Registry calculate `SHA-256(canonicalAppCompose)`. The attestation verifier first requires the reference-pinned dstack `MRTD`/`RTMR0`--`RTMR2` OS/boot tuple, then recomputes each runtime-event digest as `SHA-384(LE32(0x08000001) || ":" || eventName || ":" || payload)`, requires the derived compose hash as the unique `compose-hash` payload, replays RTMR3 as `SHA-384(previousRTMR || eventDigest)`, and compares the result with the hardware-signed quote RTMR3. The reference quote does not constrain Compose or `RTMR3`, and no compose-hash allowlist or worker-supplied image claim is trusted.
 
 ```mermaid
 flowchart LR
@@ -342,14 +327,15 @@ flowchart TB
 
 ## Relation to Device Registration
 
-In the prototype, `DeviceRegistry.registerDeviceWithRtmr3EventsAndImageDigest(...)` receives:
+In the prototype, `DeviceRegistry.registerDeviceWithAttestedAppCompose(...)` receives:
 
 - the TDX quote,
+- the exact SDK-canonical `app_compose` bytes and the ordered structured RTMR3 event fields,
 - the device address,
 - networking metadata,
 - and the device public key used later for model artifact signatures.
 
-Before requesting the quote, the worker obtains an exact 64-byte `REPORTDATA` commitment from the Registry. It binds a deployment-specific domain, chain and Registry address, transaction sender, endpoint hashes, public-key hash, approved compose/image pair, one-time nonce, and an expiring owner challenge. The Registry requires `msg.sender` to equal the device address, checks the verifier output at the fixed REPORTDATA offset, consumes the challenge, and increments the nonce before storing the key. The older unbound registration selectors always revert. Later, when the agent downloads a global model artifact, it verifies the model signature against the public key of the last registered aggregator. This connects the attestation layer with model provenance:
+Before requesting the quote, the worker obtains an exact 64-byte `REPORTDATA` commitment from the Registry. The Registry first extracts the digest-pinned worker image from `app_compose` onchain and checks it against the configured image policy. It then hashes those exact bytes, reconstructs every RTMR3 runtime-event digest onchain, and checks the replayed RTMR3 against the signed quote. `REPORTDATA` binds a deployment-specific domain, chain and Registry address, transaction sender, endpoint hashes, public-key hash, derived compose/image identity, one-time nonce, and an expiring owner challenge. The Registry requires `msg.sender` to equal the device address, consumes the challenge, and increments the nonce before storing the key. The older unbound registration selectors always revert. Later, when the agent downloads a global model artifact, it verifies the model signature against the public key of the last registered aggregator. This connects the attestation layer with model provenance:
 
 ```text
 TDX quote verifies worker environment and bound REPORTDATA
@@ -358,5 +344,5 @@ Aggregator signs global model artifact
 Agent verifies model signature against registered aggregator key
 ```
 
-Als Abgleich habe ich die aktuellen Phala-Dokumente genutzt: Phala beschreibt RTMR3 als application-specific measurement mit compose-hash, und empfiehlt für Docker Images explizit SHA256-Digests statt mutable Tags.
-Quellen: https://docs.phala.com/phala-cloud/attestation/attestation-fields und https://docs.phala.com/phala-cloud/attestation/verify-your-application
+Als Abgleich wurden die aktuelle dstack-Dokumentation und die Referenzimplementierung verwendet. Die SDK-kompatible Compose-Kanonisierung, das strukturierte Runtime-Event-Format und der RTMR-Replay sind dadurch unabhängig von lokal vorgegebenen Compose- oder Event-Digest-Allowlisten nachvollziehbar.
+Quellen: https://docs.phala.network/dstack/local-development und https://github.com/Dstack-TEE/dstack

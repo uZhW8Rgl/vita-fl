@@ -3,7 +3,7 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getLastRoundsAggregator, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
+import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getLastRoundsAggregator, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
 import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
 import fs from 'fs/promises';
@@ -305,49 +305,74 @@ function parseAppCompose(appComposeRaw) {
     }
     throw new Error('Unsupported app_compose encoding in dstack info');
 }
+function sortComposeValue(value) {
+    if (value === undefined || value === null)
+        return value;
+    if (Array.isArray(value))
+        return value.map(sortComposeValue);
+    if (value && typeof value === 'object' && value.constructor === Object) {
+        return Object.keys(value).sort().reduce((result, key) => {
+            result[key] = sortComposeValue(value[key]);
+            return result;
+        }, {});
+    }
+    return value;
+}
+function canonicalAppComposeBytes(appCompose) {
+    const normalized = { ...appCompose };
+    if (normalized.runner === 'bash' && 'docker_compose_file' in normalized)
+        delete normalized.docker_compose_file;
+    else if (normalized.runner === 'docker-compose' && 'bash_script' in normalized)
+        delete normalized.bash_script;
+    if ('pre_launch_script' in normalized && !normalized.pre_launch_script)
+        delete normalized.pre_launch_script;
+    const deterministicJson = JSON.stringify(sortComposeValue(normalized), (_key, value) => typeof value === 'number' && !Number.isFinite(value) ? null : value);
+    return Buffer.from(deterministicJson, 'utf8');
+}
+function measuredAppCompose(appComposeRaw) {
+    const appCompose = parseAppCompose(appComposeRaw);
+    // dstack measures SHA-256 over the exact app-compose file bytes and exposes
+    // that same raw string through info(). Preserve it instead of serializing it
+    // again. Object-valued responses only exist on legacy/mock SDK paths.
+    const bytes = typeof appComposeRaw === 'string'
+        ? Buffer.from(appComposeRaw, 'utf8')
+        : canonicalAppComposeBytes(appCompose);
+    return { appCompose, bytes };
+}
 function tcbInfoFromDstackInfo(info) {
     return info?.tcb_info || info?.tcbInfo || info?.tcb || null;
 }
-function extractWorkerImageRefs(appCompose) {
-    const dockerComposeText = String(appCompose?.docker_compose_file || '');
-    if (!dockerComposeText) {
-        throw new Error('app_compose does not include docker_compose_file');
-    }
-    const matches = [...dockerComposeText.matchAll(/^\s*image:\s*["']?([^"'\s#]+)["']?/gm)]
-        .map(match => match[1]);
-    if (matches.length === 0) {
-        throw new Error('docker_compose_file does not include an image reference');
-    }
-    return matches;
-}
-function extractImageDigest(imageRef) {
-    const match = String(imageRef || '').match(/@sha256:([0-9a-fA-F]{64})(?:$|[^\w])/);
-    return match ? `0x${match[1].toLowerCase()}` : null;
-}
-function measuredWorkerIdentity(info) {
+function measuredAppComposeIdentity(info) {
     const tcbInfo = tcbInfoFromDstackInfo(info);
-    const appCompose = parseAppCompose(tcbInfo?.app_compose || tcbInfo?.appCompose);
-    const measuredComposeHash = normalizeHashHex(getComposeHash(appCompose, true), 32, 'measured app_compose hash');
-    const imageRefs = extractWorkerImageRefs(appCompose);
-    const matchedImageRef = imageRefs.find(imageRef => imageRef.includes('master-thesis-dfl-worker@sha256:')) || imageRefs[0];
-    if (!matchedImageRef) {
-        throw new Error('Measured app_compose does not contain a worker image reference');
+    const appComposeRaw = tcbInfo?.app_compose || tcbInfo?.appCompose;
+    const { appCompose, bytes: canonicalAppCompose } = measuredAppCompose(appComposeRaw);
+    const measuredComposeHash = normalizeHashHex(crypto.createHash('sha256').update(canonicalAppCompose).digest('hex'), 32, 'measured app_compose hash');
+    const reportedComposeHash = tcbInfo?.compose_hash || info?.compose_hash;
+    if (reportedComposeHash) {
+        const normalizedReportedHash = normalizeHashHex(reportedComposeHash, 32, 'dstack info compose hash');
+        if (measuredComposeHash !== normalizedReportedHash) {
+            throw new Error(`Raw app_compose hash ${measuredComposeHash} does not match dstack info hash ${normalizedReportedHash}`);
+        }
     }
-    const imageDigest = extractImageDigest(matchedImageRef);
-    if (!imageDigest) {
-        throw new Error(`Measured worker image is not digest-pinned: ${matchedImageRef}`);
+    const sdkComposeHash = normalizeHashHex(getComposeHash(appCompose, false), 32, 'SDK app_compose hash');
+    if (measuredComposeHash !== sdkComposeHash) {
+        console.warn('Raw measured app_compose is not in SDK canonical JSON form; the quote-bound raw hash remains authoritative.', {
+            measuredComposeHash,
+            sdkComposeHash,
+        });
     }
-    return { imageRef: matchedImageRef, imageDigest, composeHash: measuredComposeHash };
+    return {
+        composeHash: measuredComposeHash,
+        canonicalAppCompose: `0x${canonicalAppCompose.toString('hex')}`,
+    };
 }
-function verifyMeasuredWorkerImage(info, liveComposeHash) {
-    const identity = measuredWorkerIdentity(info);
+function verifyMeasuredAppCompose(info, liveComposeHash) {
+    const identity = measuredAppComposeIdentity(info);
     const quoteComposeHash = normalizeHashHex(liveComposeHash, 32, 'live quote compose hash');
     if (identity.composeHash !== quoteComposeHash) {
         throw new Error(`dstack info compose hash ${identity.composeHash} does not match quote compose hash ${quoteComposeHash}`);
     }
-    console.log('Verified measured worker image reference:', {
-        image: identity.imageRef,
-        imageDigest: identity.imageDigest,
+    console.log('Verified exact measured app_compose against the live quote event:', {
         composeHash: identity.composeHash,
     });
     return identity;
@@ -372,19 +397,19 @@ async function fetchLivePhalaQuote(reportDataFactory) {
         console.log('Instance ID:', info.instance_id);
         console.log('App Name:', info.app_name);
         console.log('TCB Info:', info.tcb_info);
-        const identity = measuredWorkerIdentity(info);
+        const identity = measuredAppComposeIdentity(info);
         const reportData = await boundReportData(reportDataFactory, identity);
         const quote = await client.getQuote(reportData);
         await publishLivePhalaArtifacts(quote, info).catch(error => {
             console.warn('Could not publish live Phala attestation artifacts:', error?.message || error);
         });
         const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
-        const workerImage = verifyMeasuredWorkerImage(info, rtmr3Policy.composeHash);
+        const appComposeIdentity = verifyMeasuredAppCompose(info, rtmr3Policy.composeHash);
         return {
             quoteHex: normalizeHexBytes(quote.quote),
-            rtmr3EventDigests: rtmr3Policy.digests,
+            rtmr3EventLog: rtmr3Policy.events,
             composeHash: rtmr3Policy.composeHash,
-            workerImageDigest: workerImage.imageDigest,
+            canonicalAppCompose: appComposeIdentity.canonicalAppCompose,
         };
     }
     if (existsSync(tappdSock)) {
@@ -397,22 +422,36 @@ async function fetchLivePhalaQuote(reportDataFactory) {
         if (!tcbInfoFromDstackInfo(info)?.app_compose && !tcbInfoFromDstackInfo(info)?.appCompose) {
             throw new Error('Legacy tappd.sock path did not expose app_compose; mount /var/run/dstack.sock for measured image verification');
         }
-        const identity = measuredWorkerIdentity(info);
+        const identity = measuredAppComposeIdentity(info);
         const reportData = await boundReportData(reportDataFactory, identity);
         const quote = await client.tdxQuote(reportData, 'raw');
         await publishLivePhalaArtifacts(quote, info).catch(error => {
             console.warn('Could not publish live Phala attestation artifacts:', error?.message || error);
         });
         const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
-        const workerImage = verifyMeasuredWorkerImage(info, rtmr3Policy.composeHash);
+        const appComposeIdentity = verifyMeasuredAppCompose(info, rtmr3Policy.composeHash);
         return {
             quoteHex: normalizeHexBytes(quote.quote),
-            rtmr3EventDigests: rtmr3Policy.digests,
+            rtmr3EventLog: rtmr3Policy.events,
             composeHash: rtmr3Policy.composeHash,
-            workerImageDigest: workerImage.imageDigest,
+            canonicalAppCompose: appComposeIdentity.canonicalAppCompose,
         };
     }
     throw new Error('Neither /var/run/dstack.sock nor /var/run/tappd.sock is available for Phala attestation.');
+}
+async function currentPhalaIdentity() {
+    if (existsSync('/var/run/dstack.sock')) {
+        const client = new DstackClient('/var/run/dstack.sock');
+        return measuredAppComposeIdentity(await client.info());
+    }
+    if (existsSync('/var/run/tappd.sock')) {
+        const client = new TappdClient('/var/run/tappd.sock');
+        const info = typeof client.info === 'function' ? await client.info() : null;
+        if (!tcbInfoFromDstackInfo(info)?.app_compose && !tcbInfoFromDstackInfo(info)?.appCompose)
+            throw new Error('Legacy tappd.sock path did not expose app_compose');
+        return measuredAppComposeIdentity(info);
+    }
+    throw new Error('No dstack attestation socket is available');
 }
 async function expectedWorkerAddresses() {
     const own = String(process.env.ACCOUNT_ADDRESS || '').toLowerCase();
@@ -480,12 +519,11 @@ async function getMissingAuthorizedWorkers() {
     }
     return missing;
 }
-async function hasCurrentDeviceRegistration(publicKey) {
+async function hasCurrentDeviceRegistration(publicKey, canonicalAppCompose) {
     const accountAddress = process.env.ACCOUNT_ADDRESS;
     if (!accountAddress || !(await isAuthorized(accountAddress)))
         return false;
-    const storedKey = await getDevicePublicKey(accountAddress);
-    return String(storedKey || '').toLowerCase() === String(publicKey || '').toLowerCase();
+    return isDeviceRegistrationCurrent(accountAddress, publicKey, canonicalAppCompose);
 }
 async function registerWithLocalTdxMock() {
     if (localTdxRegistrationDone || process.env.DOCKER === "phala")
@@ -499,18 +537,24 @@ async function registerWithLocalTdxMock() {
     if (!localRpc || await getBlockchainChainId() !== 31337) {
         throw new Error('LOCAL_TDX_MOCK is restricted to the local Anvil endpoint on chain 31337');
     }
-    const composeHash = normalizeHashHex(process.env.LOCAL_TDX_COMPOSE_HASH || '0x47d7ddfa97906d05b2b7e53ce888440a820598f120079ed887229ab0302982fa', 32, 'local mock compose hash');
     const workerImageDigest = normalizeHashHex(process.env.LOCAL_TDX_IMAGE_DIGEST || '0x7849ee527ff2efc746c58f67cd6336572d5c71743c608bbd3810079289c7c066', 32, 'local mock worker image digest');
+    const canonicalAppCompose = Buffer.from(JSON.stringify({
+        docker_compose_file: `services:\n  dfl-worker:\n    image: local/dfl-worker@sha256:${workerImageDigest.slice(2)}\n`,
+        manifest_version: 2,
+        name: 'local-dfl-worker',
+        runner: 'docker-compose',
+    }), 'utf8');
+    const canonicalAppComposeHex = `0x${canonicalAppCompose.toString('hex')}`;
     const publicKey = rsaPublicKeyDerHex();
-    if (await hasCurrentDeviceRegistration(publicKey)) {
+    if (await hasCurrentDeviceRegistration(publicKey, canonicalAppComposeHex)) {
         console.log('Device already has a bound registration for the current RSA key; reusing it.');
         return;
     }
     const publicIp = process.env.PUBLIC_IP || '';
     const brokerIp = process.env.MSG_BROKER_IP || '';
-    const reportData = await getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey, composeHash, workerImageDigest);
+    const reportData = await getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey, canonicalAppComposeHex);
     console.warn('Registering through the LOCAL-ONLY mock TDX verifier; this is not a hardware attestation.');
-    await registerDeviceWithTeeQuoteAndRtmr3Events(reportData, [`0x${'00'.repeat(48)}`], composeHash, workerImageDigest, process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey);
+    await registerDeviceWithTeeQuoteAndRtmr3Events(reportData, [{ eventType: 0x08000001, eventName: 'compose-hash', eventPayload: `0x${'00'.repeat(32)}` }], canonicalAppComposeHex, process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey);
     console.log('Device registered with bound local mock REPORTDATA.');
 }
 function decodeEventBytes(rawValue) {
@@ -563,31 +607,18 @@ function normalizeRtmr3EventPolicy(eventLog) {
         throw new Error('Phala quote response did not include an RTMR event log array');
     }
     const rtmr3Events = events.filter(event => Number(event?.imr) === 3);
-    const digests = rtmr3Events.map(event => {
-        let digest = decodeEventBytes(event?.digest);
-        if ((!digest || digest.length === 0) && Number(event?.event_type) === 0x08000001) {
-            const payload = decodeEventBytes(event?.event_payload);
-            if (!payload) {
-                throw new Error(`Invalid RTMR3 event payload for event ${event?.event || '<unknown>'}`);
-            }
-            const eventType = Buffer.alloc(4);
-            eventType.writeUInt32LE(0x08000001);
-            digest = crypto.createHash('sha384')
-                .update(eventType)
-                .update(':')
-                .update(String(event?.event || ''), 'utf8')
-                .update(':')
-                .update(payload)
-                .digest();
-        }
-        if (!digest || digest.length === 0 || digest.length > 48) {
-            throw new Error(`Invalid RTMR3 event digest for event ${event?.event || '<unknown>'}`);
-        }
-        // Legacy tappd pads event digests to the 48-byte SHA-384 RTMR input width.
-        return `0x${Buffer.concat([digest, Buffer.alloc(48 - digest.length)]).toString('hex')}`;
+    const structuredEvents = rtmr3Events.map(event => {
+        const payload = decodeEventBytes(event?.event_payload);
+        if (!payload)
+            throw new Error(`Invalid RTMR3 event payload for event ${event?.event || '<unknown>'}`);
+        return {
+            eventType: Number(event?.event_type),
+            eventName: String(event?.event || ''),
+            eventPayload: `0x${payload.toString('hex')}`,
+        };
     });
-    if (digests.length === 0) {
-        throw new Error('Phala quote response did not include RTMR3 event digests');
+    if (structuredEvents.length === 0) {
+        throw new Error('Phala quote response did not include RTMR3 runtime events');
     }
     const composeEventIndex = rtmr3Events.findIndex(event => event?.event === 'compose-hash');
     let composeHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
@@ -598,14 +629,13 @@ function normalizeRtmr3EventPolicy(eventLog) {
         }
         composeHash = `0x${payload.toString('hex')}`;
         console.log('Live RTMR3 compose event:', {
-            digest: digests[composeEventIndex],
             composeHash,
         });
     }
     else {
         console.warn('Live RTMR3 event log does not contain a compose-hash event.');
     }
-    return { digests, composeHash };
+    return { events: structuredEvents, composeHash };
 }
 function derHexToBuffer(derHex) {
     if (typeof derHex !== 'string')
@@ -697,16 +727,17 @@ async function prepareRoundZeroBootstrapRollover() {
 const stateMachine = async () => {
     if (process.env.DOCKER === "phala") {
         const publicKey = rsaPublicKeyDerHex();
-        if (await hasCurrentDeviceRegistration(publicKey)) {
+        const liveIdentity = await currentPhalaIdentity();
+        if (await hasCurrentDeviceRegistration(publicKey, liveIdentity.canonicalAppCompose)) {
             console.log('Device already has a bound registration for the current RSA key; reusing it.');
         }
         else {
             console.log("Fetching TDX Quote ...");
             const publicIp = process.env.PUBLIC_IP || "";
             const brokerIp = process.env.MSG_BROKER_IP || "";
-            const { quoteHex, rtmr3EventDigests, composeHash, workerImageDigest } = await fetchLivePhalaQuote(async (identity) => getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey, identity.composeHash, identity.imageDigest));
-            console.log(`Registering with live Phala TDX quote and ${rtmr3EventDigests.length} RTMR3 event digests ...`);
-            await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventDigests, composeHash, workerImageDigest, process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey);
+            const { quoteHex, rtmr3EventLog, canonicalAppCompose } = await fetchLivePhalaQuote(async (identity) => getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey, identity.canonicalAppCompose));
+            console.log(`Registering with live Phala TDX quote, canonical app_compose and ${rtmr3EventLog.length} RTMR3 events ...`);
+            await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventLog, canonicalAppCompose, process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey);
             console.log("Device registered with onchain TDX quote and RTMR3 event replay verification.");
         }
     }

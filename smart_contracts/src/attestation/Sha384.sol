@@ -11,28 +11,17 @@ library Sha384 {
     }
 
     function hash(bytes memory input) internal pure returns (bytes memory) {
-        require(input.length <= 111, "SHA-384 helper supports one block");
-        uint64[80] memory w;
-        bytes memory blockInput = new bytes(128);
+        uint256 paddedLength = ((input.length + 17 + 127) / 128) * 128;
+        bytes memory paddedInput = new bytes(paddedLength);
 
         for (uint256 i = 0; i < input.length; i++) {
-            blockInput[i] = input[i];
+            paddedInput[i] = input[i];
         }
-        blockInput[input.length] = bytes1(0x80);
+        paddedInput[input.length] = bytes1(0x80);
 
         uint256 bitLength = input.length * 8;
         for (uint256 i = 0; i < 8; i++) {
-            blockInput[127 - i] = bytes1(uint8(bitLength >> (8 * i)));
-        }
-
-        for (uint256 i = 0; i < 16; i++) {
-            w[i] = _readUint64(blockInput, i * 8);
-        }
-
-        for (uint256 i = 16; i < 80; i++) {
-            unchecked {
-                w[i] = _smallSigma1(w[i - 2]) + w[i - 7] + _smallSigma0(w[i - 15]) + w[i - 16];
-            }
+            paddedInput[paddedLength - 1 - i] = bytes1(uint8(bitLength >> (8 * i)));
         }
 
         uint64[8] memory state = [
@@ -46,17 +35,26 @@ library Sha384 {
             0x47b5481dbefa4fa4
         ];
 
-        for (uint256 i = 0; i < 80; i++) {
-            _round(state, w[i], _k(i));
-        }
+        for (uint256 blockOffset = 0; blockOffset < paddedLength; blockOffset += 128) {
+            uint64[80] memory w;
+            for (uint256 i = 0; i < 16; i++) {
+                w[i] = _readUint64(paddedInput, blockOffset + i * 8);
+            }
+            for (uint256 i = 16; i < 80; i++) {
+                unchecked {
+                    w[i] = _smallSigma1(w[i - 2]) + w[i - 7] + _smallSigma0(w[i - 15]) + w[i - 16];
+                }
+            }
 
-        unchecked {
-            state[0] += 0xcbbb9d5dc1059ed8;
-            state[1] += 0x629a292a367cd507;
-            state[2] += 0x9159015a3070dd17;
-            state[3] += 0x152fecd8f70e5939;
-            state[4] += 0x67332667ffc00b31;
-            state[5] += 0x8eb44a8768581511;
+            uint64[8] memory working;
+            for (uint256 i = 0; i < 8; i++) working[i] = state[i];
+            for (uint256 i = 0; i < 80; i++) {
+                _round(working, w[i], _k(i));
+            }
+
+            unchecked {
+                for (uint256 i = 0; i < 8; i++) state[i] += working[i];
+            }
         }
 
         return abi.encodePacked(state[0], state[1], state[2], state[3], state[4], state[5]);

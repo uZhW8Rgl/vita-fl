@@ -714,13 +714,20 @@ export const getDevicePublicKey = async (address) => {
     return publicKey;
 };
 
+export const isDeviceRegistrationCurrent = async (address, publicKeyBytesHex, canonicalAppCompose) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    return Boolean(await contract.methods
+        .isDeviceRegistrationCurrent(address, publicKeyBytesHex, canonicalAppCompose)
+        .call());
+};
+
 export const getDeviceRegistrationReportData = async (
     address,
     publicIp,
     brokerIp,
     publicKeyBytesHex,
-    composeHash,
-    workerImageDigest
+    canonicalAppCompose
 ) => {
     if (!device_registry_address) {
         throw new Error("REGISTRY_ADDRESS is required for TDX device registration");
@@ -732,8 +739,7 @@ export const getDeviceRegistrationReportData = async (
         publicIp,
         brokerIp,
         publicKeyBytesHex,
-        composeHash,
-        workerImageDigest
+        canonicalAppCompose
     ).call();
     if (typeof reportData !== "string" || !/^0x[0-9a-fA-F]{128}$/.test(reportData)) {
         throw new Error("DeviceRegistry returned invalid registration REPORTDATA");
@@ -743,9 +749,8 @@ export const getDeviceRegistrationReportData = async (
 
 export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     quoteHex,
-    rtmr3EventDigests,
-    composeHash,
-    workerImageDigest,
+    rtmr3EventLog,
+    canonicalAppCompose,
     address,
     publicIp,
     brokerIp,
@@ -762,11 +767,10 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     }
     addAccountToWallet(account);
     const gasPrice = await web3.eth.getGasPrice();
-    const registration = contract.methods.registerDeviceWithRtmr3EventsAndImageDigest(
+    const registration = contract.methods.registerDeviceWithAttestedAppCompose(
         quoteHex,
-        rtmr3EventDigests,
-        composeHash,
-        workerImageDigest,
+        rtmr3EventLog,
+        canonicalAppCompose,
         address,
         publicIp,
         brokerIp,
@@ -781,9 +785,8 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     };
     console.log("TDX registration payload:", {
         quoteBytes: hexByteLength(quoteHex),
-        eventDigestBytes: rtmr3EventDigests.map(hexByteLength),
-        composeHashBytes: hexByteLength(composeHash),
-        workerImageDigestBytes: hexByteLength(workerImageDigest),
+        rtmr3Events: rtmr3EventLog.length,
+        appComposeBytes: hexByteLength(canonicalAppCompose),
         publicKeyBytes: hexByteLength(publicKeyBytesHex),
         calldataBytes: hexByteLength(calldata),
     });
@@ -793,10 +796,18 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
             const attestationAddress = await contract.methods.tdxV4Attestation().call();
         const debugAbi = [{
             type: "function",
-            name: "debugVerifyWithRtmr3Events",
+            name: "debugVerifyWithRtmr3EventLog",
             inputs: [
                 { name: "input", type: "bytes" },
-                { name: "rtmr3EventDigests", type: "bytes[]" },
+                {
+                    name: "rtmr3EventLog",
+                    type: "tuple[]",
+                    components: [
+                        { name: "eventType", type: "uint32" },
+                        { name: "eventName", type: "string" },
+                        { name: "eventPayload", type: "bytes" },
+                    ],
+                },
                 { name: "composeHash", type: "bytes32" },
             ],
             outputs: [
@@ -812,8 +823,10 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
             stateMutability: "view",
         }];
             const attestation = new web3.eth.Contract(debugAbi, attestationAddress);
+            const identity = await contract.methods.workloadIdentity(canonicalAppCompose).call();
+            const composeHash = identity.composeHash ?? identity[0];
             const debugResult = await attestation.methods
-                .debugVerifyWithRtmr3Events(quoteHex, rtmr3EventDigests, composeHash)
+                .debugVerifyWithRtmr3EventLog(quoteHex, rtmr3EventLog, composeHash)
                 .call({ from: account.address });
             console.log("TDX debug verification:", {
                 attestationAddress,

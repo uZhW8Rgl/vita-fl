@@ -61,12 +61,6 @@ locals {
     pccs_quote_path                   = var.pccs_quote_path
     tdx_quote_path                    = var.tdx_quote_path
     tdx_reference_quote_path          = var.tdx_reference_quote_path
-    phala_compose_path                = var.phala_compose_path
-    phala_app_code_path               = var.phala_app_code_path
-    phala_rtmr3_event_log_path        = var.phala_rtmr3_event_log_path
-    phala_rtmr3_event_digests         = var.phala_rtmr3_event_digests
-    phala_enforce_compose_hash        = var.phala_enforce_compose_hash
-    phala_allowed_worker_compose_hashes = var.phala_allowed_worker_compose_hashes
   })
 
   ssh_authorized_keys = var.ssh_public_key_path == null ? [] : [trimspace(file(var.ssh_public_key_path))]

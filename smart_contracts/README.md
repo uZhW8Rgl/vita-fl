@@ -62,10 +62,11 @@ contract-runtime compose file by immutable digest:
 ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:64f0ac3d1ce001dc32e4bdf7cf1f39a0607a6a021e7b792c715f48fc52df7c29
 ```
 
-Whenever the worker digest changes, or the files under `phala/` that feed the
-runtime policy export change in a way that should be reflected inside the
-contract-runtime TEE, rebuild and republish this image before redeploying the
-runtime TEE.
+Rebuild and republish this image when the contracts or bootstrap code changes.
+The expected worker image is supplied separately as the digest-pinned
+`EXPECTED_WORKER_IMAGE` deployment input; changing that policy requires a
+contract-runtime redeployment, but no measured Compose or RTMR3 digest is baked
+into the smart-contract image.
 
 It performs:
 
@@ -88,9 +89,11 @@ KEEP_ALIVE=0 docker compose -f compose.yml up --build --force-recreate
 
 ## RTMR3 Workload Policy
 
-The live Phala path verifies the quote, certificate chain, QE identity and TCB status, then replays the submitted RTMR3 event chain. The exact `compose-hash` event must both occur in that replay and be owner-allowlisted. The replayed RTMR3 must equal the signed quote RTMR3.
+The live Phala path verifies the quote, certificate chain, QE identity and TCB status. It also fails closed unless the quote's dstack OS/boot tuple (`MRTD` and `RTMR0`--`RTMR2`) matches the owner-pinned tuple extracted during bootstrap from a reference dstack quote. That reference quote identifies the approved base runtime only; its Compose hash and `RTMR3` are not application allowlist inputs for the structured-log selector.
 
-`DeviceRegistry` additionally installs an owner-reviewed `composeHash -> imageDigest` mapping. A caller-supplied image digest without that exact mapping is rejected, so an arbitrary workload cannot merely claim the approved digest. Both the verifier and Registry policies are fail-closed when no approved compose hash is configured.
+Registration supplies the exact canonical `app_compose` byte preimage reported by dstack, not a caller-supplied compose hash or image-digest claim. `DeviceRegistry` first parses `docker_compose_file` on-chain, requires the strict single-service `services.dfl-worker.image` form, extracts its immutable `@sha256:<digest>` value, and compares that derived digest with `expectedWorkerImageDigest`. Tag-only images, duplicate image fields, comments in the image value, additional or repeated service declarations, and YAML flow/merge service declarations are rejected.
+
+Only after the image policy passes does the Registry calculate `SHA-256` over those exact `app_compose` bytes. The worker also supplies the ordered RTMR3 event fields `(eventType, eventName, eventPayload)`. The verifier reconstructs every event digest on-chain as `SHA-384(LE32(eventType) || ":" || eventName || ":" || eventPayload)`, requires exactly one `compose-hash` event whose payload is the Registry-derived SHA-256 value, replays the RTMR3 extend chain, and compares the result with RTMR3 in the hardware-signed quote. No compose-hash allowlist or precomputed trusted event digest participates in this selector.
 
 The quote's 64-byte `REPORTDATA` has this format:
 
@@ -108,10 +111,10 @@ The local Docker flow cannot use one static quote for multiple dynamic worker id
 
 For Phala/dstack this needs one subtle distinction:
 
-- the RTMR3 `compose-hash` event is the SHA-256 of the normalized Phala app-code object from `phala/app_code.txt`
+- the RTMR3 `compose-hash` event is the SHA-256 of the normalized/canonical `app_compose` byte preimage; `phala/app_code.txt` can hold an exported copy for offline inspection
 - the plain SHA-256 of `phala/dstack-compose.template.yml` is only the raw compose-file hash
 
-Configure the first value, never the raw compose-file hash, in `PHALA_ALLOWED_WORKER_COMPOSE_HASHES`. If the image, endpoint-bearing compose, or another measured input changes, review and provision every new canonical hash before registration. Generated `app_code.txt` and Terraform state files are intentionally ignored and must not be committed.
+No compose-hash provisioning is required. Different endpoint-bearing worker Composes are accepted when their strictly parsed `dfl-worker.image` resolves to the configured digest and their structured event log reconstructs the quote-bound RTMR3. Generated `app_code.txt` and Terraform state files are intentionally ignored and must not be committed.
 
 ## Generated Artifacts
 

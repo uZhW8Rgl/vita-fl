@@ -15,6 +15,8 @@ services:
       - osaka
       - --code-size-limit
       - "999999"
+      - --gas-limit
+      - "1000000000"
     healthcheck:
       test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
       interval: 5s
@@ -22,7 +24,7 @@ services:
       retries: 24
 
   rpc-proxy:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:ecca24e8dbafbf978acdad4941b25611994d734c2087cc603399e4a44e42540f
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:66ea3186e49148a58e081a33f8dff55144fb20c6cbcf09f1b00ccd3a2a4dd164
     restart: unless-stopped
     read_only: true
     cap_drop: ["ALL"]
@@ -57,7 +59,7 @@ services:
       retries: 24
 
   smart-contracts:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:ecca24e8dbafbf978acdad4941b25611994d734c2087cc603399e4a44e42540f
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:66ea3186e49148a58e081a33f8dff55144fb20c6cbcf09f1b00ccd3a2a4dd164
     restart: "no"
     depends_on:
       anvil:
@@ -71,9 +73,9 @@ services:
       IPFS_PROVIDER: kubo
       KEEP_ALIVE: "0"
       # Supply these through Phala's encrypted environment.
-      ETH_WALLET_PRIVATE_KEY:
-      INITIAL_GM_SIGNING_KEY:
-      INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY:
+      ETH_WALLET_PRIVATE_KEY: "${ETH_WALLET_PRIVATE_KEY}"
+      INITIAL_GM_SIGNING_KEY: "${INITIAL_GM_SIGNING_KEY}"
+      INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY: "${INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY}"
       PCCS_FMSPC: "20A06F000000"
       PCCS_FETCH: "1"
       PCCS_TEE: tdx
@@ -84,12 +86,6 @@ services:
       EXPECTED_WORKER_IMAGE: "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553"
       PCCS_QUOTE_PATH: /dfl/data/phala_tdx_quote
       TDX_REFERENCE_QUOTE_PATH: ""
-      PHALA_COMPOSE_PATH: /dfl/phala/dstack-compose.template.yml
-      PHALA_APP_CODE_PATH: /dfl/phala/app_code.txt
-      PHALA_RTMR3_EVENT_LOG_PATH: /dfl/phala/rtmr3_event_log.txt
-      PHALA_RTMR3_EVENT_DIGESTS: ""
-      PHALA_ENFORCE_COMPOSE_HASH: "0"
-      PHALA_ALLOWED_WORKER_COMPOSE_HASHES: "REPLACE_WITH_COMMA_SEPARATED_COMPOSE_HASHES"
       DATASET_NAME: mnist
       W0_ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
       W1_ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"

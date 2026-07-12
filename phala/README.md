@@ -4,7 +4,7 @@ This directory contains the deployment template for generating a Phala/dstack TD
 
 ## Terraform Deployment
 
-This directory now also contains a Terraform scaffold for deploying the DFL prototype to Phala Cloud with the official provider `phala-network/phala` (`0.2.0-beta.1` as documented on June 30, 2026).
+This directory also contains a Terraform scaffold for deploying the DFL prototype to Phala Cloud with the official provider `phala-network/phala` version `0.2.0-beta.3`.
 
 Files:
 
@@ -53,6 +53,7 @@ It also forwards the current Anvil/DFL profile settings into Terraform, includin
 - `DATASET_NAME`
 - `PCCS_FMSPC`, `PCCS_FETCH`, `PCCS_TEE`, `P256_MODE`
 - `DEPLOY_TDX_V4_DCAP`, `VERIFY_TDX_QUOTE_ONCHAIN`, `AGGREGATOR_TIMEOUT_REPORT_PERCENT`
+- `TDX_REFERENCE_QUOTE_PATH` for the owner-reviewed dstack base-runtime quote; when empty, bootstrap falls back to `PCCS_QUOTE_PATH`
 
 This means a Phala deployment can now be driven directly from `.env.phala.anvil` without first rebuilding a combined `.env`.
 
@@ -68,10 +69,10 @@ Notes:
 
 - The provider's `env` attribute encrypts wallet and RSA key material for the target Phala app. The measured/public Compose contains only environment-variable names, never their values.
 - Terraform still records sensitive `env` inputs in state. Local state, state backups, `terraform.tfvars`, and exported `app_code.txt` are ignored; use an encrypted, access-controlled remote backend for non-demo deployments.
-- `public_logs` defaults to `false`. Enabling it does not make secret logging safe.
+- `public_logs` defaults to `true` for this observable Anvil demo deployment. Do not log secrets when adapting it for production.
 - Worker and smart-contract images contain no private keys. Local Compose mounts generated development keys read-only; run `scripts/prepare_dfl_worker_experiment.py` first on a fresh clone.
 - Keys that were committed previously must be treated as compromised and rotated outside this source change before production use.
-- `worker_image` should stay pinned to a `sha256` digest to preserve a stable measured compose policy.
+- `worker_image` must stay pinned to a `sha256` digest. Its digest is the shared on-chain workload-policy identity; the worker-specific Compose hash is not an allowlist key.
 - `smart_contracts_image` should also be pinned to a `sha256` digest when you want the contract-runtime TEE to be reproducible.
 - The Terraform scaffold now separates `smart-contracts` and `dfl-worker` into different Phala apps / TEEs.
 - If you want SSH access, set `ssh_public_key_path`; if you also want the key stored account-wide in Phala Cloud, set `manage_account_ssh_key = true`.
@@ -82,7 +83,7 @@ Notes:
 - The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
 - The worker now treats `/runtime/contracts.json` as the effective runtime-ready signal. The runtime publishes that manifest only after `smart-contracts` finished its bootstrap path, which avoids startup races even when `/runtime/ready.json` is missing on Phala.
 - The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/dstack.sock` and keeps `/var/run/tappd.sock` only for compatibility.
-- At runtime the worker requires a measured `app_compose` from Phala `info()`, recomputes the normalized compose hash, compares it with the live quote's `compose-hash` event payload, and verifies that the measured compose contains the expected digest-pinned worker image.
+- At runtime the worker requires `app_compose` from Phala `info()` and checks its SDK-compatible canonicalization against the live `compose-hash` event as a local consistency preflight. The authoritative policy decision is on-chain: the Registry parses the image digest from the submitted byte preimage before deriving its compose hash.
 - The legacy `tappd.sock` path is not accepted unless it also exposes `app_compose`; otherwise the worker aborts instead of trusting a mock or env-only digest.
 - After changing the worker attestation code, publish a fresh `ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala` image before redeploying the Phala workers, otherwise the running CVMs still use the old logic baked into the last image.
 
@@ -106,7 +107,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:<new-worker-digest>
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
@@ -114,7 +115,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:4c7c8c396efc41715d27794b831c40f
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:ecca24e8dbafbf978acdad4941b25611994d734c2087cc603399e4a44e42540f
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:<new-runtime-digest>
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
@@ -134,24 +135,24 @@ docker compose down --volumes --remove-orphans
 KEEP_ALIVE=0 docker compose up --build --force-recreate
 ```
 
-During deployment, `starter_docker.sh` checks that the worker image is pinned by immutable `sha256` digest. Production registration is fail-closed until every approved worker's exact canonical `app_compose` hash is mapped to that image digest through `PHALA_ALLOWED_WORKER_COMPOSE_HASHES`.
+During deployment, `starter_docker.sh` requires the digest-pinned `EXPECTED_WORKER_IMAGE` input and configures its SHA-256 value as the single expected worker-image policy. It no longer derives policy from a local Compose file. During registration the worker submits the exact SDK-canonical `app_compose` byte preimage; `DeviceRegistry` first parses `docker_compose_file` and derives the single `services.dfl-worker.image` digest on-chain instead of trusting a worker-supplied digest.
 
 For Phala/dstack, the measured `compose-hash` is not just the SHA-256 of `dstack-compose.template.yml`. In practice there are two related hashes:
 
-- the RTMR3 `compose-hash` event: SHA-256 of the normalized app-code object exported from Phala into `phala/app_code.txt`
+- the RTMR3 `compose-hash` event: SHA-256 of the normalized/canonical `app_compose` byte preimage; `phala/app_code.txt` may contain an exported copy for offline inspection
 - the raw compose-file hash: SHA-256 of the `docker_compose_file` text, which can match your local `dstack-compose.template.yml`
 
-The raw compose-file hash is not sufficient for this policy. Copy the canonical hashes reported by `dstack info` for the deployed workers into the comma-separated `PHALA_ALLOWED_WORKER_COMPOSE_HASHES` value. The bootstrap installs both the verifier's exact compose-event allowlist and the Registry mapping `composeHash -> workerImageDigest`.
+Compose hashes may differ between workers. Only after the derived image digest matches the configured policy does the contract calculate `SHA-256` over the submitted `app_compose` bytes. The worker submits ordered structured event fields `(eventType, eventName, eventPayload)`, not trusted precomputed digests. The verifier hashes those fields on-chain with dstack's SHA-384 event serialization, requires the derived hash in the unique `compose-hash` event, replays RTMR3, and compares it with the hardware-signed quote. No compose-hash allowlist is used.
 
-For a first deployment where the hashes are not known yet, leave the value empty. Contracts and runtime endpoints are created, but worker registration remains disabled. Read each worker's canonical `app_compose` hash from its public TCB info or generated local artifact, review the measured compose, set the allowlist, and apply the runtime configuration again. A correct image-digest claim without this allowlist is deliberately rejected.
+Independently, bootstrap extracts `MRTD` and `RTMR0`--`RTMR2` from the owner-reviewed dstack reference quote and pins that OS/boot tuple in the verifier. The structured-log selector is fail-closed until this tuple is configured and requires every live worker quote to match it. The reference quote does not pin the worker-specific Compose hash or `RTMR3`; those remain live-derived and may differ between workers.
 
-When the worker image digest changes, refresh the local Phala measurement exports before rebuilding the smart-contracts image. A live worker publishes its current RTMR3 event log and app-code export into the runtime Kubo MFS under `/phala-artifacts/latest`. Pull those into the repository with:
+For an independent offline audit, a live worker can publish its current RTMR3 event log and app-code export into the runtime Kubo MFS under `/phala-artifacts/latest`. Pull those into the repository with:
 
 ```bash
 scripts/fetch_phala_worker_artifacts.sh "$KUBO_API"
 ```
 
-This refreshes `phala/rtmr3_event_log.txt` and `phala/app_code.txt` when Phala exposes them. These files are generated, permission-restricted artifacts and must not be committed. Exports from deployments created with older templates can still contain plaintext keys; rotate those keys and redeploy before treating a new export as safe. After reviewing the canonical app-code object, provision its hash through `PHALA_ALLOWED_WORKER_COMPOSE_HASHES`; use `PHALA_EXPECTED_COMPOSE_HASH` only for a deliberate single-worker policy.
+This refreshes `phala/rtmr3_event_log.txt` and `phala/app_code.txt` when Phala exposes them. These are audit copies, not bootstrap inputs, and their hashes are never provisioned as registration policy. Treat exports as deployment artifacts and do not add new exports to version control.
 
 ## Manual Runtime-Only Redeploy
 
@@ -202,9 +203,9 @@ If only `PHALA_RUNTIME_ENDPOINT_OVERRIDE` is set and it already contains an embe
 
 ## What This Verifies
 
-The on-chain contract verifies the TDX quote and replays the submitted Phala/dstack RTMR3 event digests until they reproduce the signed RTMR3 value inside the quote.
+The on-chain path receives the quote, the exact canonical `app_compose` bytes, and the ordered RTMR3 event fields. It does not accept a worker-provided image identity, compose hash, or precomputed event digest as policy truth.
 
-During registration, the worker submits the live RTMR3 event digests, the live `compose-hash` payload from the Phala quote response, and the worker image digest extracted from the measured `app_compose`. The attestation contract recomputes the Phala `compose-hash` event digest from that payload, checks that this event is present in the replayed RTMR3 chain, verifies that the replayed RTMR3 equals the signed RTMR3 inside the quote, and the registry checks that the submitted worker image digest matches the digest stored during `smart-contracts` bootstrap.
+`DeviceRegistry` strictly derives the Docker image digest first and compares it with `expectedWorkerImageDigest`. Its narrow parser also rejects a second service declaration and YAML flow- or merge-style service declarations. It then computes `SHA-256(app_compose)`. The attestation contract requires the owner-pinned dstack `MRTD`/`RTMR0`--`RTMR2` base-runtime tuple, validates each structured event type, name and payload, computes its SHA-384 digest on-chain, requires exactly one matching `compose-hash` payload, replays the extend chain from the zero RTMR3 value, and requires the result to equal RTMR3 inside the verified quote. The Registry-generated `REPORTDATA` additionally binds the derived image/compose identity to the device address, endpoint metadata, RSA public key, deployment, owner challenge and nonce.
 
 This means worker-specific `app-id`, `instance-id`, and compose measurements may still produce different final RTMR3 values, but those final RTMR3 values no longer need to be known in advance. The shared policy anchor is the digest-pinned worker image reference measured inside each worker's Phala app-compose preimage.
 
@@ -228,18 +229,19 @@ python scripts/verify_phala_rtmr3.py \
   --app-code phala/app_code.txt
 ```
 
-5. After changing the worker digest or measured worker compose, update both `worker_image` and `PHALA_ALLOWED_WORKER_COMPOSE_HASHES`, then redeploy the contract-runtime compose so bootstrap installs the new `composeHash -> imageDigest` policies.
+5. After changing the worker image, update `worker_image` and redeploy the contract-runtime so it installs the new expected image digest. Ordinary per-worker Compose differences require no allowlist update.
 
 Important:
 
 - The on-chain attestation policy verifies the live worker quote and event replay, not the contract-runtime TEE quote.
-- `PHALA_ENFORCE_REFERENCE_RTMR3` and raw `PHALA_RTMR3_EVENT_DIGESTS` remain legacy debugging inputs. The production authorization input is the reviewed `PHALA_ALLOWED_WORKER_COMPOSE_HASHES` list.
-- If you change the worker digest or any Phala policy artifact consumed by `smart-contracts`, rebuild and republish the `smart-contracts` image too, then redeploy the contract-runtime TEE with the new runtime digest.
+- The dstack reference quote is mandatory for pinning `MRTD` and `RTMR0`--`RTMR2`, but it is not a Compose or `RTMR3` allowlist. `PHALA_ENFORCE_REFERENCE_RTMR3` remains a separate legacy-only debugging input. The new `registerDeviceWithAttestedAppCompose` selector calls the structured-log verifier without exact-`RTMR3` enforcement, so keep that flag disabled for the normal Phala flow.
+- If the worker digest changes, update `worker_image` and redeploy the contract runtime so it installs the new expected digest. Rebuild the `smart-contracts` image only when its contract or bootstrap code changes.
 
 Current Terraform defaults in this scaffold match that target layout:
 
 - `contracts_app_name = "master-thesis-contract-runtime-phala"`
-- `worker_app_name = "master-thesis-dfl-worker-phala"`
-- `worker_replicas = 3`
+- `worker_app_name = "master-thesis-dfl-worker-0"`
+- `worker_replicas = 1`
 - `contracts_size = "tdx.small"`
 - `worker_size = "tdx.small"`
+- `os_image = "dstack-dev-0.5.7"`

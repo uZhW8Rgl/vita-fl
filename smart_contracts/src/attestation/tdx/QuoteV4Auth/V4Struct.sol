@@ -17,6 +17,9 @@ library V4Struct {
     struct Body {
         bytes16 teeTcbSvn;
         bytes mrtd; // 48 bytes
+        bytes rtmr0; // 48 bytes
+        bytes rtmr1; // 48 bytes
+        bytes rtmr2; // 48 bytes
         bytes rtmr3; // 48 bytes
         bytes reportData; // 64 bytes
     }

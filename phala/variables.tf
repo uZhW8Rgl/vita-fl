@@ -117,7 +117,7 @@ variable "pre_launch_script" {
 variable "public_logs" {
   description = "Expose container logs publicly."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "public_sysinfo" {
@@ -212,7 +212,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:ecca24e8dbafbf978acdad4941b25611994d734c2087cc603399e4a44e42540f"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:66ea3186e49148a58e081a33f8dff55144fb20c6cbcf09f1b00ccd3a2a4dd164"
 }
 
 variable "anvil_image" {
@@ -481,42 +481,6 @@ variable "tdx_quote_path" {
 
 variable "tdx_reference_quote_path" {
   description = "Path inside the contract-runtime container to the reference TDX quote."
-  type        = string
-  default     = ""
-}
-
-variable "phala_compose_path" {
-  description = "Path inside the contract-runtime container to the worker compose template."
-  type        = string
-  default     = "../phala/dstack-compose.template.yml"
-}
-
-variable "phala_app_code_path" {
-  description = "Path inside the contract-runtime container to the app code measurement file."
-  type        = string
-  default     = "../phala/app_code.txt"
-}
-
-variable "phala_rtmr3_event_log_path" {
-  description = "Path inside the contract-runtime container to the RTMR3 event log."
-  type        = string
-  default     = "../phala/rtmr3_event_log.txt"
-}
-
-variable "phala_rtmr3_event_digests" {
-  description = "Legacy fallback: comma-separated allowlist of live Phala RTMR3 compose event digests for worker TEEs. Preferred path uses live compose-hash payload verification."
-  type        = string
-  default     = ""
-}
-
-variable "phala_enforce_compose_hash" {
-  description = "Legacy single-compose switch. Production registration now always requires an explicit compose allowlist."
-  type        = string
-  default     = "0"
-}
-
-variable "phala_allowed_worker_compose_hashes" {
-  description = "Comma-separated SHA-256 hashes of the exact measured app_compose objects approved for worker registration. Required for Phala deployment."
   type        = string
   default     = ""
 }
