@@ -206,7 +206,7 @@ variable "ssh_public_key_path" {
 variable "worker_image" {
   description = "Digest-pinned DFL worker container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:45f83036ba624fbab9c880ebafdafb8ffe3fa0c4b6d388194dd656866cfd4274"
 }
 
 variable "smart_contracts_image" {
