@@ -81,7 +81,7 @@ services:
       DEPLOY_TDX_V4_DCAP: "1"
       VERIFY_TDX_QUOTE_ONCHAIN: "1"
       AGGREGATOR_TIMEOUT_REPORT_PERCENT: "50"
-      EXPECTED_WORKER_IMAGE: "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:ea37c012d57ab7fb5cc3a872b035b8556bded8764636db97d19f6e73b720d341"
+      EXPECTED_WORKER_IMAGE: "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553"
       PCCS_QUOTE_PATH: /dfl/data/phala_tdx_quote
       TDX_REFERENCE_QUOTE_PATH: ""
       PHALA_COMPOSE_PATH: /dfl/phala/dstack-compose.template.yml
