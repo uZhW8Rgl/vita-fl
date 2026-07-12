@@ -147,7 +147,7 @@ variable "contracts_gateway_enabled" {
 variable "worker_gateway_enabled" {
   description = "Enable the public gateway endpoint for the worker app."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "secure_time" {
@@ -212,7 +212,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:66ea3186e49148a58e081a33f8dff55144fb20c6cbcf09f1b00ccd3a2a4dd164"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:a57af0231bea67a0f51c7442c210f785f3ad07f00e2ee9c29c41a5c0dbfe9ab8"
 }
 
 variable "anvil_image" {

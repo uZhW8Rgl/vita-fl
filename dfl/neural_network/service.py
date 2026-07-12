@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import base64
 import os
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from .cli import aggregate, save_random, start_client, start_server, train_model
+from .cli import aggregate, decrypt_model_package, private_key_path, received_models_dir, save_random, start_client, start_server, train_model
 
 
 server_thread: threading.Thread | None = None
@@ -100,6 +101,18 @@ class Handler(BaseHTTPRequestHandler):
                     int(payload.get("timeout_ms") or os.environ.get("MODEL_TRANSFER_TIMEOUT_MS", "20000")),
                 )
                 _json_response(self, 200, {"ok": True})
+                return
+            if self.path == "/model/receive":
+                device_id = str(payload["device_id"])
+                if not device_id.startswith("0x") or len(device_id) != 42:
+                    raise ValueError("invalid Ethereum device address")
+                int(device_id[2:], 16)
+                package = base64.b64decode(str(payload["package_base64"]), validate=True)
+                plain = decrypt_model_package(package, private_key_path(payload.get("private_key")))
+                destination = received_models_dir() / f"wb_client_{device_id}.bin"
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(plain)
+                _json_response(self, 200, {"ok": True, "bytes": len(plain)})
                 return
             if self.path == "/aggregate":
                 result = aggregate(

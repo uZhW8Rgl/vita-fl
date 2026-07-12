@@ -5,6 +5,8 @@ services:
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
       - /var/run/tappd.sock:/var/run/tappd.sock
+    ports:
+      - "8001:8001"
     environment:
       DOCKER: phala
       NODE_ENV: production
@@ -47,6 +49,7 @@ services:
       TEST_DATA_SRC: "${test_data_src}"
 
       PYTHON_SERVICE_URL: "${python_service_url}"
+      MODEL_UPLOAD_PORT: "8001"
     command:
       - /bin/bash
       - -lc

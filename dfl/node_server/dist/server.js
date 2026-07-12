@@ -3,19 +3,23 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getLastRoundsAggregator, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
+import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getLastRoundsAggregator, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
 import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
 import fs from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
 import { DstackClient, TappdClient, getComposeHash } from '@phala/dstack-sdk';
 import crypto from 'crypto';
+import http from 'http';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const deviceID = process.env.DEVICE_ID;
 let currentState = "";
 let aggregatorServerRunning = false;
+let modelUploadServer;
 const pythonServiceUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+const modelUploadPort = Number(process.env.MODEL_UPLOAD_PORT || 8001);
+const maxModelUploadBytes = Number(process.env.MODEL_UPLOAD_MAX_BYTES || 25 * 1024 * 1024);
 function loadPemFromEnvOrFile(envName, fileEnvName, fallbackFileName) {
     const inline = process.env[envName];
     if (inline && inline.trim()) {
@@ -173,6 +177,102 @@ async function localModelPackageHash() {
     const data = await fs.readFile('./data/lm.bin.enc');
     return `0x${crypto.createHash('sha256').update(data).digest('hex')}`;
 }
+function gatewayDomainFromEnvironment() {
+    const explicit = String(process.env.DSTACK_GATEWAY_DOMAIN || '').trim().replace(/^\./, '');
+    if (explicit)
+        return explicit;
+    const kuboHost = new URL(String(process.env.KUBO_API || '')).hostname;
+    const firstDot = kuboHost.indexOf('.');
+    if (firstDot < 0)
+        throw new Error('Cannot derive the Phala gateway domain from KUBO_API');
+    return kuboHost.slice(firstDot + 1);
+}
+function ownModelUploadEndpoint(appId) {
+    const id = String(appId || '').replace(/^app_/, '');
+    if (!/^[0-9a-f]{40}$/i.test(id))
+        throw new Error(`Invalid dstack app_id: ${appId}`);
+    return `https://${id}-${modelUploadPort}.${gatewayDomainFromEnvironment()}`;
+}
+async function uploadLocalModel(endpoint, deviceId) {
+    const packageBytes = await fs.readFile('./data/lm.bin.enc');
+    const signature = crypto.sign('sha256', packageBytes, rsaPrivateKey).toString('base64');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), modelTransferTimeoutMs);
+    try {
+        const response = await fetch(`${String(endpoint).replace(/\/+$/, '')}/model`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                device_id: deviceId,
+                package_base64: packageBytes.toString('base64'),
+                signature_base64: signature,
+            }),
+            signal: controller.signal,
+        });
+        const body = await response.text();
+        if (!response.ok)
+            throw new Error(`aggregator model endpoint failed (${response.status}): ${body}`);
+    }
+    finally {
+        clearTimeout(timeout);
+    }
+}
+async function handleModelUpload(request, response) {
+    const reply = (status, payload) => {
+        const body = Buffer.from(JSON.stringify(payload));
+        response.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': body.length });
+        response.end(body);
+    };
+    if (request.method === 'GET' && request.url === '/health')
+        return reply(200, { ok: true });
+    if (request.method !== 'POST' || request.url !== '/model')
+        return reply(404, { ok: false, error: 'not found' });
+    try {
+        const chunks = [];
+        let length = 0;
+        for await (const chunk of request) {
+            length += chunk.length;
+            if (length > maxModelUploadBytes)
+                throw new Error('model upload exceeds size limit');
+            chunks.push(chunk);
+        }
+        const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const deviceId = String(payload.device_id || '');
+        const chainState = await getCurrentState();
+        if (!sameAddress(chainState[1], process.env.ACCOUNT_ADDRESS)) {
+            return reply(409, { ok: false, error: 'this worker is not the current aggregator' });
+        }
+        if (!/^0x[0-9a-fA-F]{40}$/.test(deviceId) || !(await isAuthorized(deviceId))) {
+            return reply(403, { ok: false, error: 'device is not authorized' });
+        }
+        const packageBytes = Buffer.from(String(payload.package_base64 || ''), 'base64');
+        const signature = Buffer.from(String(payload.signature_base64 || ''), 'base64');
+        const publicKeyDer = Buffer.from(String(await getDevicePublicKey(deviceId)).replace(/^0x/, ''), 'hex');
+        const publicKey = crypto.createPublicKey({ key: publicKeyDer, format: 'der', type: 'spki' });
+        if (!crypto.verify('sha256', packageBytes, publicKey, signature)) {
+            return reply(403, { ok: false, error: 'invalid model package signature' });
+        }
+        await callPythonService('/model/receive', {
+            device_id: deviceId,
+            package_base64: packageBytes.toString('base64'),
+        }, { timeoutMs: modelTransferTimeoutMs });
+        return reply(200, { ok: true });
+    }
+    catch (error) {
+        console.error('Model upload rejected:', error);
+        return reply(400, { ok: false, error: error?.message || String(error) });
+    }
+}
+async function startModelUploadServer() {
+    if (modelUploadServer)
+        return;
+    modelUploadServer = http.createServer((request, response) => void handleModelUpload(request, response));
+    await new Promise((resolve, reject) => {
+        modelUploadServer.once('error', reject);
+        modelUploadServer.listen(modelUploadPort, '0.0.0.0', resolve);
+    });
+    console.log(`Authenticated model upload server listening on port ${modelUploadPort}.`);
+}
 function serializePhalaEventLog(eventLog) {
     if (typeof eventLog === 'string') {
         return eventLog.endsWith('\n') ? eventLog : `${eventLog}\n`;
@@ -320,13 +420,18 @@ function sortComposeValue(value) {
 }
 function canonicalAppComposeBytes(appCompose) {
     const normalized = { ...appCompose };
-    if (normalized.runner === 'bash' && 'docker_compose_file' in normalized)
+    if (normalized.runner === 'bash' && 'docker_compose_file' in normalized) {
         delete normalized.docker_compose_file;
-    else if (normalized.runner === 'docker-compose' && 'bash_script' in normalized)
+    }
+    else if (normalized.runner === 'docker-compose' && 'bash_script' in normalized) {
         delete normalized.bash_script;
-    if ('pre_launch_script' in normalized && !normalized.pre_launch_script)
+    }
+    if ('pre_launch_script' in normalized && !normalized.pre_launch_script) {
         delete normalized.pre_launch_script;
-    const deterministicJson = JSON.stringify(sortComposeValue(normalized), (_key, value) => typeof value === 'number' && !Number.isFinite(value) ? null : value);
+    }
+    const deterministicJson = JSON.stringify(sortComposeValue(normalized), (_key, value) => {
+        return typeof value === 'number' && !Number.isFinite(value) ? null : value;
+    });
     return Buffer.from(deterministicJson, 'utf8');
 }
 function measuredAppCompose(appComposeRaw) {
@@ -442,14 +547,16 @@ async function fetchLivePhalaQuote(reportDataFactory) {
 async function currentPhalaIdentity() {
     if (existsSync('/var/run/dstack.sock')) {
         const client = new DstackClient('/var/run/dstack.sock');
-        return measuredAppComposeIdentity(await client.info());
+        const info = await client.info();
+        return { ...measuredAppComposeIdentity(info), appId: info?.app_id || info?.appId };
     }
     if (existsSync('/var/run/tappd.sock')) {
         const client = new TappdClient('/var/run/tappd.sock');
         const info = typeof client.info === 'function' ? await client.info() : null;
-        if (!tcbInfoFromDstackInfo(info)?.app_compose && !tcbInfoFromDstackInfo(info)?.appCompose)
+        if (!tcbInfoFromDstackInfo(info)?.app_compose && !tcbInfoFromDstackInfo(info)?.appCompose) {
             throw new Error('Legacy tappd.sock path did not expose app_compose');
-        return measuredAppComposeIdentity(info);
+        }
+        return { ...measuredAppComposeIdentity(info), appId: info?.app_id || info?.appId };
     }
     throw new Error('No dstack attestation socket is available');
 }
@@ -758,12 +865,16 @@ const stateMachine = async () => {
                         await setCurrentState("AGGREGATING");
                         continue;
                     }
-                    console.log("Starting the zerompq server ...");
+                    console.log("Starting the authenticated HTTPS model receiver ...");
                     try {
                         if (!aggregatorServerRunning) {
-                            await callPythonService('/server/start', {
-                                client_limit: Number(process.env.CLIENT_LIMIT || 1),
-                            });
+                            const identity = await currentPhalaIdentity();
+                            await startModelUploadServer();
+                            const endpoint = ownModelUploadEndpoint(identity.appId);
+                            if (String(await getAggregatorEndpoint()) !== endpoint) {
+                                await setAggregatorEndpoint(endpoint);
+                            }
+                            console.log(`Published aggregator model endpoint: ${endpoint}`);
                             aggregatorServerRunning = true;
                         }
                         const expected = Number(process.env.CLIENT_LIMIT || 1);
@@ -882,17 +993,19 @@ const stateMachine = async () => {
                     }
                     state = latestState;
                     console.log("Is the device authorized? ", await isAuthorized(process.env.ACCOUNT_ADDRESS));
-                    console.log("Starting the zerompq client ...");
+                    console.log("Uploading encrypted local model to the aggregator ...");
                     await runtimeEvent("worker.model_transfer.started", { role: "worker", aggregator: String(state["1"]) });
                     try {
                         await runOperation("worker.model_transfer", {
                             role: "worker",
                             aggregator: String(state["1"]),
-                        }, () => callPythonService('/client', {
-                            server_ip: String(state["1"]),
-                            device_id: String(process.env.ACCOUNT_ADDRESS),
-                            timeout_ms: modelTransferTimeoutMs,
-                        }, { timeoutMs: modelTransferTimeoutMs + 5000 }));
+                        }, async () => {
+                            const endpoint = String(await getAggregatorEndpoint());
+                            if (!endpoint.startsWith('https://')) {
+                                throw new Error(`Aggregator has not published a valid HTTPS model endpoint: ${endpoint}`);
+                            }
+                            await uploadLocalModel(endpoint, String(process.env.ACCOUNT_ADDRESS));
+                        });
                         if (await hasSubmittedModel(currentRound, process.env.ACCOUNT_ADDRESS)) {
                             console.log(`Model submission already recorded for round ${currentRound}; skipping duplicate submit/contribution transactions.`);
                         }
