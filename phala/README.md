@@ -1,6 +1,7 @@
 # Phala/dstack Worker Image Attestation
 
-This directory contains the deployment template for generating a Phala/dstack TDX quote for the DFL worker image.
+This directory contains deployment templates for the contract runtime, DFL
+workers, and the separately attested TEE inference service.
 
 ## Terraform Deployment
 
@@ -14,6 +15,7 @@ Files:
 - `terraform.tfvars.example`: values you can copy into `terraform.tfvars`
 - `dstack-compose.contracts.phala.tftpl`: Terraform-rendered compose policy for the contract-runtime TEE
 - `dstack-compose.worker.phala.tftpl`: Terraform-rendered compose policy for the worker TEE
+- `dstack-compose.tee-inference.phala.tftpl`: Terraform-rendered compose policy for the TEE inference app
 - `dstack-compose.contracts.template.yml`: manual compose policy for the contract-runtime TEE
 - `dstack-compose.template.yml`: manual compose policy for the worker TEE
 
@@ -42,6 +44,7 @@ The wrapper reads these values from the selected env file:
 - `W0_ACCOUNT_ADDRESS`
 - `W0_PRIVATE_KEY`
 - optional `W0_RSA_PRIVATE_KEY_FILE` and `W0_RSA_PUBLIC_KEY_FILE` paths; generated files under `data/rsa_keys/` are used by default
+- optional `ENABLE_TEE_INFERENCE`, `TEE_INFERENCE_IMAGE`, `TEE_MODEL_URL`, and `TEE_MODEL_MANIFEST_URL`
 
 It also forwards the current Anvil/DFL profile settings into Terraform, including:
 
@@ -75,6 +78,16 @@ Notes:
 - `worker_image` must stay pinned to a `sha256` digest. Its digest is the shared on-chain workload-policy identity; the worker-specific Compose hash is not an allowlist key.
 - `smart_contracts_image` should also be pinned to a `sha256` digest when you want the contract-runtime TEE to be reproducible.
 - The Terraform scaffold now separates `smart-contracts` and `dfl-worker` into different Phala apps / TEEs.
+- The optional third `tee_inference` app uses the digest-pinned
+  `ghcr.io/uzhw8rgl/master-thesis-tee-inference` image. Its socketless
+  `model-init` service downloads the native `aggregated.bin` artifact and canonical CBOR manifest
+  into a shared volume. Only the `tee-inference` service in that app mounts
+  `/var/run/dstack.sock`; the init service cannot request quotes or derive
+  dstack-bound keys.
+- TEE inference is disabled by default and Terraform rejects enabling it until
+  both model URLs are HTTP(S) URLs. At service startup the manifest hash,
+  declared native-model hash, byte length, tensor contract, preprocessing, decision
+  rule, and label order are checked before the health endpoint becomes ready.
 - If you want SSH access, set `ssh_public_key_path`; if you also want the key stored account-wide in Phala Cloud, set `manage_account_ssh_key = true`.
 - Non-secret worker configuration is rendered into Compose; secret values use the provider's encrypted app environment.
 - The default minimal hardware profile is now `tdx.small` with `20 GB` disk.
@@ -245,3 +258,16 @@ Current Terraform defaults in this scaffold match that target layout:
 - `contracts_size = "tdx.small"`
 - `worker_size = "tdx.small"`
 - `os_image = "dstack-dev-0.5.7"`
+- `tee_inference_image = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:aa5d0ed3151ca0b46e77a0ea16af336e5374745eed77277dc30608cca80e0baf"`
+- `enable_tee_inference = false` until the matching native-model and manifest URLs are supplied
+
+To enable the third app after publishing both immutable model artifacts:
+
+```bash
+export ENABLE_TEE_INFERENCE=true
+export TEE_INFERENCE_IMAGE=ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:aa5d0ed3151ca0b46e77a0ea16af336e5374745eed77277dc30608cca80e0baf
+export TEE_MODEL_URL=https://<immutable-location>/aggregated.bin
+export TEE_MODEL_MANIFEST_URL=https://<immutable-location>/model-manifest.cbor
+bash phala/tf-env.sh plan -input=false
+bash phala/tf-env.sh apply -input=false -auto-approve
+```

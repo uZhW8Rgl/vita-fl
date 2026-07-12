@@ -15,9 +15,8 @@ inference-response = {
   2: bytes .size 16,            ; request identifier copied from request
   3: bytes .size 32,            ; SHA-256 of exact request CBOR bytes
   4: bytes .size 32,            ; model manifest SHA-256
-  5: bytes .size 56,            ; 14 IEEE-754 binary32 logits, little-endian
-  6: bytes .size 56,            ; 14 IEEE-754 binary32 probabilities, little-endian
+  5: bytes .size 112,           ; 14 IEEE-754 binary64 logits, little-endian
+  6: bytes .size 112,           ; 14 IEEE-754 binary64 probabilities, little-endian
   7: bytes .size 14,            ; one 0x00/0x01 decision per label
   8: uint                       ; inference duration in microseconds
 }
-

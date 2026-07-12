@@ -38,19 +38,20 @@ PYTHONPATH=. python3 -m unittest discover -s tee_inference/tests -v
 The AIR tests include the official cyntrisec/air-v1
 `valid/v1-tdx-with-nonce.json` receipt and its published verification key.
 
-## ONNX inference service
+## Native PyTorch inference service
 
 `tee_inference.service` exposes `POST /v1/infer` with media type
 `application/cbor`. It rejects JSON, oversized bodies, non-deterministic CBOR,
-unknown fields, a mismatched manifest hash, and an incompatible ONNX tensor
+unknown fields, a mismatched manifest hash, and an incompatible native model
 contract. `GET /healthz` reports the loaded model and manifest SHA-256 values.
 
 At startup, the service reads both the model and its exact canonical manifest;
-it checks the manifest's ONNX SHA-256 and byte length before serving requests.
+it checks the manifest's `aggregated.bin` SHA-256 and byte length before serving requests.
 The required environment variables are paths rather than trusted digest text:
 
 ```sh
-export TEE_MODEL_PATH=/app/model/model_logits.onnx
+export DATASET_NAME=chestmnist
+export TEE_MODEL_PATH=/app/model/aggregated.bin
 export TEE_MODEL_MANIFEST_PATH=/app/model/model-manifest.cbor
 PYTHONPATH=. python3 -m tee_inference.service
 ```

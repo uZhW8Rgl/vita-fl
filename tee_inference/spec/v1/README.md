@@ -25,14 +25,14 @@ must verify the quote before accepting the AIR signature as TEE provenance.
 
 The request carries exactly 784 unsigned grayscale samples in row-major order.
 For each pixel `p`, the service computes `(float64(p) - 127.5) / 127.5`, then
-casts the resulting `[1, 784]` tensor to float32 before ONNX Runtime execution.
+keeps the resulting `[1, 784]` tensor as float64 for native PyTorch execution.
 This matches `dfl/neural_network/cli.py`. Keeping source pixels in the request
 avoids cross-language CBOR floating-point ambiguities.
 
 ## Output
 
-The ONNX model returns 14 logits. Logits and sigmoid probabilities are encoded
-as 14 consecutive IEEE-754 binary32 values in little-endian order. Decisions
+The native `FederatedCNN` returns 14 logits. Logits and sigmoid probabilities are encoded
+as 14 consecutive IEEE-754 binary64 values in little-endian order. Decisions
 are 14 bytes (`0x00` or `0x01`) and use `sigmoid(logit) >= 0.5` independently
 for every label. Their fixed order is:
 

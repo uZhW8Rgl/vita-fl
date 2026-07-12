@@ -19,18 +19,18 @@ def digest(raw: bytes) -> str:
 
 def main() -> None:
     artifact_digest = bytes.fromhex(
-        "67d9389ce4ff06c859ff411f150eac28df3e95c989ddeb31136806fd87723896"
+        "37f6d03679ff0af626905e27bd5908238118982fca493be84c3ef41eda0c38b4"
     )
     manifest = {
         1: 1,
         2: "master-thesis/chestmnist-dfl",
         3: "round-1",
         4: {
-            1: "model_logits.onnx",
-            2: "application/onnx",
+            1: "aggregated.bin",
+            2: "application/vnd.master-thesis.dfl-model",
             3: artifact_digest,
-            4: 109_022,
-            5: 18,
+            4: 214_640,
+            5: "float64-le-v1",
         },
         5: {
             1: 31_337,
@@ -41,10 +41,10 @@ def main() -> None:
         },
         6: {
             1: "input",
-            2: "float32",
+            2: "float64",
             3: [1, 784],
             4: "logits",
-            5: "float32",
+            5: "float64",
             6: [1, 14],
             7: "row-major",
         },
@@ -53,7 +53,7 @@ def main() -> None:
             2: [28, 28, 1],
             3: "row-major-hwc",
             4: "(float64(pixel)-127.5)/127.5",
-            5: "float32-before-onnx",
+            5: "float64-native-pytorch",
         },
         8: {
             1: "multilabel",
@@ -92,8 +92,8 @@ def main() -> None:
         2: request[2],
         3: request_digest,
         4: manifest_digest,
-        5: struct.pack("<14f", *logits),
-        6: struct.pack("<14f", *probabilities),
+        5: struct.pack("<14d", *logits),
+        6: struct.pack("<14d", *probabilities),
         7: bytes(int(value >= 0.5) for value in probabilities),
         8: 12_345,
     }

@@ -9,13 +9,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from tee_inference.protocol.v1 import ProtocolError
-from tee_inference.service.engine import ChestMnistOnnxEngine, InferenceError
+from tee_inference.service.engine import ChestMnistTorchEngine, InferenceError
 
 CBOR_MEDIA_TYPE = "application/cbor"
 MAX_REQUEST_BYTES = 2_048
 
 
-def create_app(engine: ChestMnistOnnxEngine) -> FastAPI:
+def create_app(engine: ChestMnistTorchEngine) -> FastAPI:
     app = FastAPI(title="ChestMNIST TEE inference", version="1")
 
     @app.get("/healthz")
@@ -44,9 +44,9 @@ def create_app(engine: ChestMnistOnnxEngine) -> FastAPI:
 
 
 def from_environment() -> FastAPI:
-    model_path = Path(os.environ.get("TEE_MODEL_PATH", "/app/model/model_logits.onnx"))
+    model_path = Path(os.environ.get("TEE_MODEL_PATH", "/app/model/aggregated.bin"))
     manifest_path = Path(os.environ.get("TEE_MODEL_MANIFEST_PATH", "/app/model/model-manifest.cbor"))
-    return create_app(ChestMnistOnnxEngine.from_manifest(model_path, manifest_path.read_bytes()))
+    return create_app(ChestMnistTorchEngine.from_manifest(model_path, manifest_path.read_bytes()))
 
 
 app = from_environment() if os.environ.get("TEE_INFERENCE_AUTOSTART") == "1" else FastAPI()

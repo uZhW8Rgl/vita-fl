@@ -1,6 +1,5 @@
-"""ChestMNIST ONNX inference service."""
+"""Native ChestMNIST PyTorch inference service."""
 
-from .engine import ChestMnistOnnxEngine
+from .engine import ChestMnistTorchEngine
 
-__all__ = ["ChestMnistOnnxEngine"]
-
+__all__ = ["ChestMnistTorchEngine"]

@@ -1,4 +1,6 @@
 **
 !tee_inference/
 !tee_inference/**
-
+!dfl/
+!dfl/neural_network/
+!dfl/neural_network/**

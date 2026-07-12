@@ -1,0 +1,53 @@
+services:
+  model-init:
+    image: ${tee_inference_image}
+    restart: "no"
+    environment:
+      TEE_MODEL_URL: "${tee_model_url}"
+      TEE_MODEL_MANIFEST_URL: "${tee_model_manifest_url}"
+    volumes:
+      - tee-model:/app/model
+    command:
+      - python
+      - -c
+      - |
+        import os
+        import pathlib
+        import urllib.request
+
+        target = pathlib.Path("/app/model")
+        target.mkdir(parents=True, exist_ok=True)
+        for env_name, filename, maximum_bytes in (
+            ("TEE_MODEL_URL", "aggregated.bin", 268435456),
+            ("TEE_MODEL_MANIFEST_URL", "model-manifest.cbor", 1048576),
+        ):
+            url = os.environ[env_name]
+            if not url.startswith(("https://", "http://")):
+                raise SystemExit(f"{env_name} must be an HTTP(S) URL")
+            temporary = target / f".{filename}.tmp"
+            with urllib.request.urlopen(url, timeout=120) as response:
+                content = response.read(maximum_bytes + 1)
+            if len(content) > maximum_bytes:
+                raise SystemExit(f"{filename} exceeds its size limit")
+            temporary.write_bytes(content)
+            temporary.replace(target / filename)
+
+  tee-inference:
+    image: ${tee_inference_image}
+    restart: unless-stopped
+    depends_on:
+      model-init:
+        condition: service_completed_successfully
+    volumes:
+      - tee-model:/app/model:ro
+      # Only the attested inference service in this app receives the socket.
+      - /var/run/dstack.sock:/var/run/dstack.sock
+    ports:
+      - "8080:8080"
+    environment:
+      DATASET_NAME: chestmnist
+      TEE_MODEL_PATH: /app/model/aggregated.bin
+      TEE_MODEL_MANIFEST_PATH: /app/model/model-manifest.cbor
+
+volumes:
+  tee-model:

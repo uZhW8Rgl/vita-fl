@@ -256,6 +256,43 @@ resource "phala_app" "dfl_worker_additional" {
   wait_timeout_seconds = var.wait_timeout_seconds
 }
 
+resource "phala_app" "tee_inference" {
+  count = var.enable_tee_inference ? 1 : 0
+
+  name = var.tee_inference_app_name
+  docker_compose = templatefile("${path.module}/dstack-compose.tee-inference.phala.tftpl", {
+    tee_inference_image    = var.tee_inference_image
+    tee_model_url          = var.tee_model_url
+    tee_model_manifest_url = var.tee_model_manifest_url
+  })
+  env  = {}
+  size = var.tee_inference_size
+
+  region    = var.region
+  image     = var.os_image
+  disk_size = var.tee_inference_disk_size
+  replicas  = 1
+
+  kms           = var.kms
+  listed        = var.listed
+  node_id       = var.node_id
+  custom_app_id = var.custom_app_id
+  nonce         = var.nonce
+  storage_fs    = var.storage_fs
+
+  ssh_authorized_keys = local.ssh_authorized_keys
+  pre_launch_script   = var.pre_launch_script
+
+  public_logs     = var.public_logs
+  public_sysinfo  = var.public_sysinfo
+  public_tcbinfo  = var.public_tcbinfo
+  gateway_enabled = var.tee_inference_gateway_enabled
+  secure_time     = var.secure_time
+
+  wait_for_ready       = var.wait_for_ready
+  wait_timeout_seconds = var.wait_timeout_seconds
+}
+
 resource "phala_cvm_power" "dfl_worker" {
   count = var.manage_power_state ? 1 : 0
 
@@ -280,6 +317,16 @@ resource "phala_cvm_power" "dfl_worker_additional" {
   for_each = var.manage_power_state ? toset(keys(nonsensitive(var.additional_workers))) : toset([])
 
   cvm_id = phala_app.dfl_worker_additional[each.key].primary_cvm_id
+  state  = var.desired_power_state
+
+  wait_for_state       = true
+  wait_timeout_seconds = var.wait_timeout_seconds
+}
+
+resource "phala_cvm_power" "tee_inference" {
+  count = var.enable_tee_inference && var.manage_power_state ? 1 : 0
+
+  cvm_id = phala_app.tee_inference[0].primary_cvm_id
   state  = var.desired_power_state
 
   wait_for_state       = true

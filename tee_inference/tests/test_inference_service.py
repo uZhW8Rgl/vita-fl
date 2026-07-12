@@ -11,21 +11,21 @@ import httpx
 
 from tee_inference.protocol.v1 import ProtocolError, decode_request, decode_response, encode_deterministic
 from tee_inference.service.app import create_app
-from tee_inference.service.engine import ChestMnistOnnxEngine, InferenceError
+from tee_inference.service.engine import ChestMnistTorchEngine, InferenceError
 
 ROOT = Path(__file__).resolve().parents[2]
-MODEL = ROOT / "zk_inference" / "out" / "model_logits.onnx"
+MODEL = ROOT / "agent" / "downloads" / "onchain-28945426c804-aggregated.bin"
 VECTOR = ROOT / "tee_inference" / "vectors" / "v1-chestmnist.json"
 
 
-@unittest.skipUnless(MODEL.exists(), "local ONNX export is not present")
+@unittest.skipUnless(MODEL.exists(), "local native DFL model is not present")
 class ChestMnistInferenceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         vector = json.loads(VECTOR.read_text(encoding="utf-8"))
         cls.manifest_hash = bytes.fromhex(vector["manifest"]["sha256_hex"])
         manifest_cbor = bytes.fromhex(vector["manifest"]["deterministic_cbor_hex"])
-        cls.engine = ChestMnistOnnxEngine.from_manifest(MODEL, manifest_cbor)
+        cls.engine = ChestMnistTorchEngine.from_manifest(MODEL, manifest_cbor)
 
     def request(self, *, manifest_hash: bytes | None = None) -> bytes:
         return encode_deterministic({
@@ -37,14 +37,14 @@ class ChestMnistInferenceTests(unittest.TestCase):
             6: 1_750_000_000_123,
         })
 
-    def test_real_onnx_model_contract_and_inference(self) -> None:
+    def test_real_native_model_contract_and_inference(self) -> None:
         request = self.request()
         response = decode_response(self.engine.infer(request))
         self.assertEqual(response[2], bytes.fromhex("00112233445566778899aabbccddeeff"))
         self.assertEqual(response[3], hashlib.sha256(request).digest())
         self.assertEqual(response[4], self.manifest_hash)
-        self.assertEqual(len(struct.unpack("<14f", response[5])), 14)
-        probabilities = struct.unpack("<14f", response[6])
+        self.assertEqual(len(struct.unpack("<14d", response[5])), 14)
+        probabilities = struct.unpack("<14d", response[6])
         self.assertTrue(all(0.0 <= value <= 1.0 for value in probabilities))
         self.assertEqual(response[7], bytes(int(value >= 0.5) for value in probabilities))
 

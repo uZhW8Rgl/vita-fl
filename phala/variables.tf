@@ -17,6 +17,18 @@ variable "worker_app_name" {
   default     = "master-thesis-dfl-worker-0"
 }
 
+variable "enable_tee_inference" {
+  description = "Deploy the separate attested TEE inference Phala app. Model URLs must be configured first."
+  type        = bool
+  default     = false
+}
+
+variable "tee_inference_app_name" {
+  description = "Name of the Phala Cloud app that runs attested ChestMNIST inference."
+  type        = string
+  default     = "master-thesis-tee-inference"
+}
+
 variable "additional_workers" {
   description = "Additional DFL worker apps with independent account/key pairs."
   type = map(object({
@@ -42,6 +54,12 @@ variable "worker_size" {
   default     = "tdx.small"
 }
 
+variable "tee_inference_size" {
+  description = "Phala CVM size slug for the TEE inference app."
+  type        = string
+  default     = "tdx.small"
+}
+
 variable "region" {
   description = "Phala region slug."
   type        = string
@@ -62,6 +80,12 @@ variable "contracts_disk_size" {
 
 variable "worker_disk_size" {
   description = "Disk size in GB for the worker TEE."
+  type        = number
+  default     = 20
+}
+
+variable "tee_inference_disk_size" {
+  description = "Disk size in GB for the TEE inference app."
   type        = number
   default     = 20
 }
@@ -150,6 +174,12 @@ variable "worker_gateway_enabled" {
   default     = true
 }
 
+variable "tee_inference_gateway_enabled" {
+  description = "Enable the public gateway endpoint for the TEE inference app."
+  type        = bool
+  default     = true
+}
+
 variable "secure_time" {
   description = "Enable secure time mode."
   type        = bool
@@ -213,6 +243,39 @@ variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
   default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:5b6bafac3bd026632f4f53fe42ca2804b37849b231e34c5303d810b9433d0533"
+}
+
+variable "tee_inference_image" {
+  description = "Digest-pinned TEE inference container image."
+  type        = string
+  default     = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:aa5d0ed3151ca0b46e77a0ea16af336e5374745eed77277dc30608cca80e0baf"
+
+  validation {
+    condition     = can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.tee_inference_image))
+    error_message = "tee_inference_image must be a digest-pinned ghcr.io reference."
+  }
+}
+
+variable "tee_model_url" {
+  description = "HTTP(S) URL of the native aggregated.bin DFL model loaded by the socketless model-init service."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_tee_inference || can(regex("^https?://", var.tee_model_url))
+    error_message = "tee_model_url must be HTTP(S) when TEE inference is enabled."
+  }
+}
+
+variable "tee_model_manifest_url" {
+  description = "HTTP(S) URL of the canonical model-manifest.cbor matching the native DFL artifact."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_tee_inference || can(regex("^https?://", var.tee_model_manifest_url))
+    error_message = "tee_model_manifest_url must be HTTP(S) when TEE inference is enabled."
+  }
 }
 
 variable "anvil_image" {

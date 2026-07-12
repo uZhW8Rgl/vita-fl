@@ -155,20 +155,20 @@ def decode_manifest(raw: bytes) -> dict[int, object]:
     if not isinstance(manifest[3], str) or not manifest[3]:
         raise ProtocolError("model version must be non-empty text")
     artifact = _closed_map(manifest[4], set(range(1, 6)), "artifact")
-    if artifact[1] != "model_logits.onnx" or artifact[2] != "application/onnx":
+    if artifact[1] != "aggregated.bin" or artifact[2] != "application/vnd.master-thesis.dfl-model":
         raise ProtocolError("unsupported model artifact")
-    _bytes_field(artifact[3], 32, "ONNX artifact hash")
-    _uint_field(artifact[4], "ONNX artifact size")
-    if artifact[5] != 18:
-        raise ProtocolError("unsupported ONNX opset")
+    _bytes_field(artifact[3], 32, "native model hash")
+    _uint_field(artifact[4], "native model size")
+    if artifact[5] != "float64-le-v1":
+        raise ProtocolError("unsupported native model serialization")
     _closed_map(manifest[5], set(range(1, 6)), "provenance")
     tensor = _closed_map(manifest[6], set(range(1, 8)), "tensor contract")
     if tensor != {
         1: "input",
-        2: "float32",
+        2: "float64",
         3: [1, 784],
         4: "logits",
-        5: "float32",
+        5: "float64",
         6: [1, 14],
         7: "row-major",
     }:
@@ -179,7 +179,7 @@ def decode_manifest(raw: bytes) -> dict[int, object]:
         2: [28, 28, 1],
         3: "row-major-hwc",
         4: "(float64(pixel)-127.5)/127.5",
-        5: "float32-before-onnx",
+        5: "float64-native-pytorch",
     }:
         raise ProtocolError("unsupported preprocessing contract")
     decision = _closed_map(manifest[8], set(range(1, 5)), "decision rule")
@@ -214,8 +214,8 @@ def build_response(
         2: request_id,
         3: hashlib.sha256(exact_request).digest(),
         4: model_manifest_hash,
-        5: struct.pack("<14f", *logits),
-        6: struct.pack("<14f", *probabilities),
+        5: struct.pack("<14d", *logits),
+        6: struct.pack("<14d", *probabilities),
         7: decisions,
         8: duration_microseconds,
     }
@@ -230,8 +230,8 @@ def decode_response(raw: bytes) -> dict[int, object]:
     _bytes_field(response[2], 16, "request id")
     _bytes_field(response[3], 32, "request hash")
     _bytes_field(response[4], 32, "manifest hash")
-    _bytes_field(response[5], 56, "logits")
-    _bytes_field(response[6], 56, "probabilities")
+    _bytes_field(response[5], 112, "logits")
+    _bytes_field(response[6], 112, "probabilities")
     decisions = _bytes_field(response[7], 14, "decisions")
     if any(value not in (0, 1) for value in decisions):
         raise ProtocolError("decision bytes must be 0 or 1")

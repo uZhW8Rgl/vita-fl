@@ -38,6 +38,26 @@ output "worker_status" {
   value       = phala_app.dfl_worker.status
 }
 
+output "tee_inference_app_id" {
+  description = "Phala application ID for the TEE inference app, when enabled."
+  value       = try(phala_app.tee_inference[0].app_id, null)
+}
+
+output "tee_inference_primary_cvm_id" {
+  description = "Primary CVM identifier for the TEE inference app, when enabled."
+  value       = try(phala_app.tee_inference[0].primary_cvm_id, null)
+}
+
+output "tee_inference_endpoint" {
+  description = "Public endpoint for the TEE inference app, when enabled."
+  value       = try(phala_app.tee_inference[0].endpoint, null)
+}
+
+output "tee_inference_status" {
+  description = "Deployment status for the TEE inference app, when enabled."
+  value       = try(phala_app.tee_inference[0].status, null)
+}
+
 output "additional_worker_app_ids" {
   description = "Phala application IDs for additional worker apps."
   value       = { for key, app in phala_app.dfl_worker_additional : key => app.app_id }
