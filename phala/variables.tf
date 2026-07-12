@@ -20,9 +20,11 @@ variable "worker_app_name" {
 variable "additional_workers" {
   description = "Additional DFL worker apps with independent account/key pairs."
   type = map(object({
-    app_name        = string
-    account_address = string
-    private_key     = string
+    app_name             = string
+    account_address      = string
+    private_key          = string
+    rsa_private_key_path = string
+    rsa_public_key_path  = string
   }))
   sensitive = true
   default   = {}
@@ -115,7 +117,7 @@ variable "pre_launch_script" {
 variable "public_logs" {
   description = "Expose container logs publicly."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "public_sysinfo" {
@@ -345,16 +347,22 @@ variable "gm_update_poll_ms" {
   default     = "5000"
 }
 
-variable "rsa_private_key_file" {
-  description = "Path inside the container to the RSA private key."
+variable "rsa_private_key_path" {
+  description = "Local path to the worker RSA private key; encrypted by the Phala provider before deployment."
   type        = string
-  default     = "/dfl/keys/private_key.pem"
+  default     = "../data/rsa_keys/private_key.pem"
 }
 
-variable "rsa_public_key_file" {
-  description = "Path inside the container to the RSA public key."
+variable "rsa_public_key_path" {
+  description = "Local path to the worker RSA public key; delivered with the encrypted app environment."
   type        = string
-  default     = "/dfl/keys/public_key.pem"
+  default     = "../data/rsa_keys/public_key.pem"
+}
+
+variable "initial_gm_signing_key_path" {
+  description = "Local path to the initial global-model signing key; encrypted before delivery to the contract-runtime TEE."
+  type        = string
+  default     = "../data/rsa_keys/private_key.pem"
 }
 
 variable "train_images_src" {
@@ -502,9 +510,15 @@ variable "phala_rtmr3_event_digests" {
 }
 
 variable "phala_enforce_compose_hash" {
-  description = "Set to 1 to require all workers to match one fixed Phala compose-hash. Leave 0 for multi-worker Phala runs where each worker has a distinct measured compose hash but still submits live RTMR3 events."
+  description = "Legacy single-compose switch. Production registration now always requires an explicit compose allowlist."
   type        = string
   default     = "0"
+}
+
+variable "phala_allowed_worker_compose_hashes" {
+  description = "Comma-separated SHA-256 hashes of the exact measured app_compose objects approved for worker registration. Required for Phala deployment."
+  type        = string
+  default     = ""
 }
 
 variable "public_ip" {

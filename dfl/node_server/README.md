@@ -5,7 +5,7 @@
 It coordinates:
 
 - smart-contract calls against `DeviceRegistry`, `AggregatorSelection`, and `GMStorage`,
-- local TDX quote registration,
+- bound TDX registration (live Phala quote or explicit local-only mock),
 - IPFS upload and download through Kubo or Pinata,
 - global model and signature retrieval,
 - RSA signature verification for global model artifacts,
@@ -62,7 +62,8 @@ npm run start
 - `KUBO_API`
 - `KUBO_GATEWAY`
 - `PYTHON_SERVICE_URL`
-- `TDX_QUOTE_PATH`
+- `LOCAL_TDX_MOCK` (local Anvil only; never enable on Phala)
+- `EXPECTED_WORKER_IMAGE` and the Registry-provisioned compose allowlist (Phala)
 - `RSA_PRIVATE_KEY`
 - `RSA_PUBLIC_KEY`
 

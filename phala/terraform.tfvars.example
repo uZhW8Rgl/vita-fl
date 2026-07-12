@@ -8,8 +8,16 @@
 # - worker_disk_size    = 20
 # - worker_replicas = 1
 
-account_address    = "0xYOUR_WORKER_ADDRESS"
-private_key        = "0xYOUR_WORKER_PRIVATE_KEY"
+account_address             = "0xYOUR_WORKER_ADDRESS"
+rsa_private_key_path        = "../data/rsa_keys/private_key.pem"
+rsa_public_key_path         = "../data/rsa_keys/public_key.pem"
+initial_gm_signing_key_path = "../data/rsa_keys/private_key.pem"
+
+# Required, exact canonical app_compose SHA-256 hashes for approved workers:
+# phala_allowed_worker_compose_hashes = "0123...cdef,4567...abcd"
+
+# Do not put wallet or RSA private-key contents in this file. Supply the
+# sensitive wallet input with TF_VAR_private_key or use phala/tf-env.sh.
 
 # Optional overrides:
 # contracts_app_name = "master-thesis-contract-runtime-phala"
@@ -25,16 +33,6 @@ private_key        = "0xYOUR_WORKER_PRIVATE_KEY"
 # desired_power_state = "running" # or "stopped"
 # ssh_public_key_path = "/absolute/path/to/id_ed25519.pub"
 #
-# To add separate worker apps with different account/key pairs:
-# additional_workers = {
-#   worker1 = {
-#     app_name        = "master-thesis-dfl-worker-1"
-#     account_address = "0x..."
-#     private_key     = "0x..."
-#   }
-#   worker2 = {
-#     app_name        = "master-thesis-dfl-worker-2"
-#     account_address = "0x..."
-#     private_key     = "0x..."
-#   }
-# }
+# For multiple workers, prefer phala/tf-env.sh. It builds the sensitive
+# additional_workers value in the process environment instead of writing it
+# into this file or the command line.

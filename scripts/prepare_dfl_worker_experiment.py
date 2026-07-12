@@ -208,13 +208,16 @@ def ensure_rsa_keypair(keys_dir: Path, index: int, *, force: bool = False) -> bo
     der_path = public_der_path(keys_dir, index)
 
     if not force and private_path.exists() and public_path.exists() and der_path.exists():
+        private_path.chmod(0o600)
+        public_path.chmod(0o644)
+        der_path.chmod(0o644)
         return False
 
     keys_dir.mkdir(parents=True, exist_ok=True)
     run_openssl(["genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private_path)])
     run_openssl(["pkey", "-in", str(private_path), "-pubout", "-out", str(public_path)])
     run_openssl(["pkey", "-pubin", "-in", str(public_path), "-outform", "DER", "-out", str(der_path)])
-    private_path.chmod(0o644)
+    private_path.chmod(0o600)
     public_path.chmod(0o644)
     der_path.chmod(0o644)
     return True
@@ -276,6 +279,7 @@ def update_env_file(env_path: Path, accounts: list[tuple[str, str]], worker_coun
     value_map = {
         "WORKER_COUNT": str(worker_count),
         "ANVIL_ACCOUNT_COUNT": str(worker_count),
+        "WORKER_ACCOUNT_ADDRESSES": ",".join(address for address, _ in accounts),
     }
     seen: set[str] = set()
     kept: list[str] = []
@@ -301,7 +305,7 @@ def update_env_file(env_path: Path, accounts: list[tuple[str, str]], worker_coun
 
     if kept and kept[-1] != "":
         kept.append("")
-    for key in ("ANVIL_ACCOUNT_COUNT", "WORKER_COUNT"):
+    for key in ("ANVIL_ACCOUNT_COUNT", "WORKER_COUNT", "WORKER_ACCOUNT_ADDRESSES"):
         if key not in seen:
             kept.append(f"{key}={value_map[key]}")
 

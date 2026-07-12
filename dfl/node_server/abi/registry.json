@@ -1,18 +1,43 @@
 [
   {
     "type": "constructor",
-    "inputs": [],
+    "inputs": [
+      { "name": "_deploymentId", "type": "bytes32", "internalType": "bytes32" }
+    ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "REGISTRATION_CHALLENGE_DOMAIN",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "REGISTRATION_CHALLENGE_TTL",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "uint256", "internalType": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "REGISTRATION_REPORT_DATA_DOMAIN",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
     "name": "authorizeAddress",
     "inputs": [
-      {
-        "name": "_address",
-        "type": "address",
-        "internalType": "address"
-      }
+      { "name": "_address", "type": "address", "internalType": "address" }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
@@ -21,46 +46,31 @@
     "type": "function",
     "name": "deauthorizeAddress",
     "inputs": [
-      {
-        "name": "_address",
-        "type": "address",
-        "internalType": "address"
-      }
+      { "name": "_address", "type": "address", "internalType": "address" }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
+    "name": "deploymentId",
+    "inputs": [],
+    "outputs": [
+      { "name": "", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "devices",
     "inputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
+      { "name": "", "type": "address", "internalType": "address" }
     ],
     "outputs": [
-      {
-        "name": "authorized",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "public_ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "msg_broker_ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "public_key",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
+      { "name": "authorized", "type": "bool", "internalType": "bool" },
+      { "name": "public_ip", "type": "string", "internalType": "string" },
+      { "name": "msg_broker_ip", "type": "string", "internalType": "string" },
+      { "name": "public_key", "type": "bytes", "internalType": "bytes" }
     ],
     "stateMutability": "view"
   },
@@ -69,11 +79,7 @@
     "name": "expectedWorkerImageDigest",
     "inputs": [],
     "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
+      { "name": "", "type": "bytes32", "internalType": "bytes32" }
     ],
     "stateMutability": "view"
   },
@@ -82,11 +88,7 @@
     "name": "getAuthorizedDevices",
     "inputs": [],
     "outputs": [
-      {
-        "name": "",
-        "type": "address[]",
-        "internalType": "address[]"
-      }
+      { "name": "", "type": "address[]", "internalType": "address[]" }
     ],
     "stateMutability": "view"
   },
@@ -94,33 +96,27 @@
     "type": "function",
     "name": "getDevice",
     "inputs": [
-      {
-        "name": "_address",
-        "type": "address",
-        "internalType": "address"
-      }
+      { "name": "_address", "type": "address", "internalType": "address" }
     ],
     "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
+      { "name": "", "type": "bool", "internalType": "bool" },
+      { "name": "", "type": "string", "internalType": "string" },
+      { "name": "", "type": "string", "internalType": "string" },
+      { "name": "", "type": "bytes", "internalType": "bytes" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isDeviceRegistrationCurrent",
+    "inputs": [
+      { "name": "_address", "type": "address", "internalType": "address" },
+      { "name": "_public_key", "type": "bytes", "internalType": "bytes" },
+      { "name": "composeHash", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "imageDigest", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "outputs": [
+      { "name": "", "type": "bool", "internalType": "bool" }
     ],
     "stateMutability": "view"
   },
@@ -128,18 +124,10 @@
     "type": "function",
     "name": "isAuthorized",
     "inputs": [
-      {
-        "name": "_address",
-        "type": "address",
-        "internalType": "address"
-      }
+      { "name": "_address", "type": "address", "internalType": "address" }
     ],
     "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
+      { "name": "", "type": "bool", "internalType": "bool" }
     ],
     "stateMutability": "view"
   },
@@ -155,11 +143,7 @@
     "name": "number",
     "inputs": [],
     "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
+      { "name": "", "type": "uint256", "internalType": "uint256" }
     ],
     "stateMutability": "view"
   },
@@ -168,11 +152,7 @@
     "name": "owner",
     "inputs": [],
     "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
+      { "name": "", "type": "address", "internalType": "address" }
     ],
     "stateMutability": "view"
   },
@@ -180,135 +160,143 @@
     "type": "function",
     "name": "registerDevice",
     "inputs": [
-      {
-        "name": "quote",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "_address",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_public_ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "_msg_broker_ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "_public_key",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
+      { "name": "", "type": "bytes", "internalType": "bytes" },
+      { "name": "", "type": "address", "internalType": "address" },
+      { "name": "", "type": "string", "internalType": "string" },
+      { "name": "", "type": "string", "internalType": "string" },
+      { "name": "", "type": "bytes", "internalType": "bytes" }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
     "name": "registerDeviceWithRtmr3Events",
     "inputs": [
-      {
-        "name": "quote",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "rtmr3EventDigests",
-        "type": "bytes[]",
-        "internalType": "bytes[]"
-      },
-      {
-        "name": "composeHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "_address",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_public_ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "_msg_broker_ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "_public_key",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
+      { "name": "", "type": "bytes", "internalType": "bytes" },
+      { "name": "", "type": "bytes[]", "internalType": "bytes[]" },
+      { "name": "", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "", "type": "address", "internalType": "address" },
+      { "name": "", "type": "string", "internalType": "string" },
+      { "name": "", "type": "string", "internalType": "string" },
+      { "name": "", "type": "bytes", "internalType": "bytes" }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
     "name": "registerDeviceWithRtmr3EventsAndImageDigest",
     "inputs": [
-      {
-        "name": "quote",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "rtmr3EventDigests",
-        "type": "bytes[]",
-        "internalType": "bytes[]"
-      },
-      {
-        "name": "composeHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "workerImageDigest",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "_address",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_public_ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "_msg_broker_ip",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "_public_key",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
+      { "name": "quote", "type": "bytes", "internalType": "bytes" },
+      { "name": "rtmr3EventDigests", "type": "bytes[]", "internalType": "bytes[]" },
+      { "name": "composeHash", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "workerImageDigest", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "_address", "type": "address", "internalType": "address" },
+      { "name": "_public_ip", "type": "string", "internalType": "string" },
+      { "name": "_msg_broker_ip", "type": "string", "internalType": "string" },
+      { "name": "_public_key", "type": "bytes", "internalType": "bytes" }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
+    "name": "registeredComposeHashes",
+    "inputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [
+      { "name": "", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registeredImageDigests",
+    "inputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [
+      { "name": "", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registrationAllowed",
+    "inputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [
+      { "name": "", "type": "bool", "internalType": "bool" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registrationChallengeDeadlines",
+    "inputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [
+      { "name": "", "type": "uint256", "internalType": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registrationChallenges",
+    "inputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [
+      { "name": "", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registrationNonces",
+    "inputs": [
+      { "name": "", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [
+      { "name": "", "type": "uint256", "internalType": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registrationReportData",
+    "inputs": [
+      { "name": "_address", "type": "address", "internalType": "address" },
+      { "name": "_public_ip", "type": "string", "internalType": "string" },
+      { "name": "_msg_broker_ip", "type": "string", "internalType": "string" },
+      { "name": "_public_key", "type": "bytes", "internalType": "bytes" },
+      { "name": "composeHash", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "workerImageDigest", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "outputs": [
+      { "name": "", "type": "bytes", "internalType": "bytes" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setExpectedWorkerImageDigest",
     "inputs": [
-      {
-        "name": "_expectedWorkerImageDigest",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
+      { "name": "_expectedWorkerImageDigest", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRegistrationAllowed",
+    "inputs": [
+      { "name": "_address", "type": "address", "internalType": "address" },
+      { "name": "allowed", "type": "bool", "internalType": "bool" }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
@@ -317,11 +305,18 @@
     "type": "function",
     "name": "setTdxV4Attestation",
     "inputs": [
-      {
-        "name": "_tdxV4Attestation",
-        "type": "address",
-        "internalType": "address"
-      }
+      { "name": "_tdxV4Attestation", "type": "address", "internalType": "address" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setWorkerComposePolicy",
+    "inputs": [
+      { "name": "composeHash", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "imageDigest", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "allowed", "type": "bool", "internalType": "bool" }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
@@ -331,11 +326,19 @@
     "name": "tdxV4Attestation",
     "inputs": [],
     "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract ITdxV4Attestation"
-      }
+      { "name": "", "type": "address", "internalType": "contract ITdxV4Attestation" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "workerComposePolicies",
+    "inputs": [
+      { "name": "", "type": "bytes32", "internalType": "bytes32" }
+    ],
+    "outputs": [
+      { "name": "imageDigest", "type": "bytes32", "internalType": "bytes32" },
+      { "name": "allowed", "type": "bool", "internalType": "bool" }
     ],
     "stateMutability": "view"
   },
@@ -343,12 +346,7 @@
     "type": "event",
     "name": "DeviceAuthorized",
     "inputs": [
-      {
-        "name": "device",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
+      { "name": "device", "type": "address", "indexed": true, "internalType": "address" }
     ],
     "anonymous": false
   },
@@ -356,12 +354,7 @@
     "type": "event",
     "name": "DeviceDeauthorized",
     "inputs": [
-      {
-        "name": "device",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
+      { "name": "device", "type": "address", "indexed": true, "internalType": "address" }
     ],
     "anonymous": false
   },
@@ -369,12 +362,7 @@
     "type": "event",
     "name": "DeviceLeft",
     "inputs": [
-      {
-        "name": "device",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
+      { "name": "device", "type": "address", "indexed": true, "internalType": "address" }
     ],
     "anonymous": false
   },
@@ -382,12 +370,9 @@
     "type": "event",
     "name": "DeviceRegistered",
     "inputs": [
-      {
-        "name": "device",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
+      { "name": "device", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "registrationNonce", "type": "uint256", "indexed": true, "internalType": "uint256" },
+      { "name": "composeHash", "type": "bytes32", "indexed": true, "internalType": "bytes32" }
     ],
     "anonymous": false
   },
@@ -395,12 +380,28 @@
     "type": "event",
     "name": "ExpectedWorkerImageDigestUpdated",
     "inputs": [
-      {
-        "name": "expectedWorkerImageDigest",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
+      { "name": "expectedWorkerImageDigest", "type": "bytes32", "indexed": false, "internalType": "bytes32" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RegistrationPermissionUpdated",
+    "inputs": [
+      { "name": "device", "type": "address", "indexed": true, "internalType": "address" },
+      { "name": "allowed", "type": "bool", "indexed": false, "internalType": "bool" },
+      { "name": "challenge", "type": "bytes32", "indexed": true, "internalType": "bytes32" },
+      { "name": "deadline", "type": "uint256", "indexed": false, "internalType": "uint256" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "WorkerComposePolicyUpdated",
+    "inputs": [
+      { "name": "composeHash", "type": "bytes32", "indexed": true, "internalType": "bytes32" },
+      { "name": "imageDigest", "type": "bytes32", "indexed": true, "internalType": "bytes32" },
+      { "name": "allowed", "type": "bool", "indexed": false, "internalType": "bool" }
     ],
     "anonymous": false
   }

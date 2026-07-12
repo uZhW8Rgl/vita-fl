@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 if [[ $# -gt 2 ]]; then
   echo "Usage: $0 [KUBO_API_URL] [OUTPUT_DIR]" >&2

@@ -15,10 +15,29 @@ services:
       - osaka
       - --code-size-limit
       - "999999"
+    healthcheck:
+      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+  rpc-proxy:
+    image: ${smart_contracts_image}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      anvil:
+        condition: service_healthy
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      RPC_PROXY_UPSTREAM: http://anvil:8545
+    command: ["python3", "/dfl/smart_contracts/rpc_proxy.py"]
     ports:
       - "8545:8545"
     healthcheck:
-      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8545/health', timeout=2).read()"]
       interval: 5s
       timeout: 3s
       retries: 24
@@ -52,7 +71,11 @@ services:
       KUBO_API_URL: http://ipfs:5001
       IPFS_PROVIDER: kubo
       KEEP_ALIVE: "${keep_alive}"
-      ETH_WALLET_PRIVATE_KEY: "${eth_wallet_private_key}"
+      # Supplied through Phala's encrypted app environment. Only allow-list
+      # names belong in the measured compose policy.
+      ETH_WALLET_PRIVATE_KEY:
+      INITIAL_GM_SIGNING_KEY:
+      INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY:
       INITIAL_GM_CID: "${initial_gm_cid}"
       INITIAL_GM_SIG_CID: "${initial_gm_sig_cid}"
       ETH_EUR_PRICE: "${eth_eur_price}"
@@ -76,6 +99,7 @@ services:
       PHALA_RTMR3_EVENT_LOG_PATH: "${phala_rtmr3_event_log_path}"
       PHALA_RTMR3_EVENT_DIGESTS: "${phala_rtmr3_event_digests}"
       PHALA_ENFORCE_COMPOSE_HASH: "${phala_enforce_compose_hash}"
+      PHALA_ALLOWED_WORKER_COMPOSE_HASHES: "${phala_allowed_worker_compose_hashes}"
       DATASET_NAME: "${dataset_name}"
       W0_ACCOUNT_ADDRESS: "${w0_account_address}"
       W1_ACCOUNT_ADDRESS: "${w1_account_address}"

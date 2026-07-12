@@ -29,6 +29,7 @@ contract AggregatorSelection {
         SELECTING
     }
     string public system_state;
+    address public owner;
     address public current_aggregator;
     string public broker_endpoint;
     uint256 public time_to_aggregate;
@@ -61,14 +62,18 @@ contract AggregatorSelection {
     );
 
     constructor() {
+        owner = msg.sender;
         system_state = "TRAINING";
-        current_aggregator = address(
-            0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 // First Anvil Address
-        );
+        current_aggregator = msg.sender;
         broker_endpoint = "test_endpoint";
         time_to_aggregate = 0;
         time_to_select = 0;
         timeoutReportThresholdPercent = 50;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
     }
 
     // view functions
@@ -115,29 +120,23 @@ contract AggregatorSelection {
         system_state = _state;
     }
 
-    function setCurrentAggregator(address _aggregator) external {
+    function setCurrentAggregator(address _aggregator) external onlyOwner {
+        require(_aggregator != address(0), "invalid aggregator");
         current_aggregator = _aggregator;
     }
 
     function setBrokerEndpoint(string memory _endpoint) external {
+        require(msg.sender == current_aggregator, "Caller is not the current aggregator");
         broker_endpoint = _endpoint;
     }
 
-    function setGMStorageAddress(address _gm_storage_address) external {
-        // Restrict access to the current aggregator
-        require(
-            msg.sender == current_aggregator,
-            "Caller is not the current aggregator"
-        );
+    function setGMStorageAddress(address _gm_storage_address) external onlyOwner {
+        require(_gm_storage_address != address(0), "invalid GMStorage address");
         emit GMStorageAddressUpdated(gm_storage_address, _gm_storage_address);
         gm_storage_address = _gm_storage_address;
     }
 
-    function setTimeoutReportThresholdPercent(uint256 _thresholdPercent) external {
-        require(
-            msg.sender == current_aggregator,
-            "Caller is not the current aggregator"
-        );
+    function setTimeoutReportThresholdPercent(uint256 _thresholdPercent) external onlyOwner {
         require(_thresholdPercent > 0 && _thresholdPercent <= 100, "invalid threshold percent");
         emit TimeoutReportThresholdUpdated(
             timeoutReportThresholdPercent,

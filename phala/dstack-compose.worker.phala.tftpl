@@ -16,7 +16,11 @@ services:
       MSG_BROKER_IP: "${msg_broker_ip}"
 
       ACCOUNT_ADDRESS: "${account_address}"
-      PRIVATE_KEY: "${private_key}"
+      # Values are supplied through Phala's encrypted app environment. Keeping
+      # only the names here prevents secrets from entering measured app-compose.
+      PRIVATE_KEY:
+      RSA_PRIVATE_KEY:
+      RSA_PUBLIC_KEY:
       # Auto-resolved from the contract-runtime TEE's Kubo manifest at
       # /runtime/contracts.json when the worker boots.
       REGISTRY_ADDRESS: ""
@@ -36,8 +40,6 @@ services:
       GM_UPDATE_POLL_MS: "${gm_update_poll_ms}"
       DATASET_NAME: "${dataset_name}"
 
-      RSA_PRIVATE_KEY_FILE: "${rsa_private_key_file}"
-      RSA_PUBLIC_KEY_FILE: "${rsa_public_key_file}"
       TRAIN_IMAGES_SRC: "${train_images_src}"
       TRAIN_LABELS_SRC: "${train_labels_src}"
       TEST_IMAGES_SRC: "${test_images_src}"

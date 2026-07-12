@@ -4,7 +4,7 @@ terraform {
   required_providers {
     phala = {
       source  = "phala-network/phala"
-      version = "0.2.0-beta.1"
+      version = "0.2.0-beta.3"
     }
   }
 }
@@ -16,7 +16,7 @@ provider "phala" {
 locals {
   worker_account_addresses = concat(
     [var.account_address],
-    [for _, worker in nonsensitive(var.additional_workers) : worker.account_address],
+    [for worker_key in keys(nonsensitive(var.additional_workers)) : var.additional_workers[worker_key].account_address],
   )
 
   contracts_compose_content = templatefile("${path.module}/dstack-compose.contracts.phala.tftpl", {
@@ -28,7 +28,6 @@ locals {
     worker_account_addresses          = join(",", local.worker_account_addresses)
     initial_gm_signer_address         = coalesce(var.initial_gm_signer_address, var.account_address)
     blockchain_provider               = var.blockchain_provider
-    eth_wallet_private_key            = var.eth_wallet_private_key
     initial_gm_cid                    = var.initial_gm_cid
     initial_gm_sig_cid                = var.initial_gm_sig_cid
     eth_eur_price                     = var.eth_eur_price
@@ -43,8 +42,6 @@ locals {
     gm_update_poll_ms                 = var.gm_update_poll_ms
     model_transfer_timeout_ms         = var.model_transfer_timeout_ms
     model_transfer_retry_delay_ms     = var.model_transfer_retry_delay_ms
-    rsa_private_key_file              = var.rsa_private_key_file
-    rsa_public_key_file               = var.rsa_public_key_file
     train_images_src                  = var.train_images_src
     train_labels_src                  = var.train_labels_src
     python_service_url                = var.python_service_url
@@ -69,6 +66,7 @@ locals {
     phala_rtmr3_event_log_path        = var.phala_rtmr3_event_log_path
     phala_rtmr3_event_digests         = var.phala_rtmr3_event_digests
     phala_enforce_compose_hash        = var.phala_enforce_compose_hash
+    phala_allowed_worker_compose_hashes = var.phala_allowed_worker_compose_hashes
   })
 
   ssh_authorized_keys = var.ssh_public_key_path == null ? [] : [trimspace(file(var.ssh_public_key_path))]
@@ -97,7 +95,7 @@ locals {
     : "${local.contracts_endpoint_base}:8080",
   )
   additional_worker_indices = {
-    for worker_key, _ in nonsensitive(var.additional_workers) :
+    for worker_key in keys(nonsensitive(var.additional_workers)) :
     worker_key => tonumber(replace(worker_key, "worker", ""))
   }
 }
@@ -112,7 +110,12 @@ resource "phala_ssh_key" "operator" {
 resource "phala_app" "contract_runtime" {
   name           = var.contracts_app_name
   docker_compose = local.contracts_compose_content
-  size           = var.contracts_size
+  env = {
+    ETH_WALLET_PRIVATE_KEY                 = var.eth_wallet_private_key != "" ? var.eth_wallet_private_key : var.private_key
+    INITIAL_GM_SIGNING_KEY                 = file(var.initial_gm_signing_key_path)
+    INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY = file(var.rsa_public_key_path)
+  }
+  size = var.contracts_size
 
   region    = var.region
   image     = var.os_image
@@ -144,7 +147,6 @@ resource "phala_app" "dfl_worker" {
   docker_compose = templatefile("${path.module}/dstack-compose.worker.phala.tftpl", {
     worker_image                   = var.worker_image
     account_address                = var.account_address
-    private_key                    = var.private_key
     rpc_url                        = local.contracts_rpc_url
     kubo_api_url                   = local.contracts_kubo_api_url
     kubo_gateway_url               = local.contracts_kubo_gateway
@@ -156,8 +158,6 @@ resource "phala_app" "dfl_worker" {
     gm_update_timeout_loops        = var.gm_update_timeout_loops
     aggregation_update_estimate_ms = var.aggregation_update_estimate_ms
     gm_update_poll_ms              = var.gm_update_poll_ms
-    rsa_private_key_file           = var.rsa_private_key_file
-    rsa_public_key_file            = var.rsa_public_key_file
     dataset_name                   = var.dataset_name
     train_images_src               = var.train_images_src
     train_labels_src               = var.train_labels_src
@@ -169,6 +169,11 @@ resource "phala_app" "dfl_worker" {
     public_ip                      = var.public_ip
     msg_broker_ip                  = var.msg_broker_ip
   })
+  env = {
+    PRIVATE_KEY     = var.private_key
+    RSA_PRIVATE_KEY = file(var.rsa_private_key_path)
+    RSA_PUBLIC_KEY  = file(var.rsa_public_key_path)
+  }
   size = var.worker_size
 
   region    = var.region
@@ -197,13 +202,12 @@ resource "phala_app" "dfl_worker" {
 }
 
 resource "phala_app" "dfl_worker_additional" {
-  for_each = nonsensitive(var.additional_workers)
+  for_each = toset(keys(nonsensitive(var.additional_workers)))
 
-  name = each.value.app_name
+  name = var.additional_workers[each.key].app_name
   docker_compose = templatefile("${path.module}/dstack-compose.worker.phala.tftpl", {
     worker_image                   = var.worker_image
-    account_address                = each.value.account_address
-    private_key                    = each.value.private_key
+    account_address                = var.additional_workers[each.key].account_address
     rpc_url                        = local.contracts_rpc_url
     kubo_api_url                   = local.contracts_kubo_api_url
     kubo_gateway_url               = local.contracts_kubo_gateway
@@ -215,8 +219,6 @@ resource "phala_app" "dfl_worker_additional" {
     gm_update_timeout_loops        = var.gm_update_timeout_loops
     aggregation_update_estimate_ms = var.aggregation_update_estimate_ms
     gm_update_poll_ms              = var.gm_update_poll_ms
-    rsa_private_key_file           = var.rsa_private_key_file
-    rsa_public_key_file            = var.rsa_public_key_file
     dataset_name                   = var.dataset_name
     train_images_src               = replace(var.train_images_src, "-0.", format("-%d.", local.additional_worker_indices[each.key]))
     train_labels_src               = replace(var.train_labels_src, "-0.", format("-%d.", local.additional_worker_indices[each.key]))
@@ -228,6 +230,11 @@ resource "phala_app" "dfl_worker_additional" {
     public_ip                      = var.public_ip
     msg_broker_ip                  = var.msg_broker_ip
   })
+  env = {
+    PRIVATE_KEY     = var.additional_workers[each.key].private_key
+    RSA_PRIVATE_KEY = file(var.additional_workers[each.key].rsa_private_key_path)
+    RSA_PUBLIC_KEY  = file(var.additional_workers[each.key].rsa_public_key_path)
+  }
   size = var.worker_size
 
   region    = var.region
@@ -276,7 +283,7 @@ resource "phala_cvm_power" "contract_runtime" {
 }
 
 resource "phala_cvm_power" "dfl_worker_additional" {
-  for_each = var.manage_power_state ? nonsensitive(var.additional_workers) : {}
+  for_each = var.manage_power_state ? toset(keys(nonsensitive(var.additional_workers))) : toset([])
 
   cvm_id = phala_app.dfl_worker_additional[each.key].primary_cvm_id
   state  = var.desired_power_state

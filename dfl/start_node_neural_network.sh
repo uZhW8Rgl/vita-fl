@@ -44,22 +44,38 @@ case "$DATASET_NAME" in
 esac
 
 cp "${BOOTSTRAP_MODEL_SRC}" /dfl/node_server/data/random_start.bin
-if [ -n "${RSA_PRIVATE_KEY:-}" ] || [ -n "${RSA_PUBLIC_KEY:-}" ]; then
+if { [ -n "${RSA_PRIVATE_KEY:-}" ] && [ -z "${RSA_PUBLIC_KEY:-}" ]; } || \
+   { [ -z "${RSA_PRIVATE_KEY:-}" ] && [ -n "${RSA_PUBLIC_KEY:-}" ]; }; then
+    echo "RSA_PRIVATE_KEY and RSA_PUBLIC_KEY must be supplied together." >&2
+    exit 1
+fi
+
+if [ -n "${RSA_PRIVATE_KEY:-}" ]; then
     "${PYTHON_BIN}" - <<'PY'
 import os
 from pathlib import Path
 
-for env_name, out_path in (
-    ("RSA_PRIVATE_KEY", "/dfl/node_server/private_key.pem"),
-    ("RSA_PUBLIC_KEY", "/dfl/node_server/public_key.pem"),
+for env_name, out_path, mode in (
+    ("RSA_PRIVATE_KEY", "/dfl/node_server/private_key.pem", 0o600),
+    ("RSA_PUBLIC_KEY", "/dfl/node_server/public_key.pem", 0o644),
 ):
     value = os.environ.get(env_name)
     if value:
-        Path(out_path).write_text(value.replace("\\n", "\n"), encoding="utf-8")
+        path = Path(out_path)
+        path.write_text(value.replace("\\n", "\n"), encoding="utf-8")
+        path.chmod(mode)
 PY
 else
+    : "${RSA_PRIVATE_KEY_FILE:?Set RSA_PRIVATE_KEY/RSA_PUBLIC_KEY or RSA_PRIVATE_KEY_FILE/RSA_PUBLIC_KEY_FILE}"
+    : "${RSA_PUBLIC_KEY_FILE:?Set RSA_PRIVATE_KEY/RSA_PUBLIC_KEY or RSA_PRIVATE_KEY_FILE/RSA_PUBLIC_KEY_FILE}"
+    if [ ! -f "${RSA_PRIVATE_KEY_FILE}" ] || [ ! -f "${RSA_PUBLIC_KEY_FILE}" ]; then
+        echo "Configured RSA key files are missing; generate or mount the local development keys first." >&2
+        exit 1
+    fi
     cp "${RSA_PRIVATE_KEY_FILE}" /dfl/node_server/private_key.pem
     cp "${RSA_PUBLIC_KEY_FILE}" /dfl/node_server/public_key.pem
+    chmod 600 /dfl/node_server/private_key.pem
+    chmod 644 /dfl/node_server/public_key.pem
 fi
 
 "${PYTHON_BIN}" /dfl/neural_network/start_service.py 2> >(grep -v "Could not initialize NNPACK" >&2) &

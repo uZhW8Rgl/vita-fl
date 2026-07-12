@@ -1,6 +1,13 @@
 .vscode
 .DS_Store
 .terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+*.tfplan
+!*.tfvars.example
 .idea
 !lib/**
 __pycache__/
@@ -11,6 +18,11 @@ node_modules/
 .env.shared
 .env.phala.anvil
 .env.sepolia
+phala/app_code.txt
+data/rsa_keys/*
+!data/rsa_keys/README.md
+**/private_key*.pem
+dfl/node_server/public_key.pem
 cache/
 smart_contracts/out/
 smart_contracts/cache/

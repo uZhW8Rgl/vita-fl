@@ -3,7 +3,7 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getLastRoundsAggregator, registerDeviceWithTeeQuote, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
+import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getLastRoundsAggregator, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
 import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
 import fs from 'fs/promises';
@@ -324,14 +324,10 @@ function extractImageDigest(imageRef) {
     const match = String(imageRef || '').match(/@sha256:([0-9a-fA-F]{64})(?:$|[^\w])/);
     return match ? `0x${match[1].toLowerCase()}` : null;
 }
-function verifyMeasuredWorkerImage(info, liveComposeHash) {
+function measuredWorkerIdentity(info) {
     const tcbInfo = tcbInfoFromDstackInfo(info);
     const appCompose = parseAppCompose(tcbInfo?.app_compose || tcbInfo?.appCompose);
     const measuredComposeHash = normalizeHashHex(getComposeHash(appCompose, true), 32, 'measured app_compose hash');
-    const quoteComposeHash = normalizeHashHex(liveComposeHash, 32, 'live quote compose hash');
-    if (measuredComposeHash !== quoteComposeHash) {
-        throw new Error(`dstack info compose hash ${measuredComposeHash} does not match quote compose hash ${quoteComposeHash}`);
-    }
     const imageRefs = extractWorkerImageRefs(appCompose);
     const expectedImageRef = process.env.EXPECTED_WORKER_IMAGE || process.env.WORKER_IMAGE || process.env.PHALA_WORKER_IMAGE || '';
     const matchedImageRef = expectedImageRef
@@ -348,14 +344,32 @@ function verifyMeasuredWorkerImage(info, liveComposeHash) {
     if (expectedDigest && imageDigest !== expectedDigest) {
         throw new Error(`Measured worker image digest ${imageDigest} does not match expected ${expectedDigest}`);
     }
-    console.log('Verified measured worker image reference:', {
-        image: matchedImageRef,
-        imageDigest,
-        composeHash: measuredComposeHash,
-    });
-    return { imageRef: matchedImageRef, imageDigest };
+    return { imageRef: matchedImageRef, imageDigest, composeHash: measuredComposeHash };
 }
-async function fetchLivePhalaQuote(reportData) {
+function verifyMeasuredWorkerImage(info, liveComposeHash) {
+    const identity = measuredWorkerIdentity(info);
+    const quoteComposeHash = normalizeHashHex(liveComposeHash, 32, 'live quote compose hash');
+    if (identity.composeHash !== quoteComposeHash) {
+        throw new Error(`dstack info compose hash ${identity.composeHash} does not match quote compose hash ${quoteComposeHash}`);
+    }
+    console.log('Verified measured worker image reference:', {
+        image: identity.imageRef,
+        imageDigest: identity.imageDigest,
+        composeHash: identity.composeHash,
+    });
+    return identity;
+}
+async function boundReportData(reportDataFactory, identity) {
+    const value = await reportDataFactory(identity);
+    const reportData = Buffer.isBuffer(value)
+        ? value
+        : Buffer.from(String(value || '').replace(/^0x/i, ''), 'hex');
+    if (reportData.length !== 64) {
+        throw new Error(`Registration REPORTDATA must be exactly 64 bytes, got ${reportData.length}`);
+    }
+    return reportData;
+}
+async function fetchLivePhalaQuote(reportDataFactory) {
     const dstackSock = '/var/run/dstack.sock';
     const tappdSock = '/var/run/tappd.sock';
     if (existsSync(dstackSock)) {
@@ -365,6 +379,8 @@ async function fetchLivePhalaQuote(reportData) {
         console.log('Instance ID:', info.instance_id);
         console.log('App Name:', info.app_name);
         console.log('TCB Info:', info.tcb_info);
+        const identity = measuredWorkerIdentity(info);
+        const reportData = await boundReportData(reportDataFactory, identity);
         const quote = await client.getQuote(reportData);
         await publishLivePhalaArtifacts(quote, info).catch(error => {
             console.warn('Could not publish live Phala attestation artifacts:', error?.message || error);
@@ -385,14 +401,16 @@ async function fetchLivePhalaQuote(reportData) {
             console.warn('Legacy tappd.sock info() unavailable:', error?.message || error);
             return null;
         }) : null;
+        if (!tcbInfoFromDstackInfo(info)?.app_compose && !tcbInfoFromDstackInfo(info)?.appCompose) {
+            throw new Error('Legacy tappd.sock path did not expose app_compose; mount /var/run/dstack.sock for measured image verification');
+        }
+        const identity = measuredWorkerIdentity(info);
+        const reportData = await boundReportData(reportDataFactory, identity);
         const quote = await client.tdxQuote(reportData, 'raw');
         await publishLivePhalaArtifacts(quote, info).catch(error => {
             console.warn('Could not publish live Phala attestation artifacts:', error?.message || error);
         });
         const rtmr3Policy = normalizeRtmr3EventPolicy(quote.event_log);
-        if (!tcbInfoFromDstackInfo(info)?.app_compose && !tcbInfoFromDstackInfo(info)?.appCompose) {
-            throw new Error('Legacy tappd.sock path did not expose app_compose; mount /var/run/dstack.sock for measured image verification');
-        }
         const workerImage = verifyMeasuredWorkerImage(info, rtmr3Policy.composeHash);
         return {
             quoteHex: normalizeHexBytes(quote.quote),
@@ -469,15 +487,38 @@ async function getMissingAuthorizedWorkers() {
     }
     return missing;
 }
-async function registerWithLocalTdxQuote() {
+async function hasCurrentDeviceRegistration(publicKey) {
+    const accountAddress = process.env.ACCOUNT_ADDRESS;
+    if (!accountAddress || !(await isAuthorized(accountAddress)))
+        return false;
+    const storedKey = await getDevicePublicKey(accountAddress);
+    return String(storedKey || '').toLowerCase() === String(publicKey || '').toLowerCase();
+}
+async function registerWithLocalTdxMock() {
     if (localTdxRegistrationDone || process.env.DOCKER === "phala")
         return;
     localTdxRegistrationDone = true;
-    const quotePath = process.env.TDX_QUOTE_PATH || './attestation/phala_tdx_quote';
-    console.log(`Registering with local TDX quote from ${quotePath} ...`);
-    const quoteHex = normalizeHexBytes(await fs.readFile(quotePath));
-    await registerDeviceWithTeeQuote(quoteHex, process.env.ACCOUNT_ADDRESS, process.env.PUBLIC_IP || "", process.env.MSG_BROKER_IP || "", rsaPublicKeyDerHex());
-    console.log("Device registered with onchain TDX quote verification.");
+    if (process.env.LOCAL_TDX_MOCK !== '1') {
+        throw new Error('Local TDX registration requires LOCAL_TDX_MOCK=1 or a live TEE quote path');
+    }
+    const rpcUrl = String(process.env.SEPOLIA_RPC_URL || '');
+    const localRpc = /^http:\/\/(anvil|127\.0\.0\.1|localhost):8545\/?$/i.test(rpcUrl);
+    if (!localRpc || await getBlockchainChainId() !== 31337) {
+        throw new Error('LOCAL_TDX_MOCK is restricted to the local Anvil endpoint on chain 31337');
+    }
+    const composeHash = normalizeHashHex(process.env.LOCAL_TDX_COMPOSE_HASH || '0x47d7ddfa97906d05b2b7e53ce888440a820598f120079ed887229ab0302982fa', 32, 'local mock compose hash');
+    const workerImageDigest = normalizeHashHex(process.env.LOCAL_TDX_IMAGE_DIGEST || '0x7849ee527ff2efc746c58f67cd6336572d5c71743c608bbd3810079289c7c066', 32, 'local mock worker image digest');
+    const publicKey = rsaPublicKeyDerHex();
+    if (await hasCurrentDeviceRegistration(publicKey)) {
+        console.log('Device already has a bound registration for the current RSA key; reusing it.');
+        return;
+    }
+    const publicIp = process.env.PUBLIC_IP || '';
+    const brokerIp = process.env.MSG_BROKER_IP || '';
+    const reportData = await getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey, composeHash, workerImageDigest);
+    console.warn('Registering through the LOCAL-ONLY mock TDX verifier; this is not a hardware attestation.');
+    await registerDeviceWithTeeQuoteAndRtmr3Events(reportData, [`0x${'00'.repeat(48)}`], composeHash, workerImageDigest, process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey);
+    console.log('Device registered with bound local mock REPORTDATA.');
 }
 function decodeEventBytes(rawValue) {
     if (Buffer.isBuffer(rawValue) || Array.isArray(rawValue) || ArrayBuffer.isView(rawValue)) {
@@ -662,21 +703,22 @@ async function prepareRoundZeroBootstrapRollover() {
 }
 const stateMachine = async () => {
     if (process.env.DOCKER === "phala") {
-        console.log("Fetching TDX Quote ...");
-        // Generate remote attestation quote
-        const applicationData = JSON.stringify({
-            version: '1.0.0',
-            timestamp: Date.now(),
-            user_id: process.env.ACCOUNT_ADDRESS,
-        });
-        const reportData = crypto.createHash('sha256').update(applicationData).digest();
-        const { quoteHex, rtmr3EventDigests, composeHash, workerImageDigest } = await fetchLivePhalaQuote(reportData);
-        console.log(`Registering with live Phala TDX quote and ${rtmr3EventDigests.length} RTMR3 event digests ...`);
-        await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventDigests, composeHash, workerImageDigest, process.env.ACCOUNT_ADDRESS, process.env.PUBLIC_IP || "", process.env.MSG_BROKER_IP || "", rsaPublicKeyDerHex());
-        console.log("Device registered with onchain TDX quote and RTMR3 event replay verification.");
+        const publicKey = rsaPublicKeyDerHex();
+        if (await hasCurrentDeviceRegistration(publicKey)) {
+            console.log('Device already has a bound registration for the current RSA key; reusing it.');
+        }
+        else {
+            console.log("Fetching TDX Quote ...");
+            const publicIp = process.env.PUBLIC_IP || "";
+            const brokerIp = process.env.MSG_BROKER_IP || "";
+            const { quoteHex, rtmr3EventDigests, composeHash, workerImageDigest } = await fetchLivePhalaQuote(async (identity) => getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey, identity.composeHash, identity.imageDigest));
+            console.log(`Registering with live Phala TDX quote and ${rtmr3EventDigests.length} RTMR3 event digests ...`);
+            await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventDigests, composeHash, workerImageDigest, process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey);
+            console.log("Device registered with onchain TDX quote and RTMR3 event replay verification.");
+        }
     }
     else {
-        await registerWithLocalTdxQuote();
+        await registerWithLocalTdxMock();
     }
     while (Number(await getRound()) < targetRound()) {
         let state = await getCurrentState();

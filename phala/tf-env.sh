@@ -66,6 +66,37 @@ PHALA_CLOUD_API_KEY=$(require_env_value "PHALA_CLOUD_API_KEY")
 W0_ACCOUNT_ADDRESS=$(require_env_value "W0_ACCOUNT_ADDRESS")
 W0_PRIVATE_KEY=$(require_env_value "W0_PRIVATE_KEY")
 
+resolve_required_file() {
+  local configured_path="$1"
+  local description="$2"
+  local resolved_path="${configured_path}"
+
+  if [[ "${resolved_path}" != /* ]]; then
+    resolved_path="${ROOT_DIR}/${resolved_path}"
+  fi
+  if [ ! -r "${resolved_path}" ]; then
+    echo "Missing ${description}: ${resolved_path}" >&2
+    echo "Generate local demo keys with scripts/prepare_dfl_worker_experiment.py or configure an explicit file path." >&2
+    exit 1
+  fi
+
+  printf '%s/%s' "$(cd "$(dirname "${resolved_path}")" && pwd)" "$(basename "${resolved_path}")"
+}
+
+W0_RSA_PRIVATE_KEY_FILE=$(read_env_value "W0_RSA_PRIVATE_KEY_FILE")
+W0_RSA_PUBLIC_KEY_FILE=$(read_env_value "W0_RSA_PUBLIC_KEY_FILE")
+W0_RSA_PRIVATE_KEY_FILE=${W0_RSA_PRIVATE_KEY_FILE:-data/rsa_keys/private_key.pem}
+W0_RSA_PUBLIC_KEY_FILE=${W0_RSA_PUBLIC_KEY_FILE:-data/rsa_keys/public_key.pem}
+W0_RSA_PRIVATE_KEY_PATH=$(resolve_required_file "${W0_RSA_PRIVATE_KEY_FILE}" "worker-0 RSA private key")
+W0_RSA_PUBLIC_KEY_PATH=$(resolve_required_file "${W0_RSA_PUBLIC_KEY_FILE}" "worker-0 RSA public key")
+
+INITIAL_GM_SIGNING_KEY_FILE=$(read_env_value "INITIAL_GM_SIGNING_KEY_FILE")
+INITIAL_GM_SIGNING_KEY_FILE=${INITIAL_GM_SIGNING_KEY_FILE:-${W0_RSA_PRIVATE_KEY_FILE}}
+INITIAL_GM_SIGNING_KEY_PATH=$(resolve_required_file "${INITIAL_GM_SIGNING_KEY_FILE}" "initial GM signing key")
+
+ETH_WALLET_PRIVATE_KEY=$(read_env_value "ETH_WALLET_PRIVATE_KEY")
+ETH_WALLET_PRIVATE_KEY=${ETH_WALLET_PRIVATE_KEY:-${W0_PRIVATE_KEY}}
+
 if [ -n "${TERRAFORM_BIN:-}" ]; then
   TERRAFORM_CMD="${TERRAFORM_BIN}"
 elif command -v terraform >/dev/null 2>&1; then
@@ -80,10 +111,15 @@ fi
 terraform_args=(
   -chdir="${SCRIPT_DIR}"
   "$@"
-  -var="phala_cloud_api_key=${PHALA_CLOUD_API_KEY}"
-  -var="account_address=${W0_ACCOUNT_ADDRESS}"
-  -var="private_key=${W0_PRIVATE_KEY}"
 )
+
+export TF_VAR_phala_cloud_api_key="${PHALA_CLOUD_API_KEY}"
+export TF_VAR_account_address="${W0_ACCOUNT_ADDRESS}"
+export TF_VAR_private_key="${W0_PRIVATE_KEY}"
+export TF_VAR_eth_wallet_private_key="${ETH_WALLET_PRIVATE_KEY}"
+export TF_VAR_rsa_private_key_path="${W0_RSA_PRIVATE_KEY_PATH}"
+export TF_VAR_rsa_public_key_path="${W0_RSA_PUBLIC_KEY_PATH}"
+export TF_VAR_initial_gm_signing_key_path="${INITIAL_GM_SIGNING_KEY_PATH}"
 
 append_var_if_set() {
   local tf_name="$1"
@@ -92,7 +128,8 @@ append_var_if_set() {
   value=$(read_env_value "${env_name}")
 
   if [ -n "${value}" ]; then
-    terraform_args+=(-var="${tf_name}=${value}")
+    printf -v "TF_VAR_${tf_name}" '%s' "${value}"
+    export "TF_VAR_${tf_name}"
   fi
 }
 
@@ -112,6 +149,11 @@ build_additional_workers_var() {
     local key_var="W${idx}_PRIVATE_KEY"
     local account_value
     local key_value
+    local key_suffix
+    local rsa_private_file
+    local rsa_public_file
+    local rsa_private_path
+    local rsa_public_path
     account_value=$(read_env_value "${account_var}")
     key_value=$(read_env_value "${key_var}")
 
@@ -119,22 +161,29 @@ build_additional_workers_var() {
       continue
     fi
 
+    key_suffix="_${idx}"
+    rsa_private_file=$(read_env_value "W${idx}_RSA_PRIVATE_KEY_FILE")
+    rsa_public_file=$(read_env_value "W${idx}_RSA_PUBLIC_KEY_FILE")
+    rsa_private_file=${rsa_private_file:-data/rsa_keys/private_key${key_suffix}.pem}
+    rsa_public_file=${rsa_public_file:-data/rsa_keys/public_key${key_suffix}.pem}
+    rsa_private_path=$(resolve_required_file "${rsa_private_file}" "worker-${idx} RSA private key")
+    rsa_public_path=$(resolve_required_file "${rsa_public_file}" "worker-${idx} RSA public key")
+
     map_entries+=(
-      "\"worker${idx}\"={app_name=\"master-thesis-dfl-worker-${idx}\",account_address=\"${account_value}\",private_key=\"${key_value}\"}"
+      "\"worker${idx}\"={app_name=\"master-thesis-dfl-worker-${idx}\",account_address=\"${account_value}\",private_key=\"${key_value}\",rsa_private_key_path=\"${rsa_private_path}\",rsa_public_key_path=\"${rsa_public_path}\"}"
     )
   done
 
   if [ "${#map_entries[@]}" -gt 0 ]; then
     local joined
     joined=$(IFS=,; echo "${map_entries[*]}")
-    terraform_args+=(-var="additional_workers={${joined}}")
+    export TF_VAR_additional_workers="{${joined}}"
   fi
 }
 
 append_var_if_set "runtime_w1_account_address" "W1_ACCOUNT_ADDRESS"
 append_var_if_set "initial_gm_signer_address" "INITIAL_GM_SIGNER_ADDRESS"
 append_var_if_set "blockchain_provider" "BLOCKCHAIN_PROVIDER"
-append_var_if_set "eth_wallet_private_key" "ETH_WALLET_PRIVATE_KEY"
 append_var_if_set "initial_gm_cid" "INITIAL_GM_CID"
 append_var_if_set "initial_gm_sig_cid" "INITIAL_GM_SIG_CID"
 append_var_if_set "eth_eur_price" "ETH_EUR_PRICE"
@@ -177,14 +226,10 @@ append_var_if_set "runtime_endpoint_override" "PHALA_RUNTIME_ENDPOINT_OVERRIDE"
 append_var_if_set "runtime_rpc_url_override" "PHALA_RUNTIME_RPC_URL"
 append_var_if_set "runtime_kubo_api_url_override" "PHALA_RUNTIME_KUBO_API_URL"
 append_var_if_set "runtime_kubo_gateway_url_override" "PHALA_RUNTIME_KUBO_GATEWAY_URL"
+append_var_if_set "phala_allowed_worker_compose_hashes" "PHALA_ALLOWED_WORKER_COMPOSE_HASHES"
 
-if [ -n "$(read_env_value "PUBLIC_IP")" ]; then
-  terraform_args+=(-var="public_ip=$(read_env_value "PUBLIC_IP")")
-fi
-
-if [ -n "$(read_env_value "MSG_BROKER_IP")" ]; then
-  terraform_args+=(-var="msg_broker_ip=$(read_env_value "MSG_BROKER_IP")")
-fi
+append_var_if_set "public_ip" "PUBLIC_IP"
+append_var_if_set "msg_broker_ip" "MSG_BROKER_IP"
 
 build_additional_workers_var
 

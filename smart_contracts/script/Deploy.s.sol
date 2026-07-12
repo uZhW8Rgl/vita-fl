@@ -32,10 +32,20 @@ import {GMStorage} from "../src/core/GMStorage.sol";
 contract DeviceRegistryDeploy is Script {
     function run() external {
         uint256 deployerKey = uint256(vm.envBytes32("ETH_WALLET_PRIVATE_KEY"));
+        bytes32 defaultDeploymentId = keccak256(
+            abi.encode(
+                "MasterThesis.DeviceRegistry.deployment.v1",
+                block.chainid,
+                block.timestamp,
+                block.prevrandao,
+                deployerKey
+            )
+        );
+        bytes32 deploymentId = vm.envOr("DEVICE_REGISTRY_DEPLOYMENT_ID", defaultDeploymentId);
 
         vm.startBroadcast(deployerKey);
 
-        DeviceRegistry deviceRegistry = new DeviceRegistry();
+        DeviceRegistry deviceRegistry = new DeviceRegistry(deploymentId);
         console2.log("Deployed DeviceRegistry to", address(deviceRegistry));
 
         AggregatorSelection aggregatorSelection = new AggregatorSelection(

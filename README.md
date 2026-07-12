@@ -21,7 +21,7 @@ The current prototype combines:
 - [.env.shared.example](./.env.shared.example): Shared configuration across local Anvil and Sepolia profiles.
 - [.env.phala.anvil.example](./.env.phala.anvil.example): Chain-specific values for local Anvil runs.
 - [.env.sepolia.example](./.env.sepolia.example): Chain-specific values for Sepolia runs.
-- [data](./data): Shared local input artifacts and helpers, including dataset files, RSA worker keys, the TDX quote, and single-image sample extraction utilities.
+- [data](./data): Shared local input artifacts and helpers. Generated RSA worker keys are local-only and ignored by Git.
 - [observability](./observability): Grafana and Prometheus configuration.
 - [smart_contracts](./smart_contracts/README.md): Focused Foundry project with DFL contracts and TDX/DCAP attestation deployment logic.
 - [dfl/node_server](./dfl/node_server/README.md): Node.js orchestration layer used by each worker.
@@ -239,7 +239,7 @@ docker compose down --volumes --remove-orphans
 KEEP_ALIVE=0 docker compose up --build --force-recreate
 ```
 
-This starts Anvil, Kubo/IPFS, observability services, deploys the smart contracts, registers workers through TDX quote verification, runs training, aggregates local models, stores the new global model and signature in IPFS, and updates the on-chain model metadata.
+This starts Anvil, Kubo/IPFS, observability services, deploys the smart contracts, registers workers through an explicitly local mock verifier with the same address/key/nonce binding as production, runs training, aggregates local models, stores the new global model and signature in IPFS, and updates the on-chain model metadata. The local mock is not a hardware attestation; Phala uses live TDX quotes only.
 
 For local Anvil runs, `P256_MODE=native` is the default. The deployment script probes the native P-256 precompile at `0x0000000000000000000000000000000000000100` and uses it when available. If the current Anvil build does not expose the precompile, the script installs the local P-256 verifier at the same canonical address so the contracts still use the native verifier address. `P256_MODE=fallback` can be used to force the Daimo fallback verifier address instead.
 
@@ -251,7 +251,7 @@ The local stack starts:
 - three DFL worker containers,
 - Grafana and Prometheus.
 
-The root `.env` file provides the local timing, account, contract, IPFS, and dataset configuration. Use `.env.example` as the tracked template and keep local edits in `.env`. `IPFS_PROVIDER` is a strict switch: `kubo` uses only the local Kubo API/gateway, while `pinata` uses only the configured Pinata gateway/JWT path. The local Docker flow also uses RSA keys from `data/rsa_keys`, dataset artifacts under `data/mnist` or `data/chestmnist`, and the TDX quote from `data/phala_tdx_quote`.
+The root `.env` file provides the local timing, account, contract, IPFS, and dataset configuration. Use `.env.example` as the tracked template and keep local edits in `.env`. `IPFS_PROVIDER` is a strict switch: `kubo` uses only the local Kubo API/gateway, while `pinata` uses only the configured Pinata gateway/JWT path. Generate the ignored development RSA keys under `data/rsa_keys` with `scripts/prepare_dfl_worker_experiment.py`; private keys are mounted read-only and are not copied into images.
 
 For dataset experiments, `DATASET_NAME=mnist` remains the default. `DATASET_NAME=chestmnist` switches the worker training path to ChestMNIST `.npz` shards under `data/chestmnist`.
 
@@ -302,7 +302,7 @@ The sequence diagram above visualizes this flow.
 4. Uploads PCCS collateral.
 5. Pins the initial global model to IPFS and writes model metadata on-chain.
 6. Starts workers.
-7. Registers workers through on-chain TDX quote verification.
+7. Registers local workers through the local-only mock verifier while enforcing the production REPORTDATA binding and replay nonce.
 8. Runs local training and model transfer.
 9. Aggregates submitted local models.
 10. Signs and uploads the new global model and signature.

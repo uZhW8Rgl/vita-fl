@@ -138,6 +138,9 @@ jobs:
       - name: Build contracts
         run: forge build
 
+      - name: Run contract tests
+        run: forge test -vvv
+
   docker-builds:
     name: Docker Build (${{ matrix.name }})
     runs-on: ubuntu-latest

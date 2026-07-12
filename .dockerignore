@@ -1,5 +1,13 @@
 .env
 **/.env
+.env.*
+**/*.tfstate
+**/*.tfstate.*
+**/terraform.tfvars
+**/*.tfvars.json
+**/*.tfplan
+phala/app_code.txt
+**/private_key*.pem
 dfl/node_server/.env
 **/__pycache__/
 dfl/node_server/data/lm.bin

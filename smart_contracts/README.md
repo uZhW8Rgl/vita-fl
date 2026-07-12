@@ -88,28 +88,30 @@ KEEP_ALIVE=0 docker compose -f compose.yml up --build --force-recreate
 
 ## RTMR3 Workload Policy
 
-The local prototype verifies the TDX/DCAP quote, certificate chain, QE identity, and TCB status. In addition, the deployment script configures a workload policy from the checked-in reference quote at `data/phala_tdx_quote`.
+The live Phala path verifies the quote, certificate chain, QE identity and TCB status, then replays the submitted RTMR3 event chain. The exact `compose-hash` event must both occur in that replay and be owner-allowlisted. The replayed RTMR3 must equal the signed quote RTMR3.
 
-During deployment, `starter_docker.sh` calls:
+`DeviceRegistry` additionally installs an owner-reviewed `composeHash -> imageDigest` mapping. A caller-supplied image digest without that exact mapping is rejected, so an arbitrary workload cannot merely claim the approved digest. Both the verifier and Registry policies are fail-closed when no approved compose hash is configured.
+
+The quote's 64-byte `REPORTDATA` has this format:
 
 ```text
-setExpectedRtmr3FromQuote(bytes referenceQuote)
+bytes  0..31  keccak256(domain, deploymentId, chainId, registry,
+                        device, endpoint hashes, public-key hash,
+                        composeHash, imageDigest, owner challenge,
+                        challenge deadline, nonce)
+bytes 32..63  uint256 registration nonce
 ```
 
-The contract parses the reference quote on-chain, extracts RTMR3, and keeps that value for legacy exact-RTMR3 checks. The live Phala path uses the RTMR3 event log instead: the worker submits the live RTMR3 event digests, the `compose-hash` event payload from its quote response, and the worker image digest extracted from measured Phala `app_compose`. The attestation contract replays the event digests, compares the replayed RTMR3 with the quote, and recomputes the Phala `compose-hash` event digest from the submitted payload. `DeviceRegistry` separately checks the submitted worker image digest against the digest stored by `starter_docker.sh`.
+The worker asks `DeviceRegistry.registrationReportData(...)` for these exact bytes before requesting its quote. The owner-issued challenge expires after one day and is consumed on success; successful registration also increments the nonce. This binds the quote to the transaction sender, RSA key, endpoints, workload policy, Registry deployment and one fresh registration attempt. The two legacy registration selectors always revert.
 
-`starter_docker.sh` also checks that the worker compose policy pins the image by immutable `sha256` digest and records that expected worker image digest on-chain.
+The local Docker flow cannot use one static quote for multiple dynamic worker identities. It therefore deploys `MockTdxV4Attestation` explicitly for Anvil, while exercising the same Registry binding and replay checks. This mock proves no hardware claim and the bootstrap refuses to enable it when `DOCKER=phala`.
 
 For Phala/dstack this needs one subtle distinction:
 
 - the RTMR3 `compose-hash` event is the SHA-256 of the normalized Phala app-code object from `phala/app_code.txt`
 - the plain SHA-256 of `phala/dstack-compose.template.yml` is only the raw compose-file hash
 
-`starter_docker.sh` therefore prefers `phala/app_code.txt` when present and only falls back to the raw compose-file hash if no app-code export is available.
-
-The compose policy is still the replaceable workload input. If the worker image changes, update the digest-pinned image reference used by Terraform/Phala, redeploy the contract-runtime compose so bootstrap stores the new expected worker digest, deploy that exact worker app on Phala/dstack, fetch the new quote/app-code/event log, and rerun the local deployment. Rebuild the smart-contracts image only when contract or bootstrap code changed.
-
-A complete image-to-RTMR3 verification additionally requires the Phala/dstack RTMR3 event log. With that log, a verifier can replay the RTMR3 measurement chain, bind the submitted `compose-hash` payload to an actual event in the chain, compare the measured compose hash with `expectedComposeHash`, and then compare the replayed RTMR3 with the signed RTMR3 in the quote.
+Configure the first value, never the raw compose-file hash, in `PHALA_ALLOWED_WORKER_COMPOSE_HASHES`. If the image, endpoint-bearing compose, or another measured input changes, review and provision every new canonical hash before registration. Generated `app_code.txt` and Terraform state files are intentionally ignored and must not be committed.
 
 ## Generated Artifacts
 

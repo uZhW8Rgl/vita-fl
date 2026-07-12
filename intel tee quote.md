@@ -2,7 +2,7 @@
 
 This section explains the structure of the Intel TDX quote used by the prototype, the relevant signatures, and how the values verified by the smart contracts are derived.
 
-The quote is the central attestation artifact. It binds a TDX guest measurement and user-provided report data to an Intel-backed certificate chain. In this prototype, the quote is submitted to `DeviceRegistry.registerDevice(...)`, which forwards it to `AutomataDcapTdxV4Attestation.verifyAndAttestOnChain(...)`. A device is only registered after the quote verification succeeds.
+The quote is the central attestation artifact. It binds a TDX guest measurement and user-provided report data to an Intel-backed certificate chain. In this prototype, the live quote and RTMR3 events are submitted to `DeviceRegistry.registerDeviceWithRtmr3EventsAndImageDigest(...)`. A device is registered only after DCAP verification, exact compose/image policy checks, and verification of the Registry-generated REPORTDATA commitment.
 
 ## Quote Structure
 
@@ -142,7 +142,7 @@ This means the answer is conditional:
 - A specific source code version can be attested only if the Docker image digest is cryptographically linked to that source version through reproducible builds or signed build provenance.
 - A quote alone is not enough to identify code semantically. It must be interpreted together with the event log, deployment metadata, expected reference measurements, and image/source provenance.
 
-In the current prototype, this application-measurement policy is split between an off-chain preparation/check step and an on-chain enforcement step. The off-chain helper checks that the Phala app-code object contains a digest-pinned worker image and that the canonical app-code hash matches the `compose-hash` RTMR3 event payload. The smart contract verifies the TDX quote, signature chain, TCB status, and selected fields such as `teeTcbSvn`, `mrtd`, and `reportData`. For the stricter Phala registration path, it also replays the supplied RTMR3 event digests on-chain with SHA-384 and checks that the resulting RTMR3 equals the RTMR3 contained in the signed quote. In addition, the event list must contain the expected compose-event digest. The contract still does not parse Docker YAML or JSON directly; instead, the deployer commits to the expected compose-event digest derived from the Phala Trust Center data.
+In the current prototype, this application-measurement policy is split between an off-chain preparation/check step and an on-chain enforcement step. The off-chain helper checks that the Phala app-code object contains a digest-pinned worker image and that the canonical app-code hash matches the `compose-hash` RTMR3 event payload. The smart contract verifies the TDX quote, signature chain, TCB status, and selected fields such as `teeTcbSvn`, `mrtd`, and `reportData`. For the Phala registration path, it replays the supplied RTMR3 event digests on-chain with SHA-384 and checks that the resulting RTMR3 equals the signed quote RTMR3. The exact live compose-event digest must be owner-allowlisted, and `DeviceRegistry` additionally maps that reviewed compose hash to the permitted image digest. The contract still does not parse Docker YAML or JSON directly; instead, the deployer commits to this exact compose-to-image relation.
 
 ```mermaid
 flowchart LR
@@ -342,18 +342,18 @@ flowchart TB
 
 ## Relation to Device Registration
 
-In the prototype, `DeviceRegistry.registerDevice(...)` receives:
+In the prototype, `DeviceRegistry.registerDeviceWithRtmr3EventsAndImageDigest(...)` receives:
 
 - the TDX quote,
 - the device address,
 - networking metadata,
 - and the device public key used later for model artifact signatures.
 
-The registry calls the attestation contract before storing the device. This means that the worker's public key is only accepted after a quote has passed the TDX/DCAP verification path. Later, when the agent downloads a global model artifact, it verifies the model signature against the public key of the last registered aggregator. This connects the attestation layer with model provenance:
+Before requesting the quote, the worker obtains an exact 64-byte `REPORTDATA` commitment from the Registry. It binds a deployment-specific domain, chain and Registry address, transaction sender, endpoint hashes, public-key hash, approved compose/image pair, one-time nonce, and an expiring owner challenge. The Registry requires `msg.sender` to equal the device address, checks the verifier output at the fixed REPORTDATA offset, consumes the challenge, and increments the nonce before storing the key. The older unbound registration selectors always revert. Later, when the agent downloads a global model artifact, it verifies the model signature against the public key of the last registered aggregator. This connects the attestation layer with model provenance:
 
 ```text
-TDX quote verifies worker environment
-DeviceRegistry stores worker public key
+TDX quote verifies worker environment and bound REPORTDATA
+DeviceRegistry consumes freshness challenge and stores the bound worker public key
 Aggregator signs global model artifact
 Agent verifies model signature against registered aggregator key
 ```

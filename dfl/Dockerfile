@@ -53,7 +53,6 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY data/mnist ./config
 COPY data/chestmnist ./config/chestmnist
 COPY data/initial_gm ./initial_gm
-COPY data/rsa_keys ./keys
 
 COPY dfl/node_server/package*.json ./node_server/
 WORKDIR /dfl/node_server

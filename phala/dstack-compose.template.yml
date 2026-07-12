@@ -20,7 +20,11 @@ services:
 
       # Runtime configuration for the DFL prototype.
       ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
-      PRIVATE_KEY: "REPLACE_WITH_WORKER_PRIVATE_KEY"
+      # Supply these values through Phala's encrypted environment, never by
+      # replacing them in this measured/public compose document.
+      PRIVATE_KEY:
+      RSA_PRIVATE_KEY:
+      RSA_PUBLIC_KEY:
       # Auto-resolved from the contract-runtime TEE's Kubo manifest at
       # /runtime/contracts.json when the worker boots.
       REGISTRY_ADDRESS: ""
@@ -37,10 +41,6 @@ services:
       AGGREGATION_UPDATE_ESTIMATE_MS: "30000"
       GM_UPDATE_POLL_MS: "5000"
 
-      # The image contains demo keys, but production deployments should inject
-      # worker-specific RSA keys through secrets or environment configuration.
-      RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key.pem
-      RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key.pem
       TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-0.idx3-ubyte
       TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-0.idx1-ubyte
 

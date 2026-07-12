@@ -15,10 +15,29 @@ services:
       - osaka
       - --code-size-limit
       - "999999"
+    healthcheck:
+      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+
+  rpc-proxy:
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:ecca24e8dbafbf978acdad4941b25611994d734c2087cc603399e4a44e42540f
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      anvil:
+        condition: service_healthy
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      RPC_PROXY_UPSTREAM: http://anvil:8545
+    command: ["python3", "/dfl/smart_contracts/rpc_proxy.py"]
     ports:
       - "8545:8545"
     healthcheck:
-      test: ["CMD", "cast", "chain-id", "--rpc-url", "http://127.0.0.1:8545"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8545/health', timeout=2).read()"]
       interval: 5s
       timeout: 3s
       retries: 24
@@ -51,6 +70,10 @@ services:
       KUBO_API_URL: http://ipfs:5001
       IPFS_PROVIDER: kubo
       KEEP_ALIVE: "0"
+      # Supply these through Phala's encrypted environment.
+      ETH_WALLET_PRIVATE_KEY:
+      INITIAL_GM_SIGNING_KEY:
+      INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY:
       PCCS_FMSPC: "20A06F000000"
       PCCS_FETCH: "1"
       PCCS_TEE: tdx
@@ -66,6 +89,7 @@ services:
       PHALA_RTMR3_EVENT_LOG_PATH: /dfl/phala/rtmr3_event_log.txt
       PHALA_RTMR3_EVENT_DIGESTS: ""
       PHALA_ENFORCE_COMPOSE_HASH: "0"
+      PHALA_ALLOWED_WORKER_COMPOSE_HASHES: ""
       DATASET_NAME: chestmnist
       W0_ACCOUNT_ADDRESS: "0x561c6C160021EBfD0810F013f4efCa24edB7e9E3"
       W1_ACCOUNT_ADDRESS: "0x6004D395731f85938177d5B07aCfEc2D5D7ECcB0"

@@ -125,6 +125,7 @@ const getGMStorageContract = () => {
     const address = gm_storage_address;
     return new web3.eth.Contract(abi, address);
 };
+export const getBlockchainChainId = async () => Number(await web3.eth.getChainId());
 const getAggregatorSelectionContract = () => {
     const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
     return new web3.eth.Contract(abi, aggregator_address);
@@ -664,35 +665,17 @@ export const getDevicePublicKey = async (address) => {
     const publicKey = (result && (result.public_key ?? result[3])) ?? "0x";
     return publicKey;
 };
-export const registerDeviceWithTeeQuote = async (quoteHex, address, publicIp, brokerIp, publicKeyBytesHex) => {
+export const getDeviceRegistrationReportData = async (address, publicIp, brokerIp, publicKeyBytesHex, composeHash, workerImageDigest) => {
+    if (!device_registry_address) {
+        throw new Error("REGISTRY_ADDRESS is required for TDX device registration");
+    }
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
-    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
-    addAccountToWallet(account);
-    const gasPrice = await web3.eth.getGasPrice();
-    const gasEstimate = await contract.methods
-        .registerDevice(quoteHex, address, publicIp, brokerIp, publicKeyBytesHex)
-        .estimateGas({ from: account.address });
-    const tx = {
-        from: account.address,
-        to: device_registry_address,
-        gas: gasEstimate,
-        gasPrice: gasPrice,
-        data: contract.methods
-            .registerDevice(quoteHex, address, publicIp, brokerIp, publicKeyBytesHex)
-            .encodeABI(),
-    };
-    try {
-        const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
-        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
-        console.log("Transaction receipt: ", receipt);
-        return receipt;
+    const reportData = await contract.methods.registrationReportData(address, publicIp, brokerIp, publicKeyBytesHex, composeHash, workerImageDigest).call();
+    if (typeof reportData !== "string" || !/^0x[0-9a-fA-F]{128}$/.test(reportData)) {
+        throw new Error("DeviceRegistry returned invalid registration REPORTDATA");
     }
-    catch (error) {
-        console.error("Error sending transaction: ", error);
-        throw error;
-    }
+    return reportData;
 };
 export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3EventDigests, composeHash, workerImageDigest, address, publicIp, brokerIp, publicKeyBytesHex) => {
     if (!device_registry_address) {
@@ -701,6 +684,9 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3Ev
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+    if (account.address.toLowerCase() !== String(address || "").toLowerCase()) {
+        throw new Error(`PRIVATE_KEY account ${account.address} does not match ACCOUNT_ADDRESS ${address}`);
+    }
     addAccountToWallet(account);
     const gasPrice = await web3.eth.getGasPrice();
     const registration = contract.methods.registerDeviceWithRtmr3EventsAndImageDigest(quoteHex, rtmr3EventDigests, composeHash, workerImageDigest, address, publicIp, brokerIp, publicKeyBytesHex);
@@ -719,9 +705,10 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3Ev
         publicKeyBytes: hexByteLength(publicKeyBytesHex),
         calldataBytes: hexByteLength(calldata),
     });
-    try {
-        const attestationAddress = await contract.methods.tdxV4Attestation().call();
-        const debugAbi = [{
+    if (process.env.LOCAL_TDX_MOCK !== "1") {
+        try {
+            const attestationAddress = await contract.methods.tdxV4Attestation().call();
+            const debugAbi = [{
                 type: "function",
                 name: "debugVerifyWithRtmr3Events",
                 inputs: [
@@ -741,24 +728,25 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3Ev
                 ],
                 stateMutability: "view",
             }];
-        const attestation = new web3.eth.Contract(debugAbi, attestationAddress);
-        const debugResult = await attestation.methods
-            .debugVerifyWithRtmr3Events(quoteHex, rtmr3EventDigests, composeHash)
-            .call({ from: account.address });
-        console.log("TDX debug verification:", {
-            attestationAddress,
-            stage: String(debugResult.stage ?? debugResult[0]),
-            qeTcbStatus: String(debugResult.qeTcbStatus ?? debugResult[1]),
-            tcbStatus: String(debugResult.tcbStatus ?? debugResult[2]),
-            pcesvn: String(debugResult.pcesvn ?? debugResult[3]),
-            fmspc: String(debugResult.fmspc ?? debugResult[4]),
-            teeTcbSvn: String(debugResult.teeTcbSvn ?? debugResult[5]),
-            qeIsvProdId: String(debugResult.qeIsvProdId ?? debugResult[6]),
-            qeIsvSvn: String(debugResult.qeIsvSvn ?? debugResult[7]),
-        });
-    }
-    catch (error) {
-        console.error("TDX debug verification call failed:", serializeError(error));
+            const attestation = new web3.eth.Contract(debugAbi, attestationAddress);
+            const debugResult = await attestation.methods
+                .debugVerifyWithRtmr3Events(quoteHex, rtmr3EventDigests, composeHash)
+                .call({ from: account.address });
+            console.log("TDX debug verification:", {
+                attestationAddress,
+                stage: String(debugResult.stage ?? debugResult[0]),
+                qeTcbStatus: String(debugResult.qeTcbStatus ?? debugResult[1]),
+                tcbStatus: String(debugResult.tcbStatus ?? debugResult[2]),
+                pcesvn: String(debugResult.pcesvn ?? debugResult[3]),
+                fmspc: String(debugResult.fmspc ?? debugResult[4]),
+                teeTcbSvn: String(debugResult.teeTcbSvn ?? debugResult[5]),
+                qeIsvProdId: String(debugResult.qeIsvProdId ?? debugResult[6]),
+                qeIsvSvn: String(debugResult.qeIsvSvn ?? debugResult[7]),
+            });
+        }
+        catch (error) {
+            console.error("TDX debug verification call failed:", serializeError(error));
+        }
     }
     const gasEstimate = await registration.estimateGas({ from: account.address });
     const tx = {

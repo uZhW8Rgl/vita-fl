@@ -465,50 +465,43 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         view
         returns (bool)
     {
-        if (eventDigests.length == 0) {
+        if (eventDigests.length == 0 || composeHash == bytes32(0)) {
             return false;
         }
 
         bool hasSingleExpectedComposeEvent = expectedComposeEventDigest.length > 0;
         bool hasAllowedComposeEvents = expectedComposeEventDigestAllowedCount > 0;
         bool hasExpectedComposeHash = expectedComposeHash != bytes32(0);
-        bytes memory expectedComposeHashEventDigest;
-        bytes memory liveComposeHashEventDigest;
-        bool requireLiveComposeHashEvent = composeHash != bytes32(0);
-        if (hasExpectedComposeHash) {
-            if (composeHash != expectedComposeHash) {
-                return false;
-            }
-            expectedComposeHashEventDigest = _composeHashEventDigest(composeHash);
+        if (!hasSingleExpectedComposeEvent && !hasAllowedComposeEvents && !hasExpectedComposeHash) {
+            return false;
         }
-        if (requireLiveComposeHashEvent) {
-            liveComposeHashEventDigest = _composeHashEventDigest(composeHash);
+        if (hasExpectedComposeHash && composeHash != expectedComposeHash) {
+            return false;
         }
 
-        bool foundExpectedComposeEvent =
-            !hasSingleExpectedComposeEvent && !hasAllowedComposeEvents && !hasExpectedComposeHash && !requireLiveComposeHashEvent;
+        bytes memory liveComposeHashEventDigest = _composeHashEventDigest(composeHash);
+        bytes32 liveComposeHashEventDigestHash = keccak256(liveComposeHashEventDigest);
+        bool composePolicyAllowsLiveDigest = hasExpectedComposeHash
+            || (hasSingleExpectedComposeEvent && keccak256(expectedComposeEventDigest) == liveComposeHashEventDigestHash)
+            || (hasAllowedComposeEvents && expectedComposeEventDigestAllowed[liveComposeHashEventDigestHash]);
+        if (!composePolicyAllowsLiveDigest) {
+            return false;
+        }
+
+        bool foundLiveComposeEvent;
         bytes memory replayedRtmr = new bytes(48);
         for (uint256 i = 0; i < eventDigests.length; i++) {
             if (eventDigests[i].length != 48) {
                 return false;
             }
             bytes32 eventDigestHash = keccak256(eventDigests[i]);
-            if (requireLiveComposeHashEvent && eventDigestHash == keccak256(liveComposeHashEventDigest)) {
-                foundExpectedComposeEvent = true;
-            }
-            if (hasSingleExpectedComposeEvent && eventDigestHash == keccak256(expectedComposeEventDigest)) {
-                foundExpectedComposeEvent = true;
-            }
-            if (hasAllowedComposeEvents && expectedComposeEventDigestAllowed[eventDigestHash]) {
-                foundExpectedComposeEvent = true;
-            }
-            if (hasExpectedComposeHash && keccak256(eventDigests[i]) == keccak256(expectedComposeHashEventDigest)) {
-                foundExpectedComposeEvent = true;
+            if (eventDigestHash == liveComposeHashEventDigestHash) {
+                foundLiveComposeEvent = true;
             }
             replayedRtmr = Sha384.hashRtmrExtend(replayedRtmr, eventDigests[i]);
         }
 
-        return foundExpectedComposeEvent && keccak256(replayedRtmr) == keccak256(quoteRtmr3);
+        return foundLiveComposeEvent && keccak256(replayedRtmr) == keccak256(quoteRtmr3);
     }
 
     function _composeHashEventDigest(bytes32 composeHash) private pure returns (bytes memory) {

@@ -13,6 +13,9 @@ x-worker-env: &worker-env
   IPFS_FETCH_TIMEOUT_MS: ${IPFS_FETCH_TIMEOUT_MS:-30000}
   IPFS_PROVIDER: ${IPFS_PROVIDER}
   DOCKER: ${DOCKER}
+  LOCAL_TDX_MOCK: ${LOCAL_TDX_MOCK:-1}
+  LOCAL_TDX_COMPOSE_HASH: ${LOCAL_TDX_COMPOSE_HASH:-0x47d7ddfa97906d05b2b7e53ce888440a820598f120079ed887229ab0302982fa}
+  LOCAL_TDX_IMAGE_DIGEST: ${LOCAL_TDX_IMAGE_DIGEST:-0x7849ee527ff2efc746c58f67cd6336572d5c71743c608bbd3810079289c7c066}
   REGISTRY_ADDRESS: ${REGISTRY_ADDRESS}
   AGGREGATOR_ADDRESS: ${AGGREGATOR_ADDRESS}
   GM_STORAGE_ADDRESS: ${GM_STORAGE_ADDRESS}
@@ -48,6 +51,8 @@ x-worker-common: &worker-common
       condition: service_healthy
   volumes:
     - ./data/evaluation:/dfl/node_server/data/evaluation
+    # Development-only key material. Production images contain no private keys.
+    - ./data/rsa_keys:/dfl/keys:ro
   command: ["/dfl/start_node_neural_network.sh"]
 
 services:
@@ -195,6 +200,10 @@ services:
       FOUNDRY_DISABLE_NIGHTLY_WARNING: "1"
       IPFS_PROVIDER: ${IPFS_PROVIDER}
       DOCKER: ${DOCKER}
+      LOCAL_TDX_MOCK: ${LOCAL_TDX_MOCK:-1}
+      LOCAL_TDX_COMPOSE_HASH: ${LOCAL_TDX_COMPOSE_HASH:-0x47d7ddfa97906d05b2b7e53ce888440a820598f120079ed887229ab0302982fa}
+      LOCAL_TDX_IMAGE_DIGEST: ${LOCAL_TDX_IMAGE_DIGEST:-0x7849ee527ff2efc746c58f67cd6336572d5c71743c608bbd3810079289c7c066}
+      ETH_WALLET_PRIVATE_KEY: ${W0_PRIVATE_KEY}
       KEEP_ALIVE: ${KEEP_ALIVE:-0}
       PCCS_FMSPC: ${PCCS_FMSPC:-20A06F000000}
       PCCS_FETCH: ${PCCS_FETCH:-1}
@@ -213,6 +222,10 @@ services:
       INITIAL_GM_CID: ${INITIAL_GM_CID}
       INITIAL_GM_SIG_CID: ${INITIAL_GM_SIG_CID}
       INITIAL_GM_SIGNER_ADDRESS: ${INITIAL_GM_SIGNER_ADDRESS}
+      WORKER_COUNT: ${WORKER_COUNT:-20}
+      WORKER_ACCOUNT_ADDRESSES: ${WORKER_ACCOUNT_ADDRESSES:-}
+      INITIAL_GM_SIGNING_KEY_PATH: /run/dfl-dev-keys/private_key.pem
+      INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY_PATH: /run/dfl-dev-keys/public_key.pem
       W0_ACCOUNT_ADDRESS: ${W0_ACCOUNT_ADDRESS}
       W1_ACCOUNT_ADDRESS: ${W1_ACCOUNT_ADDRESS}
       W2_ACCOUNT_ADDRESS: ${W2_ACCOUNT_ADDRESS}
@@ -238,6 +251,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data/evaluation:/dfl/data/evaluation
+      # Local demo only; Phala receives the same material through encrypted env.
+      - ./data/rsa_keys:/run/dfl-dev-keys:ro
 
   agent:
     build:

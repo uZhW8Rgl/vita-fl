@@ -20,12 +20,10 @@ Files:
 Typical workflow:
 
 ```bash
-cd phala
-cp terraform.tfvars.example terraform.tfvars
-export PHALA_CLOUD_API_KEY="phak_xxx"
-terraform init
-terraform plan
-terraform apply
+python3 scripts/prepare_dfl_worker_experiment.py --workers 2 --skip-compose --skip-env
+bash phala/tf-env.sh init
+bash phala/tf-env.sh plan -input=false
+bash phala/tf-env.sh apply
 ```
 
 If you already keep the deployment values in repository-root env files, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
@@ -43,6 +41,7 @@ The wrapper reads these values from the selected env file:
 - `PHALA_CLOUD_API_KEY`
 - `W0_ACCOUNT_ADDRESS`
 - `W0_PRIVATE_KEY`
+- optional `W0_RSA_PRIVATE_KEY_FILE` and `W0_RSA_PUBLIC_KEY_FILE` paths; generated files under `data/rsa_keys/` are used by default
 
 It also forwards the current Anvil/DFL profile settings into Terraform, including:
 
@@ -57,21 +56,26 @@ It also forwards the current Anvil/DFL profile settings into Terraform, includin
 
 This means a Phala deployment can now be driven directly from `.env.phala.anvil` without first rebuilding a combined `.env`.
 
-Minimal `terraform.tfvars`:
+For a direct Terraform invocation, keep secret values in `TF_VAR_*` process
+environment variables and only non-secret paths in `terraform.tfvars`:
 
-```hcl
-account_address    = "0xYOUR_WORKER_ADDRESS"
-private_key        = "0xYOUR_WORKER_PRIVATE_KEY"
+```bash
+export TF_VAR_private_key="..."
+terraform -chdir=phala plan
 ```
 
 Notes:
 
-- Fill in the worker key before applying.
+- The provider's `env` attribute encrypts wallet and RSA key material for the target Phala app. The measured/public Compose contains only environment-variable names, never their values.
+- Terraform still records sensitive `env` inputs in state. Local state, state backups, `terraform.tfvars`, and exported `app_code.txt` are ignored; use an encrypted, access-controlled remote backend for non-demo deployments.
+- `public_logs` defaults to `false`. Enabling it does not make secret logging safe.
+- Worker and smart-contract images contain no private keys. Local Compose mounts generated development keys read-only; run `scripts/prepare_dfl_worker_experiment.py` first on a fresh clone.
+- Keys that were committed previously must be treated as compromised and rotated outside this source change before production use.
 - `worker_image` should stay pinned to a `sha256` digest to preserve a stable measured compose policy.
 - `smart_contracts_image` should also be pinned to a `sha256` digest when you want the contract-runtime TEE to be reproducible.
 - The Terraform scaffold now separates `smart-contracts` and `dfl-worker` into different Phala apps / TEEs.
 - If you want SSH access, set `ssh_public_key_path`; if you also want the key stored account-wide in Phala Cloud, set `manage_account_ssh_key = true`.
-- The current scaffold injects worker configuration through the rendered compose file so it stays close to your existing manual deployment flow.
+- Non-secret worker configuration is rendered into Compose; secret values use the provider's encrypted app environment.
 - The default minimal hardware profile is now `tdx.small` with `20 GB` disk.
 - The contract-runtime TEE runs its own local `anvil`; the worker TEE talks to that internal runtime endpoint, not to Sepolia.
 - The contract-runtime compose receives `WORKER_ACCOUNT_ADDRESSES` from Terraform and the `smart-contracts` bootstrap funds those accounts on the embedded Anvil before workers register. This keeps `.env.phala.anvil` worker keys usable even when they are not part of Anvil's initially funded account list.
@@ -130,14 +134,16 @@ docker compose down --volumes --remove-orphans
 KEEP_ALIVE=0 docker compose up --build --force-recreate
 ```
 
-During deployment, `starter_docker.sh` checks that the worker compose policy pins the image by immutable `sha256` digest. For Phala runs it does not preload a worker-specific RTMR3 value from a reference quote; workers submit their live RTMR3 event digest chain during registration.
+During deployment, `starter_docker.sh` checks that the worker image is pinned by immutable `sha256` digest. Production registration is fail-closed until every approved worker's exact canonical `app_compose` hash is mapped to that image digest through `PHALA_ALLOWED_WORKER_COMPOSE_HASHES`.
 
 For Phala/dstack, the measured `compose-hash` is not just the SHA-256 of `dstack-compose.template.yml`. In practice there are two related hashes:
 
 - the RTMR3 `compose-hash` event: SHA-256 of the normalized app-code object exported from Phala into `phala/app_code.txt`
 - the raw compose-file hash: SHA-256 of the `docker_compose_file` text, which can match your local `dstack-compose.template.yml`
 
-The deployment does not enforce one fixed compose hash by default, because Phala includes worker-specific measured inputs in the RTMR3 stream. This branch should keep `TDX_REFERENCE_QUOTE_PATH`, `PHALA_RTMR3_EVENT_DIGESTS`, and `PHALA_ENFORCE_COMPOSE_HASH` empty or `0` so no mock/reference quote, preloaded worker RTMR3 digest, or single-worker compose hash is used.
+The raw compose-file hash is not sufficient for this policy. Copy the canonical hashes reported by `dstack info` for the deployed workers into the comma-separated `PHALA_ALLOWED_WORKER_COMPOSE_HASHES` value. The bootstrap installs both the verifier's exact compose-event allowlist and the Registry mapping `composeHash -> workerImageDigest`.
+
+For a first deployment where the hashes are not known yet, leave the value empty. Contracts and runtime endpoints are created, but worker registration remains disabled. Read each worker's canonical `app_compose` hash from its public TCB info or generated local artifact, review the measured compose, set the allowlist, and apply the runtime configuration again. A correct image-digest claim without this allowlist is deliberately rejected.
 
 When the worker image digest changes, refresh the local Phala measurement exports before rebuilding the smart-contracts image. A live worker publishes its current RTMR3 event log and app-code export into the runtime Kubo MFS under `/phala-artifacts/latest`. Pull those into the repository with:
 
@@ -145,7 +151,7 @@ When the worker image digest changes, refresh the local Phala measurement export
 scripts/fetch_phala_worker_artifacts.sh "$KUBO_API"
 ```
 
-This refreshes `phala/rtmr3_event_log.txt` and refreshes `phala/app_code.txt` when Phala exposes it. These files are useful for local inspection and debugging, but the default Phala runtime no longer stores a single expected compose hash from them. If you intentionally want a single-worker fixed compose-hash policy, set `PHALA_ENFORCE_COMPOSE_HASH=1` or provide `PHALA_EXPECTED_COMPOSE_HASH`.
+This refreshes `phala/rtmr3_event_log.txt` and `phala/app_code.txt` when Phala exposes them. These files are generated, permission-restricted artifacts and must not be committed. Exports from deployments created with older templates can still contain plaintext keys; rotate those keys and redeploy before treating a new export as safe. After reviewing the canonical app-code object, provision its hash through `PHALA_ALLOWED_WORKER_COMPOSE_HASHES`; use `PHALA_EXPECTED_COMPOSE_HASH` only for a deliberate single-worker policy.
 
 ## Manual Runtime-Only Redeploy
 
@@ -222,12 +228,12 @@ python scripts/verify_phala_rtmr3.py \
   --app-code phala/app_code.txt
 ```
 
-5. After changing the worker digest, redeploy the contract-runtime compose with the updated `worker_image` value so bootstrap stores the new expected worker image digest in `DeviceRegistry`. Rebuild `smart-contracts` only when contract or bootstrap code changed.
+5. After changing the worker digest or measured worker compose, update both `worker_image` and `PHALA_ALLOWED_WORKER_COMPOSE_HASHES`, then redeploy the contract-runtime compose so bootstrap installs the new `composeHash -> imageDigest` policies.
 
 Important:
 
 - The on-chain attestation policy verifies the live worker quote and event replay, not the contract-runtime TEE quote.
-- `PHALA_ENFORCE_REFERENCE_RTMR3` and `PHALA_RTMR3_EVENT_DIGESTS` remain available only for legacy debugging; keep them unset for this branch so no reference/mock quote or preloaded per-worker RTMR3 digest is used.
+- `PHALA_ENFORCE_REFERENCE_RTMR3` and raw `PHALA_RTMR3_EVENT_DIGESTS` remain legacy debugging inputs. The production authorization input is the reviewed `PHALA_ALLOWED_WORKER_COMPOSE_HASHES` list.
 - If you change the worker digest or any Phala policy artifact consumed by `smart-contracts`, rebuild and republish the `smart-contracts` image too, then redeploy the contract-runtime TEE with the new runtime digest.
 
 Current Terraform defaults in this scaffold match that target layout:
