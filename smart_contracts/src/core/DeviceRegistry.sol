@@ -20,10 +20,10 @@ contract DeviceRegistry {
         bytes public_key;
     }
 
-    uint256 private constant ATTESTATION_OUTPUT_LENGTH = 119;
+    uint256 private constant REPORT_DATA_LENGTH = 64;
 
     bytes32 public constant REGISTRATION_REPORT_DATA_DOMAIN =
-        keccak256("MasterThesis.DeviceRegistry.registration.v1");
+        keccak256("MasterThesis.DeviceRegistry.registration.v2");
     bytes32 public constant REGISTRATION_CHALLENGE_DOMAIN =
         keccak256("MasterThesis.DeviceRegistry.challenge.v1");
     uint256 public constant REGISTRATION_CHALLENGE_TTL = 1 days;
@@ -206,17 +206,11 @@ contract DeviceRegistry {
         bytes memory _public_key
     ) public {
         require(_address == msg.sender, "sender/address mismatch");
-        require(registrationAllowed[_address], "registration not allowed");
-        require(registrationChallenges[_address] != bytes32(0), "registration challenge missing");
-        require(block.timestamp <= registrationChallengeDeadlines[_address], "registration challenge expired");
-        require(_public_key.length != 0, "public key required");
-        require(expectedWorkerImageDigest != bytes32(0), "worker image policy not configured");
 
         // The image identity is parsed from the exact app_compose preimage on-chain. Only after
         // the image policy passes do we derive the compose hash used to reconstruct RTMR3.
         (bytes32 composeHash, bytes32 workerImageDigest) = _workloadIdentity(canonicalAppCompose);
-        require(workerImageDigest == expectedWorkerImageDigest, "worker image digest mismatch");
-        require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
+        _requireRegistrationPreparation(_address, _public_key, workerImageDigest);
 
         uint256 nonce = registrationNonces[_address];
         bytes32 binding = _registrationBinding(
@@ -250,6 +244,7 @@ contract DeviceRegistry {
         bytes memory canonicalAppCompose
     ) public view returns (bytes memory) {
         (bytes32 composeHash, bytes32 workerImageDigest) = _workloadIdentity(canonicalAppCompose);
+        _requireRegistrationPreparation(_address, _public_key, workerImageDigest);
         uint256 nonce = registrationNonces[_address];
         bytes32 binding = _registrationBinding(
             _address,
@@ -295,6 +290,7 @@ contract DeviceRegistry {
                 deploymentId,
                 block.chainid,
                 address(this),
+                address(tdxV4Attestation),
                 _address,
                 keccak256(bytes(_public_ip)),
                 keccak256(bytes(_msg_broker_ip)),
@@ -308,15 +304,28 @@ contract DeviceRegistry {
         );
     }
 
-    function _requireBoundReportData(bytes memory output, bytes32 binding, uint256 nonce) internal pure {
-        require(output.length == ATTESTATION_OUTPUT_LENGTH, "invalid attestation output");
+    function _requireRegistrationPreparation(address _address, bytes memory _public_key, bytes32 workerImageDigest)
+        internal
+        view
+    {
+        require(_address != address(0), "invalid device address");
+        require(registrationAllowed[_address], "registration not allowed");
+        require(registrationChallenges[_address] != bytes32(0), "registration challenge missing");
+        require(block.timestamp <= registrationChallengeDeadlines[_address], "registration challenge expired");
+        require(_public_key.length != 0, "public key required");
+        require(expectedWorkerImageDigest != bytes32(0), "worker image policy not configured");
+        require(workerImageDigest == expectedWorkerImageDigest, "worker image digest mismatch");
+        require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
+    }
+
+    function _requireBoundReportData(bytes memory reportData, bytes32 binding, uint256 nonce) internal pure {
+        require(reportData.length == REPORT_DATA_LENGTH, "invalid attestation report data");
 
         bytes32 quotedBinding;
         bytes32 quotedNonce;
         assembly ("memory-safe") {
-            // bytes data starts at output + 0x20; REPORTDATA starts 49 bytes into the verifier output.
-            quotedBinding := mload(add(output, 0x51))
-            quotedNonce := mload(add(output, 0x71))
+            quotedBinding := mload(add(reportData, 0x20))
+            quotedNonce := mload(add(reportData, 0x40))
         }
         require(quotedBinding == binding && quotedNonce == bytes32(nonce), "quote report data mismatch");
     }

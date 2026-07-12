@@ -154,6 +154,9 @@ jobs:
           - name: zk-inference
             dockerfile: zk_inference/Dockerfile
             image: zk-inference
+          - name: tee-inference
+            dockerfile: tee_inference/Dockerfile
+            image: tee-inference
           - name: dfl-worker
             dockerfile: dfl/Dockerfile
             image: dfl-worker

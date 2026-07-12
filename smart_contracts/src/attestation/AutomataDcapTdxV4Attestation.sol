@@ -164,6 +164,11 @@ contract AutomataDcapTdxV4Attestation is IAttestation, PEMCertChainBase, Ownable
         ) {
             revert Failed_To_Verify_Quote();
         }
+
+        // This specialized entry point returns only the 64 quote-authenticated
+        // TDREPORT.REPORTDATA bytes consumed by DeviceRegistry. It deliberately
+        // does not expose the packed generic IAttestation output format.
+        output = parsedQuote.body.reportData;
     }
 
     function verifyAndAttestWithZKProof(bytes calldata, bytes calldata)

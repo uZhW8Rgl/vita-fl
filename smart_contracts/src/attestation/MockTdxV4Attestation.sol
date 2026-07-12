@@ -20,6 +20,6 @@ contract MockTdxV4Attestation {
 
     function _mockOutput(bytes calldata reportData) private pure returns (bytes memory) {
         require(reportData.length == REPORT_DATA_LENGTH, "mock report data must be 64 bytes");
-        return abi.encodePacked(bytes1(0), new bytes(48), reportData, bytes6(0));
+        return reportData;
     }
 }

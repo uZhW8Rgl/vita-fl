@@ -94,11 +94,12 @@ contract DeviceRegistryAttestationBindingTest is Test {
             _digestPinnedImage("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             ""
         );
-        bytes memory reportData = _reportData(registry, wrongCompose, publicKey);
+        vm.expectRevert(bytes("worker image digest mismatch"));
+        _reportData(registry, wrongCompose, publicKey);
 
         vm.expectRevert(bytes("worker image digest mismatch"));
         vm.prank(worker);
-        _register(registry, reportData, wrongCompose, publicKey);
+        _register(registry, new bytes(64), wrongCompose, publicKey);
     }
 
     function testRejectsTagOnlyImage() public {
@@ -113,11 +114,12 @@ contract DeviceRegistryAttestationBindingTest is Test {
             _digestPinnedImage("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             string.concat("# approved ", _digestPinnedImage(IMAGE_HEX), "\\n")
         );
-        bytes memory reportData = _reportData(registry, smuggled, publicKey);
+        vm.expectRevert(bytes("worker image digest mismatch"));
+        _reportData(registry, smuggled, publicKey);
 
         vm.expectRevert(bytes("worker image digest mismatch"));
         vm.prank(worker);
-        _register(registry, reportData, smuggled, publicKey);
+        _register(registry, new bytes(64), smuggled, publicKey);
     }
 
     function testRejectsDummyOrSidecarService() public {
@@ -175,11 +177,13 @@ contract DeviceRegistryAttestationBindingTest is Test {
         DeviceRegistry unconfigured = new DeviceRegistry(keccak256("unconfigured deployment"));
         unconfigured.setTdxV4Attestation(address(verifier));
         unconfigured.setRegistrationAllowed(worker, true);
-        bytes memory reportData = _reportData(unconfigured, appCompose, publicKey);
+
+        vm.expectRevert(bytes("worker image policy not configured"));
+        _reportData(unconfigured, appCompose, publicKey);
 
         vm.expectRevert(bytes("worker image policy not configured"));
         vm.prank(worker);
-        _register(unconfigured, reportData, appCompose, publicKey);
+        _register(unconfigured, new bytes(64), appCompose, publicKey);
     }
 
     function testImageRotationRevokesExistingRegistration() public {
@@ -197,9 +201,50 @@ contract DeviceRegistryAttestationBindingTest is Test {
         malformed.setOutput(hex"00");
         registry.setTdxV4Attestation(address(malformed));
 
-        vm.expectRevert(bytes("invalid attestation output"));
+        vm.expectRevert(bytes("invalid attestation report data"));
         vm.prank(worker);
         _register(registry, hex"00", appCompose, publicKey);
+    }
+
+    function testRejectsLegacyPackedVerifierOutput() public {
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        MalformedTdxV4Attestation malformed = new MalformedTdxV4Attestation();
+        malformed.setOutput(abi.encodePacked(bytes1(0), new bytes(48), reportData, bytes6(0)));
+        registry.setTdxV4Attestation(address(malformed));
+
+        vm.expectRevert(bytes("invalid attestation report data"));
+        vm.prank(worker);
+        _register(registry, reportData, appCompose, publicKey);
+    }
+
+    function testVerifierRotationInvalidatesPreparedReportData() public {
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        registry.setTdxV4Attestation(address(new MockTdxV4Attestation()));
+
+        vm.expectRevert(bytes("quote report data mismatch"));
+        vm.prank(worker);
+        _register(registry, reportData, appCompose, publicKey);
+    }
+
+    function testReportDataPreparationRequiresRegistrationPermission() public {
+        DeviceRegistry target = new DeviceRegistry(keccak256("permission test"));
+        target.setTdxV4Attestation(address(verifier));
+        target.setExpectedWorkerImageDigest(imageDigest);
+
+        vm.expectRevert(bytes("registration not allowed"));
+        _reportData(target, appCompose, publicKey);
+    }
+
+    function testReportDataPreparationRejectsExpiredChallenge() public {
+        vm.warp(registry.registrationChallengeDeadlines(worker) + 1);
+
+        vm.expectRevert(bytes("registration challenge expired"));
+        _reportData(registry, appCompose, publicKey);
+    }
+
+    function testReportDataPreparationRequiresPublicKey() public {
+        vm.expectRevert(bytes("public key required"));
+        _reportData(registry, appCompose, new bytes(0));
     }
 
     function testLegacySelectorCannotBypassAppComposeEvidence() public {
