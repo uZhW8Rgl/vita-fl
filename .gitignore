@@ -9,6 +9,7 @@
 *.tfplan
 !*.tfvars.example
 .idea
+/.tools/
 !lib/**
 __pycache__/
 *.pyc
