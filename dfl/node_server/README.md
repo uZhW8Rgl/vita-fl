@@ -63,7 +63,7 @@ npm run start
 - `KUBO_GATEWAY`
 - `PYTHON_SERVICE_URL`
 - `LOCAL_TDX_MOCK` (local Anvil only; never enable on Phala)
-- `EXPECTED_WORKER_IMAGE` and the Registry-provisioned compose allowlist (Phala)
+- the Registry-provisioned worker-image and compose allowlists (Phala; enforced on-chain)
 - `RSA_PRIVATE_KEY`
 - `RSA_PUBLIC_KEY`
 

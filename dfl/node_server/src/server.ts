@@ -345,23 +345,15 @@ function measuredWorkerIdentity(info) {
     const appCompose = parseAppCompose(tcbInfo?.app_compose || tcbInfo?.appCompose);
     const measuredComposeHash = normalizeHashHex(getComposeHash(appCompose, true), 32, 'measured app_compose hash');
     const imageRefs = extractWorkerImageRefs(appCompose);
-    const expectedImageRef = process.env.EXPECTED_WORKER_IMAGE || process.env.WORKER_IMAGE || process.env.PHALA_WORKER_IMAGE || '';
-    const matchedImageRef = expectedImageRef
-        ? imageRefs.find(imageRef => imageRef === expectedImageRef)
-        : imageRefs.find(imageRef => imageRef.includes('master-thesis-dfl-worker@sha256:')) || imageRefs[0];
+    const matchedImageRef = imageRefs.find(imageRef => imageRef.includes('master-thesis-dfl-worker@sha256:')) || imageRefs[0];
     if (!matchedImageRef) {
-        throw new Error(`Measured app_compose does not contain expected worker image reference: ${expectedImageRef}`);
+        throw new Error('Measured app_compose does not contain a worker image reference');
     }
 
     const imageDigest = extractImageDigest(matchedImageRef);
     if (!imageDigest) {
         throw new Error(`Measured worker image is not digest-pinned: ${matchedImageRef}`);
     }
-    const expectedDigest = extractImageDigest(expectedImageRef);
-    if (expectedDigest && imageDigest !== expectedDigest) {
-        throw new Error(`Measured worker image digest ${imageDigest} does not match expected ${expectedDigest}`);
-    }
-
     return { imageRef: matchedImageRef, imageDigest, composeHash: measuredComposeHash };
 }
 
