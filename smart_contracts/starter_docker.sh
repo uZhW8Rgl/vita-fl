@@ -708,7 +708,6 @@ if [ "$ENABLE_DCAP" = "1" ]; then
             # Legacy verifier selectors can optionally enforce one reference RTMR3.
             # registerDeviceWithAttestedAppCompose uses the structured event-log
             # verifier and deliberately does not consult this exact-value policy.
-            echo "Compose hashes are verified from submitted app_compose and RTMR3 logs; no compose allowlist is installed."
             authorize_pccs_reader "$DCAP_TDX_V4_ADDRESS"
             cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
                 $DEVICE_REGISTRY_ADDRESS "setTdxV4Attestation(address)" $DCAP_TDX_V4_ADDRESS
