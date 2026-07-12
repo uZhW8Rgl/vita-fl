@@ -217,6 +217,20 @@ async function uploadLocalModel(endpoint, deviceId) {
         clearTimeout(timeout);
     }
 }
+async function waitForAggregatorModelEndpoint(expectedAggregator) {
+    const deadline = Date.now() + modelTransferTimeoutMs;
+    while (Date.now() < deadline) {
+        const latestState = await getCurrentState();
+        if (!sameAddress(latestState[1], expectedAggregator)) {
+            throw new Error(`Aggregator changed from ${expectedAggregator} to ${latestState[1]} before model transfer`);
+        }
+        const endpoint = String(await getAggregatorEndpoint());
+        if (endpoint.startsWith('https://'))
+            return endpoint;
+        await sleep(500);
+    }
+    throw new Error(`Aggregator ${expectedAggregator} did not publish an HTTPS model endpoint within ${modelTransferTimeoutMs}ms`);
+}
 async function handleModelUpload(request, response) {
     const reply = (status, payload) => {
         const body = Buffer.from(JSON.stringify(payload));
@@ -1000,10 +1014,7 @@ const stateMachine = async () => {
                             role: "worker",
                             aggregator: String(state["1"]),
                         }, async () => {
-                            const endpoint = String(await getAggregatorEndpoint());
-                            if (!endpoint.startsWith('https://')) {
-                                throw new Error(`Aggregator has not published a valid HTTPS model endpoint: ${endpoint}`);
-                            }
+                            const endpoint = await waitForAggregatorModelEndpoint(state[1]);
                             await uploadLocalModel(endpoint, String(process.env.ACCOUNT_ADDRESS));
                         });
                         if (await hasSubmittedModel(currentRound, process.env.ACCOUNT_ADDRESS)) {
