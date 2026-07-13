@@ -379,9 +379,48 @@
     }
 
     .status {
-      margin-top: 6px;
+      margin: 0 0 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px 14px;
+      background: rgba(130, 209, 232, 0.07);
       color: var(--muted);
       font-size: 0.96rem;
+    }
+
+    .runtime-overview {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .runtime-state {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.025);
+    }
+
+    .runtime-state-label {
+      color: var(--muted);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .runtime-state-value {
+      margin-top: 6px;
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .runtime-state-value.ready {
+      color: var(--accent-2);
+    }
+
+    .runtime-state-value.unavailable {
+      color: var(--accent-3);
     }
 
     .tabs {
@@ -625,6 +664,10 @@
         grid-template-columns: 1fr;
       }
 
+      .runtime-overview {
+        grid-template-columns: 1fr;
+      }
+
       .dashboard-frame {
         height: 540px;
       }
@@ -670,7 +713,6 @@
             <iframe
               class="sidebar-dashboard-frame"
               id="agent-dashboard-frame"
-              src=""
               title="Grafana Agent MCP Tool Usage"
               loading="lazy">
             </iframe>
@@ -679,16 +721,28 @@
       </aside>
 
       <main class="panel main full-width" id="main-panel">
-        <div class="sr-only">
-          <h2 id="title">Fresh Session</h2>
-          <div class="status" id="status">Status: Waiting for smart contracts to initialize.</div>
-        </div>
+        <h2 class="sr-only" id="title">Fresh Session</h2>
 
         <div class="content">
           <div class="tabs content-tabs">
             <button class="tab-button active" id="contracts-tab" type="button">Smart Contracts</button>
             <button class="tab-button" id="training-tab" type="button" disabled>Training Setup</button>
             <button class="tab-button" id="chat-tab" type="button" disabled>Agent Client</button>
+          </div>
+          <div class="status" id="status">Status: Waiting for smart contracts to initialize.</div>
+          <div class="runtime-overview" aria-live="polite">
+            <div class="runtime-state">
+              <div class="runtime-state-label">Smart contracts</div>
+              <div class="runtime-state-value" id="runtime-contracts">Checking</div>
+            </div>
+            <div class="runtime-state">
+              <div class="runtime-state-label">Dynamic workers</div>
+              <div class="runtime-state-value" id="runtime-workers">0 / 20</div>
+            </div>
+            <div class="runtime-state">
+              <div class="runtime-state-label">Agent service</div>
+              <div class="runtime-state-value" id="runtime-agent">Checking</div>
+            </div>
           </div>
           <section class="dashboard" id="contracts-view">
             <div class="dashboard-card">
@@ -702,13 +756,12 @@
               </div>
               <div class="control-strip">
                 <div class="control-note" id="contract-init-note">
-                  `anvil`, `ipfs`, and `smart-contracts` start automatically with the base stack. Training unlocks once smart contract initialization finishes successfully.
+                  <code>anvil</code>, <code>ipfs</code>, and <code>smart-contracts</code> start automatically with the base stack. Training unlocks once smart contract initialization finishes successfully.
                 </div>
               </div>
               <iframe
                 class="dashboard-frame"
                 id="contracts-dashboard-frame"
-                src=""
                 title="Grafana DFL Contract Initialization Overview"
                 loading="lazy">
               </iframe>
@@ -721,7 +774,7 @@
                 <div>
                   <div class="panel-title">Training Setup</div>
                   <div class="dashboard-copy" id="training-dashboard-hint">
-                    Configure the training run, then launch the selected worker set together with the training telemetry dashboard.
+                    Configure the training run, then launch the selected worker set as individual Phala TEE deployments.
                   </div>
                 </div>
               </div>
@@ -770,7 +823,6 @@
               <iframe
                 class="dashboard-frame"
                 id="training-dashboard-frame"
-                src=""
                 title="Grafana DFL Training Overview"
                 loading="lazy">
               </iframe>
@@ -806,7 +858,7 @@
     function resolveDashboardUrl(configuredUrl, fallbackPath) {
       const value = String(configuredUrl || "").trim();
       if (!value) {
-        return `${currentGrafanaBaseUrl()}${fallbackPath}`;
+        return "";
       }
       if (value.startsWith("/")) {
         return `${currentGrafanaBaseUrl()}${value}`;
@@ -840,11 +892,15 @@
     const hasContractDashboardUrl = Boolean(contractDashboardUrl) && /^https?:\/\//.test(contractDashboardUrl);
     const hasTrainingDashboardUrl = Boolean(trainingDashboardUrl) && /^https?:\/\//.test(trainingDashboardUrl);
     const hasAgentDashboardUrl = Boolean(agentDashboardUrl) && /^https?:\/\//.test(agentDashboardUrl);
+    const hasAnyDashboardUrl = hasContractDashboardUrl || hasTrainingDashboardUrl || hasAgentDashboardUrl;
     const sidebarEl = document.getElementById("sidebar");
     const mainPanelEl = document.getElementById("main-panel");
     const sessionsEl = document.getElementById("sessions");
     const messagesEl = document.getElementById("messages");
     const statusEl = document.getElementById("status");
+    const runtimeContractsEl = document.getElementById("runtime-contracts");
+    const runtimeWorkersEl = document.getElementById("runtime-workers");
+    const runtimeAgentEl = document.getElementById("runtime-agent");
     const titleEl = document.getElementById("title");
     const inputEl = document.getElementById("input");
     const composerEl = document.getElementById("composer");
@@ -970,25 +1026,31 @@
         }
       }
       if (hasContractDashboardUrl) {
+        contractsDashboardFrameEl.classList.remove("hidden");
         loadDashboardFrame(contractsDashboardFrameEl, contractDashboardUrl);
         contractsHintEl.textContent = "Contract initialization telemetry is embedded from Grafana.";
       } else {
-        contractsDashboardFrameEl.removeAttribute("src");
-        contractsHintEl.innerHTML = 'No contract dashboard URL configured yet. Set <code>GRAFANA_CONTRACT_DASHBOARD_URL</code> and rebuild the UI.';
+        contractsDashboardFrameEl.src = "about:blank";
+        contractsDashboardFrameEl.classList.add("hidden");
+        contractsHintEl.textContent = "Live contract status is shown at the top of the page. Grafana is not deployed in the current Phala runtime.";
       }
       if (hasTrainingDashboardUrl) {
+        trainingDashboardFrameEl.classList.remove("hidden");
         loadDashboardFrame(trainingDashboardFrameEl, trainingDashboardUrl);
         trainingDashboardHintEl.textContent = "Training telemetry is embedded from Grafana.";
       } else {
-        trainingDashboardFrameEl.removeAttribute("src");
-        trainingDashboardHintEl.innerHTML = 'No training dashboard URL configured yet. Set <code>GRAFANA_TRAINING_DASHBOARD_URL</code> and rebuild the UI.';
+        trainingDashboardFrameEl.src = "about:blank";
+        trainingDashboardFrameEl.classList.add("hidden");
+        trainingDashboardHintEl.textContent = "Configure and launch digest-pinned Phala workers. Grafana is not deployed in the current runtime.";
       }
       if (hasAgentDashboardUrl) {
+        agentDashboardFrameEl.classList.remove("hidden");
         loadDashboardFrame(agentDashboardFrameEl, agentDashboardUrl);
         agentDashboardHintEl.textContent = "Agent MCP tool telemetry is embedded from Grafana.";
       } else {
-        agentDashboardFrameEl.removeAttribute("src");
-        agentDashboardHintEl.innerHTML = 'No agent dashboard URL configured yet. Set <code>GRAFANA_AGENT_DASHBOARD_URL</code> and rebuild the UI.';
+        agentDashboardFrameEl.src = "about:blank";
+        agentDashboardFrameEl.classList.add("hidden");
+        agentDashboardHintEl.textContent = "MCP telemetry will appear here after an agent dashboard is configured.";
       }
     }
 
@@ -1060,7 +1122,8 @@
       }
       trainingStartBtn.disabled = disabled;
       trainingResetBtn.disabled = disabled;
-      grafanaValuesResetBtn.disabled = disabled;
+      grafanaValuesResetBtn.disabled = disabled || !hasAnyDashboardUrl;
+      grafanaValuesResetBtn.classList.toggle("hidden", !hasAnyDashboardUrl);
     }
 
     function positiveInt(value, fallback = 1) {
@@ -1163,7 +1226,7 @@
       trainingTabBtn.classList.toggle("active", currentMode === "training");
       chatTabBtn.classList.toggle("active", currentMode === "chat");
       trainingTabBtn.disabled = !contractsReady();
-      chatTabBtn.disabled = !trainingReady();
+      chatTabBtn.disabled = !trainingReady() || !workflowState.agent_running;
     }
 
     function currentStatusText() {
@@ -1187,7 +1250,7 @@
           : "Status: Training is live. Waiting for the agent chat backend.";
       }
       if (currentMode === "training") {
-        return "Status: Training telemetry is live.";
+        return "Status: Dynamic Phala training workers are running.";
       }
       return "Status: Smart contracts ready. Training controls are unlocked.";
     }
@@ -1212,7 +1275,7 @@
       } else if (trainingDraftDirty) {
         trainingNoteEl.textContent = `Draft kept locally. Start Training will use rounds=${trainingConfig.rounds}, epoch=${trainingConfig.epoch}, workers=${trainingConfig.worker_count}, client limit=${trainingConfig.client_limit}.`;
       } else {
-        trainingNoteEl.textContent = `Available VM services in compose: ${trainingConfig.max_worker_count}. Client limit is capped to selected workers minus the active aggregator.`;
+        trainingNoteEl.textContent = `Available Phala worker slots: ${trainingConfig.max_worker_count}. Client limit is capped to selected workers minus the active aggregator.`;
       }
       setTrainingControlsDisabled(!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady());
     }
@@ -1229,7 +1292,18 @@
         chatWarningEl.classList.add("hidden");
       } else {
         chatWarningEl.classList.remove("hidden");
+        chatWarningEl.textContent = workflowState.agent_running
+          ? "The agent is starting. Chat becomes available once its health and session endpoints respond."
+          : "No agent service is deployed in the current Phala runtime. Training remains available independently.";
       }
+      const deployedWorkers = Number(workflowState.phala_workers?.deployed_worker_count || 0);
+      const maximumWorkers = Number(workflowState.phala_workers?.maximum_worker_count || trainingConfig.max_worker_count || 0);
+      runtimeContractsEl.textContent = contractsReady() ? "Ready" : "Starting";
+      runtimeContractsEl.className = `runtime-state-value${contractsReady() ? " ready" : ""}`;
+      runtimeWorkersEl.textContent = `${deployedWorkers} / ${maximumWorkers}`;
+      runtimeWorkersEl.className = `runtime-state-value${deployedWorkers > 0 ? " ready" : ""}`;
+      runtimeAgentEl.textContent = workflowState.agent_running ? (agentReady ? "Ready" : "Starting") : "Not deployed";
+      runtimeAgentEl.className = `runtime-state-value${agentReady ? " ready" : (!workflowState.agent_running ? " unavailable" : "")}`;
       if (currentMode === "training" && !contractsReady()) {
         currentMode = "contracts";
       }
@@ -1332,7 +1406,7 @@
         trainingConfigLoaded = true;
         currentMode = "contracts";
         applyAgentReadiness(false);
-        finalStatus = "Status: Base runtime restarted and smart contracts reinitialized. You are back at Smart Contracts.";
+        finalStatus = "Status: Dynamic training workers stopped. Smart contracts remain ready.";
       } catch (error) {
         finalStatus = `Status: ERROR :: ${error.message || error}`;
       } finally {
@@ -1409,7 +1483,7 @@
     }
 
     async function pollAgentHealth() {
-      if (!trainingReady()) {
+      if (!trainingReady() || !workflowState.agent_running) {
         applyAgentReadiness(false);
         return;
       }

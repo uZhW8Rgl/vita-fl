@@ -59,6 +59,11 @@ def phala_runtime_mode() -> bool:
     return CONTROL_RUNTIME_MODE == "phala"
 
 
+def environment_flag(name: str, default: bool = False) -> bool:
+    fallback = "1" if default else "0"
+    return os.environ.get(name, fallback).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def phala_worker_controller():
     global _phala_worker_controller
     if not phala_runtime_mode():
@@ -1277,16 +1282,13 @@ async def metrics() -> Response:
 async def phala_runtime_status() -> dict[str, Any]:
     worker_status = await asyncio.to_thread(phala_worker_controller().status)
     deployed = worker_status["deployed_worker_count"]
-    contract_initialized = os.environ.get("PHALA_CONTRACTS_READY", "1").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
+    contract_initialized = environment_flag("PHALA_CONTRACTS_READY", default=True)
+    agent_available = environment_flag("PHALA_AGENT_AVAILABLE")
     return {
         "contract_initialized": contract_initialized,
         "contract_running": False,
         "training_started": contract_initialized and deployed > 0,
-        "agent_running": True,
+        "agent_running": agent_available,
         "base_runtime_ready": True,
         "chain_contracts_ready": contract_initialized,
         "contract_completed_successfully": contract_initialized,
@@ -1304,7 +1306,11 @@ async def phala_runtime_status() -> dict[str, Any]:
                 "running": False,
                 "exit_code": 0 if contract_initialized else None,
             },
-            "agent": {"service": "agent", "status": "running", "running": True},
+            "agent": {
+                "service": "agent",
+                "status": "external" if agent_available else "not-deployed",
+                "running": agent_available,
+            },
             "zk-inference": {"service": "zk-inference", "status": "external", "running": True},
             "workers": worker_status["workers"],
         },
@@ -1369,6 +1375,11 @@ async def get_control_status() -> dict[str, Any]:
 
 @app.post("/api/observability/ensure")
 async def ensure_observability() -> dict[str, Any]:
+    if phala_runtime_mode() and not environment_flag("PHALA_OBSERVABILITY_AVAILABLE"):
+        raise HTTPException(
+            status_code=503,
+            detail="Observability services are not deployed in the current Phala runtime.",
+        )
     try:
         logs = await ensure_observability_services()
         return {"ok": True, "logs": logs[-1:]}
@@ -1378,6 +1389,11 @@ async def ensure_observability() -> dict[str, Any]:
 
 @app.post("/api/observability/reset-values")
 async def reset_observability_values() -> dict[str, Any]:
+    if phala_runtime_mode() and not environment_flag("PHALA_OBSERVABILITY_AVAILABLE"):
+        raise HTTPException(
+            status_code=503,
+            detail="Observability services are not deployed in the current Phala runtime.",
+        )
     if operation_lock.locked():
         raise HTTPException(status_code=409, detail="Another control operation is already running.")
 
