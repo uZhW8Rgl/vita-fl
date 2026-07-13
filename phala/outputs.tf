@@ -24,27 +24,27 @@ output "ui_endpoint" {
 
 output "worker_app_id" {
   description = "Phala application ID for the worker TEE."
-  value       = phala_app.dfl_worker.app_id
+  value       = try(phala_app.dfl_worker[0].app_id, null)
 }
 
 output "worker_primary_cvm_id" {
   description = "Primary CVM identifier for the worker TEE."
-  value       = phala_app.dfl_worker.primary_cvm_id
+  value       = try(phala_app.dfl_worker[0].primary_cvm_id, null)
 }
 
 output "worker_cvm_ids" {
   description = "All CVM identifiers attached to the worker app."
-  value       = phala_app.dfl_worker.cvm_ids
+  value       = try(phala_app.dfl_worker[0].cvm_ids, null)
 }
 
 output "worker_endpoint" {
   description = "Public endpoint for the worker app, if enabled."
-  value       = phala_app.dfl_worker.endpoint
+  value       = try(phala_app.dfl_worker[0].endpoint, null)
 }
 
 output "worker_status" {
   description = "Current deployment status for the worker app."
-  value       = phala_app.dfl_worker.status
+  value       = try(phala_app.dfl_worker[0].status, null)
 }
 
 output "tee_inference_app_id" {
@@ -78,25 +78,25 @@ output "additional_worker_cvm_ids" {
 }
 
 output "all_worker_app_ids" {
-  description = "Phala application IDs for all worker TEEs, including worker0."
+  description = "Phala application IDs for statically managed worker TEEs."
   value = merge(
-    { worker0 = phala_app.dfl_worker.app_id },
+    var.enable_phala_control_api ? {} : { worker0 = phala_app.dfl_worker[0].app_id },
     { for key, app in phala_app.dfl_worker_additional : key => app.app_id }
   )
 }
 
 output "all_worker_cvm_ids" {
-  description = "CVM identifiers for all worker TEEs, including worker0."
+  description = "CVM identifiers for statically managed worker TEEs."
   value = merge(
-    { worker0 = phala_app.dfl_worker.cvm_ids },
+    var.enable_phala_control_api ? {} : { worker0 = phala_app.dfl_worker[0].cvm_ids },
     { for key, app in phala_app.dfl_worker_additional : key => app.cvm_ids }
   )
 }
 
 output "all_worker_statuses" {
-  description = "Current deployment status for all worker TEEs, including worker0."
+  description = "Current deployment status for statically managed worker TEEs."
   value = merge(
-    { worker0 = phala_app.dfl_worker.status },
+    var.enable_phala_control_api ? {} : { worker0 = phala_app.dfl_worker[0].status },
     { for key, app in phala_app.dfl_worker_additional : key => app.status }
   )
 }

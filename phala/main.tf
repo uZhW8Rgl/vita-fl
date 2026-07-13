@@ -157,6 +157,8 @@ resource "phala_app" "contract_runtime" {
 }
 
 resource "phala_app" "dfl_worker" {
+  count = var.enable_phala_control_api ? 0 : 1
+
   name = var.worker_app_name
   docker_compose = templatefile("${path.module}/dstack-compose.worker.phala.tftpl", {
     worker_image                   = var.worker_image
@@ -321,7 +323,7 @@ resource "phala_app" "tee_inference" {
 resource "phala_cvm_power" "dfl_worker" {
   count = var.manage_power_state && !var.enable_phala_control_api ? 1 : 0
 
-  cvm_id = phala_app.dfl_worker.primary_cvm_id
+  cvm_id = phala_app.dfl_worker[0].primary_cvm_id
   state  = var.desired_power_state
 
   wait_for_state       = true

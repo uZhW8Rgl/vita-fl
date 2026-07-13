@@ -7,6 +7,7 @@ from control_api.phala_workers import (
     PhalaWorkerController,
     WorkerConfigurationError,
     load_worker_inventory,
+    redact_terraform_output,
 )
 
 
@@ -64,6 +65,20 @@ def controller(count: int = 3) -> tuple[PhalaWorkerController, FakeRunner, FakeC
 
 
 class WorkerInventoryTests(unittest.TestCase):
+    def test_terraform_diagnostics_are_redacted(self) -> None:
+        private_key = "0x" + "ab" * 32
+        diagnostic = (
+            f"key={private_key}\n"
+            "token=phak_example-token\n"
+            "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----"
+        )
+
+        redacted = redact_terraform_output(diagnostic)
+
+        self.assertNotIn(private_key, redacted)
+        self.assertNotIn("phak_example-token", redacted)
+        self.assertNotIn("secret", redacted)
+
     def test_inventory_is_ordered_and_never_exposes_keys(self) -> None:
         instance, _runner, issuer = controller()
 

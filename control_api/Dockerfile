@@ -18,8 +18,13 @@ RUN apt-get update && \
 COPY control_api ./control_api
 COPY phala/bin/terraform /usr/local/bin/terraform
 COPY phala/dynamic-workers ./phala/dynamic-workers
+COPY control_api/terraform.rc /etc/terraform.rc
 
 RUN chmod 0755 /usr/local/bin/terraform
+
+ENV TF_CLI_CONFIG_FILE=/etc/terraform.rc
+
+RUN terraform -chdir=/app/phala/dynamic-workers providers mirror /opt/terraform-provider-mirror
 
 RUN python -m pip install --upgrade pip setuptools wheel && \
     python -m pip install -r control_api/requirements.txt

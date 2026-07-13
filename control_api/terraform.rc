@@ -1,0 +1,10 @@
+provider_installation {
+  filesystem_mirror {
+    path    = "/opt/terraform-provider-mirror"
+    include = ["registry.terraform.io/phala-network/phala"]
+  }
+
+  direct {
+    exclude = ["registry.terraform.io/phala-network/phala"]
+  }
+}

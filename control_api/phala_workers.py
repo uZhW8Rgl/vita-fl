@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -17,6 +18,9 @@ from typing import Any, Protocol
 MAX_WORKERS = 20
 ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 PRIVATE_KEY_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
+PRIVATE_KEY_IN_TEXT_RE = re.compile(r"0x[0-9a-fA-F]{64}")
+PEM_IN_TEXT_RE = re.compile(r"-----BEGIN [^-]+-----.*?-----END [^-]+-----", re.DOTALL)
+PHALA_API_KEY_IN_TEXT_RE = re.compile(r"phak_[A-Za-z0-9_-]+")
 
 
 class WorkerConfigurationError(ValueError):
@@ -25,6 +29,12 @@ class WorkerConfigurationError(ValueError):
 
 class WorkerProvisioningError(RuntimeError):
     """Terraform could not establish the requested worker set."""
+
+
+def redact_terraform_output(value: str) -> str:
+    redacted = PEM_IN_TEXT_RE.sub("<redacted-pem>", value)
+    redacted = PRIVATE_KEY_IN_TEXT_RE.sub("<redacted-private-key>", redacted)
+    return PHALA_API_KEY_IN_TEXT_RE.sub("<redacted-phala-api-key>", redacted)
 
 
 @dataclass(frozen=True)
@@ -288,8 +298,13 @@ class SubprocessTerraformRunner:
             text=True,
         )
         if result.returncode != 0:
+            output = redact_terraform_output("\n".join(part for part in (result.stdout, result.stderr) if part).strip())
+            if not output:
+                output = "Terraform produced no diagnostic output"
+            output = output[-4000:]
+            print(f"Dynamic worker Terraform failed:\n{output}", file=sys.stderr, flush=True)
             raise WorkerProvisioningError(
-                f"Terraform failed with exit code {result.returncode}; inspect the protected control-api logs"
+                f"Terraform failed with exit code {result.returncode}: {output}"
             )
         return result
 
