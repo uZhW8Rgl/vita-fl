@@ -2,11 +2,13 @@
 
 This folder contains the local agent layer around the DFL and ZK inference pipeline.
 
-The implementation is now centered around three separate public agent skills:
+The implementation exposes the existing three-step ZK workflow plus one
+fail-closed TEE inference skill:
 
 1. `fetch_latest_verified_model_bundle()`
 2. `generate_random_chestmnist_image(...)`
 3. `generate_zk_inference_proof()`
+4. `run_verified_tee_inference(...)`
 
 The shared skill orchestration now lives in `agent/agent_skills.py`. MCP, the deterministic CLI path, and the LangChain/Ollama chat layer use that skill layer instead of each implementing the workflow independently.
 
@@ -22,6 +24,21 @@ Together they cover the normal flow in separate steps:
 8. Run EZKL against that prepared `input.json` to generate and verify a proof for the prediction.
 
 The smart contracts are the source of truth. Direct IPFS scanning is kept only as a debug fallback.
+
+`run_verified_tee_inference` is deliberately a single toolcall. It selects a
+ChestMNIST test image, calls the digest-pinned Phala TEE, verifies the AIR
+signature and request/model/response hashes, compares REPORTDATA with the TDX
+Quote V4, replays RTMR3, checks the measured `app_compose` and image digest,
+registers the exact verified evidence bytes with SCITT-CCF, and verifies the
+returned CCF receipt before returning the prediction. Both the raw evidence
+bundle and transparent SCITT statement are stored for later inspection.
+
+The digest-pinned endpoint and expected image digest are trusted process
+configuration and are intentionally not MCP arguments. This first verifier
+checks the AIR signature and all TDX report-data/RTMR3 workload bindings. It
+also reports `dcap_collateral_verified: false`: Intel certificate-chain,
+revocation, QE-identity, and TCB-status verification remains a separate DCAP
+step until the existing on-chain verifier is connected to this tool.
 
 ## Install
 
@@ -203,13 +220,22 @@ Run the MCP server directly:
 
 The MCP server does not reimplement proof logic. It wraps the existing scripts in `zk_inference`.
 
-The main public MCP tools are now the skill-oriented entry points:
+The public MCP tools are the skill-oriented entry points:
 
 - `fetch_latest_verified_model_bundle()` resolves the current on-chain bundle, downloads it, decrypts it, verifies the signature, and exports the verified model.
 - `generate_random_chestmnist_image(...)` prepares one ChestMNIST sample and writes the EZKL input artifacts.
 - `generate_zk_inference_proof()` runs EZKL against the already prepared artifacts.
+- `run_verified_tee_inference(index=None)` performs TEE inference, all local
+  AIR/TDX, RTMR3, Compose and image-policy checks, SCITT registration, and CCF
+  receipt verification in one fail-closed call.
 
-Only these three MCP tools are public. Lower-level functions such as the bundle fetch, query creation, and EZKL execution still exist internally as Python helpers, but they are no longer exposed as separate MCP tools.
+Lower-level TEE execution and verification functions are internal helpers and
+are not exposed as independent MCP tools. Configure the combined tool with
+`TEE_INFERENCE_URL`, `TEE_INFERENCE_IMAGE_DIGEST`, `CHESTMNIST_TEST_DATA`,
+`TEE_INFERENCE_EVIDENCE_PATH`, `SCITT_URL`, `SCITT_DEVELOPMENT`,
+`SCITT_SIGNER_DIR`, and `SCITT_TRANSPARENT_STATEMENT_PATH` when the defaults do
+not match the deployment. `SCITT_DEVELOPMENT=1` is only appropriate for the
+Virtual Mode prototype with its self-signed TLS certificate.
 
 ## Debug IPFS Scan
 

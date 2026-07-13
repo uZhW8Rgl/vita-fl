@@ -50,10 +50,29 @@ GENERATE_ZK_INFERENCE_PROOF_SKILL = SkillSpec(
     ),
 )
 
+RUN_VERIFIED_TEE_INFERENCE_SKILL = SkillSpec(
+    name="run_verified_tee_inference",
+    summary=(
+        "Run one ChestMNIST inference in the Phala TEE and return it only after "
+        "AIR, quote-binding, RTMR3, and image-policy verification."
+    ),
+    stages=(
+        "select_sample",
+        "run_tee_inference",
+        "verify_air_receipt",
+        "verify_tdx_binding",
+        "verify_rtmr3_and_image",
+        "register_scitt_statement",
+        "verify_scitt_receipt",
+        "persist_evidence",
+    ),
+)
+
 AGENT_SKILL_SPECS: tuple[SkillSpec, ...] = (
     FETCH_LATEST_VERIFIED_MODEL_BUNDLE_SKILL,
     GENERATE_RANDOM_CHESTMNIST_IMAGE_SKILL,
     GENERATE_ZK_INFERENCE_PROOF_SKILL,
+    RUN_VERIFIED_TEE_INFERENCE_SKILL,
 )
 
 

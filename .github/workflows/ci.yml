@@ -56,7 +56,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
 
       - name: Install Python tooling and dependencies
@@ -69,10 +69,10 @@ jobs:
           python -m pip install -e dfl/neural_network
 
       - name: Run Ruff lint
-        run: ruff check agent zk_inference dfl/neural_network
+        run: ruff check agent zk_inference dfl/neural_network transparency_log
 
       - name: Check formatting
-        run: ruff format --check agent zk_inference dfl/neural_network
+        run: ruff format --check agent zk_inference dfl/neural_network transparency_log
 
       - name: Python syntax smoke check
         run: |
@@ -81,6 +81,8 @@ jobs:
             agent/blockchain_source.py \
             agent/ipfs_bundle.py \
             agent/mcp_server.py \
+            agent/scitt_client.py \
+            agent/tee_inference_client.py \
             data/mnist_tools.py \
             zk_inference/create_single_mnist_query.py \
             zk_inference/export_model.py \
@@ -89,7 +91,15 @@ jobs:
             zk_inference/service_tools.py \
             dfl/neural_network/cli.py \
             dfl/neural_network/service.py \
-            dfl/neural_network/start_service.py
+            dfl/neural_network/start_service.py \
+            transparency_log/bootstrap.py \
+            transparency_log/test_bootstrap.py
+
+      - name: Run agent unit tests
+        run: PYTHONPATH=. python -m unittest discover -s agent/tests -v
+
+      - name: Run transparency-log unit tests
+        run: PYTHONPATH=. python -m unittest discover -s transparency_log -v
 
   node-server:
     name: Node Server
@@ -149,18 +159,27 @@ jobs:
       matrix:
         include:
           - name: agent
+            context: .
             dockerfile: agent/Dockerfile
             image: agent
           - name: zk-inference
+            context: .
             dockerfile: zk_inference/Dockerfile
             image: zk-inference
           - name: tee-inference
+            context: .
             dockerfile: tee_inference/Dockerfile
             image: tee-inference
+          - name: transparency-log
+            context: transparency_log
+            dockerfile: transparency_log/Dockerfile
+            image: transparency-log
           - name: dfl-worker
+            context: .
             dockerfile: dfl/Dockerfile
             image: dfl-worker
           - name: smart-contracts
+            context: .
             dockerfile: smart_contracts/Dockerfile
             image: smart-contracts
     steps:
@@ -181,7 +200,7 @@ jobs:
       - name: Build ${{ matrix.name }} image
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
           load: false

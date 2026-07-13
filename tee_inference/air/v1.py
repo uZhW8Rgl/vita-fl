@@ -247,7 +247,9 @@ def verify_receipt(
     if not isinstance(tagged, cbor2.CBORTag) or tagged.tag != COSE_SIGN1_TAG:
         raise AirVerificationError("BAD_COSE_TAG", "AIR requires CBOR tag 18")
     value = tagged.value
-    if not isinstance(value, list) or len(value) != 4:
+    # cbor2 6.x decodes arrays contained in semantic tags as immutable tuples,
+    # while older releases returned lists. Both represent the same CBOR array.
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
         raise AirVerificationError("BAD_COSE", "COSE_Sign1 must contain four elements")
     protected, unprotected, payload, signature = value
     if not isinstance(protected, bytes) or not isinstance(payload, bytes) or not isinstance(signature, bytes):
@@ -267,4 +269,3 @@ def verify_receipt(
     claims = _validate_claims(_loads_exact(payload, "BAD_PAYLOAD"))
     _apply_policy(claims, policy or AirPolicy(), int(time.time()) if now is None else now)
     return claims
-

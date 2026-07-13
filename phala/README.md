@@ -258,14 +258,14 @@ Current Terraform defaults in this scaffold match that target layout:
 - `contracts_size = "tdx.small"`
 - `worker_size = "tdx.small"`
 - `os_image = "dstack-dev-0.5.7"`
-- `tee_inference_image = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:3b3c3903fd319a73ae991623992a6e0e10a59bc7fef29fa111458ae9208c8a93"`
+- `tee_inference_image = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:cf78b6b5515f0d8d61ecb22612088db9dccf43dcd9311783239a30c90dd4054a"`
 - `enable_tee_inference = false` until the updated image has been published
 
 To enable the separate third app:
 
 ```bash
 export ENABLE_TEE_INFERENCE=true
-export TEE_INFERENCE_IMAGE=ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:3b3c3903fd319a73ae991623992a6e0e10a59bc7fef29fa111458ae9208c8a93
+export TEE_INFERENCE_IMAGE=ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:cf78b6b5515f0d8d61ecb22612088db9dccf43dcd9311783239a30c90dd4054a
 bash phala/tf-env.sh plan -input=false
 bash phala/tf-env.sh apply -input=false -auto-approve
 ```

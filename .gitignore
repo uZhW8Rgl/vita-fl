@@ -40,6 +40,8 @@ remote_attestation/cache/
 zk_inference/out/
 zk_inference/single_query/
 agent/downloads/
+agent/state/
+tee_inference/out/
 ollama-data/
 data/evaluation/*.csv
 data/evaluation/*.jsonl

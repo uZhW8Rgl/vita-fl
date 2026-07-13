@@ -77,6 +77,7 @@ PUBLIC_SKILL_NAMES = (
     "fetch_latest_verified_model_bundle",
     "generate_random_chestmnist_image",
     "generate_zk_inference_proof",
+    "run_verified_tee_inference",
 )
 
 
@@ -208,10 +209,18 @@ def _local_langchain_tools():
         )
         return _compact_json(payload)
 
+    @tool
+    def run_verified_tee_inference(index: Any = None) -> str:
+        """Run one ChestMNIST TEE inference and return only after local evidence verification."""
+        from mcp_server import run_verified_tee_inference as run_tee_impl
+
+        return run_tee_impl(index=resolve_preferred_sample_index(_session_state(), index))
+
     return [
         fetch_latest_verified_model_bundle,
         generate_random_chestmnist_image,
         generate_zk_inference_proof,
+        run_verified_tee_inference,
     ]
 
 
@@ -538,6 +547,10 @@ class AgentRuntime:
             return "generate_random_chestmnist_image"
         if "generate_zk_inference_proof" in lowered:
             return "generate_zk_inference_proof"
+        if "run_verified_tee_inference" in lowered:
+            return "run_verified_tee_inference"
+        if "tee" in lowered and "inference" in lowered:
+            return "run_verified_tee_inference"
         if "bundle" in lowered and any(token in lowered for token in ("fetch", "latest", "verified")):
             return "fetch_latest_verified_model_bundle"
         if "chestmnist" in lowered or ("random" in lowered and "image" in lowered):
@@ -595,6 +608,17 @@ class AgentRuntime:
                 )
             )
             detail = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+            return self._assistant_response(
+                self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
+                [{"type": "tool", "label": skill_name, "detail": detail}],
+            )
+
+        if skill_name == "run_verified_tee_inference":
+            from mcp_server import run_verified_tee_inference
+
+            detail = run_verified_tee_inference(
+                index=resolve_preferred_sample_index(session_state, None),
+            )
             return self._assistant_response(
                 self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
                 [{"type": "tool", "label": skill_name, "detail": detail}],

@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -16,6 +16,9 @@ RUN apt-get update && \
 
 COPY agent ./agent
 COPY data/mnist ./data/mnist
+COPY data/chestmnist/test_data/test-data.npz ./data/chestmnist/test_data/test-data.npz
+COPY tee_inference/air ./tee_inference/air
+COPY tee_inference/protocol ./tee_inference/protocol
 
 RUN python -m pip install --upgrade pip setuptools wheel && \
     attempts=0 && \

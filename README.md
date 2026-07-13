@@ -12,6 +12,8 @@ The current prototype combines:
 - TDX/DCAP quote verification through Solidity contracts,
 - RSA signature verification for global model artifacts,
 - EZKL-based zero-knowledge inference for a single dataset image,
+- AIR/TDX-bound ChestMNIST inference in a digest-pinned Phala TEE,
+- SCITT-CCF registration and local verification of transparency receipts,
 - and a local LangChain/Ollama agent that orchestrates contract lookup, artifact verification, and proof generation.
 
 ## Repository Structure
@@ -27,7 +29,9 @@ The current prototype combines:
 - [dfl/node_server](./dfl/node_server/README.md): Node.js orchestration layer used by each worker.
 - [dfl/neural_network](./dfl/neural_network/README.md): Python/PyTorch CNN training, transfer, aggregation, and model serialization.
 - [zk_inference](./zk_inference/README.md): ONNX export, single-image query creation, EZKL proof generation, and proof verification.
-- [agent](./agent/README.md): Local LangChain/MCP agent for contract-based model lookup, signature verification, and ZK inference.
+- [tee_inference](./tee_inference/README.md): PyTorch ChestMNIST inference service with deterministic CBOR and AIR/TDX evidence.
+- [transparency_log](./transparency_log/README.md): Persistent Microsoft SCITT-CCF ledger in virtual mode.
+- [agent](./agent/README.md): Local LangChain/MCP agent for contract-based model lookup, ZK inference, and verified TEE inference with SCITT registration.
 
 ## Architecture
 
@@ -371,6 +375,8 @@ Some runs create local build and proof outputs:
 - `zk_inference/out/`: ONNX, EZKL settings, witness, proof, and verification key.
 - `zk_inference/single_query/`: single-image query input and prediction metadata.
 - `agent/downloads/`: model and signature bundles fetched by the agent.
+- `tee_inference/out/`: the latest locally verified TEE evidence and transparent SCITT statement.
+- `agent/state/scitt/`: persistent X.509 identity used by the agent to submit evidence to SCITT.
 
 ## GitHub Workflow
 
@@ -388,6 +394,8 @@ On pushes to `main`, the Docker build job publishes the project images to GitHub
 ```bash
 docker pull ghcr.io/uzhw8rgl/master-thesis-agent:latest
 docker pull ghcr.io/uzhw8rgl/master-thesis-zk-inference:latest
+docker pull ghcr.io/uzhw8rgl/master-thesis-tee-inference:latest
+docker pull ghcr.io/uzhw8rgl/master-thesis-transparency-log:latest
 docker pull ghcr.io/uzhw8rgl/master-thesis-dfl-worker:latest
 docker pull ghcr.io/uzhw8rgl/master-thesis-smart-contracts:latest
 ```
@@ -398,4 +406,6 @@ Each image is also tagged with the commit SHA, for example `ghcr.io/uzhw8rgl/mas
 
 - The active neural-network implementation is Python/PyTorch in `dfl/neural_network`.
 - `smart_contracts` is the active contract and attestation project.
+- The combined `run_verified_tee_inference` MCP tool verifies the TEE evidence before submitting its exact bytes to SCITT-CCF, and verifies the returned CCF receipt before returning the inference result.
+- The SCITT log proves registration, integrity, and ordering of the signed evidence. It does not by itself validate Intel DCAP collateral; that distinction remains explicit in the tool output.
 - The healthcare setting is the motivating scenario. The concrete prototype now supports a compact CNN on MNIST and a ChestMNIST training/query path. A full ChestMNIST Compose plus EZKL proof run should still be treated as an integration test to complete.

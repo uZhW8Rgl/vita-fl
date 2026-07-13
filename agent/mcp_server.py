@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MCP server exposing the zk_inference pipeline as tools."""
+"""MCP server exposing the ZK and verified TEE inference workflows as tools."""
 
 from __future__ import annotations
 
@@ -43,6 +43,7 @@ PUBLIC_MCP_TOOL_NAMES = (
     "fetch_latest_verified_model_bundle",
     "generate_random_chestmnist_image",
     "generate_zk_inference_proof",
+    "run_verified_tee_inference",
 )
 
 
@@ -288,6 +289,31 @@ def generate_zk_inference_proof(
             data=_normalize_artifact_name(payload.get("data"), "input.json"),
             skip_calibration=bool(payload.get("skip_calibration", True)),
         ),
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def run_verified_tee_inference(
+    index: int | None = None,
+) -> str:
+    """Run ChestMNIST inference in the Phala TEE and return only a verified result.
+
+    This single fail-closed tool selects the requested (or a random) test image,
+    calls the TEE, verifies the AIR signature and all request/model/response
+    hashes, compares REPORTDATA with Quote V4, replays RTMR3, checks the measured
+    app_compose and configured image digest, submits the exact evidence bundle
+    to SCITT-CCF, verifies the returned CCF receipt, and stores both artifacts.
+    Endpoints and policies come exclusively from trusted process configuration,
+    not from tool-call arguments.
+    """
+    record_mcp_tool_call("run_verified_tee_inference")
+    try:
+        from .tee_inference_client import run_verified_tee_inference as run_impl
+    except ImportError:
+        from tee_inference_client import run_verified_tee_inference as run_impl
+    result = run_impl(
+        index=normalize_optional_index(index),
     )
     return json.dumps(result, indent=2)
 
