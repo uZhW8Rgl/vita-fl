@@ -116,6 +116,7 @@ services:
     environment:
       CONTROL_RUNTIME_MODE: phala
       CONTROL_API_PORT: "8091"
+      PYTHONPATH: /app
       CONTROL_ADMIN_TOKEN: "$${CONTROL_ADMIN_TOKEN}"
       PHALA_CLOUD_API_KEY: "$${PHALA_CLOUD_API_KEY}"
       DYNAMIC_WORKER_INVENTORY: "$${DYNAMIC_WORKER_INVENTORY}"
@@ -149,7 +150,7 @@ services:
     tmpfs:
       - /run/master-thesis:size=64m,mode=0700
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/api/control/status"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/docs"]
       interval: 10s
       timeout: 5s
       retries: 30

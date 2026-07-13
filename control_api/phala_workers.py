@@ -104,12 +104,13 @@ class DeviceRegistryChallengeIssuer:
 
     def __init__(self, rpc_url: str, kubo_api_url: str, owner_private_key: str) -> None:
         from eth_account import Account
-        from eth_utils import keccak
+        from eth_utils import keccak, to_checksum_address
 
         self.rpc_url = rpc_url.rstrip("/")
         self.kubo_api_url = kubo_api_url.rstrip("/")
         self.account = Account.from_key(owner_private_key)
         self.keccak = keccak
+        self.to_checksum_address = to_checksum_address
         self._request_id = 0
 
     def _rpc(self, method: str, params: list[Any]) -> Any:
@@ -135,7 +136,7 @@ class DeviceRegistryChallengeIssuer:
         address = str(payload.get("registry_address", ""))
         if not ADDRESS_RE.fullmatch(address):
             raise WorkerProvisioningError("runtime contract manifest has no valid registry address")
-        return address
+        return self.to_checksum_address(address)
 
     def _calldata(self, account_address: str, allowed: bool) -> str:
         selector = self.keccak(text="setRegistrationAllowed(address,bool)")[:4]

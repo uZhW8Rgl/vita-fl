@@ -109,7 +109,7 @@ variable "enable_phala_ui" {
 variable "ui_image" {
   description = "Digest-pinned browser UI image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-ui:ui"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:41a21bc30de7fa30492830861936be39cb249ea3af4af6fbed553f757a702dc0"
 
   validation {
     condition = (

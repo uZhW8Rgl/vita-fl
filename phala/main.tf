@@ -319,7 +319,7 @@ resource "phala_app" "tee_inference" {
 }
 
 resource "phala_cvm_power" "dfl_worker" {
-  count = var.manage_power_state ? 1 : 0
+  count = var.manage_power_state && !var.enable_phala_control_api ? 1 : 0
 
   cvm_id = phala_app.dfl_worker.primary_cvm_id
   state  = var.desired_power_state
