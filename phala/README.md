@@ -19,14 +19,18 @@ Files:
 - `dstack-compose.contracts.template.yml`: manual compose policy for the contract-runtime TEE
 - `dstack-compose.template.yml`: manual compose policy for the worker TEE
 
-Typical workflow:
+Copy the complete example, replace every placeholder (including the Phala API
+key and UI login), and start the complete deployment with one command:
 
 ```bash
-python3 scripts/prepare_dfl_worker_experiment.py --workers 2 --skip-compose --skip-env
-bash phala/tf-env.sh init
-bash phala/tf-env.sh plan -input=false
-bash phala/tf-env.sh apply
+cp .env.phala.anvil.example .env.phala.anvil
+bash phala/start.sh
 ```
+
+On a fresh account the script performs the required two-phase bootstrap: it
+first creates the contract-runtime endpoint, then reapplies the runtime with
+the derived RPC, Kubo API, and Kubo gateway URLs used by dynamically created
+worker TEEs. Existing deployments need only the final apply.
 
 If you already keep the deployment values in repository-root env files, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
 
@@ -41,9 +45,10 @@ The wrapper prefers `.env.phala.anvil` by default, falls back to `.env` if neede
 The wrapper reads these values from the selected env file:
 
 - `PHALA_CLOUD_API_KEY`
+- `UI_BASIC_AUTH_USERNAME` and `UI_BASIC_AUTH_PASSWORD` when the UI is enabled
 - `W0_ACCOUNT_ADDRESS`
 - `W0_PRIVATE_KEY`
-- optional `W0_RSA_PRIVATE_KEY_FILE` and `W0_RSA_PUBLIC_KEY_FILE` paths; generated files under `data/rsa_keys/` are used by default
+- optional `W0_RSA_PRIVATE_KEY_FILE` and `W0_RSA_PUBLIC_KEY_FILE` paths; when those files do not exist, the inline `W0_RSA_PRIVATE_KEY` and `W0_RSA_PUBLIC_KEY` values from `.env.phala.anvil` are materialized into private temporary files
 - optional `ENABLE_TEE_INFERENCE` and `TEE_INFERENCE_IMAGE`
 
 It also forwards the current Anvil/DFL profile settings into Terraform, including:

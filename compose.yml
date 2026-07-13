@@ -366,6 +366,8 @@ services:
       GRAFANA_CONTRACT_DASHBOARD_URL: ${GRAFANA_CONTRACT_DASHBOARD_URL:-http://localhost:3300/d/dfl-contract-init-overview/dfl-contract-init-overview?kiosk}
       GRAFANA_TRAINING_DASHBOARD_URL: ${GRAFANA_TRAINING_DASHBOARD_URL:-http://localhost:3300/d/dfl-training-overview/dfl-training-overview?kiosk}
       GRAFANA_AGENT_DASHBOARD_URL: ${GRAFANA_AGENT_DASHBOARD_URL:-http://localhost:3300/d/agent-mcp-tool-usage/agent-mcp-tool-usage?kiosk}
+      UI_BASIC_AUTH_USERNAME: ${UI_BASIC_AUTH_USERNAME:-admin}
+      UI_BASIC_AUTH_PASSWORD: ${UI_BASIC_AUTH_PASSWORD:-admin}
     depends_on:
       grafana:
         condition: service_started

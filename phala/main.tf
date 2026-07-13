@@ -128,6 +128,9 @@ resource "phala_app" "contract_runtime" {
     DYNAMIC_WORKER_INVENTORY       = var.dynamic_worker_inventory
     CONTROL_ADMIN_TOKEN            = var.control_admin_token
     REGISTRATION_OWNER_PRIVATE_KEY = var.eth_wallet_private_key != "" ? var.eth_wallet_private_key : var.private_key
+    } : {}, var.enable_phala_ui ? {
+    UI_BASIC_AUTH_USERNAME = var.ui_basic_auth_username
+    UI_BASIC_AUTH_PASSWORD = var.ui_basic_auth_password
   } : {})
   size = var.contracts_size
 

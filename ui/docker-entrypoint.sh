@@ -6,6 +6,11 @@ set -eu
 : "${GRAFANA_TRAINING_DASHBOARD_URL:=}"
 : "${GRAFANA_AGENT_DASHBOARD_URL:=}"
 : "${CONTROL_ADMIN_TOKEN:=}"
+: "${UI_BASIC_AUTH_USERNAME:?UI_BASIC_AUTH_USERNAME is required}"
+: "${UI_BASIC_AUTH_PASSWORD:?UI_BASIC_AUTH_PASSWORD is required}"
+
+htpasswd -bc /etc/nginx/.htpasswd "$UI_BASIC_AUTH_USERNAME" "$UI_BASIC_AUTH_PASSWORD" >/dev/null
+chmod 0644 /etc/nginx/.htpasswd
 
 escaped_url=$(printf '%s' "$GRAFANA_EXTERNAL_DASHBOARD_URL" | sed 's/[\/&]/\\&/g')
 escaped_contract_url=$(printf '%s' "$GRAFANA_CONTRACT_DASHBOARD_URL" | sed 's/[\/&]/\\&/g')

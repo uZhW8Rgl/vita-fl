@@ -69,7 +69,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:4a14c36c383f65018c31e624547b489d855969cc3a7b2b0055ac1a35c902783e"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:bc69269b34b12c2c0dc150c5bb5b692a017d9c4b22c004623b92a7280495ba22"
 
   validation {
     condition = (
@@ -109,7 +109,7 @@ variable "enable_phala_ui" {
 variable "ui_image" {
   description = "Digest-pinned browser UI image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:cab6f4cab5818b657ecbf90e51db704f714e0e9e77b4668b70fc0c781c6bae8f"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:f24dad0f181ec539166c64d65e37ed0d7ebf317f4d3c9cbb3d9f5ef91398d8b1"
 
   validation {
     condition = (
@@ -117,6 +117,32 @@ variable "ui_image" {
       can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.ui_image))
     )
     error_message = "ui_image must be digest-pinned when enable_phala_ui is true."
+  }
+}
+
+variable "ui_basic_auth_username" {
+  description = "HTTP Basic Authentication username protecting the Phala UI and proxied Grafana dashboards."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      !var.enable_phala_ui ||
+      can(regex("^[A-Za-z0-9._-]{3,64}$", var.ui_basic_auth_username))
+    )
+    error_message = "ui_basic_auth_username must contain 3-64 safe username characters when the Phala UI is enabled."
+  }
+}
+
+variable "ui_basic_auth_password" {
+  description = "HTTP Basic Authentication password protecting the Phala UI and proxied Grafana dashboards."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = !var.enable_phala_ui || length(var.ui_basic_auth_password) >= 16
+    error_message = "ui_basic_auth_password must contain at least 16 characters when the Phala UI is enabled."
   }
 }
 

@@ -83,16 +83,48 @@ resolve_required_file() {
   printf '%s/%s' "$(cd "$(dirname "${resolved_path}")" && pwd)" "$(basename "${resolved_path}")"
 }
 
+resolve_key_file_or_inline() {
+  local configured_path="$1"
+  local description="$2"
+  local env_name="$3"
+  local output_name="$4"
+  local mode="$5"
+  local resolved_path="${configured_path}"
+
+  if [[ "${resolved_path}" != /* ]]; then
+    resolved_path="${ROOT_DIR}/${resolved_path}"
+  fi
+  if [ -r "${resolved_path}" ]; then
+    printf '%s' "${resolved_path}"
+    return
+  fi
+
+  local inline_value
+  inline_value=$(read_env_value "${env_name}")
+  if [ -z "${inline_value}" ]; then
+    echo "Missing ${description}: ${resolved_path}, and ${env_name} is empty" >&2
+    exit 1
+  fi
+
+  local output_dir="${TMPDIR:-/tmp}/master-thesis-phala-keys"
+  local output_path="${output_dir}/${output_name}"
+  mkdir -p "${output_dir}"
+  inline_value=${inline_value//\\n/$'\n'}
+  (umask 077; printf '%s\n' "${inline_value}" >"${output_path}")
+  chmod "${mode}" "${output_path}"
+  printf '%s' "${output_path}"
+}
+
 W0_RSA_PRIVATE_KEY_FILE=$(read_env_value "W0_RSA_PRIVATE_KEY_FILE")
 W0_RSA_PUBLIC_KEY_FILE=$(read_env_value "W0_RSA_PUBLIC_KEY_FILE")
 W0_RSA_PRIVATE_KEY_FILE=${W0_RSA_PRIVATE_KEY_FILE:-data/rsa_keys/private_key.pem}
 W0_RSA_PUBLIC_KEY_FILE=${W0_RSA_PUBLIC_KEY_FILE:-data/rsa_keys/public_key.pem}
-W0_RSA_PRIVATE_KEY_PATH=$(resolve_required_file "${W0_RSA_PRIVATE_KEY_FILE}" "worker-0 RSA private key")
-W0_RSA_PUBLIC_KEY_PATH=$(resolve_required_file "${W0_RSA_PUBLIC_KEY_FILE}" "worker-0 RSA public key")
+W0_RSA_PRIVATE_KEY_PATH=$(resolve_key_file_or_inline "${W0_RSA_PRIVATE_KEY_FILE}" "worker-0 RSA private key" "W0_RSA_PRIVATE_KEY" "w0-private.pem" 600)
+W0_RSA_PUBLIC_KEY_PATH=$(resolve_key_file_or_inline "${W0_RSA_PUBLIC_KEY_FILE}" "worker-0 RSA public key" "W0_RSA_PUBLIC_KEY" "w0-public.pem" 644)
 
 INITIAL_GM_SIGNING_KEY_FILE=$(read_env_value "INITIAL_GM_SIGNING_KEY_FILE")
 INITIAL_GM_SIGNING_KEY_FILE=${INITIAL_GM_SIGNING_KEY_FILE:-${W0_RSA_PRIVATE_KEY_FILE}}
-INITIAL_GM_SIGNING_KEY_PATH=$(resolve_required_file "${INITIAL_GM_SIGNING_KEY_FILE}" "initial GM signing key")
+INITIAL_GM_SIGNING_KEY_PATH=$(resolve_key_file_or_inline "${INITIAL_GM_SIGNING_KEY_FILE}" "initial GM signing key" "W0_RSA_PRIVATE_KEY" "initial-gm-signing-key.pem" 600)
 
 ETH_WALLET_PRIVATE_KEY=$(read_env_value "ETH_WALLET_PRIVATE_KEY")
 ETH_WALLET_PRIVATE_KEY=${ETH_WALLET_PRIVATE_KEY:-${W0_PRIVATE_KEY}}
@@ -221,16 +253,27 @@ configure_phala_control_api() {
   TF_VAR_control_admin_token=$(require_env_value "CONTROL_ADMIN_TOKEN")
   append_var_if_set "control_api_image" "CONTROL_API_IMAGE"
 
-  for tf_name in \
-    runtime_rpc_url_override \
-    runtime_kubo_api_url_override \
-    runtime_kubo_gateway_url_override; do
-    local variable_name="TF_VAR_${tf_name}"
-    if [ -z "${!variable_name:-}" ]; then
-      echo "${tf_name} is required when ENABLE_PHALA_CONTROL_API=true" >&2
-      exit 1
-    fi
-  done
+}
+
+configure_phala_ui() {
+  local enabled
+  enabled=$(read_env_value "ENABLE_PHALA_UI")
+  enabled="${enabled:-false}"
+  export TF_VAR_enable_phala_ui="${enabled}"
+
+  if [ "${enabled}" != "1" ] && [ "${enabled}" != "true" ]; then
+    return
+  fi
+
+  export TF_VAR_ui_basic_auth_username
+  TF_VAR_ui_basic_auth_username=${UI_BASIC_AUTH_USERNAME:-$(read_env_value "UI_BASIC_AUTH_USERNAME")}
+  export TF_VAR_ui_basic_auth_password
+  TF_VAR_ui_basic_auth_password=${UI_BASIC_AUTH_PASSWORD:-$(read_env_value "UI_BASIC_AUTH_PASSWORD")}
+  if [ -z "${TF_VAR_ui_basic_auth_username}" ] || [ -z "${TF_VAR_ui_basic_auth_password}" ]; then
+    echo "UI_BASIC_AUTH_USERNAME and UI_BASIC_AUTH_PASSWORD are required when ENABLE_PHALA_UI=true" >&2
+    exit 1
+  fi
+  append_var_if_set "ui_image" "UI_IMAGE"
 }
 
 derive_runtime_service_urls() {
@@ -308,9 +351,6 @@ append_var_if_set "runtime_endpoint_override" "PHALA_RUNTIME_ENDPOINT_OVERRIDE"
 append_var_if_set "runtime_rpc_url_override" "PHALA_RUNTIME_RPC_URL"
 append_var_if_set "runtime_kubo_api_url_override" "PHALA_RUNTIME_KUBO_API_URL"
 append_var_if_set "runtime_kubo_gateway_url_override" "PHALA_RUNTIME_KUBO_GATEWAY_URL"
-append_var_if_set "enable_phala_ui" "ENABLE_PHALA_UI"
-append_var_if_set "ui_image" "UI_IMAGE"
-
 append_var_if_set "public_ip" "PUBLIC_IP"
 append_var_if_set "msg_broker_ip" "MSG_BROKER_IP"
 
@@ -318,6 +358,7 @@ build_additional_workers_var
 build_dynamic_worker_inventory
 derive_runtime_service_urls
 configure_phala_control_api
+configure_phala_ui
 
 export PHALA_CLOUD_API_KEY
 

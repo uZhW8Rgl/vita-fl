@@ -863,6 +863,9 @@
       if (!value) {
         return "";
       }
+      if (value.startsWith("/grafana/")) {
+        return `${window.location.origin}${value}`;
+      }
       if (value.startsWith("/")) {
         return `${currentGrafanaBaseUrl()}${value}`;
       }

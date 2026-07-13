@@ -23,11 +23,11 @@ output "ui_endpoint" {
 }
 
 output "grafana_endpoint" {
-  description = "Public Grafana endpoint when the Phala UI and observability stack are enabled."
+  description = "Basic-auth-protected Grafana path proxied through the Phala UI."
   value = var.enable_phala_ui ? (
     can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
-    ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-3000.")
-    : "${local.contracts_endpoint_base}:3000"
+    ? "${replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8088.")}/grafana/"
+    : "${local.contracts_endpoint_base}:8088/grafana/"
   ) : null
 }
 

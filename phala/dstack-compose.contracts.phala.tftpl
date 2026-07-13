@@ -106,10 +106,16 @@ services:
       INITIAL_GM_SIGNER_ADDRESS: "${initial_gm_signer_address}"
     volumes:
       - evaluation-data:/dfl/data/evaluation
+      - runtime-logs:/runtime-logs
     command:
       - bash
       - -c
-      - rm -f '${transaction_cost_csv}' && exec bash /dfl/smart_contracts/starter_docker.sh
+      - |
+        rm -f '${transaction_cost_csv}'
+        mkdir -p /runtime-logs
+        : > /runtime-logs/smart-contracts.log
+        exec > >(tee -a /runtime-logs/smart-contracts.log) 2>&1
+        exec bash /dfl/smart_contracts/starter_docker.sh
 
 %{ if enable_control_api ~}
   control-api:
@@ -197,6 +203,38 @@ services:
     tmpfs:
       - /prometheus:size=1024m,mode=1777
 
+  loki:
+    image: grafana/loki@sha256:191d4fdfb7264f16989f0a57f320872620a5a7c2ceeec6229212c4190ec49b86
+    restart: unless-stopped
+    depends_on:
+      observability-init:
+        condition: service_completed_successfully
+    command:
+      - -config.file=/runtime-config/loki/loki.yml
+    volumes:
+      - observability-config:/runtime-config:ro
+    tmpfs:
+      - /loki:size=512m,mode=1777
+
+  alloy:
+    image: grafana/alloy@sha256:51aeb9d829239345070619dad3edd6873186f913c84f45b365b74574fcb38ec0
+    restart: unless-stopped
+    depends_on:
+      observability-init:
+        condition: service_completed_successfully
+      loki:
+        condition: service_started
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /runtime-config/alloy/config.alloy
+    volumes:
+      - observability-config:/runtime-config:ro
+      - runtime-logs:/runtime-logs:ro
+    tmpfs:
+      - /var/lib/alloy:size=128m,mode=1777
+
   grafana:
     image: grafana/grafana@sha256:62d2b9d20a19714ebfe48d1bb405086081bc602aa053e28cf6d73c7537640dfb
     restart: unless-stopped
@@ -205,16 +243,18 @@ services:
         condition: service_completed_successfully
       prometheus:
         condition: service_started
+      loki:
+        condition: service_started
     environment:
       GF_PATHS_PROVISIONING: /runtime-config/grafana/provisioning
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       GF_LOG_LEVEL: warn
-    ports:
-      - "3000:3000"
     volumes:
       - observability-config:/runtime-config:ro
     tmpfs:
@@ -230,10 +270,12 @@ services:
         condition: service_started
     environment:
       CONTROL_ADMIN_TOKEN: "$${CONTROL_ADMIN_TOKEN}"
-      GRAFANA_EXTERNAL_DASHBOARD_URL: "/d/dfl-contract-init-overview/dfl-contract-init-overview?kiosk"
-      GRAFANA_CONTRACT_DASHBOARD_URL: "/d/dfl-contract-init-overview/dfl-contract-init-overview?kiosk"
-      GRAFANA_TRAINING_DASHBOARD_URL: "/d/dfl-training-overview/dfl-training-overview?kiosk"
-      GRAFANA_AGENT_DASHBOARD_URL: "/d/agent-mcp-tool-usage/agent-mcp-tool-usage?kiosk"
+      UI_BASIC_AUTH_USERNAME: "$${UI_BASIC_AUTH_USERNAME}"
+      UI_BASIC_AUTH_PASSWORD: "$${UI_BASIC_AUTH_PASSWORD}"
+      GRAFANA_EXTERNAL_DASHBOARD_URL: "/grafana/d/dfl-contract-init-overview/dfl-contract-init-overview?kiosk"
+      GRAFANA_CONTRACT_DASHBOARD_URL: "/grafana/d/dfl-contract-init-overview/dfl-contract-init-overview?kiosk"
+      GRAFANA_TRAINING_DASHBOARD_URL: "/grafana/d/dfl-training-overview/dfl-training-overview?kiosk"
+      GRAFANA_AGENT_DASHBOARD_URL: "/grafana/d/agent-mcp-tool-usage/agent-mcp-tool-usage?kiosk"
     ports:
       - "8088:8080"
     healthcheck:
@@ -246,3 +288,4 @@ services:
 volumes:
   evaluation-data:
   observability-config:
+  runtime-logs:
