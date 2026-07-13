@@ -148,7 +148,7 @@ services:
       PUBLIC_IP: "${public_ip}"
       MSG_BROKER_IP: "${msg_broker_ip}"
     tmpfs:
-      - /run/master-thesis:size=64m,mode=0700
+      - /run/master-thesis:rw,exec,nosuid,nodev,size=64m,mode=0700
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/docs"]
       interval: 10s

@@ -1432,6 +1432,7 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                 worker_status = await asyncio.to_thread(
                     phala_worker_controller().scale,
                     normalized["worker_count"],
+                    normalized,
                 )
                 return {
                     "ok": True,

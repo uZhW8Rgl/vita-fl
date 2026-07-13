@@ -13,6 +13,7 @@ services:
       IPFS_PROVIDER: kubo
       KUBO_API: "${kubo_api_url}"
       KUBO_GATEWAY: "${kubo_gateway_url}"
+      DSTACK_GATEWAY_DOMAIN: "$${DSTACK_GATEWAY_DOMAIN}"
       PUBLIC_IP: "${public_ip}"
       MSG_BROKER_IP: "${msg_broker_ip}"
       ACCOUNT_ADDRESS: "${account_address}"
@@ -45,4 +46,3 @@ services:
       - /bin/bash
       - -lc
       - exec /dfl/start_node_neural_network.sh
-

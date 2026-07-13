@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -98,6 +98,8 @@ class WorkerDeploymentConfig:
 
 
 class WorkerTerraformRunner(Protocol):
+    def configure(self, training_config: dict[str, int]) -> None: ...
+
     def apply(self, workers: dict[str, dict[str, Any]]) -> dict[str, Any]: ...
 
     def status(self) -> dict[str, Any]: ...
@@ -288,6 +290,14 @@ class SubprocessTerraformRunner:
         environment["TF_IN_AUTOMATION"] = "1"
         return environment
 
+    def configure(self, training_config: dict[str, int]) -> None:
+        self.config = replace(
+            self.config,
+            round=training_config.get("rounds", self.config.round),
+            epoch=training_config.get("epoch", self.config.epoch),
+            client_limit=training_config.get("client_limit", self.config.client_limit),
+        )
+
     def _run(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         command = [self.terraform_bin, f"-chdir={self.module_dir}", *arguments]
         result = subprocess.run(
@@ -361,13 +371,15 @@ class PhalaWorkerController:
     def maximum(self) -> int:
         return len(self.inventory)
 
-    def scale(self, worker_count: int) -> dict[str, Any]:
+    def scale(self, worker_count: int, training_config: dict[str, int] | None = None) -> dict[str, Any]:
         if isinstance(worker_count, bool) or not isinstance(worker_count, int):
             raise WorkerConfigurationError("worker_count must be an integer")
         if not 0 <= worker_count <= self.maximum:
             raise WorkerConfigurationError(f"worker_count must be between 0 and {self.maximum}")
         selected = {identity.key: identity.terraform_value() for identity in self.inventory[:worker_count]}
         with self._lock:
+            if training_config is not None:
+                self.runner.configure(training_config)
             current = self.runner.status()
             added = [identity for identity in self.inventory[:worker_count] if identity.key not in current]
             if added and self.challenge_issuer is None:

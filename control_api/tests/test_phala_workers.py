@@ -29,6 +29,10 @@ def inventory_json(count: int = 3) -> str:
 class FakeRunner:
     def __init__(self) -> None:
         self.workers: dict[str, dict[str, object]] = {}
+        self.training_config: dict[str, int] = {}
+
+    def configure(self, training_config: dict[str, int]) -> None:
+        self.training_config = dict(training_config)
 
     def apply(self, workers: dict[str, dict[str, object]]) -> dict[str, object]:
         self.workers = {
@@ -99,6 +103,13 @@ class WorkerInventoryTests(unittest.TestCase):
 
         self.assertEqual([worker["worker"] for worker in result["workers"]], ["worker0"])
         self.assertEqual(len(issuer.allowed), 3)
+
+    def test_training_configuration_is_forwarded_to_terraform(self) -> None:
+        instance, runner, _issuer = controller()
+
+        instance.scale(2, {"rounds": 7, "epoch": 3, "client_limit": 1})
+
+        self.assertEqual(runner.training_config, {"rounds": 7, "epoch": 3, "client_limit": 1})
 
     def test_non_contiguous_inventory_is_rejected(self) -> None:
         payload = json.loads(inventory_json(2))
