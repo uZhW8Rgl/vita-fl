@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - phala
+      - tee_inference
     paths:
       - "dfl/**"
       - ".github/workflows/publish-dfl-worker.yml"

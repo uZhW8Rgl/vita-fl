@@ -32,6 +32,15 @@ first creates the contract-runtime endpoint, then reapplies the runtime with
 the derived RPC, Kubo API, and Kubo gateway URLs used by dynamically created
 worker TEEs. Existing deployments need only the final apply.
 
+Dynamic worker TEEs send operational training events to the Control API over
+its Phala `8091` endpoint. Each event is signed by the worker's configured
+Ethereum account, checked against the fixed W0--W19 inventory, protected
+against nonce replay, and then exposed to Prometheus. This is how the embedded
+training dashboard receives starts, model transfers, aggregation results,
+evaluation metrics, and worker transaction costs even though every worker has
+its own isolated CVM filesystem. These operational signatures are not a
+replacement for the worker's TDX/DCAP registration proof.
+
 If you already keep the deployment values in repository-root env files, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
 
 ```bash
@@ -121,7 +130,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 ## Flow
 
 1. Publish the DFL worker image through the GitHub Actions workflow `Publish DFL Worker Image`.
-   On branch `phala`, pushes that touch `dfl/**` trigger the workflow automatically and keep the default `phala` tag.
+   On branches `phala` and `tee_inference`, pushes that touch `dfl/**` trigger the workflow automatically and keep the default `phala` tag.
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text

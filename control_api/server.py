@@ -10,8 +10,10 @@ import os
 import re
 import secrets
 import shutil
+import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -53,6 +55,11 @@ STATIC_CONTAINER_NAMES = {
 app = FastAPI(title="Master Thesis Control API")
 operation_lock = asyncio.Lock()
 _phala_worker_controller: Any | None = None
+_telemetry_lock = threading.Lock()
+_telemetry_records: list[dict[str, Any]] = []
+_telemetry_nonces: dict[str, int] = {}
+TELEMETRY_MAX_RECORDS = 20_000
+TELEMETRY_MAX_AGE_MS = 10 * 60 * 1000
 
 
 def phala_runtime_mode() -> bool:
@@ -143,6 +150,135 @@ def read_env_values(env_file: Path = TRAINING_ENV_FILE) -> dict[str, str]:
     return values
 
 
+def _dynamic_worker_slots() -> dict[str, str]:
+    try:
+        inventory = json.loads(os.environ.get("DYNAMIC_WORKER_INVENTORY", "[]"))
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(inventory, dict):
+        records = list(inventory.values())
+    elif isinstance(inventory, list):
+        records = inventory
+    else:
+        return {}
+    slots: dict[str, str] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        address = str(record.get("account_address", "")).strip().lower()
+        if re.fullmatch(r"0x[a-f0-9]{40}", address):
+            slots[address] = str(record.get("slot", ""))
+    return slots
+
+
+def _canonical_telemetry_payload(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _record_telemetry(payload: dict[str, Any], signature: str) -> None:
+    from eth_account import Account
+    from eth_account.messages import encode_defunct
+
+    required = {"version", "account", "device_id", "event", "attributes", "timestamp_unix_ms", "nonce"}
+    if set(payload) != required or payload.get("version") != 1:
+        raise ValueError("invalid telemetry payload schema")
+    account = str(payload.get("account", "")).strip().lower()
+    device_id = str(payload.get("device_id", "")).strip()
+    event = str(payload.get("event", "")).strip()
+    nonce = str(payload.get("nonce", "")).strip()
+    attributes = payload.get("attributes")
+    try:
+        timestamp_unix_ms = int(payload.get("timestamp_unix_ms"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid telemetry timestamp") from exc
+    configured_workers = _dynamic_worker_slots()
+    if account not in configured_workers:
+        raise ValueError("telemetry account is not in the configured worker inventory")
+    if not secrets.compare_digest(device_id, configured_workers[account]):
+        raise ValueError("telemetry device ID does not match account")
+    if not re.fullmatch(r"[a-z][a-z0-9_.-]{0,95}", event):
+        raise ValueError("invalid telemetry event name")
+    if not isinstance(attributes, dict) or len(_canonical_telemetry_payload(attributes).encode()) > 32_768:
+        raise ValueError("invalid telemetry attributes")
+    if not re.fullmatch(r"[A-Za-z0-9-]{16,128}", nonce):
+        raise ValueError("invalid telemetry nonce")
+    now_ms = int(time.time() * 1000)
+    if abs(now_ms - timestamp_unix_ms) > TELEMETRY_MAX_AGE_MS:
+        raise ValueError("telemetry timestamp is outside the accepted window")
+    canonical = _canonical_telemetry_payload(payload)
+    try:
+        recovered = Account.recover_message(encode_defunct(text=canonical), signature=signature).lower()
+    except Exception as exc:
+        raise ValueError("invalid telemetry signature") from exc
+    if not secrets.compare_digest(recovered, account):
+        raise ValueError("telemetry signature does not match account")
+    with _telemetry_lock:
+        cutoff = now_ms - TELEMETRY_MAX_AGE_MS
+        expired = [seen_nonce for seen_nonce, seen_at in _telemetry_nonces.items() if seen_at < cutoff]
+        for seen_nonce in expired:
+            _telemetry_nonces.pop(seen_nonce, None)
+        if nonce in _telemetry_nonces:
+            raise ValueError("telemetry nonce was already used")
+        _telemetry_nonces[nonce] = timestamp_unix_ms
+        _telemetry_records.append(dict(payload))
+        if len(_telemetry_records) > TELEMETRY_MAX_RECORDS:
+            del _telemetry_records[: len(_telemetry_records) - TELEMETRY_MAX_RECORDS]
+
+
+def _telemetry_snapshot() -> list[dict[str, Any]]:
+    with _telemetry_lock:
+        return [dict(record) for record in _telemetry_records]
+
+
+def reset_runtime_telemetry() -> None:
+    with _telemetry_lock:
+        _telemetry_records.clear()
+        _telemetry_nonces.clear()
+
+
+def telemetry_evaluation_records(records: list[dict[str, Any]]) -> list[dict[str, str]]:
+    evaluations: list[dict[str, str]] = []
+    for record in records:
+        if record.get("event") != "aggregator.global_model_evaluation":
+            continue
+        attributes = record.get("attributes") or {}
+        evaluations.append(
+            {
+                "experiment_id": "phala",
+                "dataset": os.environ.get("DATASET_NAME", "unknown"),
+                "round": str(attributes.get("global_model_round", "")),
+                "source_round": str(attributes.get("source_round", "")),
+                "timestamp_unix_ms": str(record.get("timestamp_unix_ms", "")),
+                **{str(key): str(value) for key, value in attributes.items()},
+            }
+        )
+    return evaluations
+
+
+def telemetry_transaction_cost_records(records: list[dict[str, Any]]) -> list[dict[str, str]]:
+    costs: list[dict[str, str]] = []
+    for record in records:
+        if record.get("event") != "worker.transaction_cost":
+            continue
+        attributes = record.get("attributes") or {}
+        costs.append({str(key): str(value) for key, value in attributes.items()})
+    return costs
+
+
+def telemetry_run_totals(records: list[dict[str, Any]]) -> dict[str, float]:
+    event_metrics = {
+        "worker.training.started": "dfl_training_starts_total",
+        "worker.model_transfer.finished": "dfl_model_transfers_total",
+        "aggregator.aggregation.finished": "dfl_aggregations_total",
+    }
+    totals = {metric_name: 0.0 for metric_name in event_metrics.values()}
+    for record in records:
+        metric_name = event_metrics.get(str(record.get("event", "")))
+        if metric_name:
+            totals[metric_name] += 1.0
+    return totals
+
+
 def _prometheus_label_value(value: Any) -> str:
     return str(value or "").replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
@@ -225,7 +361,11 @@ def _evaluation_labels(record: dict[str, str]) -> str:
     return ",".join(f'{key}="{_prometheus_label_value(value)}"' for key, value in labels.items())
 
 
-def append_evaluation_metrics(payload_lines: list[str], records: list[dict[str, str]]) -> None:
+def append_evaluation_metrics(
+    payload_lines: list[str],
+    records: list[dict[str, str]],
+    run_totals_override: dict[str, float] | None = None,
+) -> None:
     payload_lines.extend(
         [
             (
@@ -287,7 +427,7 @@ def append_evaluation_metrics(payload_lines: list[str], records: list[dict[str, 
         expected_training_starts += _prometheus_float(record.get("expected_models")) or 0.0
         aggregated_model_count += _prometheus_float(record.get("aggregated_model_count")) or 0.0
 
-    run_totals = {
+    run_totals = run_totals_override or {
         "dfl_training_starts_total": expected_training_starts,
         "dfl_model_transfers_total": aggregated_model_count,
         "dfl_aggregations_total": float(len(records)),
@@ -750,6 +890,37 @@ def probe_contract_deployment(env_values: dict[str, str]) -> bool:
     return False
 
 
+def runtime_contract_env_values() -> dict[str, str]:
+    values = read_env_values()
+    if not phala_runtime_mode():
+        return values
+    rpc_url = os.environ.get("DYNAMIC_WORKER_RPC_URL", "").strip()
+    kubo_api = os.environ.get("DYNAMIC_WORKER_KUBO_API_URL", "").strip().rstrip("/")
+    if rpc_url:
+        values["RPC_URL"] = rpc_url
+    if kubo_api:
+        values["KUBO_API"] = kubo_api
+        try:
+            manifest_url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote(
+                "/runtime/contracts.json", safe=""
+            )
+            request = urllib.request.Request(manifest_url, data=b"", method="POST")
+            with urllib.request.urlopen(request, timeout=2.0) as response:
+                manifest = json.loads(response.read().decode("utf-8"))
+            address_keys = {
+                "registry_address": "REGISTRY_ADDRESS",
+                "aggregator_address": "AGGREGATOR_ADDRESS",
+                "gm_storage_address": "GM_STORAGE_ADDRESS",
+            }
+            for manifest_key, env_key in address_keys.items():
+                address = str(manifest.get(manifest_key, "")).strip()
+                if re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
+                    values[env_key] = address
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+            pass
+    return values
+
+
 def read_chain_round(env_values: dict[str, str]) -> int | None:
     rpc_url = env_values.get("RPC_URL", "http://anvil:8545").strip()
     gm_storage_address = env_values.get("GM_STORAGE_ADDRESS", "").strip()
@@ -788,10 +959,29 @@ def _worker_label_for_address(env_values: dict[str, str], address: str | None) -
     if not address:
         return None
     normalized = address.lower()
-    for index in range(16):
+    for index in range(20):
         worker_address = env_values.get(f"W{index}_ACCOUNT_ADDRESS", "").strip().lower()
         if worker_address == normalized:
             return f"VM-{index}"
+    try:
+        inventory = json.loads(os.environ.get("DYNAMIC_WORKER_INVENTORY", "[]"))
+    except json.JSONDecodeError:
+        inventory = []
+    if isinstance(inventory, dict):
+        records = list(inventory.values())
+    elif isinstance(inventory, list):
+        records = inventory
+    else:
+        records = []
+    if records:
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("account_address", "")).strip().lower() == normalized:
+                try:
+                    return f"VM-{int(record.get('slot'))}"
+                except (TypeError, ValueError):
+                    return None
     return None
 
 
@@ -1254,13 +1444,27 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/api/telemetry/events", status_code=202)
+async def ingest_telemetry(body: dict[str, Any]) -> dict[str, bool]:
+    payload = body.get("payload")
+    signature = str(body.get("signature", ""))
+    if not isinstance(payload, dict) or not re.fullmatch(r"0x[a-fA-F0-9]{130}", signature):
+        raise HTTPException(status_code=400, detail="invalid signed telemetry envelope")
+    try:
+        _record_telemetry(payload, signature)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"accepted": True}
+
+
 @app.get("/metrics")
 async def metrics() -> Response:
-    env_values = read_env_values()
+    env_values = runtime_contract_env_values()
     current_round = read_chain_round(env_values)
     current_aggregator = read_current_aggregator(env_values)
-    evaluation_records = read_evaluation_summary_records()
-    transaction_cost_records = read_transaction_cost_records()
+    telemetry_records = _telemetry_snapshot()
+    evaluation_records = read_evaluation_summary_records() + telemetry_evaluation_records(telemetry_records)
+    transaction_cost_records = read_transaction_cost_records() + telemetry_transaction_cost_records(telemetry_records)
     round_value = current_round if current_round is not None else 0
     aggregator_vm = current_aggregator["vm"] or "unknown"
     payload_lines = [
@@ -1273,8 +1477,32 @@ async def metrics() -> Response:
         f'dfl_current_aggregator{{aggregator_vm="{aggregator_vm}"}} 1',
         "",
     ]
-    append_evaluation_metrics(payload_lines, evaluation_records)
+    runtime_totals = telemetry_run_totals(telemetry_records) if phala_runtime_mode() else None
+    append_evaluation_metrics(payload_lines, evaluation_records, runtime_totals)
     append_transaction_cost_metrics(payload_lines, transaction_cost_records)
+    payload_lines.extend(
+        [
+            "",
+            "# HELP dfl_worker_runtime_event_total Signed runtime events received from each Phala worker.",
+            "# TYPE dfl_worker_runtime_event_total gauge",
+        ]
+    )
+    event_totals: dict[tuple[str, str, str], int] = {}
+    for record in telemetry_records:
+        key = (
+            str(record.get("device_id", "")),
+            str(record.get("account", "")),
+            str(record.get("event", "")),
+        )
+        event_totals[key] = event_totals.get(key, 0) + 1
+    for (device_id, account, event), value in event_totals.items():
+        worker = _worker_display_name(device_id, account)
+        labels = (
+            f'worker="{_prometheus_label_value(worker)}",'
+            f'account="{_prometheus_label_value(account)}",'
+            f'event="{_prometheus_label_value(event)}"'
+        )
+        payload_lines.append(f"dfl_worker_runtime_event_total{{{labels}}} {value}")
     payload = "\n".join(payload_lines)
     return Response(content=payload, media_type="text/plain; version=0.0.4")
 
@@ -1401,6 +1629,9 @@ async def reset_observability_values() -> dict[str, Any]:
 
     async with operation_lock:
         try:
+            if phala_runtime_mode():
+                reset_runtime_telemetry()
+                return {"ok": True, "status": await phala_runtime_status(), "logs": []}
             logs = await reset_grafana_view_values()
             return {"ok": True, "status": await collect_runtime_status(), "logs": logs[-3:]}
         except Exception as exc:
@@ -1447,6 +1678,7 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
             normalized = normalize_training_config(payload)
             if phala_runtime_mode():
                 require_control_admin(request)
+                reset_runtime_telemetry()
                 worker_status = await asyncio.to_thread(
                     phala_worker_controller().scale,
                     normalized["worker_count"],

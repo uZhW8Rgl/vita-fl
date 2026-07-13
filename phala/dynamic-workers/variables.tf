@@ -33,6 +33,7 @@ variable "worker_image" {
 variable "rpc_url" { type = string }
 variable "kubo_api_url" { type = string }
 variable "kubo_gateway_url" { type = string }
+variable "telemetry_url" { type = string }
 
 variable "region" {
   type    = string
@@ -87,4 +88,3 @@ variable "wait_timeout_seconds" {
   type    = number
   default = 900
 }
-

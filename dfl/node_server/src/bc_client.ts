@@ -2,6 +2,7 @@
 import Web3 from "web3";
 import fs from "fs";
 import 'dotenv/config';
+import { emitTelemetryEvent } from "./telemetry.js";
 // setup client´
 //const web3 = new Web3("https://eth-sepolia.g.alchemy.com/v2/pFowzUSGYob62Q7i2YVsF0LFUX3WiCT2");
 const web3 = new Web3(process.env.SEPOLIA_RPC_URL);
@@ -125,6 +126,7 @@ const logTransactionCost = (scope, operation, receipt, fallbackGasPriceWei) => {
     };
     console.log(JSON.stringify(event, jsonReplacer));
     appendTransactionCostCsv(event);
+    void emitTelemetryEvent("worker.transaction_cost", event);
 };
 
 const withGasBuffer = (gasEstimate, percent = 30n) => {

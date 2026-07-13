@@ -24,6 +24,7 @@ resource "phala_app" "worker" {
     rpc_url                        = var.rpc_url
     kubo_api_url                   = var.kubo_api_url
     kubo_gateway_url               = var.kubo_gateway_url
+    telemetry_url                  = var.telemetry_url
     client_limit                   = var.client_limit
     epoch                          = var.epoch
     round                          = var.round

@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from 'fs';
 import { DstackClient, TappdClient, getComposeHash } from '@phala/dstack-sdk';
 import crypto from 'crypto';
 import http from 'http';
+import { emitTelemetryEvent } from "./telemetry.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -92,7 +93,7 @@ async function assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel) {
 }
 
 async function runtimeEvent(name, attributes = {}) {
-    return undefined;
+    void emitTelemetryEvent(name, attributes);
 }
 
 async function runOperation(name, attributes, operation) {

@@ -71,6 +71,7 @@ class WorkerDeploymentConfig:
     rpc_url: str
     kubo_api_url: str
     kubo_gateway_url: str
+    telemetry_url: str
     region: str = "US-WEST-1"
     os_image: str = "dstack-dev-0.5.7"
     client_limit: int = 2
@@ -448,12 +449,22 @@ def controller_from_environment() -> PhalaWorkerController:
             raise WorkerConfigurationError(f"{name} must be an integer") from exc
 
     inventory = load_worker_inventory(required["DYNAMIC_WORKER_INVENTORY"])
+    telemetry_url = os.environ.get("DYNAMIC_WORKER_TELEMETRY_URL", "").strip()
+    if not telemetry_url:
+        parsed_rpc_url = urllib.parse.urlsplit(required["DYNAMIC_WORKER_RPC_URL"])
+        telemetry_host = re.sub(r"-[0-9]+(?=\.dstack-)", "-8091", parsed_rpc_url.hostname or "")
+        if not telemetry_host:
+            raise WorkerConfigurationError("could not derive the control API telemetry URL")
+        telemetry_url = urllib.parse.urlunsplit(
+            (parsed_rpc_url.scheme or "https", telemetry_host, "", "", "")
+        )
     config = WorkerDeploymentConfig(
         phala_cloud_api_key=required["PHALA_CLOUD_API_KEY"],
         worker_image=required["DYNAMIC_WORKER_IMAGE"],
         rpc_url=required["DYNAMIC_WORKER_RPC_URL"],
         kubo_api_url=required["DYNAMIC_WORKER_KUBO_API_URL"],
         kubo_gateway_url=required["DYNAMIC_WORKER_KUBO_GATEWAY_URL"],
+        telemetry_url=telemetry_url,
         region=os.environ.get("PHALA_REGION", "US-WEST-1"),
         os_image=os.environ.get("PHALA_OS_IMAGE", "dstack-dev-0.5.7"),
         client_limit=integer("CLIENT_LIMIT", 2),
