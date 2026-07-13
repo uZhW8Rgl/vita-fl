@@ -1,0 +1,69 @@
+terraform {
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    phala = {
+      source  = "phala-network/phala"
+      version = "0.2.0-beta.3"
+    }
+  }
+}
+
+provider "phala" {
+  api_key = var.phala_cloud_api_key
+}
+
+resource "phala_app" "worker" {
+  for_each = toset(keys(nonsensitive(var.workers)))
+
+  name = var.workers[each.key].app_name
+  docker_compose = templatefile("${path.module}/worker-compose.tftpl", {
+    worker_image                   = var.worker_image
+    account_address                = var.workers[each.key].account_address
+    device_id                      = var.workers[each.key].device_id
+    rpc_url                        = var.rpc_url
+    kubo_api_url                   = var.kubo_api_url
+    kubo_gateway_url               = var.kubo_gateway_url
+    client_limit                   = var.client_limit
+    epoch                          = var.epoch
+    round                          = var.round
+    model_submission_deadline_ms   = var.model_submission_deadline_ms
+    gm_update_timeout_ms           = var.gm_update_timeout_ms
+    gm_update_timeout_loops        = var.gm_update_timeout_loops
+    aggregation_update_estimate_ms = var.aggregation_update_estimate_ms
+    gm_update_poll_ms              = var.gm_update_poll_ms
+    dataset_name                   = var.dataset_name
+    train_images_src               = replace(var.train_images_src, "-0.", format("-%d.", var.workers[each.key].device_id))
+    train_labels_src               = replace(var.train_labels_src, "-0.", format("-%d.", var.workers[each.key].device_id))
+    test_images_src                = var.test_images_src
+    test_labels_src                = var.test_labels_src
+    train_data_src                 = replace(var.train_data_src, "-0.", format("-%d.", var.workers[each.key].device_id))
+    test_data_src                  = var.test_data_src
+    python_service_url             = var.python_service_url
+    public_ip                      = var.public_ip
+    msg_broker_ip                  = var.msg_broker_ip
+  })
+  env = {
+    PRIVATE_KEY     = var.workers[each.key].private_key
+    RSA_PRIVATE_KEY = var.workers[each.key].rsa_private_key
+    RSA_PUBLIC_KEY  = var.workers[each.key].rsa_public_key
+  }
+
+  # Dynamic workers deliberately stay on the smallest requested Phala plan.
+  size      = "tdx.small"
+  disk_size = 20
+  replicas  = 1
+  region    = var.region
+  image     = var.os_image
+
+  kms             = "phala"
+  listed          = false
+  storage_fs      = "zfs"
+  public_logs     = var.public_logs
+  public_sysinfo  = var.public_sysinfo
+  public_tcbinfo  = var.public_tcbinfo
+  gateway_enabled = true
+
+  wait_for_ready       = true
+  wait_timeout_seconds = var.wait_timeout_seconds
+}

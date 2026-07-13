@@ -69,10 +69,10 @@ jobs:
           python -m pip install -e dfl/neural_network
 
       - name: Run Ruff lint
-        run: ruff check agent zk_inference dfl/neural_network transparency_log
+        run: ruff check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log
 
       - name: Check formatting
-        run: ruff format --check agent zk_inference dfl/neural_network transparency_log
+        run: ruff format --check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log
 
       - name: Python syntax smoke check
         run: |
@@ -83,6 +83,8 @@ jobs:
             agent/mcp_server.py \
             agent/scitt_client.py \
             agent/tee_inference_client.py \
+            control_api/phala_workers.py \
+            control_api/server.py \
             data/mnist_tools.py \
             zk_inference/create_single_mnist_query.py \
             zk_inference/export_model.py \
@@ -100,6 +102,12 @@ jobs:
 
       - name: Run transparency-log unit tests
         run: PYTHONPATH=. python -m unittest discover -s transparency_log -v
+
+      - name: Run control-api unit tests
+        run: PYTHONPATH=. python -m unittest discover -s control_api/tests -v
+
+      - name: Run Phala inventory unit tests
+        run: PYTHONPATH=. python -m unittest phala.test_build_worker_inventory -v
 
   node-server:
     name: Node Server
@@ -174,6 +182,10 @@ jobs:
             context: transparency_log
             dockerfile: transparency_log/Dockerfile
             image: transparency-log
+          - name: control-api
+            context: .
+            dockerfile: control_api/Dockerfile
+            image: control-api
           - name: dfl-worker
             context: .
             dockerfile: dfl/Dockerfile

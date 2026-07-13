@@ -14,10 +14,10 @@ provider "phala" {
 }
 
 locals {
-  worker_account_addresses = concat(
+  worker_account_addresses = distinct(concat(
     [var.account_address],
     [for worker_key in keys(nonsensitive(var.additional_workers)) : var.additional_workers[worker_key].account_address],
-  )
+  ))
 
   contracts_compose_content = templatefile("${path.module}/dstack-compose.contracts.phala.tftpl", {
     smart_contracts_image             = var.smart_contracts_image
@@ -44,6 +44,10 @@ locals {
     model_transfer_retry_delay_ms     = var.model_transfer_retry_delay_ms
     train_images_src                  = var.train_images_src
     train_labels_src                  = var.train_labels_src
+    test_images_src                   = var.test_images_src
+    test_labels_src                   = var.test_labels_src
+    train_data_src                    = var.train_data_src
+    test_data_src                     = var.test_data_src
     python_service_url                = var.python_service_url
     public_ip                         = var.public_ip
     msg_broker_ip                     = var.msg_broker_ip
@@ -61,6 +65,15 @@ locals {
     pccs_quote_path                   = var.pccs_quote_path
     tdx_quote_path                    = var.tdx_quote_path
     tdx_reference_quote_path          = var.tdx_reference_quote_path
+    enable_control_api                = var.enable_phala_control_api
+    control_api_image                 = var.control_api_image
+    dynamic_worker_inventory          = var.dynamic_worker_inventory
+    dynamic_worker_rpc_url            = coalesce(var.runtime_rpc_url_override, "")
+    dynamic_worker_kubo_api_url       = coalesce(var.runtime_kubo_api_url_override, "")
+    dynamic_worker_kubo_gateway_url   = coalesce(var.runtime_kubo_gateway_url_override, "")
+    max_dynamic_workers               = var.max_dynamic_workers
+    region                            = var.region
+    os_image                          = var.os_image
   })
 
   ssh_authorized_keys = var.ssh_public_key_path == null ? [] : [trimspace(file(var.ssh_public_key_path))]
@@ -104,11 +117,16 @@ resource "phala_ssh_key" "operator" {
 resource "phala_app" "contract_runtime" {
   name           = var.contracts_app_name
   docker_compose = local.contracts_compose_content
-  env = {
+  env = merge({
     ETH_WALLET_PRIVATE_KEY                 = var.eth_wallet_private_key != "" ? var.eth_wallet_private_key : var.private_key
     INITIAL_GM_SIGNING_KEY                 = file(var.initial_gm_signing_key_path)
     INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY = file(var.rsa_public_key_path)
-  }
+    }, var.enable_phala_control_api ? {
+    PHALA_CLOUD_API_KEY            = var.phala_cloud_api_key
+    DYNAMIC_WORKER_INVENTORY       = var.dynamic_worker_inventory
+    CONTROL_ADMIN_TOKEN            = var.control_admin_token
+    REGISTRATION_OWNER_PRIVATE_KEY = var.eth_wallet_private_key != "" ? var.eth_wallet_private_key : var.private_key
+  } : {})
   size = var.contracts_size
 
   region    = var.region

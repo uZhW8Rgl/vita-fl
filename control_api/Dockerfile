@@ -16,6 +16,10 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY control_api ./control_api
+COPY phala/bin/terraform /usr/local/bin/terraform
+COPY phala/dynamic-workers ./phala/dynamic-workers
+
+RUN chmod 0755 /usr/local/bin/terraform
 
 RUN python -m pip install --upgrade pip setuptools wheel && \
     python -m pip install -r control_api/requirements.txt

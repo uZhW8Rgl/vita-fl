@@ -101,5 +101,55 @@ services:
       W1_ACCOUNT_ADDRESS: "${w1_account_address}"
       WORKER_ACCOUNT_ADDRESSES: "${worker_account_addresses}"
       WORKER_ACCOUNT_BALANCE_WEI: "10000000000000000000000"
+      FUND_WORKER_ACCOUNTS: "0"
+      PREAUTHORIZE_WORKER_REGISTRATIONS: "0"
       INITIAL_GM_SIGNER_ADDRESS: "${initial_gm_signer_address}"
     command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]
+
+%{ if enable_control_api ~}
+  control-api:
+    image: ${control_api_image}
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "8091:8091"
+    environment:
+      CONTROL_RUNTIME_MODE: phala
+      CONTROL_API_PORT: "8091"
+      CONTROL_ADMIN_TOKEN: "$${CONTROL_ADMIN_TOKEN}"
+      PHALA_CLOUD_API_KEY: "$${PHALA_CLOUD_API_KEY}"
+      DYNAMIC_WORKER_INVENTORY: "$${DYNAMIC_WORKER_INVENTORY}"
+      REGISTRATION_OWNER_PRIVATE_KEY: "$${REGISTRATION_OWNER_PRIVATE_KEY}"
+      DYNAMIC_WORKER_IMAGE: "${worker_image}"
+      DYNAMIC_WORKER_RPC_URL: "${dynamic_worker_rpc_url}"
+      DYNAMIC_WORKER_KUBO_API_URL: "${dynamic_worker_kubo_api_url}"
+      DYNAMIC_WORKER_KUBO_GATEWAY_URL: "${dynamic_worker_kubo_gateway_url}"
+      MAX_DYNAMIC_WORKERS: "${max_dynamic_workers}"
+      PHALA_REGION: "${region}"
+      PHALA_OS_IMAGE: "${os_image}"
+      CLIENT_LIMIT: "${client_limit}"
+      EPOCH: "${epoch}"
+      ROUND: "${round}"
+      MODEL_SUBMISSION_DEADLINE_MS: "${model_submission_deadline_ms}"
+      GM_UPDATE_TIMEOUT_MS: "${gm_update_timeout_ms}"
+      GM_UPDATE_TIMEOUT_LOOPS: "${gm_update_timeout_loops}"
+      AGGREGATION_UPDATE_ESTIMATE_MS: "${aggregation_update_estimate_ms}"
+      GM_UPDATE_POLL_MS: "${gm_update_poll_ms}"
+      DATASET_NAME: "${dataset_name}"
+      TRAIN_IMAGES_SRC: "${train_images_src}"
+      TRAIN_LABELS_SRC: "${train_labels_src}"
+      TEST_IMAGES_SRC: "${test_images_src}"
+      TEST_LABELS_SRC: "${test_labels_src}"
+      TRAIN_DATA_SRC: "${train_data_src}"
+      TEST_DATA_SRC: "${test_data_src}"
+      PYTHON_SERVICE_URL: "${python_service_url}"
+      PUBLIC_IP: "${public_ip}"
+      MSG_BROKER_IP: "${msg_broker_ip}"
+    tmpfs:
+      - /run/master-thesis:size=64m,mode=0700
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/api/control/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+%{ endif ~}

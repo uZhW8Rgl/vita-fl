@@ -8,6 +8,7 @@ import csv
 import json
 import os
 import re
+import secrets
 import shutil
 import time
 import urllib.error
@@ -15,8 +16,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Response
-
+from fastapi import FastAPI, HTTPException, Request, Response
 
 WORKSPACE_ROOT = Path(os.environ.get("TRAINING_WORKSPACE_ROOT", "/workspace")).resolve()
 TRAINING_ENV_FILE = WORKSPACE_ROOT / ".env"
@@ -24,6 +24,7 @@ TRAINING_COMPOSE_FILE = WORKSPACE_ROOT / "compose.yml"
 EVALUATION_SUMMARY_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "global_model_round_summary.csv"
 TRANSACTION_COST_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "transaction_costs.csv"
 CONTROL_API_STARTED_AT_UNIX_MS = int(time.time() * 1000)
+CONTROL_RUNTIME_MODE = os.environ.get("CONTROL_RUNTIME_MODE", "local").strip().lower()
 TRAINING_CONFIG_KEYS = ("ROUND", "EPOCH", "WORKER_COUNT", "CLIENT_LIMIT")
 CONTRACT_TIMEOUT_SECONDS = 600
 OBSERVABILITY_VOLUME_NAMES = (
@@ -51,6 +52,34 @@ STATIC_CONTAINER_NAMES = {
 
 app = FastAPI(title="Master Thesis Control API")
 operation_lock = asyncio.Lock()
+_phala_worker_controller: Any | None = None
+
+
+def phala_runtime_mode() -> bool:
+    return CONTROL_RUNTIME_MODE == "phala"
+
+
+def phala_worker_controller():
+    global _phala_worker_controller
+    if not phala_runtime_mode():
+        raise RuntimeError("dynamic Phala workers are only available in CONTROL_RUNTIME_MODE=phala")
+    if _phala_worker_controller is None:
+        from control_api.phala_workers import controller_from_environment
+
+        _phala_worker_controller = controller_from_environment()
+    return _phala_worker_controller
+
+
+def require_control_admin(request: Request) -> None:
+    configured = os.environ.get("CONTROL_ADMIN_TOKEN", "").strip()
+    if not configured:
+        raise HTTPException(status_code=503, detail="CONTROL_ADMIN_TOKEN is not configured")
+    supplied = request.headers.get("x-control-admin-token", "").strip()
+    authorization = request.headers.get("authorization", "").strip()
+    if not supplied and authorization.lower().startswith("bearer "):
+        supplied = authorization[7:].strip()
+    if not supplied or not secrets.compare_digest(supplied, configured):
+        raise HTTPException(status_code=401, detail="invalid control administrator token")
 
 
 def resolve_docker_bin() -> str:
@@ -192,10 +221,15 @@ def _evaluation_labels(record: dict[str, str]) -> str:
 
 
 def append_evaluation_metrics(payload_lines: list[str], records: list[dict[str, str]]) -> None:
-    payload_lines.extend([
-        "# HELP dfl_global_model_evaluation_info Global model evaluation metadata, one time series per evaluated round.",
-        "# TYPE dfl_global_model_evaluation_info gauge",
-    ])
+    payload_lines.extend(
+        [
+            (
+                "# HELP dfl_global_model_evaluation_info Global model evaluation metadata, "
+                "one time series per evaluated round."
+            ),
+            "# TYPE dfl_global_model_evaluation_info gauge",
+        ]
+    )
     for record in records:
         info_labels = {
             "experiment_id": record.get("experiment_id", "local"),
@@ -229,11 +263,13 @@ def append_evaluation_metrics(payload_lines: list[str], records: list[dict[str, 
         "exact_match_percent": "dfl_global_model_evaluation_exact_match_percent",
     }
     for field, metric_name in metric_map.items():
-        payload_lines.extend([
-            "",
-            f"# HELP {metric_name} Global model evaluation field '{field}' by evaluated round.",
-            f"# TYPE {metric_name} gauge",
-        ])
+        payload_lines.extend(
+            [
+                "",
+                f"# HELP {metric_name} Global model evaluation field '{field}' by evaluated round.",
+                f"# TYPE {metric_name} gauge",
+            ]
+        )
         for record in records:
             value = _prometheus_float(record.get(field))
             if value is None:
@@ -252,12 +288,17 @@ def append_evaluation_metrics(payload_lines: list[str], records: list[dict[str, 
         "dfl_aggregations_total": float(len(records)),
     }
     for metric_name, value in run_totals.items():
-        payload_lines.extend([
-            "",
-            f"# HELP {metric_name} Current training-run total derived from one evaluation record per aggregated round.",
-            f"# TYPE {metric_name} gauge",
-            f"{metric_name} {value}",
-        ])
+        payload_lines.extend(
+            [
+                "",
+                (
+                    f"# HELP {metric_name} Current training-run total derived from one "
+                    "evaluation record per aggregated round."
+                ),
+                f"# TYPE {metric_name} gauge",
+                f"{metric_name} {value}",
+            ]
+        )
 
     if records:
         latest = records[-1]
@@ -276,12 +317,14 @@ def append_evaluation_metrics(payload_lines: list[str], records: list[dict[str, 
         for metric_name, value in latest_values.items():
             if value is None:
                 continue
-            payload_lines.extend([
-                "",
-                f"# HELP {metric_name} Latest global model evaluation value mirrored from the round summary CSV.",
-                f"# TYPE {metric_name} gauge",
-                f"{metric_name} {value}",
-            ])
+            payload_lines.extend(
+                [
+                    "",
+                    f"# HELP {metric_name} Latest global model evaluation value mirrored from the round summary CSV.",
+                    f"# TYPE {metric_name} gauge",
+                    f"{metric_name} {value}",
+                ]
+            )
 
 
 def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict[str, str]]) -> None:
@@ -310,15 +353,15 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
         "dfl_transaction_count_total": ("transactions", "Total number of unique transactions by scope."),
     }
     for metric_name, (field, help_text) in metric_specs.items():
-        payload_lines.extend([
-            "",
-            f"# HELP {metric_name} {help_text}",
-            f"# TYPE {metric_name} gauge",
-        ])
+        payload_lines.extend(
+            [
+                "",
+                f"# HELP {metric_name} {help_text}",
+                f"# TYPE {metric_name} gauge",
+            ]
+        )
         for scope, values in totals.items():
-            payload_lines.append(
-                f'{metric_name}{{scope="{_prometheus_label_value(scope)}"}} {values[field]}'
-            )
+            payload_lines.append(f'{metric_name}{{scope="{_prometheus_label_value(scope)}"}} {values[field]}')
 
     worker = totals.get("worker", {})
     contract_init = totals.get("smart_contracts_init", {})
@@ -329,12 +372,14 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
         "dfl_contract_init_cost_eur_total": contract_init.get("eur", 0.0),
     }
     for metric_name, value in fixed_totals.items():
-        payload_lines.extend([
-            "",
-            f"# HELP {metric_name} Transaction cost total derived from deduplicated CSV records.",
-            f"# TYPE {metric_name} gauge",
-            f"{metric_name} {value}",
-        ])
+        payload_lines.extend(
+            [
+                "",
+                f"# HELP {metric_name} Transaction cost total derived from deduplicated CSV records.",
+                f"# TYPE {metric_name} gauge",
+                f"{metric_name} {value}",
+            ]
+        )
 
     worker_metric_specs = {
         "dfl_worker_cost_eth_by_worker": ("eth", "Worker transaction cost in ETH by worker."),
@@ -342,21 +387,42 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
         "dfl_worker_transaction_count_by_worker": ("transactions", "Worker transaction count by worker."),
     }
     for metric_name, (field, help_text) in worker_metric_specs.items():
-        payload_lines.extend([
-            "",
-            f"# HELP {metric_name} {help_text}",
-            f"# TYPE {metric_name} gauge",
-        ])
+        payload_lines.extend(
+            [
+                "",
+                f"# HELP {metric_name} {help_text}",
+                f"# TYPE {metric_name} gauge",
+            ]
+        )
         for (worker, account, device_id), values in worker_totals.items():
-            payload_lines.append(
-                f'{metric_name}{{worker="{_prometheus_label_value(worker)}",account="{_prometheus_label_value(account)}",device_id="{_prometheus_label_value(device_id)}"}} {values[field]}'
+            labels = (
+                f'worker="{_prometheus_label_value(worker)}",'
+                f'account="{_prometheus_label_value(account)}",'
+                f'device_id="{_prometheus_label_value(device_id)}"'
             )
+            payload_lines.append(f"{metric_name}{{{labels}}} {values[field]}")
 
 
 def read_training_config(
     env_file: Path = TRAINING_ENV_FILE, compose_file: Path = TRAINING_COMPOSE_FILE
 ) -> dict[str, Any]:
     values = read_env_values(env_file)
+
+    if phala_runtime_mode():
+        maximum = max(1, min(_safe_int(os.environ.get("MAX_DYNAMIC_WORKERS"), 20), 20))
+        worker_count = max(1, min(_safe_int(os.environ.get("WORKER_COUNT"), 3), maximum))
+        client_limit = max(
+            1,
+            min(_safe_int(os.environ.get("CLIENT_LIMIT"), max(1, worker_count - 1)), max(1, worker_count - 1)),
+        )
+        return {
+            "rounds": max(1, _safe_int(os.environ.get("ROUND"), 5)),
+            "epoch": max(1, _safe_int(os.environ.get("EPOCH"), 1)),
+            "worker_count": worker_count,
+            "client_limit": client_limit,
+            "max_worker_count": maximum,
+            "available_workers": [f"worker{slot}" for slot in range(maximum)],
+        }
 
     available_workers = _available_worker_services(compose_file)
     max_worker_count = len(available_workers)
@@ -385,13 +451,9 @@ def normalize_training_config(payload: dict[str, Any]) -> dict[str, int]:
 
     rounds = max(1, _safe_int(payload.get("rounds"), int(current["rounds"])))
     epoch = max(1, _safe_int(payload.get("epoch"), int(current["epoch"])))
-    worker_count = max(
-        1, min(_safe_int(payload.get("worker_count"), int(current["worker_count"])), max_worker_count)
-    )
+    worker_count = max(1, min(_safe_int(payload.get("worker_count"), int(current["worker_count"])), max_worker_count))
     max_client_limit = max(1, worker_count - 1)
-    client_limit = max(
-        1, min(_safe_int(payload.get("client_limit"), int(current["client_limit"])), max_client_limit)
-    )
+    client_limit = max(1, min(_safe_int(payload.get("client_limit"), int(current["client_limit"])), max_client_limit))
 
     return {
         "rounds": rounds,
@@ -852,7 +914,9 @@ async def collect_runtime_status() -> dict[str, Any]:
         ipfs_state = service_state_map.get("ipfs") or missing_service_state("ipfs")
         agent_state = service_state_map.get("agent") or missing_service_state("agent")
         zk_inference_state = service_state_map.get("zk-inference") or missing_service_state("zk-inference")
-        worker_states = [service_state_map.get(service) or missing_service_state(service) for service in worker_services]
+        worker_states = [
+            service_state_map.get(service) or missing_service_state(service) for service in worker_services
+        ]
     else:
         contract_state = await inspect_service("smart-contracts")
         anvil_state = await inspect_service("anvil")
@@ -914,12 +978,14 @@ async def reset_observability_volumes() -> list[dict[str, Any]]:
     try:
         docker_bin = resolve_docker_bin()
     except RuntimeError as exc:
-        return [{
-            "command": ["docker", "volume", "rm", "-f", *OBSERVABILITY_VOLUME_NAMES],
-            "returncode": 0,
-            "stdout": "Skipped old observability volume cleanup because the Docker CLI is unavailable.",
-            "stderr": str(exc),
-        }]
+        return [
+            {
+                "command": ["docker", "volume", "rm", "-f", *OBSERVABILITY_VOLUME_NAMES],
+                "returncode": 0,
+                "stdout": "Skipped old observability volume cleanup because the Docker CLI is unavailable.",
+                "stderr": str(exc),
+            }
+        ]
     project_name = compose_project_name()
     logs: list[dict[str, Any]] = []
 
@@ -948,12 +1014,14 @@ async def clear_evaluation_artifacts() -> list[dict[str, Any]]:
                 continue
             except OSError as exc:
                 errors.append(f"{path}: {exc}")
-    return [{
-        "command": ["clear-evaluation-artifacts"],
-        "returncode": 1 if errors else 0,
-        "stdout": "\n".join(removed),
-        "stderr": "\n".join(errors),
-    }]
+    return [
+        {
+            "command": ["clear-evaluation-artifacts"],
+            "returncode": 1 if errors else 0,
+            "stdout": "\n".join(removed),
+            "stderr": "\n".join(errors),
+        }
+    ]
 
 
 async def wait_for_http_url(url: str, timeout_seconds: int) -> None:
@@ -1206,9 +1274,91 @@ async def metrics() -> Response:
     return Response(content=payload, media_type="text/plain; version=0.0.4")
 
 
+async def phala_runtime_status() -> dict[str, Any]:
+    worker_status = await asyncio.to_thread(phala_worker_controller().status)
+    deployed = worker_status["deployed_worker_count"]
+    contract_initialized = os.environ.get("PHALA_CONTRACTS_READY", "1").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    return {
+        "contract_initialized": contract_initialized,
+        "contract_running": False,
+        "training_started": contract_initialized and deployed > 0,
+        "agent_running": True,
+        "base_runtime_ready": True,
+        "chain_contracts_ready": contract_initialized,
+        "contract_completed_successfully": contract_initialized,
+        "contract_failed": False,
+        "current_round": None,
+        "current_aggregator_address": None,
+        "current_aggregator_vm": None,
+        "running_workers": [worker["worker"] for worker in worker_status["workers"]],
+        "services": {
+            "anvil": {"service": "anvil", "status": "running", "running": True},
+            "ipfs": {"service": "ipfs", "status": "running", "running": True},
+            "smart-contracts": {
+                "service": "smart-contracts",
+                "status": "exited" if contract_initialized else "starting",
+                "running": False,
+                "exit_code": 0 if contract_initialized else None,
+            },
+            "agent": {"service": "agent", "status": "running", "running": True},
+            "zk-inference": {"service": "zk-inference", "status": "external", "running": True},
+            "workers": worker_status["workers"],
+        },
+        "phala_workers": worker_status,
+    }
+
+
+@app.get("/api/phala/workers")
+async def get_phala_workers(request: Request) -> dict[str, Any]:
+    require_control_admin(request)
+    try:
+        return await asyncio.to_thread(phala_worker_controller().status)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/phala/workers/scale")
+async def scale_phala_workers(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+    require_control_admin(request)
+    if operation_lock.locked():
+        raise HTTPException(status_code=409, detail="Another control operation is already running.")
+    try:
+        worker_count = int(payload.get("worker_count"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="worker_count must be an integer") from exc
+    async with operation_lock:
+        try:
+            return await asyncio.to_thread(phala_worker_controller().scale, worker_count)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.delete("/api/phala/workers")
+async def destroy_phala_workers(request: Request) -> dict[str, Any]:
+    require_control_admin(request)
+    if operation_lock.locked():
+        raise HTTPException(status_code=409, detail="Another control operation is already running.")
+    async with operation_lock:
+        try:
+            return await asyncio.to_thread(phala_worker_controller().scale, 0)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/api/control/status")
 async def get_control_status() -> dict[str, Any]:
     try:
+        if phala_runtime_mode():
+            return {
+                "config": read_training_config(),
+                "runtime": await phala_runtime_status(),
+            }
         return {
             "config": read_training_config(),
             "runtime": await collect_runtime_status(),
@@ -1270,13 +1420,28 @@ async def update_training_config(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @app.post("/api/training/start")
-async def start_training(payload: dict[str, Any]) -> dict[str, Any]:
+async def start_training(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
     if operation_lock.locked():
         raise HTTPException(status_code=409, detail="Another control operation is already running.")
 
     async with operation_lock:
         try:
             normalized = normalize_training_config(payload)
+            if phala_runtime_mode():
+                require_control_admin(request)
+                worker_status = await asyncio.to_thread(
+                    phala_worker_controller().scale,
+                    normalized["worker_count"],
+                )
+                return {
+                    "ok": True,
+                    "config": {**read_training_config(), **normalized},
+                    "selected_workers": [worker["worker"] for worker in worker_status["workers"]],
+                    "inactive_workers": [],
+                    "status": await phala_runtime_status(),
+                    "phala_workers": worker_status,
+                    "logs": [],
+                }
             saved_config = write_training_config(normalized)
             result = await start_training_services(normalized)
         except Exception as exc:
@@ -1285,12 +1450,22 @@ async def start_training(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @app.post("/api/training/reset")
-async def reset_training() -> dict[str, Any]:
+async def reset_training(request: Request) -> dict[str, Any]:
     if operation_lock.locked():
         raise HTTPException(status_code=409, detail="Another control operation is already running.")
 
     async with operation_lock:
         try:
+            if phala_runtime_mode():
+                require_control_admin(request)
+                worker_status = await asyncio.to_thread(phala_worker_controller().scale, 0)
+                return {
+                    "ok": True,
+                    "config": read_training_config(),
+                    "status": await phala_runtime_status(),
+                    "phala_workers": worker_status,
+                    "logs": [],
+                }
             result = await reset_training_services()
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc

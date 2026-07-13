@@ -42,6 +42,56 @@ variable "additional_workers" {
   default   = {}
 }
 
+variable "dynamic_worker_inventory" {
+  description = "Encrypted JSON inventory containing the existing fixed W0-W19 worker identities."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "max_dynamic_workers" {
+  description = "Maximum number of fixed worker identities exposed to the Phala control API."
+  type        = number
+  default     = 20
+
+  validation {
+    condition     = var.max_dynamic_workers >= 1 && var.max_dynamic_workers <= 20
+    error_message = "max_dynamic_workers must be between 1 and 20."
+  }
+}
+
+variable "enable_phala_control_api" {
+  description = "Run the dynamic-worker Control API in the contract-runtime CVM."
+  type        = bool
+  default     = false
+}
+
+variable "control_api_image" {
+  description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
+  type        = string
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api:control"
+
+  validation {
+    condition = (
+      !var.enable_phala_control_api ||
+      can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.control_api_image))
+    )
+    error_message = "control_api_image must be digest-pinned when enable_phala_control_api is true."
+  }
+}
+
+variable "control_admin_token" {
+  description = "Bearer/header token used by the UI proxy to authorize worker lifecycle changes."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = !var.enable_phala_control_api || length(var.control_admin_token) >= 16
+    error_message = "control_admin_token must contain at least 16 characters when the Phala Control API is enabled."
+  }
+}
+
 variable "contracts_size" {
   description = "Phala CVM size slug for the contract-runtime TEE."
   type        = string

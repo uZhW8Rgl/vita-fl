@@ -181,6 +181,47 @@ build_additional_workers_var() {
   fi
 }
 
+build_dynamic_worker_inventory() {
+  local maximum
+  maximum=$(read_env_value "MAX_DYNAMIC_WORKERS")
+  maximum="${maximum:-20}"
+  if ! [[ "${maximum}" =~ ^[0-9]+$ ]] || [ "${maximum}" -lt 1 ] || [ "${maximum}" -gt 20 ]; then
+    echo "MAX_DYNAMIC_WORKERS must be an integer between 1 and 20" >&2
+    exit 1
+  fi
+
+  local command=(python3 "${SCRIPT_DIR}/build_worker_inventory.py" --max-workers "${maximum}")
+  local file
+  for file in "${ENV_FILES[@]}"; do
+    command+=(--env-file "${file}")
+  done
+  export TF_VAR_dynamic_worker_inventory
+  TF_VAR_dynamic_worker_inventory=$("${command[@]}")
+  export TF_VAR_max_dynamic_workers="${maximum}"
+}
+
+configure_phala_control_api() {
+  local enabled
+  enabled=$(read_env_value "ENABLE_PHALA_CONTROL_API")
+  enabled="${enabled:-false}"
+  export TF_VAR_enable_phala_control_api="${enabled}"
+
+  if [ "${enabled}" != "1" ] && [ "${enabled}" != "true" ]; then
+    return
+  fi
+
+  export TF_VAR_control_admin_token
+  TF_VAR_control_admin_token=$(require_env_value "CONTROL_ADMIN_TOKEN")
+  append_var_if_set "control_api_image" "CONTROL_API_IMAGE"
+
+  for env_name in \
+    PHALA_RUNTIME_RPC_URL \
+    PHALA_RUNTIME_KUBO_API_URL \
+    PHALA_RUNTIME_KUBO_GATEWAY_URL; do
+    require_env_value "${env_name}" >/dev/null
+  done
+}
+
 append_var_if_set "runtime_w1_account_address" "W1_ACCOUNT_ADDRESS"
 append_var_if_set "initial_gm_signer_address" "INITIAL_GM_SIGNER_ADDRESS"
 append_var_if_set "blockchain_provider" "BLOCKCHAIN_PROVIDER"
@@ -228,6 +269,8 @@ append_var_if_set "public_ip" "PUBLIC_IP"
 append_var_if_set "msg_broker_ip" "MSG_BROKER_IP"
 
 build_additional_workers_var
+build_dynamic_worker_inventory
+configure_phala_control_api
 
 export PHALA_CLOUD_API_KEY
 

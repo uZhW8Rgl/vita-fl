@@ -1,0 +1,48 @@
+services:
+  dfl-worker:
+    image: ${worker_image}
+    restart: unless-stopped
+    volumes:
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      - /var/run/tappd.sock:/var/run/tappd.sock
+    ports:
+      - "8001:8001"
+    environment:
+      DOCKER: phala
+      NODE_ENV: production
+      IPFS_PROVIDER: kubo
+      KUBO_API: "${kubo_api_url}"
+      KUBO_GATEWAY: "${kubo_gateway_url}"
+      PUBLIC_IP: "${public_ip}"
+      MSG_BROKER_IP: "${msg_broker_ip}"
+      ACCOUNT_ADDRESS: "${account_address}"
+      DEVICE_ID: "${device_id}"
+      PRIVATE_KEY: "$${PRIVATE_KEY}"
+      RSA_PRIVATE_KEY: "$${RSA_PRIVATE_KEY}"
+      RSA_PUBLIC_KEY: "$${RSA_PUBLIC_KEY}"
+      REGISTRY_ADDRESS: ""
+      AGGREGATOR_ADDRESS: ""
+      GM_STORAGE_ADDRESS: ""
+      SEPOLIA_RPC_URL: "${rpc_url}"
+      CLIENT_LIMIT: "${client_limit}"
+      EPOCH: "${epoch}"
+      ROUND: "${round}"
+      MODEL_SUBMISSION_DEADLINE_MS: "${model_submission_deadline_ms}"
+      GM_UPDATE_TIMEOUT_MS: "${gm_update_timeout_ms}"
+      GM_UPDATE_TIMEOUT_LOOPS: "${gm_update_timeout_loops}"
+      AGGREGATION_UPDATE_ESTIMATE_MS: "${aggregation_update_estimate_ms}"
+      GM_UPDATE_POLL_MS: "${gm_update_poll_ms}"
+      DATASET_NAME: "${dataset_name}"
+      TRAIN_IMAGES_SRC: "${train_images_src}"
+      TRAIN_LABELS_SRC: "${train_labels_src}"
+      TEST_IMAGES_SRC: "${test_images_src}"
+      TEST_LABELS_SRC: "${test_labels_src}"
+      TRAIN_DATA_SRC: "${train_data_src}"
+      TEST_DATA_SRC: "${test_data_src}"
+      PYTHON_SERVICE_URL: "${python_service_url}"
+      MODEL_UPLOAD_PORT: "8001"
+    command:
+      - /bin/bash
+      - -lc
+      - exec /dfl/start_node_neural_network.sh
+

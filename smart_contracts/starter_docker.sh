@@ -105,6 +105,10 @@ fund_configured_worker_accounts() {
     if ! using_local_runtime_services; then
         return 0
     fi
+    if [ "${FUND_WORKER_ACCOUNTS:-1}" != "1" ]; then
+        echo "Skipping worker-account funding; the configured Anvil accounts are already funded."
+        return 0
+    fi
 
     local balance_wei=${WORKER_ACCOUNT_BALANCE_WEI:-10000000000000000000000}
     local balance_hex
@@ -1039,7 +1043,11 @@ echo "Expected worker image digest set to sha256:$EXPECTED_WORKER_IMAGE_DIGEST"
 cast send --rpc-url "$rpc_url" --private-key "$ETH_WALLET_PRIVATE_KEY" \
     "$DEVICE_REGISTRY_ADDRESS" "setExpectedWorkerImageDigest(bytes32)" "0x$EXPECTED_WORKER_IMAGE_DIGEST" >/dev/null
 
-allow_configured_worker_registrations
+if [ "${PREAUTHORIZE_WORKER_REGISTRATIONS:-1}" = "1" ]; then
+    allow_configured_worker_registrations
+else
+    echo "Skipping bulk registration challenges; the dynamic controller opens them just in time."
+fi
 
 
 #echo "Authorization Status:"
