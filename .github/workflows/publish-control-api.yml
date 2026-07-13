@@ -1,6 +1,14 @@
 name: Publish Phala Control API
 
 on:
+  push:
+    branches:
+      - tee_inference
+    paths:
+      - "control_api/**"
+      - "phala/dynamic-workers/**"
+      - "phala/build_worker_inventory.py"
+      - ".github/workflows/publish-control-api.yml"
   workflow_dispatch:
     inputs:
       tag:
@@ -13,6 +21,7 @@ permissions:
   packages: write
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   REGISTRY: ghcr.io
   IMAGE_NAME: uzhw8rgl/master-thesis-control-api
 
@@ -54,7 +63,9 @@ jobs:
           file: control_api/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag || 'control' }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha,scope=control-api
           cache-to: type=gha,scope=control-api,mode=max
 
@@ -62,7 +73,7 @@ jobs:
         run: |
           echo "Image tag:" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.tag || 'control' }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "Digest-pinned reference for Phala/Terraform:" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
