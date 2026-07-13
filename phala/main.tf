@@ -268,7 +268,6 @@ resource "phala_app" "tee_inference" {
     kubo_gateway_url    = local.contracts_kubo_gateway
   })
   env = {
-    PRIVATE_KEY     = var.private_key
     RSA_PRIVATE_KEY = file(var.rsa_private_key_path)
     RSA_PUBLIC_KEY  = file(var.rsa_public_key_path)
   }

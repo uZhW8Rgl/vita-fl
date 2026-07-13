@@ -4,8 +4,9 @@ import hashlib
 import json
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import cbor2
 from cryptography.hazmat.primitives import serialization
@@ -14,7 +15,7 @@ from nacl.signing import SigningKey
 
 from tee_inference.air.v1 import AirPolicy, verify_receipt
 from tee_inference.service.attestation import AirEvidenceEmitter
-from tee_inference.service.model_source import _assert_w0_authorized, provision_latest_model
+from tee_inference.service.model_source import _assert_w0_authorized, _contracts_manifest, provision_latest_model
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTOR = ROOT / "tee_inference" / "vectors" / "v1-chestmnist.json"
@@ -30,6 +31,21 @@ def private_pem(key: rsa.RSAPrivateKey) -> str:
 
 
 class ModelAuthorizationTests(unittest.TestCase):
+    def test_contract_manifest_retries_transient_gateway_failure(self) -> None:
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = json.dumps(
+            {"gm_storage_address": "0x" + "11" * 20, "registry_address": "0x" + "22" * 20}
+        ).encode()
+        env = {"RUNTIME_MANIFEST_TIMEOUT_SECONDS": "5", "RUNTIME_MANIFEST_RETRY_SECONDS": "0.1"}
+        with patch.dict("os.environ", env, clear=False), patch(
+            "tee_inference.service.model_source.urllib.request.urlopen",
+            side_effect=[urllib.error.URLError("temporary TLS EOF"), response],
+        ) as urlopen, patch("tee_inference.service.model_source.time.sleep"):
+            manifest = _contracts_manifest("https://runtime-5001.example")
+        self.assertEqual(manifest["gm_storage_address"], "0x" + "11" * 20)
+        self.assertEqual(urlopen.call_count, 2)
+
     def test_rejects_w0_private_key_not_matching_registry(self) -> None:
         registered = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         supplied = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -52,7 +68,7 @@ class ModelAuthorizationTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", env, clear=False), patch(
             "tee_inference.service.model_source._contracts_manifest",
-            return_value={"GM_STORAGE_ADDRESS": "0x" + "11" * 20, "REGISTRY_ADDRESS": "0x" + "33" * 20},
+            return_value={"gm_storage_address": "0x" + "11" * 20, "registry_address": "0x" + "33" * 20},
         ), patch("tee_inference.service.model_source._assert_w0_authorized"), patch(
             "tee_inference.service.model_source.read_current_bundle_from_contract",
             return_value={"model_cid": "bafy-model", "signature_cid": "bafy-sig", "key_bundle_cid": "bafy-key", "last_aggregator": "0x" + "44" * 20, "gm_storage_address": "0x" + "11" * 20},
@@ -117,4 +133,3 @@ class AttestedBundleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

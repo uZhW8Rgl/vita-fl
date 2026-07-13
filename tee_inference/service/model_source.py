@@ -6,6 +6,8 @@ import hashlib
 import json
 import os
 import re
+import sys
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -24,10 +26,42 @@ from tee_inference.protocol.v1 import LABELS, encode_deterministic
 
 def _contracts_manifest(kubo_api: str) -> dict[str, str]:
     url = kubo_api.rstrip("/") + "/api/v0/files/read?" + urllib.parse.urlencode({"arg": "/runtime/contracts.json"})
-    request = urllib.request.Request(url, method="POST")
-    with urllib.request.urlopen(request, timeout=30) as response:
-        value = json.loads(response.read().decode("utf-8"))
-    return {str(key): str(item) for key, item in value.items()}
+    timeout_seconds = max(1, int(os.environ.get("RUNTIME_MANIFEST_TIMEOUT_SECONDS", "600")))
+    retry_seconds = max(0.1, float(os.environ.get("RUNTIME_MANIFEST_RETRY_SECONDS", "2")))
+    deadline = time.monotonic() + timeout_seconds
+    attempt = 0
+    last_error: Exception | None = None
+
+    # Phala gateway routes can briefly terminate TLS while a CVM or its Kubo
+    # service is starting. Match the DFL worker's readiness behaviour instead
+    # of making container startup depend on a single gateway request.
+    while time.monotonic() < deadline:
+        attempt += 1
+        try:
+            request = urllib.request.Request(url, method="POST")
+            with urllib.request.urlopen(request, timeout=30) as response:
+                value = json.loads(response.read().decode("utf-8"))
+            manifest = {str(key): str(item) for key, item in value.items()}
+            if (
+                manifest.get("gm_storage_address")
+                or manifest.get("GM_STORAGE_ADDRESS")
+                or manifest.get("gmStorage")
+            ):
+                return manifest
+            last_error = RuntimeError("runtime contracts manifest does not contain GMStorage")
+        except Exception as exc:
+            last_error = exc
+        if attempt == 1 or attempt % 15 == 0:
+            print(
+                f"Waiting for contract-runtime manifest (attempt {attempt}): {last_error}",
+                file=sys.stderr,
+                flush=True,
+            )
+        time.sleep(min(retry_seconds, max(0.0, deadline - time.monotonic())))
+
+    raise RuntimeError(
+        f"Timed out after {timeout_seconds}s waiting for /runtime/contracts.json via {kubo_api}: {last_error}"
+    ) from last_error
 
 
 def _assert_w0_authorized(rpc_url: str, registry: str, address: str, private_key_pem: str) -> None:
@@ -51,8 +85,16 @@ def provision_latest_model(target: Path) -> tuple[Path, bytes, dict[str, str]]:
     if not re.fullmatch(r"0x[a-f0-9]{40}", address):
         raise RuntimeError("ACCOUNT_ADDRESS must be a lowercase EVM address")
     contracts = _contracts_manifest(kubo_api)
-    gm_storage = contracts.get("GM_STORAGE_ADDRESS") or contracts.get("gmStorage")
-    registry = contracts.get("REGISTRY_ADDRESS") or contracts.get("deviceRegistry")
+    gm_storage = (
+        contracts.get("gm_storage_address")
+        or contracts.get("GM_STORAGE_ADDRESS")
+        or contracts.get("gmStorage")
+    )
+    registry = (
+        contracts.get("registry_address")
+        or contracts.get("REGISTRY_ADDRESS")
+        or contracts.get("deviceRegistry")
+    )
     if not gm_storage or not registry:
         raise RuntimeError("runtime contracts manifest lacks GMStorage or DeviceRegistry")
     _assert_w0_authorized(rpc_url, registry, address, private_key)
@@ -84,4 +126,3 @@ def provision_latest_model(target: Path) -> tuple[Path, bytes, dict[str, str]]:
     stable_model_path = target / "aggregated.bin"
     stable_model_path.write_bytes(model_path.read_bytes())
     return stable_model_path, manifest_bytes, bundle
-

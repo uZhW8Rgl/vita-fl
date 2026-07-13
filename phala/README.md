@@ -79,7 +79,9 @@ Notes:
 - `smart_contracts_image` should also be pinned to a `sha256` digest when you want the contract-runtime TEE to be reproducible.
 - The Terraform scaffold now separates `smart-contracts` and `dfl-worker` into different Phala apps / TEEs.
 - The optional third `tee_inference` app runs in a separate CVM. Phala injects
-  W0's account and RSA credentials through that app's encrypted environment.
+  W0's RSA credentials through that app's encrypted environment. The W0
+  Ethereum private key is deliberately not provisioned because all required
+  DeviceRegistry and GMStorage operations are read-only.
   The service checks the RSA key against W0's authorized DeviceRegistry entry,
   fetches the current encrypted GMStorage/IPFS bundle, decrypts it inside the
   inference TEE, and verifies the authorized aggregator signatures before
@@ -256,14 +258,14 @@ Current Terraform defaults in this scaffold match that target layout:
 - `contracts_size = "tdx.small"`
 - `worker_size = "tdx.small"`
 - `os_image = "dstack-dev-0.5.7"`
-- `tee_inference_image = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:6ce20ad296c57b912b711479c71d5b2115c299ba7fe5a33b387a5c826d6ef880"`
+- `tee_inference_image = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:3b3c3903fd319a73ae991623992a6e0e10a59bc7fef29fa111458ae9208c8a93"`
 - `enable_tee_inference = false` until the updated image has been published
 
 To enable the separate third app:
 
 ```bash
 export ENABLE_TEE_INFERENCE=true
-export TEE_INFERENCE_IMAGE=ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:6ce20ad296c57b912b711479c71d5b2115c299ba7fe5a33b387a5c826d6ef880
+export TEE_INFERENCE_IMAGE=ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:3b3c3903fd319a73ae991623992a6e0e10a59bc7fef29fa111458ae9208c8a93
 bash phala/tf-env.sh plan -input=false
 bash phala/tf-env.sh apply -input=false -auto-approve
 ```
