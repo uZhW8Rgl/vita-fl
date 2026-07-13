@@ -67,6 +67,8 @@ locals {
     tdx_reference_quote_path          = var.tdx_reference_quote_path
     enable_control_api                = var.enable_phala_control_api
     control_api_image                 = var.control_api_image
+    enable_ui                         = var.enable_phala_ui
+    ui_image                          = var.ui_image
     dynamic_worker_inventory          = var.dynamic_worker_inventory
     dynamic_worker_rpc_url            = coalesce(var.runtime_rpc_url_override, "")
     dynamic_worker_kubo_api_url       = coalesce(var.runtime_kubo_api_url_override, "")

@@ -69,7 +69,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api:control"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:cbc24776de581f86b4852101e4c02d69cd190db6550b7a47ee12aa90ac2bd6a5"
 
   validation {
     condition = (
@@ -87,8 +87,36 @@ variable "control_admin_token" {
   default     = ""
 
   validation {
-    condition     = !var.enable_phala_control_api || length(var.control_admin_token) >= 16
-    error_message = "control_admin_token must contain at least 16 characters when the Phala Control API is enabled."
+    condition = (
+      !var.enable_phala_control_api ||
+      can(regex("^[A-Za-z0-9_-]{16,128}$", var.control_admin_token))
+    )
+    error_message = "control_admin_token must contain 16-128 URL-safe characters when the Phala Control API is enabled."
+  }
+}
+
+variable "enable_phala_ui" {
+  description = "Run the browser UI and its authenticated Control API proxy in the contract-runtime CVM."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_phala_ui || var.enable_phala_control_api
+    error_message = "enable_phala_ui requires enable_phala_control_api."
+  }
+}
+
+variable "ui_image" {
+  description = "Digest-pinned browser UI image."
+  type        = string
+  default     = "ghcr.io/uzhw8rgl/master-thesis-ui:ui"
+
+  validation {
+    condition = (
+      !var.enable_phala_ui ||
+      can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.ui_image))
+    )
+    error_message = "ui_image must be digest-pinned when enable_phala_ui is true."
   }
 }
 
@@ -292,7 +320,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:5b6bafac3bd026632f4f53fe42ca2804b37849b231e34c5303d810b9433d0533"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:70b65f1c30b5bdf8d50dd3ce01800e5615e5900d500a06be2dbbfdedb606d202"
 }
 
 variable "tee_inference_image" {

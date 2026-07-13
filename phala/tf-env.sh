@@ -134,6 +134,13 @@ append_var_if_set() {
 }
 
 build_additional_workers_var() {
+  local dynamic_control
+  dynamic_control=$(read_env_value "ENABLE_PHALA_CONTROL_API")
+  if [ "${dynamic_control}" = "1" ] || [ "${dynamic_control}" = "true" ]; then
+    export TF_VAR_additional_workers="{}"
+    return
+  fi
+
   local worker_count
   worker_count=$(read_env_value "WORKER_COUNT")
   worker_count="${worker_count:-1}"
@@ -214,12 +221,47 @@ configure_phala_control_api() {
   TF_VAR_control_admin_token=$(require_env_value "CONTROL_ADMIN_TOKEN")
   append_var_if_set "control_api_image" "CONTROL_API_IMAGE"
 
-  for env_name in \
-    PHALA_RUNTIME_RPC_URL \
-    PHALA_RUNTIME_KUBO_API_URL \
-    PHALA_RUNTIME_KUBO_GATEWAY_URL; do
-    require_env_value "${env_name}" >/dev/null
+  for tf_name in \
+    runtime_rpc_url_override \
+    runtime_kubo_api_url_override \
+    runtime_kubo_gateway_url_override; do
+    local variable_name="TF_VAR_${tf_name}"
+    if [ -z "${!variable_name:-}" ]; then
+      echo "${tf_name} is required when ENABLE_PHALA_CONTROL_API=true" >&2
+      exit 1
+    fi
   done
+}
+
+derive_runtime_service_urls() {
+  local endpoint
+  endpoint=$(read_env_value "PHALA_RUNTIME_ENDPOINT_OVERRIDE")
+  if [ -z "${endpoint}" ]; then
+    return
+  fi
+  endpoint="${endpoint%/}"
+
+  derive_url() {
+    local port="$1"
+    if [[ "${endpoint}" =~ -[0-9]+\. ]]; then
+      printf '%s' "${endpoint}" | sed -E "s/-[0-9]+\\./-${port}./"
+    else
+      printf '%s:%s' "${endpoint}" "${port}"
+    fi
+  }
+
+  if [ -z "${TF_VAR_runtime_rpc_url_override:-}" ]; then
+    export TF_VAR_runtime_rpc_url_override
+    TF_VAR_runtime_rpc_url_override=$(derive_url 8545)
+  fi
+  if [ -z "${TF_VAR_runtime_kubo_api_url_override:-}" ]; then
+    export TF_VAR_runtime_kubo_api_url_override
+    TF_VAR_runtime_kubo_api_url_override=$(derive_url 5001)
+  fi
+  if [ -z "${TF_VAR_runtime_kubo_gateway_url_override:-}" ]; then
+    export TF_VAR_runtime_kubo_gateway_url_override
+    TF_VAR_runtime_kubo_gateway_url_override=$(derive_url 8080)
+  fi
 }
 
 append_var_if_set "runtime_w1_account_address" "W1_ACCOUNT_ADDRESS"
@@ -264,12 +306,15 @@ append_var_if_set "runtime_endpoint_override" "PHALA_RUNTIME_ENDPOINT_OVERRIDE"
 append_var_if_set "runtime_rpc_url_override" "PHALA_RUNTIME_RPC_URL"
 append_var_if_set "runtime_kubo_api_url_override" "PHALA_RUNTIME_KUBO_API_URL"
 append_var_if_set "runtime_kubo_gateway_url_override" "PHALA_RUNTIME_KUBO_GATEWAY_URL"
+append_var_if_set "enable_phala_ui" "ENABLE_PHALA_UI"
+append_var_if_set "ui_image" "UI_IMAGE"
 
 append_var_if_set "public_ip" "PUBLIC_IP"
 append_var_if_set "msg_broker_ip" "MSG_BROKER_IP"
 
 build_additional_workers_var
 build_dynamic_worker_inventory
+derive_runtime_service_urls
 configure_phala_control_api
 
 export PHALA_CLOUD_API_KEY

@@ -13,6 +13,15 @@ output "contracts_primary_cvm_id" {
   value       = phala_app.contract_runtime.primary_cvm_id
 }
 
+output "ui_endpoint" {
+  description = "Public browser UI endpoint when the UI is enabled."
+  value = var.enable_phala_ui ? (
+    can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
+    ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8088.")
+    : "${local.contracts_endpoint_base}:8088"
+  ) : null
+}
+
 output "worker_app_id" {
   description = "Phala application ID for the worker TEE."
   value       = phala_app.dfl_worker.app_id

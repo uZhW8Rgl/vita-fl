@@ -125,6 +125,7 @@ services:
       DYNAMIC_WORKER_KUBO_API_URL: "${dynamic_worker_kubo_api_url}"
       DYNAMIC_WORKER_KUBO_GATEWAY_URL: "${dynamic_worker_kubo_gateway_url}"
       MAX_DYNAMIC_WORKERS: "${max_dynamic_workers}"
+      WORKER_COUNT: "${max_dynamic_workers}"
       PHALA_REGION: "${region}"
       PHALA_OS_IMAGE: "${os_image}"
       CLIENT_LIMIT: "${client_limit}"
@@ -149,6 +150,28 @@ services:
       - /run/master-thesis:size=64m,mode=0700
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/api/control/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+%{ endif ~}
+
+%{ if enable_ui ~}
+  ui:
+    image: ${ui_image}
+    restart: unless-stopped
+    depends_on:
+      control-api:
+        condition: service_healthy
+    environment:
+      CONTROL_ADMIN_TOKEN: "$${CONTROL_ADMIN_TOKEN}"
+      GRAFANA_EXTERNAL_DASHBOARD_URL: ""
+      GRAFANA_CONTRACT_DASHBOARD_URL: ""
+      GRAFANA_TRAINING_DASHBOARD_URL: ""
+      GRAFANA_AGENT_DASHBOARD_URL: ""
+    ports:
+      - "8088:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/ui-health"]
       interval: 10s
       timeout: 5s
       retries: 30
