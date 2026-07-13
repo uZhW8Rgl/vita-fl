@@ -104,7 +104,12 @@ services:
       FUND_WORKER_ACCOUNTS: "0"
       PREAUTHORIZE_WORKER_REGISTRATIONS: "0"
       INITIAL_GM_SIGNER_ADDRESS: "${initial_gm_signer_address}"
-    command: ["bash", "/dfl/smart_contracts/starter_docker.sh"]
+    volumes:
+      - evaluation-data:/dfl/data/evaluation
+    command:
+      - bash
+      - -c
+      - rm -f '${transaction_cost_csv}' && exec bash /dfl/smart_contracts/starter_docker.sh
 
 %{ if enable_control_api ~}
   control-api:
@@ -115,7 +120,9 @@ services:
       - "8091:8091"
     environment:
       CONTROL_RUNTIME_MODE: phala
+      TRAINING_WORKSPACE_ROOT: /workspace
       CONTROL_API_PORT: "8091"
+      PHALA_OBSERVABILITY_AVAILABLE: "1"
       PYTHONPATH: /app
       CONTROL_ADMIN_TOKEN: "$${CONTROL_ADMIN_TOKEN}"
       PHALA_CLOUD_API_KEY: "$${PHALA_CLOUD_API_KEY}"
@@ -147,6 +154,8 @@ services:
       PYTHON_SERVICE_URL: "${python_service_url}"
       PUBLIC_IP: "${public_ip}"
       MSG_BROKER_IP: "${msg_broker_ip}"
+    volumes:
+      - evaluation-data:/workspace/data/evaluation
     tmpfs:
       - /run/master-thesis:rw,exec,nosuid,nodev,size=64m,mode=0700
     healthcheck:
@@ -157,18 +166,74 @@ services:
 %{ endif ~}
 
 %{ if enable_ui ~}
+  observability-init:
+    image: ${control_api_image}
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        rm -rf /runtime-config/grafana /runtime-config/prometheus
+        cp -R /opt/master-thesis-observability/. /runtime-config/
+        sed -i 's#/var/lib/grafana/dashboards#/runtime-config/grafana/dashboards#g' /runtime-config/grafana/provisioning/dashboards/dashboards.yml
+        chmod -R a+rX /runtime-config
+    volumes:
+      - observability-config:/runtime-config
+
+  prometheus:
+    image: prom/prometheus@sha256:5c435642ca4d8427ca26f4901c11114023004709037880cd7860d5b7176aa731
+    restart: unless-stopped
+    user: "0"
+    depends_on:
+      observability-init:
+        condition: service_completed_successfully
+    command:
+      - --config.file=/runtime-config/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=24h
+      - --web.enable-remote-write-receiver
+      - --log.level=warn
+    volumes:
+      - observability-config:/runtime-config:ro
+    tmpfs:
+      - /prometheus:size=1024m,mode=1777
+
+  grafana:
+    image: grafana/grafana@sha256:62d2b9d20a19714ebfe48d1bb405086081bc602aa053e28cf6d73c7537640dfb
+    restart: unless-stopped
+    depends_on:
+      observability-init:
+        condition: service_completed_successfully
+      prometheus:
+        condition: service_started
+    environment:
+      GF_PATHS_PROVISIONING: /runtime-config/grafana/provisioning
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_LOG_LEVEL: warn
+    ports:
+      - "3000:3000"
+    volumes:
+      - observability-config:/runtime-config:ro
+    tmpfs:
+      - /var/lib/grafana:size=256m,mode=1777
+
   ui:
     image: ${ui_image}
     restart: unless-stopped
     depends_on:
       control-api:
         condition: service_healthy
+      grafana:
+        condition: service_started
     environment:
       CONTROL_ADMIN_TOKEN: "$${CONTROL_ADMIN_TOKEN}"
-      GRAFANA_EXTERNAL_DASHBOARD_URL: ""
-      GRAFANA_CONTRACT_DASHBOARD_URL: ""
-      GRAFANA_TRAINING_DASHBOARD_URL: ""
-      GRAFANA_AGENT_DASHBOARD_URL: ""
+      GRAFANA_EXTERNAL_DASHBOARD_URL: "/d/dfl-contract-init-overview/dfl-contract-init-overview?kiosk"
+      GRAFANA_CONTRACT_DASHBOARD_URL: "/d/dfl-contract-init-overview/dfl-contract-init-overview?kiosk"
+      GRAFANA_TRAINING_DASHBOARD_URL: "/d/dfl-training-overview/dfl-training-overview?kiosk"
+      GRAFANA_AGENT_DASHBOARD_URL: "/d/agent-mcp-tool-usage/agent-mcp-tool-usage?kiosk"
     ports:
       - "8088:8080"
     healthcheck:
@@ -177,3 +242,7 @@ services:
       timeout: 5s
       retries: 30
 %{ endif ~}
+
+volumes:
+  evaluation-data:
+  observability-config:

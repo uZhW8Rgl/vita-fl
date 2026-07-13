@@ -1375,11 +1375,13 @@ async def get_control_status() -> dict[str, Any]:
 
 @app.post("/api/observability/ensure")
 async def ensure_observability() -> dict[str, Any]:
-    if phala_runtime_mode() and not environment_flag("PHALA_OBSERVABILITY_AVAILABLE"):
-        raise HTTPException(
-            status_code=503,
-            detail="Observability services are not deployed in the current Phala runtime.",
-        )
+    if phala_runtime_mode():
+        if not environment_flag("PHALA_OBSERVABILITY_AVAILABLE"):
+            raise HTTPException(
+                status_code=503,
+                detail="Observability services are not deployed in the current Phala runtime.",
+            )
+        return {"ok": True, "managed_by": "phala-compose", "logs": []}
     try:
         logs = await ensure_observability_services()
         return {"ok": True, "logs": logs[-1:]}

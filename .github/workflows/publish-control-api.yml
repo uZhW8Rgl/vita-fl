@@ -6,6 +6,7 @@ on:
       - tee_inference
     paths:
       - "control_api/**"
+      - "observability/**"
       - "phala/dynamic-workers/**"
       - "phala/build_worker_inventory.py"
       - ".github/workflows/publish-control-api.yml"

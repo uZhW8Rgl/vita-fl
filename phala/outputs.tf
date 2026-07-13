@@ -22,6 +22,15 @@ output "ui_endpoint" {
   ) : null
 }
 
+output "grafana_endpoint" {
+  description = "Public Grafana endpoint when the Phala UI and observability stack are enabled."
+  value = var.enable_phala_ui ? (
+    can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
+    ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-3000.")
+    : "${local.contracts_endpoint_base}:3000"
+  ) : null
+}
+
 output "worker_app_id" {
   description = "Phala application ID for the worker TEE."
   value       = try(phala_app.dfl_worker[0].app_id, null)

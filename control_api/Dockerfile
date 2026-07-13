@@ -16,6 +16,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY control_api ./control_api
+COPY observability /opt/master-thesis-observability
 COPY phala/bin/terraform /usr/local/bin/terraform
 COPY phala/dynamic-workers ./phala/dynamic-workers
 COPY control_api/terraform.rc /etc/terraform.rc

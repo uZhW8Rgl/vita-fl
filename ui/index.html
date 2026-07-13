@@ -852,6 +852,9 @@
     function currentGrafanaBaseUrl() {
       const protocol = window.location.protocol || "http:";
       const hostname = window.location.hostname || "localhost";
+      if (/-[0-9]+\.dstack-/.test(hostname)) {
+        return `${protocol}//${hostname.replace(/-[0-9]+(?=\.dstack-)/, "-3000")}`;
+      }
       return `${protocol}//${hostname}:3300`;
     }
 
