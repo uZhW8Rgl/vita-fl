@@ -818,6 +818,7 @@
                   <button class="training-action-btn primary" id="training-start" type="button">Start Training</button>
                   <button class="training-action-btn" id="training-reset" type="button">Reset</button>
                   <button class="training-action-btn" id="grafana-values-reset" type="button">Reset Grafana Values</button>
+                  <button class="training-action-btn" id="observability-export" type="button">Export CSV (.zip)</button>
                 </div>
               </div>
               <iframe
@@ -933,6 +934,7 @@
     const trainingStartBtn = document.getElementById("training-start");
     const trainingResetBtn = document.getElementById("training-reset");
     const grafanaValuesResetBtn = document.getElementById("grafana-values-reset");
+    const observabilityExportBtn = document.getElementById("observability-export");
     const trainingStepBtns = Array.from(document.querySelectorAll("[data-training-field]"));
     const trainingInputs = Array.from(document.querySelectorAll("[data-training-input]"));
     const trainingInputByField = Object.fromEntries(
@@ -1130,6 +1132,7 @@
       trainingResetBtn.disabled = disabled;
       grafanaValuesResetBtn.disabled = disabled || !hasAnyDashboardUrl;
       grafanaValuesResetBtn.classList.toggle("hidden", !hasAnyDashboardUrl);
+      observabilityExportBtn.disabled = disabled;
     }
 
     function positiveInt(value, fallback = 1) {
@@ -1412,7 +1415,7 @@
         trainingConfigLoaded = true;
         currentMode = "contracts";
         applyAgentReadiness(false);
-        finalStatus = "Status: Dynamic training workers stopped. Smart contracts remain ready.";
+        finalStatus = "Status: Grafana values cleared, dynamic workers removed, and smart contracts freshly initialized.";
       } catch (error) {
         finalStatus = `Status: ERROR :: ${error.message || error}`;
       } finally {
@@ -1454,6 +1457,43 @@
         if (finalStatus) {
           statusEl.textContent = finalStatus;
         }
+      }
+    }
+
+    async function exportObservabilityValues() {
+      if (!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady()) {
+        statusEl.textContent = "Status: Export is not ready yet.";
+        return;
+      }
+
+      trainingBusy = true;
+      renderTrainingConfig();
+      statusEl.textContent = "Status: Creating compressed CSV export...";
+      let finalStatus = "";
+      try {
+        const response = await fetch("/api/observability/export", { cache: "no-store" });
+        if (!response.ok) {
+          await readJsonResponse(response, "CSV export failed.");
+        }
+        const disposition = response.headers.get("Content-Disposition") || "";
+        const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+        const filename = filenameMatch?.[1] || "dfl-observability-export.zip";
+        const archive = await response.blob();
+        const url = URL.createObjectURL(archive);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        finalStatus = `Status: Export created as ${filename}.`;
+      } catch (error) {
+        finalStatus = `Status: ERROR :: ${error.message || error}`;
+      } finally {
+        trainingBusy = false;
+        renderWorkflow();
+        statusEl.textContent = finalStatus;
       }
     }
 
@@ -1682,6 +1722,9 @@
     });
     grafanaValuesResetBtn.addEventListener("click", async () => {
       await resetGrafanaValues();
+    });
+    observabilityExportBtn.addEventListener("click", async () => {
+      await exportObservabilityValues();
     });
 
     contractsTabBtn.addEventListener("click", () => applyMode("contracts"));

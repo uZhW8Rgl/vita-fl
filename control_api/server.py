@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import io
 import json
 import os
 import re
@@ -15,6 +16,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +46,26 @@ EVALUATION_ARTIFACT_PATTERNS = (
     "global_model_label_metrics.csv",
     "global_model_sample_metrics.csv",
     "transaction_costs.csv",
+)
+TRANSACTION_COST_EXPORT_FIELDS = (
+    "timestamp_unix_ms",
+    "scope",
+    "operation",
+    "phase",
+    "transactionHash",
+    "blockNumber",
+    "from",
+    "to",
+    "contractAddress",
+    "gasUsed",
+    "effectiveGasPriceWei",
+    "effectiveGasPriceGwei",
+    "costGwei",
+    "costEth",
+    "costEur",
+    "ethEurPrice",
+    "account",
+    "deviceId",
 )
 STATIC_CONTAINER_NAMES = {
     "anvil": "anvil",
@@ -335,6 +358,108 @@ def read_transaction_cost_records(path: Path = TRANSACTION_COST_CSV) -> list[dic
     return deduplicated
 
 
+def transaction_cost_with_gwei(record: dict[str, str]) -> dict[str, str]:
+    normalized = dict(record)
+    cost_gwei = _prometheus_float(normalized.get("costGwei"))
+    if cost_gwei is None:
+        cost_eth = _prometheus_float(normalized.get("costEth")) or 0.0
+        cost_gwei = cost_eth * 1_000_000_000
+    normalized["costGwei"] = format(cost_gwei, ".12g")
+    return normalized
+
+
+def _csv_text(records: list[dict[str, str]], preferred_fields: tuple[str, ...] = ()) -> str:
+    fieldnames = list(preferred_fields)
+    for record in records:
+        for field in record:
+            if field not in fieldnames:
+                fieldnames.append(field)
+    if not fieldnames:
+        fieldnames = ["value"]
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(records)
+    return output.getvalue()
+
+
+def worker_cost_export_records(records: list[dict[str, str]]) -> list[dict[str, str]]:
+    totals: dict[tuple[str, str, str], dict[str, float]] = {}
+    for raw_record in records:
+        record = transaction_cost_with_gwei(raw_record)
+        if (record.get("scope") or "").strip() != "worker":
+            continue
+        account = (record.get("account") or record.get("from") or "unknown").strip()
+        device_id = (record.get("deviceId") or "unknown").strip()
+        key = (_worker_display_name(device_id, account), account, device_id)
+        values = totals.setdefault(
+            key,
+            {"transactionCount": 0.0, "costGwei": 0.0, "costEth": 0.0, "costEur": 0.0},
+        )
+        values["transactionCount"] += 1
+        values["costGwei"] += _prometheus_float(record.get("costGwei")) or 0.0
+        values["costEth"] += _prometheus_float(record.get("costEth")) or 0.0
+        values["costEur"] += _prometheus_float(record.get("costEur")) or 0.0
+
+    exported: list[dict[str, str]] = []
+    for (worker, account, device_id), values in sorted(totals.items()):
+        exported.append(
+            {
+                "worker": worker,
+                "account": account,
+                "deviceId": device_id,
+                "transactionCount": str(int(values["transactionCount"])),
+                "costGwei": format(values["costGwei"], ".12g"),
+                "costEth": format(values["costEth"], ".12g"),
+                "costEur": format(values["costEur"], ".12g"),
+            }
+        )
+    return exported
+
+
+def build_observability_export() -> tuple[str, bytes]:
+    now = datetime.now(UTC)
+    archive_name = f"dfl-observability-export-{now:%Y%m%d-%H%M%S}"
+    telemetry_records = _telemetry_snapshot()
+    evaluation_records = read_evaluation_summary_records() + telemetry_evaluation_records(telemetry_records)
+    transaction_records = [
+        transaction_cost_with_gwei(record)
+        for record in read_transaction_cost_records() + telemetry_transaction_cost_records(telemetry_records)
+    ]
+    worker_cost_records = worker_cost_export_records(transaction_records)
+    metadata_records = [
+        {
+            "exported_at_utc": now.isoformat(),
+            "runtime_mode": CONTROL_RUNTIME_MODE,
+            "evaluation_rows": str(len(evaluation_records)),
+            "transaction_rows": str(len(transaction_records)),
+            "worker_summary_rows": str(len(worker_cost_records)),
+        }
+    ]
+
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        root = f"{archive_name}/"
+        archive.writestr(root + "export_metadata.csv", _csv_text(metadata_records))
+        archive.writestr(root + "global_model_round_summary.csv", _csv_text(evaluation_records))
+        archive.writestr(
+            root + "transaction_costs.csv",
+            _csv_text(transaction_records, TRANSACTION_COST_EXPORT_FIELDS),
+        )
+        archive.writestr(
+            root + "worker_costs_by_worker.csv",
+            _csv_text(
+                worker_cost_records,
+                ("worker", "account", "deviceId", "transactionCount", "costGwei", "costEth", "costEur"),
+            ),
+        )
+        for filename in ("global_model_label_metrics.csv", "global_model_sample_metrics.csv"):
+            path = WORKSPACE_ROOT / "data" / "evaluation" / filename
+            if path.is_file():
+                archive.write(path, root + filename)
+    return f"{archive_name}.zip", archive_buffer.getvalue()
+
+
 def _worker_display_name(device_id: str, account: str) -> str:
     device_id = (device_id or "").strip()
     if device_id:
@@ -477,9 +602,13 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
     worker_totals: dict[tuple[str, str, str], dict[str, float]] = {}
     for record in records:
         scope = record.get("scope") or "unknown"
-        scope_totals = totals.setdefault(scope, {"eth": 0.0, "eur": 0.0, "transactions": 0.0})
+        scope_totals = totals.setdefault(scope, {"gwei": 0.0, "eth": 0.0, "eur": 0.0, "transactions": 0.0})
         cost_eth = _prometheus_float(record.get("costEth")) or 0.0
+        cost_gwei = _prometheus_float(record.get("costGwei"))
+        if cost_gwei is None:
+            cost_gwei = cost_eth * 1_000_000_000
         cost_eur = _prometheus_float(record.get("costEur")) or 0.0
+        scope_totals["gwei"] += cost_gwei
         scope_totals["eth"] += cost_eth
         scope_totals["eur"] += cost_eur
         scope_totals["transactions"] += 1.0
@@ -487,12 +616,16 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
             account = record.get("account") or record.get("from") or "unknown"
             device_id = record.get("deviceId") or "unknown"
             worker_key = (_worker_display_name(device_id, account), account, device_id)
-            worker_values = worker_totals.setdefault(worker_key, {"eth": 0.0, "eur": 0.0, "transactions": 0.0})
+            worker_values = worker_totals.setdefault(
+                worker_key, {"gwei": 0.0, "eth": 0.0, "eur": 0.0, "transactions": 0.0}
+            )
+            worker_values["gwei"] += cost_gwei
             worker_values["eth"] += cost_eth
             worker_values["eur"] += cost_eur
             worker_values["transactions"] += 1.0
 
     metric_specs = {
+        "dfl_transaction_cost_gwei_total": ("gwei", "Total transaction cost in Gwei by scope."),
         "dfl_transaction_cost_eth_total": ("eth", "Total transaction cost in ETH by scope."),
         "dfl_transaction_cost_eur_total": ("eur", "Total transaction cost in EUR by scope."),
         "dfl_transaction_count_total": ("transactions", "Total number of unique transactions by scope."),
@@ -511,8 +644,10 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
     worker = totals.get("worker", {})
     contract_init = totals.get("smart_contracts_init", {})
     fixed_totals = {
+        "dfl_worker_cost_gwei_total": worker.get("gwei", 0.0),
         "dfl_worker_cost_eth_total": worker.get("eth", 0.0),
         "dfl_worker_cost_eur_total": worker.get("eur", 0.0),
+        "dfl_contract_init_cost_gwei_total": contract_init.get("gwei", 0.0),
         "dfl_contract_init_cost_eth_total": contract_init.get("eth", 0.0),
         "dfl_contract_init_cost_eur_total": contract_init.get("eur", 0.0),
     }
@@ -527,6 +662,7 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
         )
 
     worker_metric_specs = {
+        "dfl_worker_cost_gwei_by_worker": ("gwei", "Worker transaction cost in Gwei by worker."),
         "dfl_worker_cost_eth_by_worker": ("eth", "Worker transaction cost in ETH by worker."),
         "dfl_worker_cost_eur_by_worker": ("eur", "Worker transaction cost in EUR by worker."),
         "dfl_worker_transaction_count_by_worker": ("transactions", "Worker transaction count by worker."),
@@ -1148,6 +1284,16 @@ async def wait_for_docker_container_ready(container_id: str, service_name: str, 
     raise RuntimeError(f"Timed out waiting for {service_name} to become ready. Last state: {last_state}")
 
 
+async def restart_phala_container(service_name: str, ready_url: str | None = None) -> dict[str, Any]:
+    container_id = await phala_container_id(service_name)
+    docker_bin = resolve_docker_bin()
+    result = await run_subprocess([docker_bin, "restart", "--time", "30", container_id], cwd=Path("/app"), check=True)
+    await wait_for_docker_container_ready(container_id, service_name, 120)
+    if ready_url:
+        await wait_for_http_url(ready_url, 120)
+    return result
+
+
 async def wait_for_service_ready(service_name: str, timeout_seconds: int) -> dict[str, Any]:
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     last_state: dict[str, Any] | None = None
@@ -1355,15 +1501,12 @@ async def initialize_contract_stack() -> dict[str, Any]:
         await clear_evaluation_artifacts()
 
         container_id = await phala_container_id("smart-contracts")
-        anvil_container_id = await phala_container_id("anvil")
         docker_bin = resolve_docker_bin()
         stop_result = await run_subprocess(
             [docker_bin, "stop", "--time", "30", container_id], cwd=Path("/app"), check=True
         )
-        restart_anvil_result = await run_subprocess(
-            [docker_bin, "restart", "--time", "30", anvil_container_id], cwd=Path("/app"), check=True
-        )
-        await wait_for_docker_container_ready(anvil_container_id, "anvil", 120)
+        restart_anvil_result = await restart_phala_container("anvil")
+        restart_prometheus_result = await restart_phala_container("prometheus", "http://prometheus:9090/-/ready")
 
         start_result = await run_subprocess([docker_bin, "start", container_id], cwd=Path("/app"), check=True)
         contract_state = await wait_for_docker_container_exit_success(
@@ -1373,7 +1516,7 @@ async def initialize_contract_stack() -> dict[str, Any]:
             "contract_state": contract_state,
             "status": await phala_runtime_status(),
             "phala_workers": worker_status,
-            "logs": [stop_result, restart_anvil_result, start_result],
+            "logs": [stop_result, restart_anvil_result, restart_prometheus_result, start_result],
         }
 
     worker_services = _available_worker_services()
@@ -1731,11 +1874,28 @@ async def reset_observability_values() -> dict[str, Any]:
         try:
             if phala_runtime_mode():
                 reset_runtime_telemetry()
-                return {"ok": True, "status": await phala_runtime_status(), "logs": []}
+                await clear_evaluation_artifacts()
+                restart_result = await restart_phala_container("prometheus", "http://prometheus:9090/-/ready")
+                return {"ok": True, "status": await phala_runtime_status(), "logs": [restart_result]}
             logs = await reset_grafana_view_values()
             return {"ok": True, "status": await collect_runtime_status(), "logs": logs[-3:]}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/observability/export")
+async def export_observability_values(request: Request) -> Response:
+    if phala_runtime_mode():
+        require_control_admin(request)
+    try:
+        filename, archive = await asyncio.to_thread(build_observability_export)
+        return Response(
+            content=archive,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/control/contracts/initialize")

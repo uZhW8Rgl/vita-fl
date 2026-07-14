@@ -48,13 +48,14 @@ update, and destroy Worker CVMs after its own container restarts, preventing
 stopped but unmanaged Phala apps from accumulating.
 
 In Phala mode, resetting or reinitializing the contract stack first destroys
-all dynamic worker apps, restarts the ephemeral Anvil container at genesis, and
-then reruns the existing `smart-contracts` container. The Control API receives
-only the contract-runtime Docker socket for this operation; it does not mount
-or rewrite the measured application Compose file. Restarting the ephemeral
-Anvil container restores its complete genesis state, including the standard
-CREATE2 deployer. Worker TEEs continue to use the externally exposed restricted
-RPC proxy. A worker Compose is
+all dynamic worker apps, clears evaluation artifacts and signed runtime
+telemetry, restarts the ephemeral Prometheus and Anvil containers, and then
+reruns the existing `smart-contracts` container. Restarting Prometheus clears
+its tmpfs-backed time-series database, while restarting Anvil restores its
+complete genesis state, including the standard CREATE2 deployer. The Control
+API receives only the contract-runtime Docker socket for these operations; it
+does not mount or rewrite the measured application Compose file. Worker TEEs
+continue to use the externally exposed restricted RPC proxy. A worker Compose is
 immutable after attested registration. Changing its training configuration
 requires the fresh reset path instead of an in-place app update.
 
@@ -62,6 +63,11 @@ The round count shown in the UI is the number of actual federated client
 training rounds. Contract round 0 is a bootstrap-only model rollover, so the
 worker receives an absolute target round equal to the requested count plus
 one.
+
+The Training Setup view can export the current evaluation and transaction-cost
+data as a ZIP archive of CSV tables. In Phala mode, the Control API merges the
+signed in-memory worker telemetry with CSV artifacts from the shared evaluation
+volume and includes per-worker cost totals in GWEI, ETH, and EUR.
 
 If you already keep the deployment values in repository-root env files, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
 
