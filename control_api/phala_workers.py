@@ -299,6 +299,23 @@ class SubprocessTerraformRunner:
             client_limit=training_config.get("client_limit", self.config.client_limit),
         )
 
+    def current_training_config(self) -> dict[str, int]:
+        if self.tfvars_path.is_file():
+            try:
+                persisted = json.loads(self.tfvars_path.read_text(encoding="utf-8"))
+                return {
+                    "rounds": int(persisted["round"]),
+                    "epoch": int(persisted["epoch"]),
+                    "client_limit": int(persisted["client_limit"]),
+                }
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                pass
+        return {
+            "rounds": self.config.round,
+            "epoch": self.config.epoch,
+            "client_limit": self.config.client_limit,
+        }
+
     def _run(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         command = [self.terraform_bin, f"-chdir={self.module_dir}", *arguments]
         result = subprocess.run(
@@ -379,9 +396,22 @@ class PhalaWorkerController:
             raise WorkerConfigurationError(f"worker_count must be between 0 and {self.maximum}")
         selected = {identity.key: identity.terraform_value() for identity in self.inventory[:worker_count]}
         with self._lock:
-            if training_config is not None:
-                self.runner.configure(training_config)
             current = self.runner.status()
+            if training_config is not None:
+                configured = self.runner.current_training_config()
+                requested = {
+                    "rounds": int(training_config.get("rounds", configured.get("rounds", 1))),
+                    "epoch": int(training_config.get("epoch", configured.get("epoch", 1))),
+                    "client_limit": int(
+                        training_config.get("client_limit", configured.get("client_limit", 1))
+                    ),
+                }
+                if current and requested != configured:
+                    raise WorkerConfigurationError(
+                        "training configuration cannot mutate an attested worker compose; "
+                        "reset the workers and contract runtime before starting a new configuration"
+                    )
+                self.runner.configure(training_config)
             added = [identity for identity in self.inventory[:worker_count] if identity.key not in current]
             if added and self.challenge_issuer is None:
                 raise WorkerConfigurationError("registration challenge issuer is not configured")

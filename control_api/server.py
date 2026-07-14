@@ -21,7 +21,9 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, Response
 
 WORKSPACE_ROOT = Path(os.environ.get("TRAINING_WORKSPACE_ROOT", "/workspace")).resolve()
-TRAINING_ENV_FILE = WORKSPACE_ROOT / ".env"
+TRAINING_ENV_FILE = Path(
+    os.environ.get("TRAINING_CONFIG_FILE", str(WORKSPACE_ROOT / ".env"))
+).resolve()
 TRAINING_COMPOSE_FILE = WORKSPACE_ROOT / "compose.yml"
 EVALUATION_SUMMARY_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "global_model_round_summary.csv"
 TRANSACTION_COST_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "transaction_costs.csv"
@@ -608,6 +610,15 @@ def normalize_training_config(payload: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def phala_worker_training_config(config: dict[str, int]) -> dict[str, int]:
+    """Translate user-visible training rounds to the worker's absolute target round.
+
+    Contract round 0 only republishes the bootstrap model; it is not a federated
+    client-training round. Therefore N requested training rounds end at round N+1.
+    """
+    return {**config, "rounds": config["rounds"] + 1}
+
+
 def write_training_config(config: dict[str, int], env_file: Path = TRAINING_ENV_FILE) -> dict[str, Any]:
     existing_lines = env_file.read_text(encoding="utf-8").splitlines() if env_file.exists() else []
     updated_lines: list[str] = []
@@ -1075,6 +1086,54 @@ async def wait_for_service_exit_success(service_name: str, timeout_seconds: int)
     raise RuntimeError(f"Timed out while waiting for {service_name} to finish. Last state: {last_state}")
 
 
+async def phala_container_id(service_name: str) -> str:
+    docker_bin = resolve_docker_bin()
+    result = await run_subprocess(
+        [docker_bin, "ps", "-aq", "--filter", f"label=com.docker.compose.service={service_name}"],
+        cwd=Path("/app"),
+        check=True,
+    )
+    container_ids = [line.strip() for line in result["stdout"].splitlines() if line.strip()]
+    if len(container_ids) != 1:
+        raise RuntimeError(
+            f"expected exactly one Phala container for service {service_name}, found {len(container_ids)}"
+        )
+    return container_ids[0]
+
+
+async def inspect_docker_container(container_id: str, service_name: str) -> dict[str, Any]:
+    docker_bin = resolve_docker_bin()
+    result = await run_subprocess([docker_bin, "inspect", container_id], cwd=Path("/app"), check=True)
+    payload = json.loads(result["stdout"])[0]
+    state = payload.get("State", {})
+    return {
+        "service": service_name,
+        "exists": True,
+        "status": state.get("Status", "unknown"),
+        "running": bool(state.get("Running")),
+        "exit_code": state.get("ExitCode"),
+        "health": (state.get("Health") or {}).get("Status"),
+        "container_id": container_id,
+        "container_name": payload.get("Name", "").lstrip("/"),
+    }
+
+
+async def wait_for_docker_container_exit_success(
+    container_id: str, service_name: str, timeout_seconds: int
+) -> dict[str, Any]:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_state: dict[str, Any] | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        last_state = await inspect_docker_container(container_id, service_name)
+        if last_state["running"] or last_state["status"] in {"created", "restarting"}:
+            await asyncio.sleep(2)
+            continue
+        if last_state["status"] == "exited" and last_state["exit_code"] == 0:
+            return last_state
+        raise RuntimeError(f"{service_name} exited unsuccessfully: {last_state}")
+    raise RuntimeError(f"Timed out waiting for {service_name} to exit successfully. Last state: {last_state}")
+
+
 async def wait_for_service_ready(service_name: str, timeout_seconds: int) -> dict[str, Any]:
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     last_state: dict[str, Any] | None = None
@@ -1276,6 +1335,36 @@ async def reset_grafana_view_values() -> list[dict[str, Any]]:
 
 
 async def initialize_contract_stack() -> dict[str, Any]:
+    if phala_runtime_mode():
+        worker_status = await asyncio.to_thread(phala_worker_controller().scale, 0)
+        reset_runtime_telemetry()
+        await clear_evaluation_artifacts()
+
+        rpc_url = os.environ.get("DYNAMIC_WORKER_RPC_URL", "http://anvil:8545").strip()
+        reset_response = await asyncio.to_thread(
+            _post_json,
+            rpc_url,
+            {"jsonrpc": "2.0", "method": "anvil_reset", "params": [], "id": 1},
+            10.0,
+        )
+        if reset_response is None or reset_response.get("error") is not None:
+            raise RuntimeError(f"Anvil reset failed: {reset_response}")
+
+        container_id = await phala_container_id("smart-contracts")
+        docker_bin = resolve_docker_bin()
+        start_result = await run_subprocess(
+            [docker_bin, "start", container_id], cwd=Path("/app"), check=True
+        )
+        contract_state = await wait_for_docker_container_exit_success(
+            container_id, "smart-contracts", CONTRACT_TIMEOUT_SECONDS
+        )
+        return {
+            "contract_state": contract_state,
+            "status": await phala_runtime_status(),
+            "phala_workers": worker_status,
+            "logs": [start_result],
+        }
+
     worker_services = _available_worker_services()
     reset_targets = ["agent", "zk-inference", *worker_services, "smart-contracts", "anvil", "ipfs"]
     logs = await reset_services(reset_targets)
@@ -1639,12 +1728,14 @@ async def reset_observability_values() -> dict[str, Any]:
 
 
 @app.post("/api/control/contracts/initialize")
-async def initialize_contracts() -> dict[str, Any]:
+async def initialize_contracts(request: Request) -> dict[str, Any]:
     if operation_lock.locked():
         raise HTTPException(status_code=409, detail="Another control operation is already running.")
 
     async with operation_lock:
         try:
+            if phala_runtime_mode():
+                require_control_admin(request)
             return {"ok": True, **await initialize_contract_stack()}
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -1678,12 +1769,14 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
             normalized = normalize_training_config(payload)
             if phala_runtime_mode():
                 require_control_admin(request)
-                reset_runtime_telemetry()
+                worker_config = phala_worker_training_config(normalized)
                 worker_status = await asyncio.to_thread(
                     phala_worker_controller().scale,
                     normalized["worker_count"],
-                    normalized,
+                    worker_config,
                 )
+                write_training_config(normalized)
+                reset_runtime_telemetry()
                 return {
                     "ok": True,
                     "config": {**read_training_config(), **normalized},
@@ -1709,13 +1802,11 @@ async def reset_training(request: Request) -> dict[str, Any]:
         try:
             if phala_runtime_mode():
                 require_control_admin(request)
-                worker_status = await asyncio.to_thread(phala_worker_controller().scale, 0)
+                result = await initialize_contract_stack()
                 return {
                     "ok": True,
                     "config": read_training_config(),
-                    "status": await phala_runtime_status(),
-                    "phala_workers": worker_status,
-                    "logs": [],
+                    **result,
                 }
             result = await reset_training_services()
         except Exception as exc:

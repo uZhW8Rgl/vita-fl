@@ -41,6 +41,25 @@ evaluation metrics, and worker transaction costs even though every worker has
 its own isolated CVM filesystem. These operational signatures are not a
 replacement for the worker's TDX/DCAP registration proof.
 
+The contract-runtime app persists only the dynamic-worker Terraform ownership
+state in the `dynamic-worker-state` volume. This does not preserve Anvil,
+training, Prometheus, or Grafana run data. It allows the Control API to find,
+update, and destroy Worker CVMs after its own container restarts, preventing
+stopped but unmanaged Phala apps from accumulating.
+
+In Phala mode, resetting or reinitializing the contract stack first destroys
+all dynamic worker apps, resets Anvil to genesis through `anvil_reset`, and
+then reruns the existing `smart-contracts` container. The Control API receives
+only the contract-runtime Docker socket for this operation; it does not mount
+or rewrite the measured application Compose file. A worker Compose is
+immutable after attested registration. Changing its training configuration
+requires the fresh reset path instead of an in-place app update.
+
+The round count shown in the UI is the number of actual federated client
+training rounds. Contract round 0 is a bootstrap-only model rollover, so the
+worker receives an absolute target round equal to the requested count plus
+one.
+
 If you already keep the deployment values in repository-root env files, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
 
 ```bash
@@ -134,7 +153,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:6ea849fd7c494829e258dea99a4aba7aa4095996cdb67f66b4ccf47d2120d0e3
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:8b642b56dff2121f9ff4cd9102af3886ae444a8bca4ae96449b19f72859a32ff
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.

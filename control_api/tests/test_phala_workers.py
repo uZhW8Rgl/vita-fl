@@ -34,6 +34,9 @@ class FakeRunner:
     def configure(self, training_config: dict[str, int]) -> None:
         self.training_config = dict(training_config)
 
+    def current_training_config(self) -> dict[str, int]:
+        return dict(self.training_config)
+
     def apply(self, workers: dict[str, dict[str, object]]) -> dict[str, object]:
         self.workers = {
             key: {
@@ -110,6 +113,16 @@ class WorkerInventoryTests(unittest.TestCase):
         instance.scale(2, {"rounds": 7, "epoch": 3, "client_limit": 1})
 
         self.assertEqual(runner.training_config, {"rounds": 7, "epoch": 3, "client_limit": 1})
+
+    def test_attested_worker_configuration_cannot_be_mutated(self) -> None:
+        instance, runner, _issuer = controller()
+        initial = {"rounds": 2, "epoch": 1, "client_limit": 1}
+        instance.scale(2, initial)
+
+        with self.assertRaisesRegex(WorkerConfigurationError, "cannot mutate an attested worker compose"):
+            instance.scale(2, {"rounds": 3, "epoch": 1, "client_limit": 1})
+
+        self.assertEqual(runner.training_config, initial)
 
     def test_non_contiguous_inventory_is_rejected(self) -> None:
         payload = json.loads(inventory_json(2))

@@ -308,6 +308,7 @@ derive_runtime_service_urls() {
 }
 
 append_var_if_set "runtime_w1_account_address" "W1_ACCOUNT_ADDRESS"
+append_var_if_set "worker_image" "WORKER_IMAGE"
 append_var_if_set "initial_gm_signer_address" "INITIAL_GM_SIGNER_ADDRESS"
 append_var_if_set "blockchain_provider" "BLOCKCHAIN_PROVIDER"
 append_var_if_set "initial_gm_cid" "INITIAL_GM_CID"

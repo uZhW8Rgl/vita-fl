@@ -127,6 +127,7 @@ services:
     environment:
       CONTROL_RUNTIME_MODE: phala
       TRAINING_WORKSPACE_ROOT: /workspace
+      TRAINING_CONFIG_FILE: /run/master-thesis/training.env
       CONTROL_API_PORT: "8091"
       PHALA_OBSERVABILITY_AVAILABLE: "1"
       PYTHONPATH: /app
@@ -162,8 +163,8 @@ services:
       MSG_BROKER_IP: "${msg_broker_ip}"
     volumes:
       - evaluation-data:/workspace/data/evaluation
-    tmpfs:
-      - /run/master-thesis:rw,exec,nosuid,nodev,size=64m,mode=0700
+      - dynamic-worker-state:/run/master-thesis
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8091/docs"]
       interval: 10s
@@ -286,6 +287,7 @@ services:
 %{ endif ~}
 
 volumes:
+  dynamic-worker-state:
   evaluation-data:
   observability-config:
   runtime-logs:
