@@ -16,10 +16,15 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(translated["epoch"], 2)
         self.assertEqual(config["rounds"], 3)
 
-    async def test_phala_contract_initialization_resets_workers_anvil_and_contracts(self) -> None:
+    async def test_phala_contract_initialization_restarts_anvil_and_contracts(self) -> None:
         controller = Mock()
         controller.scale.return_value = {"deployed_worker_count": 0, "workers": []}
         contract_state = {"status": "exited", "exit_code": 0}
+        operation_order: list[str] = []
+
+        async def run_subprocess(command, **_kwargs):
+            operation_order.append(command[1])
+            return {"returncode": 0}
 
         with (
             patch.object(server, "phala_runtime_mode", return_value=True),
@@ -28,12 +33,12 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(server, "clear_evaluation_artifacts", new=AsyncMock(return_value=[])),
             patch.object(
                 server,
-                "_post_json",
-                return_value={"jsonrpc": "2.0", "id": 1, "result": True},
-            ) as post,
-            patch.object(server, "phala_container_id", new=AsyncMock(return_value="container-id")),
+                "phala_container_id",
+                new=AsyncMock(side_effect=["contract-container-id", "anvil-container-id"]),
+            ),
             patch.object(server, "resolve_docker_bin", return_value="docker"),
-            patch.object(server, "run_subprocess", new=AsyncMock(return_value={"returncode": 0})),
+            patch.object(server, "run_subprocess", side_effect=run_subprocess),
+            patch.object(server, "wait_for_docker_container_ready", new=AsyncMock()),
             patch.object(
                 server,
                 "wait_for_docker_container_exit_success",
@@ -45,8 +50,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         controller.scale.assert_called_once_with(0)
         reset_telemetry.assert_called_once_with()
-        self.assertEqual(post.call_args.args[0], "http://anvil:8545")
-        self.assertEqual(post.call_args.args[1]["method"], "anvil_reset")
+        self.assertEqual(operation_order, ["stop", "restart", "start"])
         self.assertEqual(result["contract_state"], contract_state)
         self.assertEqual(result["phala_workers"]["deployed_worker_count"], 0)
 

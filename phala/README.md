@@ -48,12 +48,13 @@ update, and destroy Worker CVMs after its own container restarts, preventing
 stopped but unmanaged Phala apps from accumulating.
 
 In Phala mode, resetting or reinitializing the contract stack first destroys
-all dynamic worker apps, resets Anvil to genesis through `anvil_reset`, and
+all dynamic worker apps, restarts the ephemeral Anvil container at genesis, and
 then reruns the existing `smart-contracts` container. The Control API receives
 only the contract-runtime Docker socket for this operation; it does not mount
-or rewrite the measured application Compose file. Administrative Anvil calls
-use the internal `http://anvil:8545` network endpoint; worker TEEs continue to
-use the externally exposed restricted RPC proxy. A worker Compose is
+or rewrite the measured application Compose file. Restarting the ephemeral
+Anvil container restores its complete genesis state, including the standard
+CREATE2 deployer. Worker TEEs continue to use the externally exposed restricted
+RPC proxy. A worker Compose is
 immutable after attested registration. Changing its training configuration
 requires the fresh reset path instead of an in-place app update.
 

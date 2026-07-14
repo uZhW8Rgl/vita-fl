@@ -21,9 +21,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, Response
 
 WORKSPACE_ROOT = Path(os.environ.get("TRAINING_WORKSPACE_ROOT", "/workspace")).resolve()
-TRAINING_ENV_FILE = Path(
-    os.environ.get("TRAINING_CONFIG_FILE", str(WORKSPACE_ROOT / ".env"))
-).resolve()
+TRAINING_ENV_FILE = Path(os.environ.get("TRAINING_CONFIG_FILE", str(WORKSPACE_ROOT / ".env"))).resolve()
 TRAINING_COMPOSE_FILE = WORKSPACE_ROOT / "compose.yml"
 EVALUATION_SUMMARY_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "global_model_round_summary.csv"
 TRANSACTION_COST_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "transaction_costs.csv"
@@ -912,9 +910,7 @@ def runtime_contract_env_values() -> dict[str, str]:
     if kubo_api:
         values["KUBO_API"] = kubo_api
         try:
-            manifest_url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote(
-                "/runtime/contracts.json", safe=""
-            )
+            manifest_url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote("/runtime/contracts.json", safe="")
             request = urllib.request.Request(manifest_url, data=b"", method="POST")
             with urllib.request.urlopen(request, timeout=2.0) as response:
                 manifest = json.loads(response.read().decode("utf-8"))
@@ -1134,6 +1130,24 @@ async def wait_for_docker_container_exit_success(
     raise RuntimeError(f"Timed out waiting for {service_name} to exit successfully. Last state: {last_state}")
 
 
+async def wait_for_docker_container_ready(container_id: str, service_name: str, timeout_seconds: int) -> dict[str, Any]:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_state: dict[str, Any] | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        last_state = await inspect_docker_container(container_id, service_name)
+        if last_state["status"] in {"created", "restarting"}:
+            await asyncio.sleep(2)
+            continue
+        if not last_state["running"]:
+            raise RuntimeError(f"{service_name} stopped before becoming ready: {last_state}")
+        if last_state["health"] in {None, "healthy"}:
+            return last_state
+        if last_state["health"] == "unhealthy":
+            raise RuntimeError(f"{service_name} became unhealthy: {last_state}")
+        await asyncio.sleep(2)
+    raise RuntimeError(f"Timed out waiting for {service_name} to become ready. Last state: {last_state}")
+
+
 async def wait_for_service_ready(service_name: str, timeout_seconds: int) -> dict[str, Any]:
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     last_state: dict[str, Any] | None = None
@@ -1340,21 +1354,18 @@ async def initialize_contract_stack() -> dict[str, Any]:
         reset_runtime_telemetry()
         await clear_evaluation_artifacts()
 
-        rpc_url = os.environ.get("PHALA_ANVIL_ADMIN_RPC_URL", "http://anvil:8545").strip()
-        reset_response = await asyncio.to_thread(
-            _post_json,
-            rpc_url,
-            {"jsonrpc": "2.0", "method": "anvil_reset", "params": [], "id": 1},
-            10.0,
-        )
-        if reset_response is None or reset_response.get("error") is not None:
-            raise RuntimeError(f"Anvil reset failed: {reset_response}")
-
         container_id = await phala_container_id("smart-contracts")
+        anvil_container_id = await phala_container_id("anvil")
         docker_bin = resolve_docker_bin()
-        start_result = await run_subprocess(
-            [docker_bin, "start", container_id], cwd=Path("/app"), check=True
+        stop_result = await run_subprocess(
+            [docker_bin, "stop", "--time", "30", container_id], cwd=Path("/app"), check=True
         )
+        restart_anvil_result = await run_subprocess(
+            [docker_bin, "restart", "--time", "30", anvil_container_id], cwd=Path("/app"), check=True
+        )
+        await wait_for_docker_container_ready(anvil_container_id, "anvil", 120)
+
+        start_result = await run_subprocess([docker_bin, "start", container_id], cwd=Path("/app"), check=True)
         contract_state = await wait_for_docker_container_exit_success(
             container_id, "smart-contracts", CONTRACT_TIMEOUT_SECONDS
         )
@@ -1362,7 +1373,7 @@ async def initialize_contract_stack() -> dict[str, Any]:
             "contract_state": contract_state,
             "status": await phala_runtime_status(),
             "phala_workers": worker_status,
-            "logs": [start_result],
+            "logs": [stop_result, restart_anvil_result, start_result],
         }
 
     worker_services = _available_worker_services()
