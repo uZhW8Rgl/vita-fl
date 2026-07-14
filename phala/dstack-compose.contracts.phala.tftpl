@@ -130,6 +130,7 @@ services:
       TRAINING_CONFIG_FILE: /run/master-thesis/training.env
       CONTROL_API_PORT: "8091"
       PHALA_OBSERVABILITY_AVAILABLE: "1"
+      PHALA_AGENT_AVAILABLE: "${agent_available}"
       PYTHONPATH: /app
       CONTROL_ADMIN_TOKEN: "$${CONTROL_ADMIN_TOKEN}"
       PHALA_CLOUD_API_KEY: "$${PHALA_CLOUD_API_KEY}"
@@ -170,6 +171,83 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
+%{ endif ~}
+
+%{ if enable_agent ~}
+  transparency-log:
+    image: ${transparency_log_image}
+    restart: unless-stopped
+    environment:
+      SCITT_DATA_DIR: /data
+      SCITT_HOST: 0.0.0.0
+      SCITT_PORT: "8000"
+      PYTHONUNBUFFERED: "1"
+    tmpfs:
+      - /data:size=512m,mode=0700
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--insecure", "https://127.0.0.1:8000/node/network"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 30
+
+  agent:
+    image: ${agent_image}
+    restart: unless-stopped
+    working_dir: /app
+    depends_on:
+      anvil:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+    environment:
+      DOCKER: "1"
+      PYTHONUNBUFFERED: "1"
+      DATASET_NAME: "${dataset_name}"
+      RPC_URL: http://anvil:8545
+      IPFS_API_URL: http://ipfs:5001
+      GM_STORAGE_ADDRESS: 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+      REGISTRY_ADDRESS: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+      ACCOUNT_ADDRESS: "${w0_account_address}"
+      RSA_PRIVATE_KEY: "$${AGENT_RSA_PRIVATE_KEY}"
+      RSA_PUBLIC_KEY: "$${AGENT_RSA_PUBLIC_KEY}"
+      OLLAMA_BASE_URL: "${ollama_base_url}"
+      OLLAMA_MODEL: "${ollama_model}"
+      OLLAMA_API_TOKEN: "$${OLLAMA_API_TOKEN}"
+      OLLAMA_NUM_PREDICT: "256"
+      AGENT_CHAT_TIMEOUT_SECONDS: "600"
+      AGENT_PORT: "8089"
+      AGENT_DOWNLOAD_DIR: /tmp/agent-downloads
+      TEE_INFERENCE_URL: "${tee_inference_url}"
+      TEE_INFERENCE_IMAGE_DIGEST: "${tee_inference_image_digest}"
+      TEE_INFERENCE_EVIDENCE_PATH: /tmp/tee-inference/latest-evidence.cbor
+      SCITT_URL: https://transparency-log:8000
+      SCITT_DEVELOPMENT: "1"
+      SCITT_SIGNER_DIR: /tmp/agent-scitt
+      SCITT_TRANSPARENT_STATEMENT_PATH: /tmp/tee-inference/latest-transparent-statement.cose
+    command:
+      - python
+      - agent/run_agent.py
+      - --serve
+      - --llm
+      - --source
+      - contract
+      - --rpc-url
+      - http://anvil:8545
+      - --gm-storage-address
+      - 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+      - --registry-address
+      - 0x5FbDB2315678afecb367f032d93F642f64180aa3
+      - --ipfs-api-url
+      - http://ipfs:5001
+      - --skip-calibration
+    tmpfs:
+      - /tmp:size=1024m,mode=1777
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8089/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
 %{ endif ~}
 
 %{ if enable_ui ~}

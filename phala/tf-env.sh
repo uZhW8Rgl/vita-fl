@@ -276,6 +276,29 @@ configure_phala_ui() {
   append_var_if_set "ui_image" "UI_IMAGE"
 }
 
+configure_phala_agent() {
+  local enabled
+  enabled=$(read_env_value "ENABLE_PHALA_AGENT")
+  enabled="${enabled:-false}"
+  export TF_VAR_enable_phala_agent="${enabled}"
+
+  local ollama_enabled
+  ollama_enabled=$(read_env_value "ENABLE_OLLAMA")
+  ollama_enabled="${ollama_enabled:-false}"
+  export TF_VAR_enable_ollama="${ollama_enabled}"
+
+  append_var_if_set "agent_image" "AGENT_IMAGE"
+  append_var_if_set "transparency_log_image" "TRANSPARENCY_LOG_IMAGE"
+  append_var_if_set "ollama_image" "OLLAMA_IMAGE"
+  append_var_if_set "ollama_model" "OLLAMA_MODEL"
+  append_var_if_set "ollama_base_url_override" "OLLAMA_BASE_URL_OVERRIDE"
+  append_var_if_set "tee_inference_url_override" "TEE_INFERENCE_URL_OVERRIDE"
+  if [ "${ollama_enabled}" = "1" ] || [ "${ollama_enabled}" = "true" ]; then
+    export TF_VAR_ollama_api_token
+    TF_VAR_ollama_api_token=$(require_env_value "OLLAMA_API_TOKEN")
+  fi
+}
+
 derive_runtime_service_urls() {
   local endpoint
   endpoint=$(read_env_value "PHALA_RUNTIME_ENDPOINT_OVERRIDE")
@@ -360,6 +383,7 @@ build_dynamic_worker_inventory
 derive_runtime_service_urls
 configure_phala_control_api
 configure_phala_ui
+configure_phala_agent
 
 export PHALA_CLOUD_API_KEY
 

@@ -1,0 +1,47 @@
+services:
+  ollama:
+    image: ${ollama_image}
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: 10m
+      OLLAMA_NUM_PARALLEL: "1"
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - |
+        ollama serve &
+        server_pid=$!
+        trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' INT TERM EXIT
+        until OLLAMA_HOST=http://127.0.0.1:11434 ollama list >/dev/null 2>&1; do
+          sleep 1
+        done
+        OLLAMA_HOST=http://127.0.0.1:11434 ollama pull '${ollama_model}'
+        wait "$server_pid"
+    healthcheck:
+      test: ["CMD-SHELL", "OLLAMA_HOST=http://127.0.0.1:11434 ollama show '${ollama_model}' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 120
+
+  ollama-proxy:
+    image: ${ollama_proxy_image}
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_UPSTREAM: http://ollama:11434
+      OLLAMA_MODEL: "${ollama_model}"
+      OLLAMA_PROXY_TOKEN: "$${OLLAMA_PROXY_TOKEN}"
+      OLLAMA_PROXY_PORT: "11434"
+    command: ["python", "-m", "agent.ollama_proxy"]
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:11434/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 30

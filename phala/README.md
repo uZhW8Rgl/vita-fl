@@ -311,3 +311,31 @@ export TEE_INFERENCE_IMAGE=ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:c
 bash phala/tf-env.sh plan -input=false
 bash phala/tf-env.sh apply -input=false -auto-approve
 ```
+
+## Agent, Ollama, and SCITT
+
+The browser agent runs inside the contract-runtime CVM so the authenticated UI
+can reach it as `agent:8089`. Its SCITT-CCF transparency log runs alongside it
+with a fresh tmpfs ledger on every container start. Ollama runs in a separate
+`tdx.small` CVM with 20 GB disk and pulls `qwen3:0.6b` during startup. Only the
+Bearer-authenticated proxy is exposed through the Ollama app gateway; the raw
+Ollama API is not published.
+
+Publish the Agent and transparency-log images with the GitHub Actions workflows
+`Publish Phala Agent` and `Publish Phala Transparency Log`, then place their
+digest-pinned references in `.env.phala.anvil`:
+
+```dotenv
+ENABLE_PHALA_AGENT=true
+AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:REPLACE
+TRANSPARENCY_LOG_IMAGE=ghcr.io/uzhw8rgl/master-thesis-transparency-log@sha256:REPLACE
+ENABLE_OLLAMA=true
+OLLAMA_MODEL=qwen3:0.6b
+OLLAMA_API_TOKEN=replace-with-at-least-24-url-safe-characters
+```
+
+The agent itself does not depend on the TEE-inference app. Chat becomes ready
+as soon as Ollama has loaded the model. Configure `TEE_INFERENCE_URL_OVERRIDE`
+only when the separate inference app is available; until then, only the
+`run_verified_tee_inference` MCP tool reports that its endpoint is not
+configured.

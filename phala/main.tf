@@ -69,6 +69,14 @@ locals {
     control_api_image                 = var.control_api_image
     enable_ui                         = var.enable_phala_ui
     ui_image                          = var.ui_image
+    enable_agent                      = var.enable_phala_agent
+    agent_image                       = var.agent_image
+    transparency_log_image            = var.transparency_log_image
+    ollama_base_url                   = local.agent_ollama_base_url
+    ollama_model                      = var.ollama_model
+    tee_inference_url                 = local.agent_tee_inference_url
+    tee_inference_image_digest        = replace(var.tee_inference_image, "/^.*@/", "")
+    agent_available                   = var.enable_phala_agent ? "1" : "0"
     dynamic_worker_inventory          = var.dynamic_worker_inventory
     dynamic_worker_rpc_url            = coalesce(var.runtime_rpc_url_override, "")
     dynamic_worker_kubo_api_url       = coalesce(var.runtime_kubo_api_url_override, "")
@@ -103,6 +111,15 @@ locals {
     ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8080.")
     : "${local.contracts_endpoint_base}:8080",
   )
+  ollama_endpoint_base = var.enable_ollama ? trimsuffix(phala_app.ollama[0].endpoint, "/") : ""
+  agent_ollama_base_url = var.ollama_base_url_override != null ? trimsuffix(
+    var.ollama_base_url_override,
+    "/",
+  ) : local.ollama_endpoint_base
+  agent_tee_inference_url = var.tee_inference_url_override != null ? trimsuffix(
+    var.tee_inference_url_override,
+    "/",
+  ) : ""
   additional_worker_indices = {
     for worker_key in keys(nonsensitive(var.additional_workers)) :
     worker_key => tonumber(replace(worker_key, "worker", ""))
@@ -131,6 +148,10 @@ resource "phala_app" "contract_runtime" {
     } : {}, var.enable_phala_ui ? {
     UI_BASIC_AUTH_USERNAME = var.ui_basic_auth_username
     UI_BASIC_AUTH_PASSWORD = var.ui_basic_auth_password
+    } : {}, var.enable_phala_agent ? {
+    AGENT_RSA_PRIVATE_KEY = file(var.rsa_private_key_path)
+    AGENT_RSA_PUBLIC_KEY  = file(var.rsa_public_key_path)
+    OLLAMA_API_TOKEN      = var.ollama_api_token
   } : {})
   size = var.contracts_size
 
@@ -323,6 +344,45 @@ resource "phala_app" "tee_inference" {
   wait_timeout_seconds = var.wait_timeout_seconds
 }
 
+resource "phala_app" "ollama" {
+  count = var.enable_ollama ? 1 : 0
+
+  name = var.ollama_app_name
+  docker_compose = templatefile("${path.module}/dstack-compose.ollama.phala.tftpl", {
+    ollama_image       = var.ollama_image
+    ollama_proxy_image = var.agent_image
+    ollama_model       = var.ollama_model
+  })
+  env = {
+    OLLAMA_PROXY_TOKEN = var.ollama_api_token
+  }
+  size = var.ollama_size
+
+  region    = var.region
+  image     = var.os_image
+  disk_size = var.ollama_disk_size
+  replicas  = 1
+
+  kms           = var.kms
+  listed        = var.listed
+  node_id       = var.node_id
+  custom_app_id = var.custom_app_id
+  nonce         = var.nonce
+  storage_fs    = var.storage_fs
+
+  ssh_authorized_keys = local.ssh_authorized_keys
+  pre_launch_script   = var.pre_launch_script
+
+  public_logs     = var.public_logs
+  public_sysinfo  = var.public_sysinfo
+  public_tcbinfo  = var.public_tcbinfo
+  gateway_enabled = var.ollama_gateway_enabled
+  secure_time     = var.secure_time
+
+  wait_for_ready       = var.wait_for_ready
+  wait_timeout_seconds = var.wait_timeout_seconds
+}
+
 resource "phala_cvm_power" "dfl_worker" {
   count = var.manage_power_state && !var.enable_phala_control_api ? 1 : 0
 
@@ -357,6 +417,16 @@ resource "phala_cvm_power" "tee_inference" {
   count = var.enable_tee_inference && var.manage_power_state ? 1 : 0
 
   cvm_id = phala_app.tee_inference[0].primary_cvm_id
+  state  = var.desired_power_state
+
+  wait_for_state       = true
+  wait_timeout_seconds = var.wait_timeout_seconds
+}
+
+resource "phala_cvm_power" "ollama" {
+  count = var.enable_ollama && var.manage_power_state ? 1 : 0
+
+  cvm_id = phala_app.ollama[0].primary_cvm_id
   state  = var.desired_power_state
 
   wait_for_state       = true

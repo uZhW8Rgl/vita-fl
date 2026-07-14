@@ -40,6 +40,12 @@ also reports `dcap_collateral_verified: false`: Intel certificate-chain,
 revocation, QE-identity, and TCB-status verification remains a separate DCAP
 step until the existing on-chain verifier is connected to this tool.
 
+When deployed through Terraform, chat readiness depends only on the separately
+deployed, Bearer-authenticated Ollama service and its configured model. The
+agent can therefore run before TEE inference exists. If `TEE_INFERENCE_URL` is
+unset, only `run_verified_tee_inference` fails with a configuration error; the
+chat service and the remaining tools stay available.
+
 ## Install
 
 From the repository root:

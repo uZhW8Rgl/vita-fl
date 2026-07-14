@@ -36,7 +36,7 @@ from tee_inference.protocol.v1 import (
 
 DEFAULT_TEE_INFERENCE_URL = os.environ.get(
     "TEE_INFERENCE_URL",
-    "https://181195df89a143ecaf3d38b2cf0fcb8a30310f07-8080.dstack-pha-prod9.phala.network",
+    "",
 ).rstrip("/")
 DEFAULT_TEE_IMAGE_DIGEST = os.environ.get(
     "TEE_INFERENCE_IMAGE_DIGEST",
@@ -307,6 +307,10 @@ def run_verified_tee_inference(
     """Run and verify TEE inference, then register its evidence with SCITT."""
 
     base_url = (endpoint or DEFAULT_TEE_INFERENCE_URL).rstrip("/")
+    if not base_url:
+        raise TeeInferenceVerificationError(
+            "TEE inference is not configured yet; set TEE_INFERENCE_URL before using this MCP tool."
+        )
     image_policy = expected_image_digest or DEFAULT_TEE_IMAGE_DIGEST
     health = _get_health(base_url, timeout_seconds)
     try:

@@ -29,6 +29,129 @@ variable "tee_inference_app_name" {
   default     = "master-thesis-tee-inference"
 }
 
+variable "enable_ollama" {
+  description = "Deploy a separate Ollama Phala app for the LLM used by the agent."
+  type        = bool
+  default     = false
+}
+
+variable "ollama_app_name" {
+  description = "Name of the separate Phala Cloud app that runs Ollama."
+  type        = string
+  default     = "master-thesis-ollama"
+}
+
+variable "enable_phala_agent" {
+  description = "Run the LLM/MCP agent and SCITT-CCF transparency log in the contract-runtime CVM."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_phala_agent || var.enable_phala_ui
+    error_message = "enable_phala_agent requires enable_phala_ui so the authenticated UI can proxy the agent API."
+  }
+
+  validation {
+    condition = (
+      !var.enable_phala_agent ||
+      var.enable_ollama ||
+      var.ollama_base_url_override != null
+    )
+    error_message = "enable_phala_agent requires enable_ollama or ollama_base_url_override."
+  }
+
+}
+
+variable "agent_image" {
+  description = "Digest-pinned LLM/MCP agent image."
+  type        = string
+  default     = "ghcr.io/uzhw8rgl/master-thesis-agent:agent"
+
+  validation {
+    condition = (
+      (!var.enable_phala_agent && !var.enable_ollama) ||
+      can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.agent_image))
+    )
+    error_message = "agent_image must be digest-pinned when the Phala agent or Ollama proxy is enabled."
+  }
+}
+
+variable "transparency_log_image" {
+  description = "Digest-pinned SCITT-CCF transparency-log image."
+  type        = string
+  default     = "ghcr.io/uzhw8rgl/master-thesis-transparency-log:scitt"
+
+  validation {
+    condition = (
+      !var.enable_phala_agent ||
+      can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.transparency_log_image))
+    )
+    error_message = "transparency_log_image must be digest-pinned when enable_phala_agent is true."
+  }
+}
+
+variable "ollama_image" {
+  description = "Digest-pinned official linux/amd64 Ollama image."
+  type        = string
+  default     = "docker.io/ollama/ollama@sha256:836a5dc3595fb7cb70d16ffbea9631af882b1bbf8ad278570e5f263e8e600f76"
+
+  validation {
+    condition     = can(regex("^docker\\.io/ollama/ollama@sha256:[0-9a-f]{64}$", var.ollama_image))
+    error_message = "ollama_image must be a digest-pinned official docker.io/ollama/ollama reference."
+  }
+}
+
+variable "ollama_model" {
+  description = "Ollama model pulled into the fresh LLM CVM at startup."
+  type        = string
+  default     = "qwen3:0.6b"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._/-]+:[A-Za-z0-9._-]+$", var.ollama_model))
+    error_message = "ollama_model must be an explicit Ollama name:tag reference."
+  }
+}
+
+variable "ollama_api_token" {
+  description = "Bearer token shared through encrypted Phala app environments between the agent and Ollama proxy."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = !var.enable_ollama || can(regex("^[A-Za-z0-9_-]{24,128}$", var.ollama_api_token))
+    error_message = "ollama_api_token must contain 24-128 URL-safe characters when Ollama is enabled."
+  }
+}
+
+variable "ollama_base_url_override" {
+  description = "Optional externally managed Ollama base URL used instead of the Terraform-managed Ollama app."
+  type        = string
+  default     = null
+
+  validation {
+    condition = (
+      var.ollama_base_url_override == null ||
+      can(regex("^https://[^[:space:]]+$", var.ollama_base_url_override))
+    )
+    error_message = "ollama_base_url_override must be an HTTPS URL."
+  }
+}
+
+variable "tee_inference_url_override" {
+  description = "Optional public URL for the attested TEE inference service used by the agent."
+  type        = string
+  default     = null
+
+  validation {
+    condition = (
+      var.tee_inference_url_override == null ||
+      can(regex("^https://[^[:space:]]+$", var.tee_inference_url_override))
+    )
+    error_message = "tee_inference_url_override must be an HTTPS URL."
+  }
+}
+
 variable "additional_workers" {
   description = "Additional DFL worker apps with independent account/key pairs."
   type = map(object({
@@ -69,7 +192,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:3b7cc3bdf877a11c7760510040cc520f953b57efd14a7d392ec0b157c77863f7"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:94ffe549227695c78c71b22d29c091acb3d99426b6ced3a413c19e539af4d779"
 
   validation {
     condition = (
@@ -109,7 +232,7 @@ variable "enable_phala_ui" {
 variable "ui_image" {
   description = "Digest-pinned browser UI image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:dff09b7c7d5703abc7a8ca6845ed49a8f19a314a37ed7d3cda17050c79cbc097"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:ce436e9bdc096ee2e485218c5709e784452bd5696b0bdee8e99cc7e68a04250f"
 
   validation {
     condition = (
@@ -164,6 +287,12 @@ variable "tee_inference_size" {
   default     = "tdx.small"
 }
 
+variable "ollama_size" {
+  description = "Phala CVM size slug for the separate Ollama app."
+  type        = string
+  default     = "tdx.small"
+}
+
 variable "region" {
   description = "Phala region slug."
   type        = string
@@ -190,6 +319,12 @@ variable "worker_disk_size" {
 
 variable "tee_inference_disk_size" {
   description = "Disk size in GB for the TEE inference app."
+  type        = number
+  default     = 20
+}
+
+variable "ollama_disk_size" {
+  description = "Disk size in GB for the fresh Ollama app."
   type        = number
   default     = 20
 }
@@ -280,6 +415,12 @@ variable "worker_gateway_enabled" {
 
 variable "tee_inference_gateway_enabled" {
   description = "Enable the public gateway endpoint for the TEE inference app."
+  type        = bool
+  default     = true
+}
+
+variable "ollama_gateway_enabled" {
+  description = "Enable the public gateway endpoint for the separate Ollama app."
   type        = bool
   default     = true
 }

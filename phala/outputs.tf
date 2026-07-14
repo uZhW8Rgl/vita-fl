@@ -76,6 +76,26 @@ output "tee_inference_status" {
   value       = try(phala_app.tee_inference[0].status, null)
 }
 
+output "ollama_app_id" {
+  description = "Phala application ID for the separate Ollama app, when enabled."
+  value       = try(phala_app.ollama[0].app_id, null)
+}
+
+output "ollama_primary_cvm_id" {
+  description = "Primary CVM identifier for the separate Ollama app, when enabled."
+  value       = try(phala_app.ollama[0].primary_cvm_id, null)
+}
+
+output "ollama_endpoint" {
+  description = "Public Ollama API endpoint consumed by the agent, when enabled."
+  value       = try(phala_app.ollama[0].endpoint, null)
+}
+
+output "ollama_status" {
+  description = "Deployment status for the separate Ollama app, when enabled."
+  value       = try(phala_app.ollama[0].status, null)
+}
+
 output "additional_worker_app_ids" {
   description = "Phala application IDs for additional worker apps."
   value       = { for key, app in phala_app.dfl_worker_additional : key => app.app_id }

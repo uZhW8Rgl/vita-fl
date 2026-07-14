@@ -34,6 +34,7 @@ try:
         discover_latest,
         fetch_bundle,
     )
+    from .ollama_client import check_ollama_readiness
 except ImportError:
     from agent_skills import (
         describe_agent_skills,
@@ -52,6 +53,7 @@ except ImportError:
         discover_latest,
         fetch_bundle,
     )
+    from ollama_client import check_ollama_readiness
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENT_STATE_DIR = REPO_ROOT / "agent" / "state"
@@ -380,12 +382,15 @@ class AgentRuntime:
         model_name = os.environ.get("OLLAMA_MODEL", "qwen3:0.6b")
         base_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
         num_predict = int(os.environ.get("OLLAMA_NUM_PREDICT", "64"))
+        api_token = os.environ.get("OLLAMA_API_TOKEN", "")
+        client_kwargs = {"headers": {"Authorization": f"Bearer {api_token}"}} if api_token else {}
         return ChatOllama(
             model=model_name,
             base_url=base_url,
             reasoning=False,
             temperature=0,
             num_predict=num_predict,
+            client_kwargs=client_kwargs,
         )
 
     async def ensure_agent_model(self) -> Any:
@@ -806,7 +811,10 @@ async def serve_agent(args: argparse.Namespace) -> None:
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok"}
+        try:
+            return await asyncio.to_thread(check_ollama_readiness)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.get("/metrics")
     async def metrics() -> Response:
