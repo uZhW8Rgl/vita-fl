@@ -45,6 +45,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         controller.scale.assert_called_once_with(0)
         reset_telemetry.assert_called_once_with()
+        self.assertEqual(post.call_args.args[0], "http://anvil:8545")
         self.assertEqual(post.call_args.args[1]["method"], "anvil_reset")
         self.assertEqual(result["contract_state"], contract_state)
         self.assertEqual(result["phala_workers"]["deployed_worker_count"], 0)

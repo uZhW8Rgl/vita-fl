@@ -1340,7 +1340,7 @@ async def initialize_contract_stack() -> dict[str, Any]:
         reset_runtime_telemetry()
         await clear_evaluation_artifacts()
 
-        rpc_url = os.environ.get("DYNAMIC_WORKER_RPC_URL", "http://anvil:8545").strip()
+        rpc_url = os.environ.get("PHALA_ANVIL_ADMIN_RPC_URL", "http://anvil:8545").strip()
         reset_response = await asyncio.to_thread(
             _post_json,
             rpc_url,

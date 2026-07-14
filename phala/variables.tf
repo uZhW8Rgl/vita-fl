@@ -69,7 +69,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:3ee75ee6374956b9693b128667aad9b7146abca79d8b3b33326499db4263f7e6"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:8a225048918739215d4e007a2cebecd6d447f71cdc46752a2ab0fa2a42103e3d"
 
   validation {
     condition = (
@@ -109,7 +109,7 @@ variable "enable_phala_ui" {
 variable "ui_image" {
   description = "Digest-pinned browser UI image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:e98e8d4c85d3b2defd5cfd9c7cbbab501220c680fc4f25025647777ec8240e58"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:dff09b7c7d5703abc7a8ca6845ed49a8f19a314a37ed7d3cda17050c79cbc097"
 
   validation {
     condition = (
