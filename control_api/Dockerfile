@@ -11,8 +11,11 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        docker-cli \
         docker.io \
         docker-compose && \
+    command -v docker && \
+    command -v docker-compose && \
     rm -rf /var/lib/apt/lists/*
 
 COPY control_api ./control_api

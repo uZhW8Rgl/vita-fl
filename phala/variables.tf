@@ -69,7 +69,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:8a225048918739215d4e007a2cebecd6d447f71cdc46752a2ab0fa2a42103e3d"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:8a66b907661f7cbde1f6a8cff75fbab1570a18e37b8bedf045184bbe13e81112"
 
   validation {
     condition = (
