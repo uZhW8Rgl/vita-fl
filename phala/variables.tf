@@ -77,7 +77,7 @@ variable "enable_phala_agent" {
 variable "agent_image" {
   description = "Digest-pinned LLM/MCP agent image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:3dee13858eafeee936b15339a67d3d59ed00be4cd8c812691e8ab98b22317286"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:2b597425eeebdaeb578aaff9e6db40f456d61cecd1d42678923a02f18585b4e2"
 
   validation {
     condition = (
@@ -528,7 +528,7 @@ variable "tee_inference_image" {
 variable "zk_inference_image" {
   description = "Digest-pinned ZK inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference:latest"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:978b4857d87f7f9b05328e2e0c6141113a4f5f6d3c78d06cb2de87a7c92de2d1"
 
   validation {
     condition = (

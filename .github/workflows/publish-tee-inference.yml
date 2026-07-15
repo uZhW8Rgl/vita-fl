@@ -49,6 +49,19 @@ jobs:
       - name: Run TEE inference tests
         run: PYTHONPATH=. python -m unittest discover -s tee_inference/tests -v
 
+      - name: Verify ChestMNIST Docker input
+        run: |
+          git restore --source=HEAD -- data/chestmnist/test_data/test-data.npz
+          test -s data/chestmnist/test_data/test-data.npz
+          python - <<'PY'
+          import numpy as np
+
+          path = "data/chestmnist/test_data/test-data.npz"
+          with np.load(path, allow_pickle=False) as dataset:
+              assert dataset["images"].shape[1:] == (28, 28)
+              assert dataset["labels"].shape[1] == 14
+          PY
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

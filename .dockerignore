@@ -22,3 +22,4 @@ dfl/node_server/data/lm.bin
 dfl/node_server/data/lm.bin.enc
 dfl/node_server/data/results_iid/
 dfl/node_server/received_models/
+!data/chestmnist/test_data/test-data.npz
