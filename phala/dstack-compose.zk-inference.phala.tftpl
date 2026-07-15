@@ -1,0 +1,26 @@
+services:
+  zk-inference:
+    image: ${zk_inference_image}
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      DOCKER: phala
+      DATASET_NAME: chestmnist
+      ACCOUNT_ADDRESS: "${account_address}"
+      RSA_PRIVATE_KEY: "$${RSA_PRIVATE_KEY}"
+      RSA_PUBLIC_KEY: "$${RSA_PUBLIC_KEY}"
+      RPC_URL: "${rpc_url}"
+      KUBO_API: "${kubo_api_url}"
+      KUBO_GATEWAY: "${kubo_gateway_url}"
+      ZK_INFERENCE_HOST: 0.0.0.0
+      ZK_INFERENCE_PORT: "8090"
+      ZK_RUNTIME_DIR: /work/zk-inference
+    tmpfs:
+      - /work/zk-inference:size=4096m,mode=0700
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 20

@@ -76,6 +76,26 @@ output "tee_inference_status" {
   value       = try(phala_app.tee_inference[0].status, null)
 }
 
+output "zk_inference_app_id" {
+  description = "Phala application ID for the separate ZK inference app, when enabled."
+  value       = try(phala_app.zk_inference[0].app_id, null)
+}
+
+output "zk_inference_primary_cvm_id" {
+  description = "Primary CVM identifier for the separate ZK inference app, when enabled."
+  value       = try(phala_app.zk_inference[0].primary_cvm_id, null)
+}
+
+output "zk_inference_endpoint" {
+  description = "Public endpoint for the separate ZK inference app, when enabled."
+  value       = try(phala_app.zk_inference[0].endpoint, null)
+}
+
+output "zk_inference_status" {
+  description = "Deployment status for the separate ZK inference app, when enabled."
+  value       = try(phala_app.zk_inference[0].status, null)
+}
+
 output "ollama_app_id" {
   description = "Phala application ID for the separate Ollama app, when enabled."
   value       = try(phala_app.ollama[0].app_id, null)

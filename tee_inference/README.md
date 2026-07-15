@@ -40,15 +40,19 @@ The AIR tests include the official cyntrisec/air-v1
 
 ## Native PyTorch inference service
 
-`tee_inference.service` exposes `POST /v1/infer` with media type
-`application/cbor`. It rejects JSON, oversized bodies, non-deterministic CBOR,
-unknown fields, a mismatched manifest hash, and an incompatible native model
-contract. `GET /healthz` reports the loaded model and manifest SHA-256 values.
+`tee_inference.service` exposes a job API: `POST /v1/models/fetch` fetches and
+verifies the current model, `POST /v1/jobs` selects a model-bound ChestMNIST
+sample, and `POST /v1/jobs/<job-id>/run` returns the canonical AIR evidence
+bundle. The older `/v1/prepare` and `/v1/infer` endpoints remain temporarily for
+compatibility. `GET /healthz` reports whether a model is loaded.
 
-At startup, the service verifies W0's supplied RSA key against W0's authorized
-DeviceRegistry key, reads the current GMStorage CIDs, downloads and decrypts the
-encrypted IPFS bundle, verifies the aggregator signatures, and constructs the
-canonical manifest from that verified state:
+Container startup does not access or load a model. `GET /healthz` remains healthy
+with `model_loaded=false`. During `fetch_latest_verified_tee_model_bundle`, the
+agent calls `POST /v1/models/fetch`. That request verifies W0's supplied RSA key against
+W0's authorized DeviceRegistry key, reads the current GMStorage CIDs, downloads
+and decrypts the encrypted IPFS bundle, verifies the aggregator signatures, and
+constructs the canonical manifest from that verified state. A later tool call
+refreshes the model again, so it observes the then-current on-chain model:
 
 ```sh
 export DATASET_NAME=chestmnist
@@ -56,7 +60,9 @@ export ACCOUNT_ADDRESS=0x...
 export RSA_PRIVATE_KEY='-----BEGIN PRIVATE KEY-----...'
 export RPC_URL=https://...
 export KUBO_API=https://...
-export TEE_MODEL_DIR=/app/model
+export TEE_MODEL_DIR=/tmp/tee-inference/model
+export TEE_JOB_DIR=/tmp/tee-inference/jobs
+export CHESTMNIST_TEST_DATA=/app/data/chestmnist/test_data/test-data.npz
 PYTHONPATH=. python3 -m tee_inference.service
 ```
 

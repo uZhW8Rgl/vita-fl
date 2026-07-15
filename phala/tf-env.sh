@@ -293,6 +293,7 @@ configure_phala_agent() {
   append_var_if_set "ollama_model" "OLLAMA_MODEL"
   append_var_if_set "ollama_base_url_override" "OLLAMA_BASE_URL_OVERRIDE"
   append_var_if_set "tee_inference_url_override" "TEE_INFERENCE_URL_OVERRIDE"
+  append_var_if_set "zk_inference_url_override" "ZK_INFERENCE_URL_OVERRIDE"
   if [ "${ollama_enabled}" = "1" ] || [ "${ollama_enabled}" = "true" ]; then
     export TF_VAR_ollama_api_token
     TF_VAR_ollama_api_token=$(require_env_value "OLLAMA_API_TOKEN")
@@ -351,6 +352,8 @@ append_var_if_set "model_transfer_retry_delay_ms" "MODEL_TRANSFER_RETRY_DELAY_MS
 append_var_if_set "dataset_name" "DATASET_NAME"
 append_var_if_set "enable_tee_inference" "ENABLE_TEE_INFERENCE"
 append_var_if_set "tee_inference_image" "TEE_INFERENCE_IMAGE"
+append_var_if_set "enable_zk_inference" "ENABLE_ZK_INFERENCE"
+append_var_if_set "zk_inference_image" "ZK_INFERENCE_IMAGE"
 append_var_if_set "manage_power_state" "MANAGE_POWER_STATE"
 append_var_if_set "desired_power_state" "DESIRED_POWER_STATE"
 append_var_if_set "train_images_src" "TRAIN_IMAGES_SRC"

@@ -10,6 +10,14 @@ phala/app_code.txt
 **/private_key*.pem
 dfl/node_server/.env
 **/__pycache__/
+.ruff_cache/
+.git/
+.tools/
+**/.terraform/
+phala/bin/
+zk_inference/out/
+zk_inference/single_query/
+dfl/node_server/node_modules/
 dfl/node_server/data/lm.bin
 dfl/node_server/data/lm.bin.enc
 dfl/node_server/data/results_iid/

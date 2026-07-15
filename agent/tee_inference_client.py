@@ -9,7 +9,6 @@ import os
 import re
 import secrets
 import struct
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -50,6 +49,10 @@ DEFAULT_EVIDENCE_PATH = os.environ.get(
     "TEE_INFERENCE_EVIDENCE_PATH",
     "tee_inference/out/latest-evidence.cbor",
 )
+DEFAULT_SCITT_STATEMENT_PATH = os.environ.get(
+    "SCITT_TRANSPARENT_STATEMENT_PATH",
+    "tee_inference/out/latest-transparent-statement.cose",
+)
 MAX_HEALTH_BYTES = 16_384
 MAX_EVIDENCE_BYTES = 1_048_576
 TDX_HEADER_SIZE = 48
@@ -71,16 +74,94 @@ def _read_limited(response: Any, limit: int, name: str) -> bytes:
     return raw
 
 
-def _get_health(base_url: str, timeout: int) -> dict[str, Any]:
-    request = urllib.request.Request(f"{base_url.rstrip('/')}/healthz", method="GET")
+def _prepare_model(base_url: str, timeout: int) -> dict[str, Any]:
+    request = urllib.request.Request(f"{base_url.rstrip('/')}/v1/prepare", data=b"", method="POST")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            value = json.loads(_read_limited(response, MAX_HEALTH_BYTES, "health response"))
+            value = json.loads(_read_limited(response, MAX_HEALTH_BYTES, "prepare response"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read(4096).decode("utf-8", errors="replace")
+        raise TeeInferenceVerificationError(f"TEE inference preparation returned HTTP {exc.code}: {body}") from exc
     except (urllib.error.URLError, json.JSONDecodeError) as exc:
-        raise TeeInferenceVerificationError(f"TEE inference health request failed: {exc}") from exc
+        raise TeeInferenceVerificationError(f"TEE inference preparation failed: {exc}") from exc
     if not isinstance(value, dict) or value.get("status") != "ok":
-        raise TeeInferenceVerificationError("TEE inference health response is not healthy")
+        raise TeeInferenceVerificationError("TEE inference preparation response is not ready")
     return value
+
+
+def _json_request(base_url: str, path: str, timeout: int, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
+    headers = {} if data is None else {"Content-Type": "application/json"}
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/{path.lstrip('/')}",
+        data=data,
+        headers=headers,
+        method="GET" if payload is None else "POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            value = json.loads(_read_limited(response, MAX_HEALTH_BYTES, f"{path} response"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read(4096).decode("utf-8", errors="replace")
+        raise TeeInferenceVerificationError(f"TEE inference {path} returned HTTP {exc.code}: {body}") from exc
+    except (urllib.error.URLError, json.JSONDecodeError) as exc:
+        raise TeeInferenceVerificationError(f"TEE inference {path} request failed: {exc}") from exc
+    if not isinstance(value, dict) or not value.get("ok"):
+        raise TeeInferenceVerificationError(f"TEE inference {path} response is not successful")
+    return value
+
+
+def fetch_latest_verified_tee_model_bundle(
+    *, endpoint: str | None = None, timeout_seconds: int = 120
+) -> dict[str, Any]:
+    """Make the TEE fetch, decrypt, and verify the current on-chain model bundle."""
+
+    base_url = (endpoint or DEFAULT_TEE_INFERENCE_URL).rstrip("/")
+    if not base_url:
+        raise TeeInferenceVerificationError("TEE_INFERENCE_URL is not configured")
+    prepared = _json_request(base_url, "/v1/models/fetch", timeout_seconds, {})
+    return {
+        "skill": "fetch_latest_verified_tee_model_bundle",
+        "stage": "verified-model-ready",
+        **prepared,
+        "endpoint": base_url,
+    }
+
+
+def generate_random_tee_chestmnist_image(
+    *, index: int | None = None, endpoint: str | None = None, timeout_seconds: int = 120
+) -> dict[str, Any]:
+    """Create a model-bound ChestMNIST job inside the TEE container."""
+
+    base_url = (endpoint or DEFAULT_TEE_INFERENCE_URL).rstrip("/")
+    if not base_url:
+        raise TeeInferenceVerificationError("TEE_INFERENCE_URL is not configured")
+    job = _json_request(base_url, "/v1/jobs", timeout_seconds, {"index": index})
+    return {
+        "skill": "generate_random_tee_chestmnist_image",
+        "stage": "tee-query-ready",
+        **job,
+        "endpoint": base_url,
+    }
+
+
+def _post_job_inference(base_url: str, job_id: str, timeout: int) -> bytes:
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/v1/jobs/{job_id}/run",
+        data=b"",
+        headers={"Accept": "application/cbor"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            if response.headers.get_content_type() != "application/cbor":
+                raise TeeInferenceVerificationError("unexpected TEE job response content type")
+            return _read_limited(response, MAX_EVIDENCE_BYTES, "TEE job evidence bundle")
+    except urllib.error.HTTPError as exc:
+        body = exc.read(4096).decode("utf-8", errors="replace")
+        raise TeeInferenceVerificationError(f"TEE inference job returned HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise TeeInferenceVerificationError(f"TEE inference job request failed: {exc}") from exc
 
 
 def _post_inference(base_url: str, request_bytes: bytes, timeout: int) -> bytes:
@@ -295,6 +376,79 @@ def _load_sample(dataset_path: str, index: int | None) -> tuple[int, bytes, np.n
         return selected, images[selected].tobytes(order="C"), labels[selected].astype(np.uint8, copy=True)
 
 
+def _job_output_path(configured_path: str, job_id: str, filename: str) -> Path:
+    configured = Path(configured_path)
+    return configured.parent / job_id / filename
+
+
+def run_and_verify_tee_inference(
+    job_id: str,
+    *,
+    endpoint: str | None = None,
+    expected_image_digest: str | None = None,
+    evidence_path: str | None = None,
+    timeout_seconds: int = 120,
+) -> dict[str, Any]:
+    """Run one prepared TEE job, verify all evidence, and register it with SCITT."""
+
+    base_url = (endpoint or DEFAULT_TEE_INFERENCE_URL).rstrip("/")
+    if not base_url:
+        raise TeeInferenceVerificationError("TEE_INFERENCE_URL is not configured")
+    if not re.fullmatch(r"[0-9a-f]{32}", str(job_id)):
+        raise TeeInferenceVerificationError("job_id must contain exactly 32 lowercase hexadecimal characters")
+
+    metadata = _json_request(base_url, f"/v1/jobs/{job_id}", timeout_seconds)
+    bundle_bytes = _post_job_inference(base_url, job_id, timeout_seconds)
+    bundle = _decode_bundle(bundle_bytes)
+    exact_request = bundle[2]
+    if not isinstance(exact_request, bytes):
+        raise TeeInferenceVerificationError("evidence bundle request must be bytes")
+    verified = verify_tee_inference_bundle(
+        bundle_bytes,
+        exact_request,
+        expected_image_digest or DEFAULT_TEE_IMAGE_DIGEST,
+    )
+
+    try:
+        from .scitt_client import register_verified_evidence
+    except ImportError:
+        from scitt_client import register_verified_evidence
+    transparent_statement = _job_output_path(
+        DEFAULT_SCITT_STATEMENT_PATH,
+        job_id,
+        "transparent-statement.cose",
+    )
+    transparency = register_verified_evidence(
+        bundle_bytes,
+        transparent_statement_path=str(transparent_statement),
+    )
+    if transparency["evidence_sha256"] != verified["bundle_sha256"]:
+        raise TeeInferenceVerificationError("SCITT statement does not bind the verified evidence bundle")
+
+    output = _job_output_path(evidence_path or DEFAULT_EVIDENCE_PATH, job_id, "evidence.cbor")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(".cbor.tmp")
+    temporary.write_bytes(bundle_bytes)
+    temporary.replace(output)
+
+    probabilities = verified.pop("probabilities")
+    decisions = verified.pop("decisions")
+    return {
+        "skill": "run_and_verify_tee_inference",
+        "stage": "verified-and-transparency-logged",
+        "ok": True,
+        "endpoint": base_url,
+        "job_id": job_id,
+        "sample_index": metadata["source_index"],
+        "ground_truth": metadata["ground_truth"],
+        "predicted_labels": [LABELS[position] for position, value in enumerate(decisions) if value],
+        "probabilities": {LABELS[position]: value for position, value in enumerate(probabilities)},
+        "evidence_path": str(output),
+        "verification": verified,
+        "transparency_log": transparency,
+    }
+
+
 def run_verified_tee_inference(
     *,
     index: int | None = None,
@@ -304,62 +458,19 @@ def run_verified_tee_inference(
     evidence_path: str | None = None,
     timeout_seconds: int = 120,
 ) -> dict[str, Any]:
-    """Run and verify TEE inference, then register its evidence with SCITT."""
+    """Compatibility wrapper that executes the new three-tool TEE workflow."""
 
-    base_url = (endpoint or DEFAULT_TEE_INFERENCE_URL).rstrip("/")
-    if not base_url:
-        raise TeeInferenceVerificationError(
-            "TEE inference is not configured yet; set TEE_INFERENCE_URL before using this MCP tool."
-        )
-    image_policy = expected_image_digest or DEFAULT_TEE_IMAGE_DIGEST
-    health = _get_health(base_url, timeout_seconds)
-    try:
-        health_manifest_hash = bytes.fromhex(str(health["manifest_sha256"]))
-    except (KeyError, ValueError) as exc:
-        raise TeeInferenceVerificationError("health response lacks a valid manifest_sha256") from exc
-    if len(health_manifest_hash) != 32:
-        raise TeeInferenceVerificationError("health manifest hash must be 32 bytes")
-
-    selected, pixels, truth = _load_sample(dataset_path or DEFAULT_CHESTMNIST_TEST_DATA, index)
-    request_bytes = encode_deterministic(
-        {
-            1: 1,
-            2: secrets.token_bytes(16),
-            3: health_manifest_hash,
-            4: pixels,
-            5: secrets.token_bytes(32),
-            6: int(time.time() * 1000),
-        }
+    del dataset_path
+    fetch_latest_verified_tee_model_bundle(endpoint=endpoint, timeout_seconds=timeout_seconds)
+    job = generate_random_tee_chestmnist_image(
+        index=index,
+        endpoint=endpoint,
+        timeout_seconds=timeout_seconds,
     )
-    bundle_bytes = _post_inference(base_url, request_bytes, timeout_seconds)
-    verified = verify_tee_inference_bundle(bundle_bytes, request_bytes, image_policy)
-
-    try:
-        from .scitt_client import register_verified_evidence
-    except ImportError:
-        from scitt_client import register_verified_evidence
-    transparency = register_verified_evidence(bundle_bytes)
-    if transparency["evidence_sha256"] != verified["bundle_sha256"]:
-        raise TeeInferenceVerificationError("SCITT statement does not bind the verified evidence bundle")
-
-    output = Path(evidence_path or DEFAULT_EVIDENCE_PATH)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_suffix(output.suffix + ".tmp")
-    temporary.write_bytes(bundle_bytes)
-    temporary.replace(output)
-
-    probabilities = verified.pop("probabilities")
-    decisions = verified.pop("decisions")
-    return {
-        "skill": "run_verified_tee_inference",
-        "stage": "verified-and-transparency-logged",
-        "ok": True,
-        "endpoint": base_url,
-        "sample_index": selected,
-        "ground_truth": [LABELS[position] for position, value in enumerate(truth) if value],
-        "predicted_labels": [LABELS[position] for position, value in enumerate(decisions) if value],
-        "probabilities": {LABELS[position]: value for position, value in enumerate(probabilities)},
-        "evidence_path": str(output),
-        "verification": verified,
-        "transparency_log": transparency,
-    }
+    return run_and_verify_tee_inference(
+        str(job["job_id"]),
+        endpoint=endpoint,
+        expected_image_digest=expected_image_digest,
+        evidence_path=evidence_path,
+        timeout_seconds=timeout_seconds,
+    )

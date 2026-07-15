@@ -76,10 +76,12 @@ API_HOME_HTML = """<!doctype html>
 </html>
 """
 PUBLIC_SKILL_NAMES = (
-    "fetch_latest_verified_model_bundle",
-    "generate_random_chestmnist_image",
-    "generate_zk_inference_proof",
-    "run_verified_tee_inference",
+    "fetch_latest_verified_zk_model_bundle",
+    "generate_random_zk_chestmnist_image",
+    "generate_and_verify_zk_inference_proof",
+    "fetch_latest_verified_tee_model_bundle",
+    "generate_random_tee_chestmnist_image",
+    "run_and_verify_tee_inference",
 )
 
 
@@ -172,57 +174,68 @@ def _local_langchain_tools():
         return str(workdir)
 
     @tool
-    def fetch_latest_verified_model_bundle() -> str:
-        """Resolve the current on-chain bundle, decrypt it, verify it, and export the model."""
-        from mcp_server import fetch_latest_verified_model_bundle as fetch_skill_impl
+    def fetch_latest_verified_zk_model_bundle() -> str:
+        """Fetch, decrypt, verify, and export the current model inside the ZK TEE."""
+        from mcp_server import fetch_latest_verified_zk_model_bundle as fetch_zk_impl
 
-        payload = json.loads(fetch_skill_impl())
-        _remember_verified_bundle(payload)
-        return format_verified_bundle_summary(payload)
-
-    @tool
-    def generate_random_chestmnist_image(index: Any = None) -> str:
-        """Prepare one ChestMNIST sample and the EZKL input artifacts."""
-        from mcp_server import generate_random_chestmnist_image as generate_image_impl
-
-        requested_index = resolve_preferred_sample_index(_session_state(), index)
-        payload = json.loads(
-            generate_image_impl(
-                index=requested_index,
-                query_dir="zk_inference/single_query",
-                input_json=str(Path(_normalize_workdir("zk_inference/out")) / "input.json"),
-            )
-        )
-        if isinstance(payload.get("selection"), dict):
-            _remember_generated_sample(payload)
-        return format_selection_summary(payload)
-
-    @tool
-    def generate_zk_inference_proof() -> str:
-        """Run EZKL against the current prepared artifacts."""
-        from mcp_server import generate_zk_inference_proof as generate_proof_impl
-
-        payload = json.loads(
-            generate_proof_impl(
-                workdir=_normalize_workdir("zk_inference/out"),
-                model="model_logits.onnx",
-                data="input.json",
-            )
-        )
+        payload = json.loads(fetch_zk_impl())
+        _session_state()["latest_zk_model"] = payload
         return _compact_json(payload)
 
     @tool
-    def run_verified_tee_inference(index: Any = None) -> str:
-        """Run one ChestMNIST TEE inference and return only after local evidence verification."""
-        from mcp_server import run_verified_tee_inference as run_tee_impl
+    def generate_random_zk_chestmnist_image(index: Any = None) -> str:
+        """Select a ChestMNIST sample inside the ZK TEE and create a proof job."""
+        from mcp_server import generate_random_zk_chestmnist_image as generate_zk_image_impl
 
-        return run_tee_impl(index=resolve_preferred_sample_index(_session_state(), index))
+        payload = json.loads(generate_zk_image_impl(index=resolve_preferred_sample_index(_session_state(), index)))
+        _session_state()["latest_zk_job"] = payload
+        return _compact_json(payload)
+
+    @tool
+    def generate_and_verify_zk_inference_proof() -> str:
+        """Generate and verify an EZKL proof for the latest prepared ZK job."""
+        from mcp_server import generate_and_verify_zk_inference_proof as prove_zk_impl
+
+        job = _session_state().get("latest_zk_job")
+        if not isinstance(job, dict) or not job.get("job_id"):
+            raise RuntimeError("No ZK inference job exists in this chat; generate a ZK ChestMNIST image first.")
+        return prove_zk_impl(job_id=str(job["job_id"]))
+
+    @tool
+    def fetch_latest_verified_tee_model_bundle() -> str:
+        """Fetch, decrypt, and verify the current on-chain model inside the TEE."""
+        from mcp_server import fetch_latest_verified_tee_model_bundle as fetch_tee_impl
+
+        payload = json.loads(fetch_tee_impl())
+        _session_state()["latest_tee_model"] = payload
+        return _compact_json(payload)
+
+    @tool
+    def generate_random_tee_chestmnist_image(index: Any = None) -> str:
+        """Select a ChestMNIST sample inside the TEE and create a model-bound job."""
+        from mcp_server import generate_random_tee_chestmnist_image as generate_tee_image_impl
+
+        payload = json.loads(generate_tee_image_impl(index=resolve_preferred_sample_index(_session_state(), index)))
+        _session_state()["latest_tee_job"] = payload
+        return _compact_json(payload)
+
+    @tool
+    def run_and_verify_tee_inference() -> str:
+        """Run the latest prepared TEE job, verify its evidence, and register it with SCITT."""
+        from mcp_server import run_and_verify_tee_inference as run_tee_impl
+
+        job = _session_state().get("latest_tee_job")
+        if not isinstance(job, dict) or not job.get("job_id"):
+            raise RuntimeError("No TEE inference job exists in this chat; generate a TEE ChestMNIST image first.")
+        return run_tee_impl(job_id=str(job["job_id"]))
 
     return [
-        fetch_latest_verified_model_bundle,
-        generate_random_chestmnist_image,
-        generate_zk_inference_proof,
-        run_verified_tee_inference,
+        fetch_latest_verified_zk_model_bundle,
+        generate_random_zk_chestmnist_image,
+        generate_and_verify_zk_inference_proof,
+        fetch_latest_verified_tee_model_bundle,
+        generate_random_tee_chestmnist_image,
+        run_and_verify_tee_inference,
     ]
 
 
@@ -286,6 +299,39 @@ def _session_memory_messages(session_state: dict[str, Any] | None) -> list[dict[
             f"source_index={selection.get('source_index', 'unknown')}, "
             f"random_selection={selection.get('random_selection', 'unknown')}, "
             f"true_label={selection.get('true_label', 'unknown')}."
+        )
+
+    tee_model = session_state.get("latest_tee_model")
+    if isinstance(tee_model, dict):
+        lines.append(
+            "Current TEE model memory: "
+            f"manifest_sha256={tee_model.get('manifest_sha256', 'unknown')}, "
+            f"model_sha256={tee_model.get('model_sha256', 'unknown')}."
+        )
+
+    tee_job = session_state.get("latest_tee_job")
+    if isinstance(tee_job, dict):
+        lines.append(
+            "Current TEE job memory: "
+            f"job_id={tee_job.get('job_id', 'unknown')}, "
+            f"source_index={tee_job.get('source_index', 'unknown')}, "
+            f"ground_truth={tee_job.get('ground_truth', [])}."
+        )
+
+    zk_model = session_state.get("latest_zk_model")
+    if isinstance(zk_model, dict):
+        lines.append(
+            "Current ZK model memory: "
+            f"model_id={zk_model.get('model_id', 'unknown')}, "
+            f"model_sha256={zk_model.get('model_sha256', 'unknown')}."
+        )
+
+    zk_job = session_state.get("latest_zk_job")
+    if isinstance(zk_job, dict):
+        lines.append(
+            "Current ZK job memory: "
+            f"job_id={zk_job.get('job_id', 'unknown')}, "
+            f"source_index={zk_job.get('source_index', 'unknown')}."
         )
 
     if not lines:
@@ -546,22 +592,32 @@ class AgentRuntime:
         lowered = user_message.strip().lower()
         if not lowered:
             return None
+        if "fetch_latest_verified_zk_model_bundle" in lowered:
+            return "fetch_latest_verified_zk_model_bundle"
+        if "generate_random_zk_chestmnist_image" in lowered:
+            return "generate_random_zk_chestmnist_image"
+        if "generate_and_verify_zk_inference_proof" in lowered:
+            return "generate_and_verify_zk_inference_proof"
         if "fetch_latest_verified_model_bundle" in lowered:
             return "fetch_latest_verified_model_bundle"
         if "generate_random_chestmnist_image" in lowered:
             return "generate_random_chestmnist_image"
         if "generate_zk_inference_proof" in lowered:
             return "generate_zk_inference_proof"
-        if "run_verified_tee_inference" in lowered:
-            return "run_verified_tee_inference"
+        if "fetch_latest_verified_tee_model_bundle" in lowered:
+            return "fetch_latest_verified_tee_model_bundle"
+        if "generate_random_tee_chestmnist_image" in lowered:
+            return "generate_random_tee_chestmnist_image"
+        if "run_and_verify_tee_inference" in lowered:
+            return "run_and_verify_tee_inference"
         if "tee" in lowered and "inference" in lowered:
-            return "run_verified_tee_inference"
+            return "run_and_verify_tee_inference"
         if "bundle" in lowered and any(token in lowered for token in ("fetch", "latest", "verified")):
             return "fetch_latest_verified_model_bundle"
         if "chestmnist" in lowered or ("random" in lowered and "image" in lowered):
             return "generate_random_chestmnist_image"
         if "proof" in lowered or "ezkl" in lowered:
-            return "generate_zk_inference_proof"
+            return "generate_and_verify_zk_inference_proof"
         return None
 
     def _execute_skill_fallback(
@@ -572,6 +628,42 @@ class AgentRuntime:
         skill_name = self._infer_requested_skill(user_message)
         if skill_name is None:
             return None
+
+        if skill_name == "fetch_latest_verified_zk_model_bundle":
+            from mcp_server import fetch_latest_verified_zk_model_bundle
+
+            payload = json.loads(fetch_latest_verified_zk_model_bundle())
+            session_state["latest_zk_model"] = payload
+            detail = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+            return self._assistant_response(
+                self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
+                [{"type": "tool", "label": skill_name, "detail": detail}],
+            )
+
+        if skill_name == "generate_random_zk_chestmnist_image":
+            from mcp_server import generate_random_zk_chestmnist_image
+
+            payload = json.loads(
+                generate_random_zk_chestmnist_image(index=resolve_preferred_sample_index(session_state, None))
+            )
+            session_state["latest_zk_job"] = payload
+            detail = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+            return self._assistant_response(
+                self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
+                [{"type": "tool", "label": skill_name, "detail": detail}],
+            )
+
+        if skill_name == "generate_and_verify_zk_inference_proof":
+            from mcp_server import generate_and_verify_zk_inference_proof
+
+            job = session_state.get("latest_zk_job")
+            if not isinstance(job, dict) or not job.get("job_id"):
+                raise RuntimeError("No ZK inference job exists; run the ZK model and image tools first.")
+            detail = generate_and_verify_zk_inference_proof(job_id=str(job["job_id"]))
+            return self._assistant_response(
+                self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
+                [{"type": "tool", "label": skill_name, "detail": detail}],
+            )
 
         if skill_name == "fetch_latest_verified_model_bundle":
             from mcp_server import fetch_latest_verified_model_bundle
@@ -618,12 +710,39 @@ class AgentRuntime:
                 [{"type": "tool", "label": skill_name, "detail": detail}],
             )
 
-        if skill_name == "run_verified_tee_inference":
-            from mcp_server import run_verified_tee_inference
+        if skill_name == "fetch_latest_verified_tee_model_bundle":
+            from mcp_server import fetch_latest_verified_tee_model_bundle
 
-            detail = run_verified_tee_inference(
-                index=resolve_preferred_sample_index(session_state, None),
+            payload = json.loads(fetch_latest_verified_tee_model_bundle())
+            session_state["latest_tee_model"] = payload
+            detail = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+            return self._assistant_response(
+                self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
+                [{"type": "tool", "label": skill_name, "detail": detail}],
             )
+
+        if skill_name == "generate_random_tee_chestmnist_image":
+            from mcp_server import generate_random_tee_chestmnist_image
+
+            payload = json.loads(
+                generate_random_tee_chestmnist_image(
+                    index=resolve_preferred_sample_index(session_state, None),
+                )
+            )
+            session_state["latest_tee_job"] = payload
+            detail = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+            return self._assistant_response(
+                self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
+                [{"type": "tool", "label": skill_name, "detail": detail}],
+            )
+
+        if skill_name == "run_and_verify_tee_inference":
+            from mcp_server import run_and_verify_tee_inference
+
+            job = session_state.get("latest_tee_job")
+            if not isinstance(job, dict) or not job.get("job_id"):
+                raise RuntimeError("No TEE inference job exists; run the TEE model and image tools first.")
+            detail = run_and_verify_tee_inference(job_id=str(job["job_id"]))
             return self._assistant_response(
                 self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
                 [{"type": "tool", "label": skill_name, "detail": detail}],

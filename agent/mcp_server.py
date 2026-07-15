@@ -40,10 +40,12 @@ MCP_TOOL_CALLS_CURRENT = Gauge(
     ["tool_name"],
 )
 PUBLIC_MCP_TOOL_NAMES = (
-    "fetch_latest_verified_model_bundle",
-    "generate_random_chestmnist_image",
-    "generate_zk_inference_proof",
-    "run_verified_tee_inference",
+    "fetch_latest_verified_tee_model_bundle",
+    "generate_random_tee_chestmnist_image",
+    "run_and_verify_tee_inference",
+    "fetch_latest_verified_zk_model_bundle",
+    "generate_random_zk_chestmnist_image",
+    "generate_and_verify_zk_inference_proof",
 )
 
 
@@ -242,6 +244,43 @@ def _fetch_current_onchain_model_bundle(out_dir: str = "zk_inference/out") -> di
 
 
 @mcp.tool()
+def fetch_latest_verified_zk_model_bundle() -> str:
+    """Fetch, decrypt, verify, and export the current on-chain model inside the ZK TEE."""
+
+    record_mcp_tool_call("fetch_latest_verified_zk_model_bundle")
+    result = _remote_call("/v1/models/fetch", {}, timeout=600)
+    return json.dumps(
+        {"skill": "fetch_latest_verified_zk_model_bundle", "stage": "verified-model-ready", **result},
+        indent=2,
+    )
+
+
+@mcp.tool()
+def generate_random_zk_chestmnist_image(index: int | None = None) -> str:
+    """Select a ChestMNIST sample inside the ZK TEE and return its model-bound job ID."""
+
+    record_mcp_tool_call("generate_random_zk_chestmnist_image")
+    result = _remote_call("/v1/jobs", {"index": normalize_optional_index(index)})
+    return json.dumps(
+        {"skill": "generate_random_zk_chestmnist_image", "stage": "zk-query-ready", **result},
+        indent=2,
+    )
+
+
+@mcp.tool()
+def generate_and_verify_zk_inference_proof(job_id: str) -> str:
+    """Generate and cryptographically verify an EZKL proof for a prepared ZK job."""
+
+    record_mcp_tool_call("generate_and_verify_zk_inference_proof")
+    if len(job_id) != 32 or any(character not in "0123456789abcdef" for character in job_id):
+        raise ValueError("job_id must contain exactly 32 lowercase hexadecimal characters")
+    result = _remote_call(f"/v1/jobs/{job_id}/run-and-verify", {}, timeout=900)
+    return json.dumps(
+        {"skill": "generate_and_verify_zk_inference_proof", "stage": "proof-verified", **result},
+        indent=2,
+    )
+
+
 def fetch_latest_verified_model_bundle(out_dir: str = "zk_inference/out") -> str:
     """Skill-oriented bundle fetch: resolve, decrypt, verify, and export the current on-chain model bundle."""
     record_mcp_tool_call("fetch_latest_verified_model_bundle")
@@ -252,7 +291,6 @@ def fetch_latest_verified_model_bundle(out_dir: str = "zk_inference/out") -> str
     return json.dumps(result, indent=2)
 
 
-@mcp.tool()
 def generate_random_chestmnist_image(
     index: int | None = None,
     query_dir: str = "zk_inference/single_query",
@@ -269,7 +307,6 @@ def generate_random_chestmnist_image(
     return json.dumps(result, indent=2)
 
 
-@mcp.tool()
 def generate_zk_inference_proof(
     workdir: str = "zk_inference/out",
     model: str = "model_logits.onnx",
@@ -294,6 +331,41 @@ def generate_zk_inference_proof(
 
 
 @mcp.tool()
+def fetch_latest_verified_tee_model_bundle() -> str:
+    """Fetch, decrypt, and verify the current on-chain model inside the TEE."""
+
+    record_mcp_tool_call("fetch_latest_verified_tee_model_bundle")
+    try:
+        from .tee_inference_client import fetch_latest_verified_tee_model_bundle as run_impl
+    except ImportError:
+        from tee_inference_client import fetch_latest_verified_tee_model_bundle as run_impl
+    return json.dumps(run_impl(), indent=2)
+
+
+@mcp.tool()
+def generate_random_tee_chestmnist_image(index: int | None = None) -> str:
+    """Select a ChestMNIST sample inside the TEE and return its model-bound job ID."""
+
+    record_mcp_tool_call("generate_random_tee_chestmnist_image")
+    try:
+        from .tee_inference_client import generate_random_tee_chestmnist_image as run_impl
+    except ImportError:
+        from tee_inference_client import generate_random_tee_chestmnist_image as run_impl
+    return json.dumps(run_impl(index=normalize_optional_index(index)), indent=2)
+
+
+@mcp.tool()
+def run_and_verify_tee_inference(job_id: str) -> str:
+    """Run a prepared TEE job, verify its evidence, and register it with SCITT."""
+
+    record_mcp_tool_call("run_and_verify_tee_inference")
+    try:
+        from .tee_inference_client import run_and_verify_tee_inference as run_impl
+    except ImportError:
+        from tee_inference_client import run_and_verify_tee_inference as run_impl
+    return json.dumps(run_impl(job_id), indent=2)
+
+
 def run_verified_tee_inference(
     index: int | None = None,
 ) -> str:

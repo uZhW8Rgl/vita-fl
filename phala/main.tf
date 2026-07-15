@@ -76,6 +76,7 @@ locals {
     ollama_model                      = var.ollama_model
     tee_inference_url                 = local.agent_tee_inference_url
     tee_inference_image_digest        = replace(var.tee_inference_image, "/^.*@/", "")
+    zk_inference_url                  = coalesce(var.zk_inference_url_override, "")
     agent_available                   = var.enable_phala_agent ? "1" : "0"
     dynamic_worker_inventory          = var.dynamic_worker_inventory
     dynamic_worker_rpc_url            = coalesce(var.runtime_rpc_url_override, "")
@@ -344,6 +345,44 @@ resource "phala_app" "tee_inference" {
   wait_timeout_seconds = var.wait_timeout_seconds
 }
 
+resource "phala_app" "zk_inference" {
+  count = var.enable_zk_inference ? 1 : 0
+
+  name = var.zk_inference_app_name
+  docker_compose = templatefile("${path.module}/dstack-compose.zk-inference.phala.tftpl", {
+    zk_inference_image = var.zk_inference_image
+    account_address    = var.account_address
+    rpc_url            = local.contracts_rpc_url
+    kubo_api_url       = local.contracts_kubo_api_url
+    kubo_gateway_url   = local.contracts_kubo_gateway
+  })
+  env = {
+    RSA_PRIVATE_KEY = file(var.rsa_private_key_path)
+    RSA_PUBLIC_KEY  = file(var.rsa_public_key_path)
+  }
+  size      = var.zk_inference_size
+  region    = var.region
+  image     = var.os_image
+  disk_size = var.zk_inference_disk_size
+  replicas  = 1
+
+  kms                  = var.kms
+  listed               = var.listed
+  node_id              = var.node_id
+  custom_app_id        = var.custom_app_id
+  nonce                = var.nonce
+  storage_fs           = var.storage_fs
+  ssh_authorized_keys  = local.ssh_authorized_keys
+  pre_launch_script    = var.pre_launch_script
+  public_logs          = var.public_logs
+  public_sysinfo       = var.public_sysinfo
+  public_tcbinfo       = var.public_tcbinfo
+  gateway_enabled      = true
+  secure_time          = var.secure_time
+  wait_for_ready       = var.wait_for_ready
+  wait_timeout_seconds = var.wait_timeout_seconds
+}
+
 resource "phala_app" "ollama" {
   count = var.enable_ollama ? 1 : 0
 
@@ -421,6 +460,13 @@ resource "phala_cvm_power" "tee_inference" {
 
   wait_for_state       = true
   wait_timeout_seconds = var.wait_timeout_seconds
+}
+
+resource "phala_cvm_power" "zk_inference" {
+  count = var.enable_zk_inference && var.manage_power_state ? 1 : 0
+
+  cvm_id = phala_app.zk_inference[0].primary_cvm_id
+  state  = var.desired_power_state
 }
 
 resource "phala_cvm_power" "ollama" {

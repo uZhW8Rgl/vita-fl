@@ -23,6 +23,18 @@ variable "enable_tee_inference" {
   default     = false
 }
 
+variable "enable_zk_inference" {
+  description = "Deploy the separate ZK inference Phala app using W0 participant credentials."
+  type        = bool
+  default     = false
+}
+
+variable "zk_inference_app_name" {
+  description = "Name of the separate Phala app that generates and verifies EZKL proofs."
+  type        = string
+  default     = "master-thesis-zk-inference"
+}
+
 variable "tee_inference_app_name" {
   description = "Name of the Phala Cloud app that runs attested ChestMNIST inference."
   type        = string
@@ -65,7 +77,7 @@ variable "enable_phala_agent" {
 variable "agent_image" {
   description = "Digest-pinned LLM/MCP agent image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-agent:agent"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:3dee13858eafeee936b15339a67d3d59ed00be4cd8c812691e8ab98b22317286"
 
   validation {
     condition = (
@@ -79,7 +91,7 @@ variable "agent_image" {
 variable "transparency_log_image" {
   description = "Digest-pinned SCITT-CCF transparency-log image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-transparency-log:scitt"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-transparency-log@sha256:4c6789921d5ff89e546c65c435bc19d479acc8248715dff3f5b1536e2c8af723"
 
   validation {
     condition = (
@@ -287,6 +299,12 @@ variable "tee_inference_size" {
   default     = "tdx.small"
 }
 
+variable "zk_inference_size" {
+  description = "Phala CVM size slug for the separate ZK inference app."
+  type        = string
+  default     = "tdx.small"
+}
+
 variable "ollama_size" {
   description = "Phala CVM size slug for the separate Ollama app."
   type        = string
@@ -319,6 +337,12 @@ variable "worker_disk_size" {
 
 variable "tee_inference_disk_size" {
   description = "Disk size in GB for the TEE inference app."
+  type        = number
+  default     = 20
+}
+
+variable "zk_inference_disk_size" {
+  description = "Disk size in GB for the separate ZK inference app."
   type        = number
   default     = 20
 }
@@ -499,6 +523,26 @@ variable "tee_inference_image" {
     condition     = can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.tee_inference_image))
     error_message = "tee_inference_image must be a digest-pinned ghcr.io reference."
   }
+}
+
+variable "zk_inference_image" {
+  description = "Digest-pinned ZK inference container image."
+  type        = string
+  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference:latest"
+
+  validation {
+    condition = (
+      !var.enable_zk_inference ||
+      can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.zk_inference_image))
+    )
+    error_message = "zk_inference_image must be digest-pinned when ZK inference is enabled."
+  }
+}
+
+variable "zk_inference_url_override" {
+  description = "HTTPS endpoint for the separately deployed ZK inference app consumed by the agent."
+  type        = string
+  default     = null
 }
 
 variable "anvil_image" {

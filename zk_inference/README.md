@@ -2,6 +2,20 @@
 
 This directory exports a trained DFL model into an EZKL-compatible inference pipeline and generates a proof for a single dataset image.
 
+In the Phala deployment it is a separate TEE. It starts without a model and
+provides a job API:
+
+- `POST /v1/models/fetch` reads the current model references from the blockchain,
+  downloads and decrypts the bundle, verifies the registered aggregator
+  signature, and exports the model inside the TEE.
+- `POST /v1/jobs` selects a ChestMNIST image and returns an opaque, model-bound
+  job ID; no filesystem path leaves the service.
+- `POST /v1/jobs/{job_id}/run-and-verify` generates and verifies the EZKL proof
+  atomically and returns only verified metadata and artifact hashes.
+
+All model, query, and proof artifacts live in the service's per-run runtime
+directory and are discarded with the container.
+
 `neural_network` is the source of truth for:
 
 - model class,

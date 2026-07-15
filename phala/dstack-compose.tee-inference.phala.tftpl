@@ -3,7 +3,6 @@ services:
     image: ${tee_inference_image}
     restart: unless-stopped
     volumes:
-      - tee-model:/app/model
       - /var/run/dstack.sock:/var/run/dstack.sock
     ports:
       - "8080:8080"
@@ -16,7 +15,8 @@ services:
       RPC_URL: "${rpc_url}"
       KUBO_API: "${kubo_api_url}"
       KUBO_GATEWAY: "${kubo_gateway_url}"
-      TEE_MODEL_DIR: /app/model
-
-volumes:
-  tee-model:
+      TEE_MODEL_DIR: /tmp/tee-inference/model
+      TEE_JOB_DIR: /tmp/tee-inference/jobs
+      CHESTMNIST_TEST_DATA: /app/data/chestmnist/test_data/test-data.npz
+    tmpfs:
+      - /tmp/tee-inference:size=1024m,mode=0700,uid=10001,gid=10001

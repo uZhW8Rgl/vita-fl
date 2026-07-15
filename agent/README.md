@@ -2,13 +2,15 @@
 
 This folder contains the local agent layer around the DFL and ZK inference pipeline.
 
-The implementation exposes the existing three-step ZK workflow plus one
-fail-closed TEE inference skill:
+The implementation exposes two separate three-step, job-based workflows. TEE
+inference and ZK inference each run in their own Phala TEE:
 
-1. `fetch_latest_verified_model_bundle()`
-2. `generate_random_chestmnist_image(...)`
-3. `generate_zk_inference_proof()`
-4. `run_verified_tee_inference(...)`
+1. `fetch_latest_verified_tee_model_bundle()`
+2. `generate_random_tee_chestmnist_image(...)`
+3. `run_and_verify_tee_inference(job_id)`
+4. `fetch_latest_verified_zk_model_bundle()`
+5. `generate_random_zk_chestmnist_image(...)`
+6. `generate_and_verify_zk_inference_proof(job_id)`
 
 The shared skill orchestration now lives in `agent/agent_skills.py`. MCP, the deterministic CLI path, and the LangChain/Ollama chat layer use that skill layer instead of each implementing the workflow independently.
 
@@ -19,14 +21,15 @@ Together they cover the normal flow in separate steps:
 3. Decrypt the model bundle for the intended recipient.
 4. Read the last aggregator's public key from `DeviceRegistry`.
 5. Verify the model signature with RSA-SHA256 and PKCS1v15 padding.
-6. Export the verified model to ONNX through `zk_inference`.
-7. Create a single-image query for the active dataset and write `zk_inference/out/input.json`.
-8. Run EZKL against that prepared `input.json` to generate and verify a proof for the prediction.
+6. Keep model and query artifacts inside the selected inference TEE, addressed
+   only through an opaque job ID.
+7. In the ZK service, export the verified model and create a single-image EZKL query.
+8. Generate and verify the EZKL proof in one final, fail-closed tool call.
 
 The smart contracts are the source of truth. Direct IPFS scanning is kept only as a debug fallback.
 
-`run_verified_tee_inference` is deliberately a single toolcall. It selects a
-ChestMNIST test image, calls the digest-pinned Phala TEE, verifies the AIR
+The third TEE toolcall runs and verifies one previously prepared job. It calls
+the digest-pinned Phala TEE, verifies the AIR
 signature and request/model/response hashes, compares REPORTDATA with the TDX
 Quote V4, replays RTMR3, checks the measured `app_compose` and image digest,
 registers the exact verified evidence bytes with SCITT-CCF, and verifies the
@@ -42,9 +45,9 @@ step until the existing on-chain verifier is connected to this tool.
 
 When deployed through Terraform, chat readiness depends only on the separately
 deployed, Bearer-authenticated Ollama service and its configured model. The
-agent can therefore run before TEE inference exists. If `TEE_INFERENCE_URL` is
-unset, only `run_verified_tee_inference` fails with a configuration error; the
-chat service and the remaining tools stay available.
+agent can therefore run before either inference service exists. If an inference
+endpoint is unset, only that workflow fails with a configuration error; the
+chat service and the other tools stay available.
 
 ## Install
 
@@ -226,18 +229,25 @@ Run the MCP server directly:
 
 The MCP server does not reimplement proof logic. It wraps the existing scripts in `zk_inference`.
 
-The public MCP tools are the skill-oriented entry points:
+The public MCP tools are the six job-oriented entry points:
 
-- `fetch_latest_verified_model_bundle()` resolves the current on-chain bundle, downloads it, decrypts it, verifies the signature, and exports the verified model.
-- `generate_random_chestmnist_image(...)` prepares one ChestMNIST sample and writes the EZKL input artifacts.
-- `generate_zk_inference_proof()` runs EZKL against the already prepared artifacts.
-- `run_verified_tee_inference(index=None)` performs TEE inference, all local
+- `fetch_latest_verified_tee_model_bundle()` makes the TEE obtain, decrypt, and
+  verify the current model directly from the blockchain and IPFS references.
+- `generate_random_tee_chestmnist_image(index=None)` creates a model-bound,
+  opaque TEE job ID without exposing a container path.
+- `run_and_verify_tee_inference(job_id)` performs TEE inference, all local
   AIR/TDX, RTMR3, Compose and image-policy checks, SCITT registration, and CCF
   receipt verification in one fail-closed call.
+- `fetch_latest_verified_zk_model_bundle()` makes the ZK TEE obtain, decrypt,
+  verify, and export the current on-chain model.
+- `generate_random_zk_chestmnist_image(index=None)` creates an opaque,
+  model-bound ZK job and its private query artifacts.
+- `generate_and_verify_zk_inference_proof(job_id)` generates and verifies the
+  EZKL proof in the ZK TEE before returning verified metadata and artifact hashes.
 
-Lower-level TEE execution and verification functions are internal helpers and
-are not exposed as independent MCP tools. Configure the combined tool with
-`TEE_INFERENCE_URL`, `TEE_INFERENCE_IMAGE_DIGEST`, `CHESTMNIST_TEST_DATA`,
+Container paths are internal and are not exposed as MCP arguments. Configure
+the inference workflows with `TEE_INFERENCE_URL`, `ZK_INFERENCE_URL`,
+`TEE_INFERENCE_IMAGE_DIGEST`, `CHESTMNIST_TEST_DATA`,
 `TEE_INFERENCE_EVIDENCE_PATH`, `SCITT_URL`, `SCITT_DEVELOPMENT`,
 `SCITT_SIGNER_DIR`, and `SCITT_TRANSPARENT_STATEMENT_PATH` when the defaults do
 not match the deployment. `SCITT_DEVELOPMENT=1` is only appropriate for the

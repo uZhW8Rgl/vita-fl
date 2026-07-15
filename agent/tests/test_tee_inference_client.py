@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import cbor2
 from nacl.signing import SigningKey
@@ -13,6 +15,10 @@ from agent.tee_inference_client import (
     TDX_REPORTDATA_OFFSET,
     TDX_RTMR3_OFFSET,
     TeeInferenceVerificationError,
+    _prepare_model,
+    fetch_latest_verified_tee_model_bundle,
+    generate_random_tee_chestmnist_image,
+    run_and_verify_tee_inference,
     verify_tee_inference_bundle,
 )
 from tee_inference.air.v1 import AirClaims, emit_receipt
@@ -21,6 +27,32 @@ from tee_inference.protocol.v1 import build_response, decode_manifest, encode_de
 ROOT = Path(__file__).resolve().parents[2]
 VECTOR = ROOT / "tee_inference" / "vectors" / "v1-chestmnist.json"
 IMAGE_DIGEST = "sha256:" + "cf" * 32
+
+
+class _JsonResponse:
+    def __init__(self, value: dict[str, object]) -> None:
+        self._body = json.dumps(value).encode()
+
+    def __enter__(self) -> "_JsonResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, limit: int) -> bytes:
+        return self._body[:limit]
+
+
+class _Headers:
+    @staticmethod
+    def get_content_type() -> str:
+        return "application/cbor"
+
+
+class _CborResponse(_JsonResponse):
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+        self.headers = _Headers()
 
 
 def _extend(events: list[dict[str, object]]) -> bytes:
@@ -135,6 +167,86 @@ def valid_fixture() -> tuple[bytes, bytes]:
 
 
 class TeeInferenceBundleTests(unittest.TestCase):
+    def test_combined_tee_tool_verifies_and_transparency_logs_job(self) -> None:
+        request, bundle = valid_fixture()
+        job_id = "ab" * 16
+        manifest_hash = hashlib.sha256(cbor2.loads(bundle)[9]).hexdigest()
+        metadata = _JsonResponse(
+            {
+                "ok": True,
+                "job_id": job_id,
+                "source_index": 3,
+                "ground_truth": ["mass"],
+                "manifest_sha256": manifest_hash,
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch(
+                    "agent.tee_inference_client.urllib.request.urlopen",
+                    side_effect=[metadata, _CborResponse(bundle)],
+                ),
+                patch(
+                    "agent.scitt_client.register_verified_evidence",
+                    return_value={
+                        "evidence_sha256": hashlib.sha256(bundle).hexdigest(),
+                        "status": "registered-and-receipt-verified",
+                    },
+                ),
+            ):
+                result = run_and_verify_tee_inference(
+                    job_id,
+                    endpoint="https://tee.example",
+                    expected_image_digest=IMAGE_DIGEST,
+                    evidence_path=str(Path(directory) / "latest-evidence.cbor"),
+                )
+        self.assertEqual(cbor2.loads(bundle)[2], request)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["job_id"], job_id)
+        self.assertEqual(result["sample_index"], 3)
+        self.assertEqual(result["ground_truth"], ["mass"])
+        self.assertEqual(result["transparency_log"]["status"], "registered-and-receipt-verified")
+
+    def test_model_and_image_tools_use_job_api_without_paths(self) -> None:
+        responses = [
+            _JsonResponse(
+                {
+                    "ok": True,
+                    "status": "ok",
+                    "model_loaded": True,
+                    "model_sha256": "11" * 32,
+                    "manifest_sha256": "22" * 32,
+                }
+            ),
+            _JsonResponse(
+                {
+                    "ok": True,
+                    "job_id": "ab" * 16,
+                    "source_index": 7,
+                    "ground_truth": ["mass"],
+                    "manifest_sha256": "22" * 32,
+                }
+            ),
+        ]
+        with patch("agent.tee_inference_client.urllib.request.urlopen", side_effect=responses) as urlopen:
+            model = fetch_latest_verified_tee_model_bundle(endpoint="https://tee.example")
+            job = generate_random_tee_chestmnist_image(index=7, endpoint="https://tee.example")
+        requests = [call.args[0] for call in urlopen.call_args_list]
+        self.assertEqual(requests[0].full_url, "https://tee.example/v1/models/fetch")
+        self.assertEqual(requests[1].full_url, "https://tee.example/v1/jobs")
+        self.assertNotIn("path", model)
+        self.assertEqual(job["job_id"], "ab" * 16)
+
+    def test_agent_prepares_current_model_within_tool_call(self) -> None:
+        manifest_hash = "12" * 32
+        response = _JsonResponse({"status": "ok", "model_loaded": True, "manifest_sha256": manifest_hash})
+        with patch("agent.tee_inference_client.urllib.request.urlopen", return_value=response) as urlopen:
+            result = _prepare_model("https://tee.example", 30)
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.full_url, "https://tee.example/v1/prepare")
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(result["manifest_sha256"], manifest_hash)
+
     def test_valid_bundle_verifies(self) -> None:
         request, bundle = valid_fixture()
         result = verify_tee_inference_bundle(bundle, request, IMAGE_DIGEST)

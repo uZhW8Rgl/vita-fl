@@ -50,8 +50,38 @@ GENERATE_ZK_INFERENCE_PROOF_SKILL = SkillSpec(
     ),
 )
 
-RUN_VERIFIED_TEE_INFERENCE_SKILL = SkillSpec(
-    name="run_verified_tee_inference",
+FETCH_LATEST_VERIFIED_ZK_MODEL_BUNDLE_SKILL = SkillSpec(
+    name="fetch_latest_verified_zk_model_bundle",
+    summary="Make the ZK TEE fetch, decrypt, verify, and export the current on-chain model.",
+    stages=("resolve_bundle", "decrypt_bundle", "verify_signature", "export_model"),
+)
+
+GENERATE_RANDOM_ZK_CHESTMNIST_IMAGE_SKILL = SkillSpec(
+    name="generate_random_zk_chestmnist_image",
+    summary="Create a model-bound ChestMNIST proof job inside the ZK TEE.",
+    stages=("select_sample", "prepare_query"),
+)
+
+GENERATE_AND_VERIFY_ZK_INFERENCE_PROOF_SKILL = SkillSpec(
+    name="generate_and_verify_zk_inference_proof",
+    summary="Generate and verify an EZKL proof for the prepared ZK job.",
+    stages=("generate_witness", "generate_proof", "verify_proof"),
+)
+
+FETCH_LATEST_VERIFIED_TEE_MODEL_BUNDLE_SKILL = SkillSpec(
+    name="fetch_latest_verified_tee_model_bundle",
+    summary="Make the TEE fetch, decrypt, and verify the current on-chain model bundle.",
+    stages=("resolve_bundle", "decrypt_bundle", "verify_signature"),
+)
+
+GENERATE_RANDOM_TEE_CHESTMNIST_IMAGE_SKILL = SkillSpec(
+    name="generate_random_tee_chestmnist_image",
+    summary="Create a model-bound ChestMNIST inference job inside the TEE.",
+    stages=("select_sample", "bind_sample_to_model"),
+)
+
+RUN_AND_VERIFY_TEE_INFERENCE_SKILL = SkillSpec(
+    name="run_and_verify_tee_inference",
     summary=(
         "Run one ChestMNIST inference in the Phala TEE and return it only after "
         "AIR, quote-binding, RTMR3, and image-policy verification."
@@ -69,10 +99,12 @@ RUN_VERIFIED_TEE_INFERENCE_SKILL = SkillSpec(
 )
 
 AGENT_SKILL_SPECS: tuple[SkillSpec, ...] = (
-    FETCH_LATEST_VERIFIED_MODEL_BUNDLE_SKILL,
-    GENERATE_RANDOM_CHESTMNIST_IMAGE_SKILL,
-    GENERATE_ZK_INFERENCE_PROOF_SKILL,
-    RUN_VERIFIED_TEE_INFERENCE_SKILL,
+    FETCH_LATEST_VERIFIED_ZK_MODEL_BUNDLE_SKILL,
+    GENERATE_RANDOM_ZK_CHESTMNIST_IMAGE_SKILL,
+    GENERATE_AND_VERIFY_ZK_INFERENCE_PROOF_SKILL,
+    FETCH_LATEST_VERIFIED_TEE_MODEL_BUNDLE_SKILL,
+    GENERATE_RANDOM_TEE_CHESTMNIST_IMAGE_SKILL,
+    RUN_AND_VERIFY_TEE_INFERENCE_SKILL,
 )
 
 

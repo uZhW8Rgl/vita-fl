@@ -1,3 +1,5 @@
-torch
-onnx
-onnxscript
+torch==2.8.0
+onnx==1.22.0
+onnxscript==0.7.1
+cbor2==5.9.0
+cryptography==46.0.7

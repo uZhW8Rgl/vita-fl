@@ -100,6 +100,9 @@ jobs:
       - name: Run agent unit tests
         run: PYTHONPATH=. python -m unittest discover -s agent/tests -v
 
+      - name: Run ZK inference unit tests
+        run: PYTHONPATH=. python -m unittest discover -s zk_inference/tests -v
+
       - name: Run transparency-log unit tests
         run: PYTHONPATH=. python -m unittest discover -s transparency_log -v
 

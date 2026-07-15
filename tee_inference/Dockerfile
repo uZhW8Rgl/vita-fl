@@ -7,7 +7,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/app \
     DATASET_NAME=chestmnist \
-    TEE_MODEL_DIR=/app/model
+    TEE_MODEL_DIR=/tmp/tee-inference/model \
+    TEE_JOB_DIR=/tmp/tee-inference/jobs \
+    CHESTMNIST_TEST_DATA=/app/data/chestmnist/test_data/test-data.npz
 
 WORKDIR /app
 
@@ -26,7 +28,9 @@ RUN python -m pip install --upgrade pip && \
 COPY --chown=tee-inference:tee-inference tee_inference /app/tee_inference
 COPY --chown=tee-inference:tee-inference dfl/neural_network /app/dfl/neural_network
 COPY --chown=tee-inference:tee-inference agent/blockchain_source.py agent/ipfs_bundle.py /app/agent/
-RUN mkdir -p /app/model && chown tee-inference:tee-inference /app/model
+COPY --chown=tee-inference:tee-inference data/chestmnist/test_data/test-data.npz /app/data/chestmnist/test_data/test-data.npz
+RUN mkdir -p /tmp/tee-inference/model /tmp/tee-inference/jobs && \
+    chown -R tee-inference:tee-inference /tmp/tee-inference
 
 USER 10001:10001
 

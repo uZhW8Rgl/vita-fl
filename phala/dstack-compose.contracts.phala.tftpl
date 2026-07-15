@@ -206,8 +206,8 @@ services:
       DATASET_NAME: "${dataset_name}"
       RPC_URL: http://anvil:8545
       IPFS_API_URL: http://ipfs:5001
-      GM_STORAGE_ADDRESS: 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
-      REGISTRY_ADDRESS: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+      GM_STORAGE_ADDRESS: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+      REGISTRY_ADDRESS: "0x5FbDB2315678afecb367f032d93F642f64180aa3"
       ACCOUNT_ADDRESS: "${w0_account_address}"
       RSA_PRIVATE_KEY: "$${AGENT_RSA_PRIVATE_KEY}"
       RSA_PUBLIC_KEY: "$${AGENT_RSA_PUBLIC_KEY}"
@@ -219,6 +219,7 @@ services:
       AGENT_PORT: "8089"
       AGENT_DOWNLOAD_DIR: /tmp/agent-downloads
       TEE_INFERENCE_URL: "${tee_inference_url}"
+      ZK_INFERENCE_URL: "${zk_inference_url}"
       TEE_INFERENCE_IMAGE_DIGEST: "${tee_inference_image_digest}"
       TEE_INFERENCE_EVIDENCE_PATH: /tmp/tee-inference/latest-evidence.cbor
       SCITT_URL: https://transparency-log:8000
@@ -235,9 +236,9 @@ services:
       - --rpc-url
       - http://anvil:8545
       - --gm-storage-address
-      - 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+      - "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
       - --registry-address
-      - 0x5FbDB2315678afecb367f032d93F642f64180aa3
+      - "0x5FbDB2315678afecb367f032d93F642f64180aa3"
       - --ipfs-api-url
       - http://ipfs:5001
       - --skip-calibration
