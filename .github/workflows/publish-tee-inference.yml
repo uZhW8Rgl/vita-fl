@@ -77,6 +77,7 @@ jobs:
           cp data/chestmnist/test_data/test-data.npz "$context/data/chestmnist/test_data/"
           find "$context" -type d -name __pycache__ -prune -exec rm -rf {} +
           test -s "$context/data/chestmnist/test_data/test-data.npz"
+          ls -lh "$context/data/chestmnist/test_data/test-data.npz"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

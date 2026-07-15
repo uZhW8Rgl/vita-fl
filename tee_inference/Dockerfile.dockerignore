@@ -7,3 +7,7 @@
 !agent/
 !agent/blockchain_source.py
 !agent/ipfs_bundle.py
+!data/
+!data/chestmnist/
+!data/chestmnist/test_data/
+!data/chestmnist/test_data/test-data.npz
