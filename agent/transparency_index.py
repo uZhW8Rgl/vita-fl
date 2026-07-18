@@ -77,6 +77,7 @@ def record_transparency_entry(
 def read_transparency_entries(
     *,
     limit: int = 100,
+    token_ref: str | None = None,
     index_path: Path | None = None,
 ) -> list[dict[str, Any]]:
     path = index_path or DEFAULT_INDEX_PATH
@@ -91,5 +92,7 @@ def read_transparency_entries(
         except json.JSONDecodeError:
             continue
         if isinstance(record, dict):
+            if token_ref is not None and str((record.get("verification") or {}).get("token_ref", "")) != token_ref:
+                continue
             records.append(record)
     return records[-max(1, min(limit, 500)) :][::-1]

@@ -6,6 +6,7 @@ on:
       - tee_inference
     paths:
       - "agent/**"
+      - "agent_receipts/**"
       - "tee_inference/air/**"
       - "tee_inference/protocol/**"
       - "tee_inference/vectors/**"

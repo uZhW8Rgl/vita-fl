@@ -88,6 +88,8 @@ locals {
     max_dynamic_workers             = var.max_dynamic_workers
     region                          = var.region
     os_image                        = var.os_image
+    sello_required                  = var.enable_sello_receipts ? "1" : "0"
+    sello_scitt_url                 = var.sello_scitt_url
   })
 
   ssh_authorized_keys = var.ssh_public_key_path == null ? [] : [trimspace(file(var.ssh_public_key_path))]
@@ -157,16 +159,19 @@ resource "phala_app" "contract_runtime" {
     INITIAL_GM_SIGNING_KEY                 = file(var.initial_gm_signing_key_path)
     INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY = file(var.rsa_public_key_path)
     }, var.enable_phala_control_api ? {
-    PHALA_CLOUD_API_KEY            = var.phala_cloud_api_key
-    DYNAMIC_WORKER_INVENTORY       = var.dynamic_worker_inventory
-    CONTROL_ADMIN_TOKEN            = var.control_admin_token
+    PHALA_CLOUD_API_KEY      = var.phala_cloud_api_key
+    DYNAMIC_WORKER_INVENTORY = var.dynamic_worker_inventory
+    CONTROL_ADMIN_TOKEN      = var.control_admin_token
     } : {}, var.enable_phala_ui ? {
     UI_BASIC_AUTH_USERNAME = var.ui_basic_auth_username
     UI_BASIC_AUTH_PASSWORD = var.ui_basic_auth_password
     } : {}, var.enable_phala_agent ? {
-    AGENT_RSA_PRIVATE_KEY = file(var.rsa_private_key_path)
-    AGENT_RSA_PUBLIC_KEY  = file(var.rsa_public_key_path)
-    OLLAMA_API_TOKEN      = var.ollama_api_token
+    AGENT_RSA_PRIVATE_KEY           = file(var.rsa_private_key_path)
+    AGENT_RSA_PUBLIC_KEY            = file(var.rsa_public_key_path)
+    OLLAMA_API_TOKEN                = var.ollama_api_token
+    SELLO_TOKEN_ISSUER_SIGNING_SEED = var.sello_token_issuer_signing_seed
+    SELLO_OWNER_HPKE_PRIVATE_KEY    = var.sello_owner_hpke_private_key
+    SELLO_SERVICE_REGISTRY          = var.sello_service_registry
   } : {})
   size = var.contracts_size
 
@@ -327,10 +332,14 @@ resource "phala_app" "tee_inference" {
     rpc_url             = local.inference_runtime_rpc_url
     kubo_api_url        = local.inference_runtime_kubo_api_url
     kubo_gateway_url    = local.inference_runtime_kubo_gateway_url
+    sello_required      = var.enable_sello_receipts ? "1" : "0"
+    sello_scitt_url     = var.sello_scitt_url
   })
   env = {
-    RSA_PRIVATE_KEY = file(var.rsa_private_key_path)
-    RSA_PUBLIC_KEY  = file(var.rsa_public_key_path)
+    RSA_PRIVATE_KEY               = file(var.rsa_private_key_path)
+    RSA_PUBLIC_KEY                = file(var.rsa_public_key_path)
+    SELLO_SERVICE_SIGNING_SEED    = var.sello_tee_service_signing_seed
+    SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
   }
   size = var.tee_inference_size
 
@@ -369,10 +378,14 @@ resource "phala_app" "zk_inference" {
     rpc_url            = local.inference_runtime_rpc_url
     kubo_api_url       = local.inference_runtime_kubo_api_url
     kubo_gateway_url   = local.inference_runtime_kubo_gateway_url
+    sello_required     = var.enable_sello_receipts ? "1" : "0"
+    sello_scitt_url    = var.sello_scitt_url
   })
   env = {
-    RSA_PRIVATE_KEY = file(var.rsa_private_key_path)
-    RSA_PUBLIC_KEY  = file(var.rsa_public_key_path)
+    RSA_PRIVATE_KEY               = file(var.rsa_private_key_path)
+    RSA_PUBLIC_KEY                = file(var.rsa_public_key_path)
+    SELLO_SERVICE_SIGNING_SEED    = var.sello_zk_service_signing_seed
+    SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
   }
   size      = var.zk_inference_size
   region    = var.region

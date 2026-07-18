@@ -258,6 +258,38 @@ The public MCP tools are the six job-oriented entry points:
 - `generate_and_verify_zk_inference_proof(job_id)` generates and verifies the
   EZKL proof in the ZK TEE before returning verified metadata and artifact hashes.
 
+### Receiver-attested tool receipts
+
+When `SELLO_REQUIRED=1`, every one of these six calls uses the receiver-attested
+receipt profile derived from *Notarized Agents* (Sello v0.1). The agent presents
+an Ed25519-signed compact JWS whose claims bind the owner's X25519 public key and
+the permitted public SCITT URL. The independently deployed TEE or ZK service hashes the
+canonical tool input and exact response bytes, HPKE-encrypts the CBOR receipt
+body to that owner key, and signs the encrypted envelope as COSE_Sign1 with its
+own Ed25519 key. Before releasing the response, the receiver submits the envelope
+directly to SCITT-CCF and verifies the returned inclusion receipt. The agent then
+verifies the receiver envelope and the returned transparent statement; it never
+publishes the receipt itself.
+
+Successful and failed receiver calls are recorded as `agent-tool-receipt`
+entries. A missing, modified, incorrectly signed, wrong-service, wrong-token,
+input/output-substituted, or non-included receipt fails closed. An inference
+result is not released if direct SCITT publication fails.
+
+Generate a coherent prototype key set with:
+
+```bash
+python phala/generate_sello_env.py --scitt-url https://CONTRACT_APP_ID-8000.dstack-REGION.phala.network
+```
+
+Copy the resulting lines into `.env.phala.anvil`, then keep
+`ENABLE_SELLO_RECEIPTS=true`. The service signing seeds are injected only into
+their respective encrypted Phala app environments; the agent receives only the
+corresponding public-key registry.
+
+`SELLO_SCITT_URL` must be the contract-runtime gateway URL for port 8000, not
+the Compose-only hostname `transparency-log`.
+
 Container paths are internal and are not exposed as MCP arguments. Configure
 the inference workflows with `TEE_INFERENCE_URL`, `ZK_INFERENCE_URL`,
 `TEE_INFERENCE_IMAGE_DIGEST`, `CHESTMNIST_TEST_DATA`,

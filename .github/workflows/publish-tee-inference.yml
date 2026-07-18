@@ -6,6 +6,7 @@ on:
       - tee_inference
     paths:
       - "tee_inference/**"
+      - "agent_receipts/**"
       - "data/chestmnist/test_data/test-data.npz"
       - "dfl/neural_network/**"
       - "agent/blockchain_source.py"
@@ -72,6 +73,7 @@ jobs:
           rm -rf "$context"
           mkdir -p "$context/agent" "$context/data/chestmnist/test_data" "$context/dfl"
           cp -R tee_inference "$context/tee_inference"
+          cp -R agent_receipts "$context/agent_receipts"
           cp -R dfl/neural_network "$context/dfl/neural_network"
           cp agent/blockchain_source.py agent/ipfs_bundle.py "$context/agent/"
           cp data/chestmnist/test_data/test-data.npz "$context/data/chestmnist/test_data/"

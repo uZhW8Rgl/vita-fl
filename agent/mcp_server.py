@@ -111,23 +111,62 @@ def _local_tools():
     }
 
 
-def _remote_call(endpoint: str, payload: dict[str, Any], timeout: int = 120) -> dict[str, Any]:
+def _remote_call(
+    endpoint: str,
+    payload: dict[str, Any],
+    timeout: int = 120,
+    *,
+    receipt_action: str | None = None,
+    receipt_input: bytes | None = None,
+) -> dict[str, Any]:
     """Unified helper for POST requests to the remote zk_inference service."""
     if not ZK_INFERENCE_URL:
         raise RuntimeError("ZK_INFERENCE_URL is not set and local zk_inference tools are unavailable.")
 
     data = json.dumps(payload).encode("utf-8")
+    receiver_call = None
+    if receipt_action is not None:
+        try:
+            from .sello_client import begin_receiver_call
+        except ImportError:
+            from sello_client import begin_receiver_call
+        receiver_call = begin_receiver_call(receipt_action, "zk-inference", receipt_input or data)
+    headers = {"Content-Type": "application/json"}
+    if receiver_call is not None:
+        headers.update(receiver_call.headers)
     request = urllib.request.Request(
         f"{ZK_INFERENCE_URL}/{endpoint.lstrip('/')}",
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
+            body = response.read()
+            receipt_result = None
+            if receiver_call is not None:
+                try:
+                    from .sello_client import complete_receiver_call
+                except ImportError:
+                    from sello_client import complete_receiver_call
+                receipt_result = complete_receiver_call(
+                    receiver_call, response.headers, body, response.status, receiver_base_url=ZK_INFERENCE_URL
+                )
+            result = json.loads(body.decode("utf-8"))
+            if receipt_result is not None:
+                result["tool_receipt"] = receipt_result
+            return result
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
+        body_bytes = exc.read()
+        if receiver_call is not None:
+            try:
+                from .sello_client import complete_receiver_call
+            except ImportError:
+                from sello_client import complete_receiver_call
+            complete_receiver_call(
+                receiver_call, exc.headers, body_bytes, exc.code, receiver_base_url=ZK_INFERENCE_URL
+            )
+        body = body_bytes.decode("utf-8", errors="replace")
         raise RuntimeError(f"zk_inference service returned HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Could not reach zk_inference service at {ZK_INFERENCE_URL}: {exc}") from exc
@@ -269,7 +308,10 @@ def fetch_latest_verified_zk_model_bundle() -> str:
     """Fetch, decrypt, verify, and export the current on-chain model inside the ZK TEE."""
 
     record_mcp_tool_call("fetch_latest_verified_zk_model_bundle")
-    result = _remote_call("/v1/models/fetch", {}, timeout=600)
+    result = _remote_call(
+        "/v1/models/fetch", {}, timeout=600,
+        receipt_action="fetch_latest_verified_zk_model_bundle",
+    )
     return json.dumps(
         {"skill": "fetch_latest_verified_zk_model_bundle", "stage": "verified-model-ready", **result},
         indent=2,
@@ -281,7 +323,10 @@ def generate_random_zk_chestmnist_image(index: int | None = None) -> str:
     """Select a ChestMNIST sample inside the ZK TEE and return its model-bound job ID."""
 
     record_mcp_tool_call("generate_random_zk_chestmnist_image")
-    result = _remote_call("/v1/jobs", {"index": normalize_optional_index(index)})
+    result = _remote_call(
+        "/v1/jobs", {"index": normalize_optional_index(index)},
+        receipt_action="generate_random_zk_chestmnist_image",
+    )
     return json.dumps(
         {"skill": "generate_random_zk_chestmnist_image", "stage": "zk-query-ready", **result},
         indent=2,
@@ -295,7 +340,11 @@ def generate_and_verify_zk_inference_proof(job_id: str) -> str:
     record_mcp_tool_call("generate_and_verify_zk_inference_proof")
     if len(job_id) != 32 or any(character not in "0123456789abcdef" for character in job_id):
         raise ValueError("job_id must contain exactly 32 lowercase hexadecimal characters")
-    result = _remote_call(f"/v1/jobs/{job_id}/run-and-verify", {}, timeout=900)
+    result = _remote_call(
+        f"/v1/jobs/{job_id}/run-and-verify", {}, timeout=900,
+        receipt_action="generate_and_verify_zk_inference_proof",
+        receipt_input=json.dumps({"job_id": job_id}, sort_keys=True, separators=(",", ":")).encode(),
+    )
     if result.get("proof_verified") is not True:
         raise RuntimeError("zk_inference returned without a verified proof")
 

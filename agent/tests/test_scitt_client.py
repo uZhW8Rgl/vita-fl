@@ -21,9 +21,9 @@ class ScittClientTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "statement.cose"
             with (
-                patch("agent.scitt_client._load_or_create_signer", return_value=object()),
-                patch("agent.scitt_client._sign_evidence", return_value=signed),
-                patch("agent.scitt_client._submit_and_verify", return_value=(submission, details)),
+                patch("agent_receipts.scitt._load_or_create_signer", return_value=object()),
+                patch("agent_receipts.scitt._sign_evidence", return_value=signed),
+                patch("agent_receipts.scitt._submit_and_verify", return_value=(submission, details)),
             ):
                 result = register_verified_evidence(
                     evidence,
@@ -51,10 +51,10 @@ class ScittClientTests(unittest.TestCase):
         submission = SimpleNamespace(tx="4.1", response_bytes=b"transparent")
         with tempfile.TemporaryDirectory() as directory:
             with (
-                patch("agent.scitt_client._load_or_create_signer", return_value=object()),
-                patch("agent.scitt_client._sign_evidence", return_value=b"signed") as sign,
+                patch("agent_receipts.scitt._load_or_create_signer", return_value=object()),
+                patch("agent_receipts.scitt._sign_evidence", return_value=b"signed") as sign,
                 patch(
-                    "agent.scitt_client._submit_and_verify",
+                    "agent_receipts.scitt._submit_and_verify",
                     return_value=(submission, [{"regtxid": "4.1"}]),
                 ),
             ):

@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -26,6 +26,7 @@ RUN python -m pip install --upgrade pip && \
     rm /tmp/requirements.lock
 
 COPY --chown=tee-inference:tee-inference tee_inference /app/tee_inference
+COPY --chown=tee-inference:tee-inference agent_receipts /app/agent_receipts
 COPY --chown=tee-inference:tee-inference dfl/neural_network /app/dfl/neural_network
 COPY --chown=tee-inference:tee-inference agent/blockchain_source.py agent/ipfs_bundle.py /app/agent/
 COPY --chown=tee-inference:tee-inference data/chestmnist/test_data/test-data.npz /app/data/chestmnist/test_data/test-data.npz

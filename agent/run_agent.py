@@ -127,10 +127,11 @@ TRANSPARENCY_VIEW_HTML = """<!doctype html>
         const card = document.createElement("article");
         const top = document.createElement("div"); top.className = "top";
         const title = document.createElement("strong");
-        title.textContent = item.evidence_type === "zk-inference-proof" ? "EZKL inference proof" : "AIR / TDX inference receipt";
+        const isToolReceipt = item.evidence_type === "agent-tool-receipt";
+        title.textContent = isToolReceipt ? "Receiver-attested MCP tool receipt" : (item.evidence_type === "zk-inference-proof" ? "EZKL inference proof" : "AIR / TDX inference receipt");
         const badge = document.createElement("span");
         badge.className = item.evidence_type === "zk-inference-proof" ? "badge zk" : "badge";
-        badge.textContent = item.evidence_type === "zk-inference-proof" ? "ZK" : "TEE";
+        badge.textContent = isToolReceipt ? "TOOL" : (item.evidence_type === "zk-inference-proof" ? "ZK" : "TEE");
         top.append(title, badge);
         const list = document.createElement("dl");
         field(list, "SCITT status", item.status, "ok");
@@ -1037,12 +1038,12 @@ async def serve_agent(args: argparse.Namespace) -> None:
         return TRANSPARENCY_VIEW_HTML
 
     @app.get("/api/transparency/records")
-    async def transparency_records(limit: int = 100) -> dict[str, Any]:
+    async def transparency_records(limit: int = 100, token_ref: str | None = None) -> dict[str, Any]:
         try:
             from .transparency_index import read_transparency_entries
         except ImportError:
             from transparency_index import read_transparency_entries
-        return {"records": read_transparency_entries(limit=limit)}
+        return {"records": read_transparency_entries(limit=limit, token_ref=token_ref)}
 
     @app.get("/api/sessions")
     async def list_sessions() -> dict[str, Any]:

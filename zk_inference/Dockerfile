@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -50,6 +50,7 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
     done
 
 COPY zk_inference ./zk_inference
+COPY agent_receipts ./agent_receipts
 COPY dfl/neural_network ./dfl/neural_network
 COPY data/mnist_tools.py ./data/mnist_tools.py
 COPY data/chestmnist/test_data/test-data.npz ./data/chestmnist/test_data/test-data.npz

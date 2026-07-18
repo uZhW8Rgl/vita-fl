@@ -74,6 +74,63 @@ variable "enable_phala_agent" {
 
 }
 
+variable "enable_sello_receipts" {
+  description = "Require receiver-signed, owner-encrypted Sello receipts for all six public MCP tool calls."
+  type        = bool
+  default     = false
+}
+
+variable "sello_token_issuer_signing_seed" {
+  description = "Base64url or hexadecimal 32-byte Ed25519 seed used by the owner to issue tool authorization tokens."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "sello_owner_hpke_private_key" {
+  description = "Base64url or hexadecimal 32-byte X25519 private key used by the owner to decrypt tool receipts."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "sello_token_issuer_public_key" {
+  description = "Base64url or hexadecimal Ed25519 token-issuer public key trusted by inference services."
+  type        = string
+  default     = ""
+}
+
+variable "sello_tee_service_signing_seed" {
+  description = "Encrypted-env 32-byte Ed25519 seed held by the TEE inference receiver."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "sello_zk_service_signing_seed" {
+  description = "Encrypted-env 32-byte Ed25519 seed held by the ZK inference receiver."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "sello_service_registry" {
+  description = "JSON map from receiver service IDs to their base64url or hexadecimal Ed25519 public keys."
+  type        = string
+  default     = "{}"
+}
+
+variable "sello_scitt_url" {
+  description = "Public HTTPS URL of the SCITT service reachable by the separate TEE and ZK receiver CVMs."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_sello_receipts || can(regex("^https://", var.sello_scitt_url))
+    error_message = "sello_scitt_url must be a public HTTPS URL when Sello receipts are enabled."
+  }
+}
+
 variable "agent_image" {
   description = "Digest-pinned LLM/MCP agent image."
   type        = string
@@ -204,7 +261,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:8d371ab6daa173879801ed2834fab81e695b496193421950b7ddcb231d0afbbc"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:94c6a2312fa570de2d224a8f4e5173888048401e0d0201131fb59e252937166e"
 
   validation {
     condition = (

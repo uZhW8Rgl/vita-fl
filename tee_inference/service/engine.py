@@ -33,7 +33,10 @@ class ChestMnistTorchEngine:
         self.model_manifest_hash = model_manifest_hash
         self.model_artifact_hash = hashlib.sha256(self.model_path.read_bytes()).digest()
         torch.set_num_threads(1)
-        torch.set_num_interop_threads(1)
+        # PyTorch permits changing the inter-op pool only once and before work
+        # starts. Re-preparing the same lazy service must not call it again.
+        if torch.get_num_interop_threads() != 1:
+            torch.set_num_interop_threads(1)
         torch.use_deterministic_algorithms(True)
         self.model = read_model_bin(self.model_path).eval()
         self._validate_model_contract()

@@ -89,9 +89,25 @@ def _prepare_model(base_url: str, timeout: int) -> dict[str, Any]:
     return value
 
 
-def _json_request(base_url: str, path: str, timeout: int, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def _json_request(
+    base_url: str,
+    path: str,
+    timeout: int,
+    payload: dict[str, Any] | None = None,
+    *,
+    receipt_action: str | None = None,
+) -> dict[str, Any]:
     data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
     headers = {} if data is None else {"Content-Type": "application/json"}
+    receiver_call = None
+    if receipt_action is not None:
+        try:
+            from .sello_client import begin_receiver_call
+        except ImportError:
+            from sello_client import begin_receiver_call
+        receiver_call = begin_receiver_call(receipt_action, "tee-inference", data or b"")
+        if receiver_call is not None:
+            headers.update(receiver_call.headers)
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/{path.lstrip('/')}",
         data=data,
@@ -100,9 +116,30 @@ def _json_request(base_url: str, path: str, timeout: int, payload: dict[str, Any
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            value = json.loads(_read_limited(response, MAX_HEALTH_BYTES, f"{path} response"))
+            raw = _read_limited(response, MAX_HEALTH_BYTES, f"{path} response")
+            receipt_result = None
+            if receiver_call is not None:
+                try:
+                    from .sello_client import complete_receiver_call
+                except ImportError:
+                    from sello_client import complete_receiver_call
+                receipt_result = complete_receiver_call(
+                    receiver_call, response.headers, raw, response.status, receiver_base_url=base_url
+                )
+            value = json.loads(raw)
+            if receipt_result is not None:
+                value["tool_receipt"] = receipt_result
     except urllib.error.HTTPError as exc:
-        body = exc.read(4096).decode("utf-8", errors="replace")
+        raw = exc.read(4096)
+        if receiver_call is not None:
+            try:
+                from .sello_client import complete_receiver_call
+            except ImportError:
+                from sello_client import complete_receiver_call
+            complete_receiver_call(
+                receiver_call, exc.headers, raw, exc.code, receiver_base_url=base_url
+            )
+        body = raw.decode("utf-8", errors="replace")
         raise TeeInferenceVerificationError(f"TEE inference {path} returned HTTP {exc.code}: {body}") from exc
     except (urllib.error.URLError, json.JSONDecodeError) as exc:
         raise TeeInferenceVerificationError(f"TEE inference {path} request failed: {exc}") from exc
@@ -119,7 +156,10 @@ def fetch_latest_verified_tee_model_bundle(
     base_url = (endpoint or DEFAULT_TEE_INFERENCE_URL).rstrip("/")
     if not base_url:
         raise TeeInferenceVerificationError("TEE_INFERENCE_URL is not configured")
-    prepared = _json_request(base_url, "/v1/models/fetch", timeout_seconds, {})
+    prepared = _json_request(
+        base_url, "/v1/models/fetch", timeout_seconds, {},
+        receipt_action="fetch_latest_verified_tee_model_bundle",
+    )
     return {
         "skill": "fetch_latest_verified_tee_model_bundle",
         "stage": "verified-model-ready",
@@ -136,7 +176,10 @@ def generate_random_tee_chestmnist_image(
     base_url = (endpoint or DEFAULT_TEE_INFERENCE_URL).rstrip("/")
     if not base_url:
         raise TeeInferenceVerificationError("TEE_INFERENCE_URL is not configured")
-    job = _json_request(base_url, "/v1/jobs", timeout_seconds, {"index": index})
+    job = _json_request(
+        base_url, "/v1/jobs", timeout_seconds, {"index": index},
+        receipt_action="generate_random_tee_chestmnist_image",
+    )
     return {
         "skill": "generate_random_tee_chestmnist_image",
         "stage": "tee-query-ready",
@@ -145,20 +188,48 @@ def generate_random_tee_chestmnist_image(
     }
 
 
-def _post_job_inference(base_url: str, job_id: str, timeout: int) -> bytes:
+def _post_job_inference(base_url: str, job_id: str, timeout: int) -> tuple[bytes, dict[str, Any] | None]:
+    action_input = json.dumps({"job_id": job_id}, sort_keys=True, separators=(",", ":")).encode()
+    try:
+        from .sello_client import begin_receiver_call
+    except ImportError:
+        from sello_client import begin_receiver_call
+    receiver_call = begin_receiver_call("run_and_verify_tee_inference", "tee-inference", action_input)
+    headers = {"Accept": "application/cbor"}
+    if receiver_call is not None:
+        headers.update(receiver_call.headers)
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/v1/jobs/{job_id}/run",
         data=b"",
-        headers={"Accept": "application/cbor"},
+        headers=headers,
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             if response.headers.get_content_type() != "application/cbor":
                 raise TeeInferenceVerificationError("unexpected TEE job response content type")
-            return _read_limited(response, MAX_EVIDENCE_BYTES, "TEE job evidence bundle")
+            raw = _read_limited(response, MAX_EVIDENCE_BYTES, "TEE job evidence bundle")
+            receipt_result = None
+            if receiver_call is not None:
+                try:
+                    from .sello_client import complete_receiver_call
+                except ImportError:
+                    from sello_client import complete_receiver_call
+                receipt_result = complete_receiver_call(
+                    receiver_call, response.headers, raw, response.status, receiver_base_url=base_url
+                )
+            return raw, receipt_result
     except urllib.error.HTTPError as exc:
-        body = exc.read(4096).decode("utf-8", errors="replace")
+        raw = exc.read(4096)
+        if receiver_call is not None:
+            try:
+                from .sello_client import complete_receiver_call
+            except ImportError:
+                from sello_client import complete_receiver_call
+            complete_receiver_call(
+                receiver_call, exc.headers, raw, exc.code, receiver_base_url=base_url
+            )
+        body = raw.decode("utf-8", errors="replace")
         raise TeeInferenceVerificationError(f"TEE inference job returned HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
         raise TeeInferenceVerificationError(f"TEE inference job request failed: {exc}") from exc
@@ -398,7 +469,7 @@ def run_and_verify_tee_inference(
         raise TeeInferenceVerificationError("job_id must contain exactly 32 lowercase hexadecimal characters")
 
     metadata = _json_request(base_url, f"/v1/jobs/{job_id}", timeout_seconds)
-    bundle_bytes = _post_job_inference(base_url, job_id, timeout_seconds)
+    bundle_bytes, tool_receipt = _post_job_inference(base_url, job_id, timeout_seconds)
     bundle = _decode_bundle(bundle_bytes)
     exact_request = bundle[2]
     if not isinstance(exact_request, bytes):
@@ -464,6 +535,7 @@ def run_and_verify_tee_inference(
         "verification": verified,
         "transparency_log": transparency,
         "transparency_record_id": record["record_id"],
+        "tool_receipt": tool_receipt,
     }
 
 

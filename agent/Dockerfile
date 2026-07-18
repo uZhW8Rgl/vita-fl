@@ -29,6 +29,7 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
     done
 
 COPY agent ./agent
+COPY agent_receipts ./agent_receipts
 COPY data/mnist ./data/mnist
 COPY data/chestmnist/test_data/test-data.npz ./data/chestmnist/test_data/test-data.npz
 COPY tee_inference/air ./tee_inference/air

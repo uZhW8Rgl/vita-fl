@@ -31,6 +31,15 @@ output "grafana_endpoint" {
   ) : null
 }
 
+output "scitt_endpoint" {
+  description = "Public SCITT endpoint used for receiver-direct receipt publication."
+  value = var.enable_phala_agent ? (
+    can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
+    ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8000.")
+    : "${local.contracts_endpoint_base}:8000"
+  ) : null
+}
+
 output "worker_app_id" {
   description = "Phala application ID for the worker TEE."
   value       = try(phala_app.dfl_worker[0].app_id, null)

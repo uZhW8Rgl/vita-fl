@@ -294,6 +294,26 @@ configure_phala_agent() {
   append_var_if_set "ollama_base_url_override" "OLLAMA_BASE_URL_OVERRIDE"
   append_var_if_set "tee_inference_url_override" "TEE_INFERENCE_URL_OVERRIDE"
   append_var_if_set "zk_inference_url_override" "ZK_INFERENCE_URL_OVERRIDE"
+  local sello_enabled
+  sello_enabled=$(read_env_value "ENABLE_SELLO_RECEIPTS")
+  sello_enabled="${sello_enabled:-false}"
+  export TF_VAR_enable_sello_receipts="${sello_enabled}"
+  if [ "${sello_enabled}" = "1" ] || [ "${sello_enabled}" = "true" ]; then
+    export TF_VAR_sello_token_issuer_signing_seed
+    TF_VAR_sello_token_issuer_signing_seed=$(require_env_value "SELLO_TOKEN_ISSUER_SIGNING_SEED")
+    export TF_VAR_sello_owner_hpke_private_key
+    TF_VAR_sello_owner_hpke_private_key=$(require_env_value "SELLO_OWNER_HPKE_PRIVATE_KEY")
+    export TF_VAR_sello_token_issuer_public_key
+    TF_VAR_sello_token_issuer_public_key=$(require_env_value "SELLO_TOKEN_ISSUER_PUBLIC_KEY")
+    export TF_VAR_sello_tee_service_signing_seed
+    TF_VAR_sello_tee_service_signing_seed=$(require_env_value "SELLO_TEE_SERVICE_SIGNING_SEED")
+    export TF_VAR_sello_zk_service_signing_seed
+    TF_VAR_sello_zk_service_signing_seed=$(require_env_value "SELLO_ZK_SERVICE_SIGNING_SEED")
+    export TF_VAR_sello_service_registry
+    TF_VAR_sello_service_registry=$(require_env_value "SELLO_SERVICE_REGISTRY")
+    export TF_VAR_sello_scitt_url
+    TF_VAR_sello_scitt_url=$(require_env_value "SELLO_SCITT_URL")
+  fi
   if [ "${ollama_enabled}" = "1" ] || [ "${ollama_enabled}" = "true" ]; then
     export TF_VAR_ollama_api_token
     TF_VAR_ollama_api_token=$(require_env_value "OLLAMA_API_TOKEN")

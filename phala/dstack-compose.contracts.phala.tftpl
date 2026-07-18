@@ -176,6 +176,8 @@ services:
   transparency-log:
     image: ${transparency_log_image}
     restart: unless-stopped
+    ports:
+      - "8000:8000"
     environment:
       SCITT_DATA_DIR: /data
       SCITT_HOST: 0.0.0.0
@@ -228,6 +230,11 @@ services:
       SCITT_SIGNER_DIR: /tmp/agent-scitt
       SCITT_TRANSPARENT_STATEMENT_PATH: /tmp/tee-inference/latest-transparent-statement.cose
       TRANSPARENCY_INDEX_PATH: /tmp/transparency-log/records.jsonl
+      SELLO_REQUIRED: "${sello_required}"
+      SELLO_TOKEN_ISSUER_SIGNING_SEED: "$${SELLO_TOKEN_ISSUER_SIGNING_SEED}"
+      SELLO_OWNER_HPKE_PRIVATE_KEY: "$${SELLO_OWNER_HPKE_PRIVATE_KEY}"
+      SELLO_SERVICE_REGISTRY: "$${SELLO_SERVICE_REGISTRY}"
+      SELLO_LOG_URLS: "${sello_scitt_url}"
     command:
       - python
       - agent/run_agent.py

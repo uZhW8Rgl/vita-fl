@@ -340,3 +340,18 @@ as soon as Ollama has loaded the model. Configure `TEE_INFERENCE_URL_OVERRIDE`
 only when the separate inference app is available; until then, only the
 `run_verified_tee_inference` MCP tool reports that its endpoint is not
 configured.
+
+For receiver-attested confidential receipts on all six public MCP tools,
+generate the Sello key material once and add its output to `.env.phala.anvil`:
+
+```bash
+python phala/generate_sello_env.py --scitt-url https://CONTRACT_APP_ID-8000.dstack-REGION.phala.network
+```
+
+With `ENABLE_SELLO_RECEIPTS=true`, Terraform gives each inference receiver only
+its own signing seed and the token-issuer public key. The agent receives the
+owner token/HPKE private material and a public registry for both receivers. Each
+receiver registers its signed, owner-encrypted receipt directly with SCITT and
+releases the tool response only after verifying the inclusion receipt. Set
+`SELLO_SCITT_URL` to the contract-runtime app's public port-8000 gateway URL so
+the separate inference CVMs can reach it.

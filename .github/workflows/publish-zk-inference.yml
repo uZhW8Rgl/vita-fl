@@ -6,6 +6,7 @@ on:
       - tee_inference
     paths:
       - "zk_inference/**"
+      - "agent_receipts/**"
       - "agent/blockchain_source.py"
       - "agent/ipfs_bundle.py"
       - "tee_inference/protocol/**"
