@@ -5,6 +5,7 @@ on:
     branches:
       - tee_inference
     paths:
+      - ".dockerignore"
       - "control_api/**"
       - "observability/**"
       - "phala/dynamic-workers/**"

@@ -1,6 +1,14 @@
 name: Publish Smart Contracts Image
 
 on:
+  push:
+    branches:
+      - tee_inference
+    paths:
+      - ".dockerignore"
+      - "smart_contracts/**"
+      - "dfl/node_server/abi/registry.json"
+      - ".github/workflows/publish-smart-contracts.yml"
   workflow_dispatch:
     inputs:
       image_tag:
