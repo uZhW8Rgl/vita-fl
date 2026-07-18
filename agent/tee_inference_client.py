@@ -433,6 +433,23 @@ def run_and_verify_tee_inference(
 
     probabilities = verified.pop("probabilities")
     decisions = verified.pop("decisions")
+    try:
+        from .transparency_index import record_transparency_entry
+    except ImportError:
+        from transparency_index import record_transparency_entry
+    record = record_transparency_entry(
+        evidence_type="tee-inference-receipt",
+        job_id=job_id,
+        model_id=str(verified["model_id"]),
+        transparency=transparency,
+        verification={
+            "verification_scope": verified["verification_scope"],
+            "bundle_sha256": verified["bundle_sha256"],
+            "quote_sha256": verified["quote_sha256"],
+            "rtmr3": verified["rtmr3"],
+            "image_reference": verified["image_reference"],
+        },
+    )
     return {
         "skill": "run_and_verify_tee_inference",
         "stage": "verified-and-transparency-logged",
@@ -446,6 +463,7 @@ def run_and_verify_tee_inference(
         "evidence_path": str(output),
         "verification": verified,
         "transparency_log": transparency,
+        "transparency_record_id": record["record_id"],
     }
 
 

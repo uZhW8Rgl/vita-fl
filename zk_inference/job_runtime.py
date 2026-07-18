@@ -9,6 +9,8 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
+import cbor2
+
 
 class ZkJobError(RuntimeError):
     """The requested ZK model or job operation is invalid."""
@@ -84,6 +86,10 @@ class ZkJobRuntime:
             job = {
                 "job_id": job_id,
                 "model_id": self._model["model_id"],
+                "model_sha256": self._model["model_sha256"],
+                "model_cid": self._model["model_cid"],
+                "signature_cid": self._model["signature_cid"],
+                "last_aggregator": self._model["last_aggregator"],
                 "source_index": selection.get("source_index"),
                 "selection": selection,
                 "workdir": workdir,
@@ -93,7 +99,11 @@ class ZkJobRuntime:
 
     def job_metadata(self, job_id: str) -> dict[str, Any]:
         job = self._job(job_id)
-        return {key: value for key, value in job.items() if key not in {"workdir", "selection"}}
+        return {
+            key: value
+            for key, value in job.items()
+            if key not in {"workdir", "selection", "transparency_path"}
+        }
 
     def run_and_verify(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -115,13 +125,45 @@ class ZkJobRuntime:
                 path = job["workdir"] / name
                 if path.is_file():
                     artifact_hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            transparency_bundle = cbor2.dumps(
+                {
+                    "schema": "master-thesis.zk-inference-proof.v1",
+                    "job_id": job_id,
+                    "model_id": job["model_id"],
+                    "model_sha256": job["model_sha256"],
+                    "model_cid": job["model_cid"],
+                    "signature_cid": job["signature_cid"],
+                    "last_aggregator": job["last_aggregator"],
+                    "source_index": job["source_index"],
+                    "proof_verified": True,
+                    "input_json": (job["workdir"] / "input.json").read_bytes(),
+                    "proof_json": (job["workdir"] / "proof.json").read_bytes(),
+                    "settings_json": (job["workdir"] / "settings.json").read_bytes(),
+                    "verification_key": (job["workdir"] / "vk.key").read_bytes(),
+                    "artifact_sha256": artifact_hashes,
+                },
+                canonical=True,
+            )
+            transparency_path = job["workdir"] / "transparency-bundle.cbor"
+            transparency_path.write_bytes(transparency_bundle)
+            job["transparency_path"] = transparency_path
             return {
                 "job_id": job_id,
                 "model_id": job["model_id"],
                 "source_index": job["source_index"],
                 "proof_verified": True,
                 "artifact_sha256": artifact_hashes,
+                "transparency_bundle_sha256": hashlib.sha256(transparency_bundle).hexdigest(),
+                "transparency_bundle_bytes": len(transparency_bundle),
             }
+
+    def transparency_bundle(self, job_id: str) -> bytes:
+        with self._lock:
+            job = self._job(job_id)
+            path = job.get("transparency_path")
+            if not isinstance(path, Path) or not path.is_file():
+                raise ZkJobError("ZK proof must be verified before its transparency bundle is available")
+            return path.read_bytes()
 
     def _job(self, job_id: str) -> dict[str, Any]:
         if len(job_id) != 32 or any(character not in "0123456789abcdef" for character in job_id):

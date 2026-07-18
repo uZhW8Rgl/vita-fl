@@ -45,7 +45,7 @@ by itself validate Intel DCAP collateral. The AIR/TDX verifier must decide what
 is accepted before submission, or DCAP verification must be added to an
 admission gateway.
 
-## AIR statement profile
+## Inference statement profiles
 
 The MCP integration submits the deterministic CBOR evidence bundle as the
 payload of an X.509-signed SCITT statement with content type
@@ -54,5 +54,18 @@ statement returned by SCITT is stored alongside the evidence bundle and
 verified against the service keys from `/.well-known/scitt-keys` before the MCP
 call returns. The outer X.509 identity identifies the submitting agent; the AIR
 receipt embedded in the payload remains the TEE execution identity.
+
+After local EZKL verification, the agent also submits a canonical ZK proof
+bundle with content type
+`application/vnd.master-thesis.zk-inference-proof+cbor`. It contains the proof,
+public input, settings, verification key, model identity, and hashes of the
+proof artifacts. It does not contain the private witness. In both profiles the
+MCP tool returns success only after verifying the CCF receipt for the submitted
+statement.
+
+The runtime agent maintains a fresh, non-authoritative JSONL read model of
+verified submissions for the UI's **Transparency Log** iframe. The prototype
+intentionally starts this display index and the SCITT service with fresh state
+for each runtime container deployment.
 
 Upstream project: <https://github.com/microsoft/scitt-ccf-ledger>

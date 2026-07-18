@@ -75,6 +75,94 @@ API_HOME_HTML = """<!doctype html>
 </body>
 </html>
 """
+TRANSPARENCY_VIEW_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verified SCITT Evidence</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; padding: 22px; background: #081116; color: #e7f4f7; }
+    header { display: flex; justify-content: space-between; gap: 18px; align-items: end; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: 1.25rem; }
+    .copy, #status { color: #91a9b0; font-size: .86rem; }
+    #records { display: grid; gap: 12px; }
+    .empty, article { border: 1px solid #28404a; border-radius: 14px; background: #0c1a21; padding: 16px; }
+    .top { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    .badge { border: 1px solid #4d91a4; border-radius: 999px; color: #9ce6f2; padding: 4px 9px; font-size: .72rem; }
+    .badge.zk { border-color: #9b7ec8; color: #d4baff; }
+    dl { display: grid; grid-template-columns: minmax(130px, .35fr) 1fr; gap: 7px 14px; margin: 14px 0 0; }
+    dt { color: #91a9b0; }
+    dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .ok { color: #80e1aa; }
+    details { margin-top: 14px; border-top: 1px solid #20343d; padding-top: 10px; }
+    summary { cursor: pointer; color: #9ce6f2; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; color: #b9cbd0; font-size: .74rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div><h1>Verified SCITT Evidence</h1><div class="copy">Receipt-verified view of TEE and ZK inference statements</div></div>
+    <div id="status">Loading…</div>
+  </header>
+  <main id="records"></main>
+  <script>
+    const records = document.getElementById("records");
+    const status = document.getElementById("status");
+    function field(list, name, value, className) {
+      const dt = document.createElement("dt"); dt.textContent = name;
+      const dd = document.createElement("dd"); dd.textContent = value ?? "—";
+      if (className) dd.className = className;
+      list.append(dt, dd);
+    }
+    function render(items) {
+      records.replaceChildren();
+      if (!items.length) {
+        const empty = document.createElement("div"); empty.className = "empty";
+        empty.textContent = "No verified inference evidence has been submitted in this container run yet.";
+        records.append(empty); return;
+      }
+      for (const item of items) {
+        const card = document.createElement("article");
+        const top = document.createElement("div"); top.className = "top";
+        const title = document.createElement("strong");
+        title.textContent = item.evidence_type === "zk-inference-proof" ? "EZKL inference proof" : "AIR / TDX inference receipt";
+        const badge = document.createElement("span");
+        badge.className = item.evidence_type === "zk-inference-proof" ? "badge zk" : "badge";
+        badge.textContent = item.evidence_type === "zk-inference-proof" ? "ZK" : "TEE";
+        top.append(title, badge);
+        const list = document.createElement("dl");
+        field(list, "SCITT status", item.status, "ok");
+        field(list, "Transaction", item.transaction_id);
+        field(list, "Recorded", item.recorded_at);
+        field(list, "Job", item.job_id);
+        field(list, "Model", item.model_id);
+        field(list, "Content type", item.content_type);
+        field(list, "Evidence SHA-256", item.evidence_sha256);
+        field(list, "Transparent statement", item.transparent_statement_sha256);
+        const receiptIds = (item.receipt_transactions || []).map((entry) => entry.sigtxid || entry.regtxid).filter(Boolean).join(", ");
+        field(list, "Receipt transaction", receiptIds || "verified");
+        const details = document.createElement("details");
+        const summary = document.createElement("summary"); summary.textContent = "Verified evidence details";
+        const pre = document.createElement("pre"); pre.textContent = JSON.stringify(item.verification || {}, null, 2);
+        details.append(summary, pre);
+        card.append(top, list, details); records.append(card);
+      }
+    }
+    async function refresh() {
+      try {
+        const response = await fetch("/api/transparency/records", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json(); render(payload.records || []);
+        status.textContent = `${payload.records?.length || 0} verified entr${payload.records?.length === 1 ? "y" : "ies"}`;
+      } catch (error) { status.textContent = `Unavailable: ${error.message || error}`; }
+    }
+    refresh(); setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
+"""
 PUBLIC_SKILL_NAMES = (
     "fetch_latest_verified_zk_model_bundle",
     "generate_random_zk_chestmnist_image",
@@ -942,6 +1030,19 @@ async def serve_agent(args: argparse.Namespace) -> None:
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
         return API_HOME_HTML
+
+    @app.get("/transparency", response_class=HTMLResponse)
+    @app.get("/transparency/", response_class=HTMLResponse)
+    async def transparency_view() -> str:
+        return TRANSPARENCY_VIEW_HTML
+
+    @app.get("/api/transparency/records")
+    async def transparency_records(limit: int = 100) -> dict[str, Any]:
+        try:
+            from .transparency_index import read_transparency_entries
+        except ImportError:
+            from transparency_index import read_transparency_entries
+        return {"records": read_transparency_entries(limit=limit)}
 
     @app.get("/api/sessions")
     async def list_sessions() -> dict[str, Any]:

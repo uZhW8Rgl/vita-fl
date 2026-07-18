@@ -8,6 +8,7 @@ on:
       - "agent/**"
       - "tee_inference/air/**"
       - "tee_inference/protocol/**"
+      - "tee_inference/vectors/**"
       - "data/chestmnist/test_data/test-data.npz"
       - ".github/workflows/publish-agent.yml"
   workflow_dispatch:

@@ -299,6 +299,7 @@ Current Terraform defaults in this scaffold match that target layout:
 - `worker_replicas = 1`
 - `contracts_size = "tdx.small"`
 - `worker_size = "tdx.small"`
+- `zk_inference_size = "tdx.medium"` (4 GB RAM; the ZK prover does not complete on the 2 GB `tdx.small` profile)
 - `os_image = "dstack-dev-0.5.7"`
 - `tee_inference_image = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:f1b33351467ede01637e3410b239ce35f2ac178398a7957c3809b3e5010d0f0c"`
 - `enable_tee_inference = false` until the updated image has been published

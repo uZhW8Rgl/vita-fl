@@ -159,8 +159,9 @@ restricted to scale 8 and at most 16 logrows. These defaults can be changed with
 `EZKL_NUM_INNER_COLS`, `EZKL_MAX_LOGROWS`, `--num-inner-cols`, and
 `--max-logrows`. The job-owned MCP proof path always performs calibration; the
 `--skip-calibration` option is retained only for local diagnostics. Phala also
-runs the CPU prover with one Rayon thread to keep its peak memory below the
-20 GB CVM limit.
+runs the CPU prover with one Rayon thread on `tdx.medium`, whose 4 GB RAM is the
+smallest tested profile that completes this ChestMNIST proof. The separately
+configured 20 GB value is disk capacity, not RAM.
 
 ## Output Files
 

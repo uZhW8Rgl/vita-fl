@@ -302,7 +302,7 @@ variable "tee_inference_size" {
 variable "zk_inference_size" {
   description = "Phala CVM size slug for the separate ZK inference app."
   type        = string
-  default     = "tdx.small"
+  default     = "tdx.medium"
 }
 
 variable "ollama_size" {
@@ -528,7 +528,7 @@ variable "tee_inference_image" {
 variable "zk_inference_image" {
   description = "Digest-pinned ZK inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:4668b0b559656bafc06a485cd574cb02b7ce373a73eb3a88a15a63fe7ba96144"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:039142e369cbe48bda261c59b15b0c5dc454030d8a764a3bd44f30f067a1051a"
 
   validation {
     condition = (

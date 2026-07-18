@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import cbor2
+
 from zk_inference.job_runtime import ZkJobRuntime
 
 
@@ -42,12 +44,18 @@ class ZkJobRuntimeTests(unittest.TestCase):
             self.assertTrue(runtime.health()["model_loaded"])
             job = runtime.create_job(4)
             result = runtime.run_and_verify(job["job_id"])
+            transparency_bundle = cbor2.loads(runtime.transparency_bundle(job["job_id"]))
 
         self.assertEqual(model["model_cid"], "cid")
         self.assertEqual(job["source_index"], 4)
         self.assertTrue(result["proof_verified"])
         self.assertFalse(proof_call["skip_calibration"])
         self.assertEqual(set(result["artifact_sha256"]), {"proof.json", "witness.json", "settings.json", "vk.key"})
+        self.assertEqual(transparency_bundle["schema"], "master-thesis.zk-inference-proof.v1")
+        self.assertEqual(transparency_bundle["job_id"], job["job_id"])
+        self.assertTrue(transparency_bundle["proof_verified"])
+        self.assertEqual(transparency_bundle["proof_json"], b"proof.json")
+        self.assertNotIn("witness_json", transparency_bundle)
 
 
 if __name__ == "__main__":

@@ -199,6 +199,8 @@ services:
         condition: service_healthy
       ipfs:
         condition: service_healthy
+      transparency-log:
+        condition: service_healthy
     environment:
       DOCKER: "1"
       PYTHONUNBUFFERED: "1"
@@ -225,6 +227,7 @@ services:
       SCITT_DEVELOPMENT: "1"
       SCITT_SIGNER_DIR: /tmp/agent-scitt
       SCITT_TRANSPARENT_STATEMENT_PATH: /tmp/tee-inference/latest-transparent-statement.cose
+      TRANSPARENCY_INDEX_PATH: /tmp/transparency-log/records.jsonl
     command:
       - python
       - agent/run_agent.py

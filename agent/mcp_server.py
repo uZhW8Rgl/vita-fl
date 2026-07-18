@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import urllib.error
@@ -125,6 +126,26 @@ def _remote_call(endpoint: str, payload: dict[str, Any], timeout: int = 120) -> 
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"zk_inference service returned HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Could not reach zk_inference service at {ZK_INFERENCE_URL}: {exc}") from exc
+
+
+def _remote_get_bytes(endpoint: str, timeout: int = 120) -> bytes:
+    if not ZK_INFERENCE_URL:
+        raise RuntimeError("ZK_INFERENCE_URL is not set and local zk_inference tools are unavailable.")
+    request = urllib.request.Request(
+        f"{ZK_INFERENCE_URL}/{endpoint.lstrip('/')}",
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read()
+            if response.headers.get_content_type() != "application/cbor":
+                raise RuntimeError("zk_inference transparency bundle is not CBOR")
+            return body
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"zk_inference service returned HTTP {exc.code}: {body}") from exc
@@ -269,14 +290,67 @@ def generate_random_zk_chestmnist_image(index: int | None = None) -> str:
 
 @mcp.tool()
 def generate_and_verify_zk_inference_proof(job_id: str) -> str:
-    """Generate and cryptographically verify an EZKL proof for a prepared ZK job."""
+    """Generate and verify an EZKL proof, then register its proof bundle with SCITT."""
 
     record_mcp_tool_call("generate_and_verify_zk_inference_proof")
     if len(job_id) != 32 or any(character not in "0123456789abcdef" for character in job_id):
         raise ValueError("job_id must contain exactly 32 lowercase hexadecimal characters")
     result = _remote_call(f"/v1/jobs/{job_id}/run-and-verify", {}, timeout=900)
+    if result.get("proof_verified") is not True:
+        raise RuntimeError("zk_inference returned without a verified proof")
+
+    import cbor2
+
+    bundle = _remote_get_bytes(f"/v1/jobs/{job_id}/transparency-bundle", timeout=120)
+    bundle_sha256 = hashlib.sha256(bundle).hexdigest()
+    if bundle_sha256 != result.get("transparency_bundle_sha256"):
+        raise RuntimeError("ZK transparency bundle hash does not match the verified proof result")
+    decoded = cbor2.loads(bundle)
+    if not isinstance(decoded, dict) or decoded.get("schema") != "master-thesis.zk-inference-proof.v1":
+        raise RuntimeError("ZK transparency bundle uses an unsupported schema")
+    if decoded.get("job_id") != job_id or decoded.get("model_id") != result.get("model_id"):
+        raise RuntimeError("ZK transparency bundle is bound to another job or model")
+    if decoded.get("proof_verified") is not True:
+        raise RuntimeError("ZK transparency bundle does not assert a verified proof")
+
+    try:
+        from .scitt_client import SCITT_ZK_CONTENT_TYPE, register_verified_evidence
+        from .transparency_index import record_transparency_entry
+    except ImportError:
+        from scitt_client import SCITT_ZK_CONTENT_TYPE, register_verified_evidence
+        from transparency_index import record_transparency_entry
+
+    bundle_path = Path(f"/tmp/zk-inference/{job_id}/proof-bundle.cbor")
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+    bundle_path.write_bytes(bundle)
+    transparent_statement_path = bundle_path.with_name("transparent-statement.cose")
+    transparency = register_verified_evidence(
+        bundle,
+        content_type=SCITT_ZK_CONTENT_TYPE,
+        transparent_statement_path=str(transparent_statement_path),
+    )
+    verification = {
+        "proof_verified": True,
+        "source_index": result.get("source_index"),
+        "artifact_sha256": result.get("artifact_sha256", {}),
+        "transparency_bundle_sha256": bundle_sha256,
+    }
+    record = record_transparency_entry(
+        evidence_type="zk-inference-proof",
+        job_id=job_id,
+        model_id=str(result["model_id"]),
+        transparency=transparency,
+        verification=verification,
+    )
     return json.dumps(
-        {"skill": "generate_and_verify_zk_inference_proof", "stage": "proof-verified", **result},
+        {
+            "skill": "generate_and_verify_zk_inference_proof",
+            "stage": "proof-verified-and-transparency-logged",
+            **result,
+            "proof_bundle_path": str(bundle_path),
+            "transparency_log": transparency,
+            "transparency_record_id": record["record_id"],
+        },
         indent=2,
     )
 

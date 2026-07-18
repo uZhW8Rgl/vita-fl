@@ -193,6 +193,10 @@ class TeeInferenceBundleTests(unittest.TestCase):
                         "status": "registered-and-receipt-verified",
                     },
                 ),
+                patch(
+                    "agent.transparency_index.record_transparency_entry",
+                    return_value={"record_id": "11" * 32},
+                ),
             ):
                 result = run_and_verify_tee_inference(
                     job_id,
@@ -206,6 +210,7 @@ class TeeInferenceBundleTests(unittest.TestCase):
         self.assertEqual(result["sample_index"], 3)
         self.assertEqual(result["ground_truth"], ["mass"])
         self.assertEqual(result["transparency_log"]["status"], "registered-and-receipt-verified")
+        self.assertEqual(result["transparency_record_id"], "11" * 32)
 
     def test_model_and_image_tools_use_job_api_without_paths(self) -> None:
         responses = [

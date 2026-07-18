@@ -36,6 +36,19 @@ registers the exact verified evidence bytes with SCITT-CCF, and verifies the
 returned CCF receipt before returning the prediction. Both the raw evidence
 bundle and transparent SCITT statement are stored for later inspection.
 
+The third ZK toolcall similarly generates and locally verifies the EZKL proof,
+builds a canonical CBOR statement containing the proof, public input, settings,
+verification key, model identity, and artifact hashes, and submits it to SCITT.
+The private witness is deliberately excluded. The tool returns only after the
+CCF receipt has also been verified.
+
+Both evidence types are appended to a per-container read model at
+`/tmp/transparency-log/records.jsonl`. The agent serves a receipt-verified view
+at `/transparency/` and its JSON data at `/api/transparency/records`. The UI
+embeds that view through its authenticated same-origin proxy. This index is a
+display cache; the signed transparent statements and their CCF receipts remain
+the cryptographic evidence.
+
 The digest-pinned endpoint and expected image digest are trusted process
 configuration and are intentionally not MCP arguments. This first verifier
 checks the AIR signature and all TDX report-data/RTMR3 workload bindings. It
@@ -154,7 +167,7 @@ export OLLAMA_MODEL=qwen3:0.6b
 .venv/bin/python agent/run_agent.py --llm --source contract --skip-calibration
 ```
 
-In this mode LangChain should prefer the three public skills instead of manually composing low-level retrieval, verification, and proof steps.
+In this mode LangChain should prefer the six public TEE and ZK skills instead of manually composing low-level retrieval, verification, and proof steps.
 
 ## Persistent Chat Service
 

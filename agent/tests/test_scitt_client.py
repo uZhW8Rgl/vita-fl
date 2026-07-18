@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
-from agent.scitt_client import ScittRegistrationError, register_verified_evidence
+from agent.scitt_client import SCITT_ZK_CONTENT_TYPE, ScittRegistrationError, register_verified_evidence
 
 
 class ScittClientTests(unittest.TestCase):
@@ -46,6 +46,25 @@ class ScittClientTests(unittest.TestCase):
     def test_plain_http_service_is_rejected(self) -> None:
         with self.assertRaisesRegex(ScittRegistrationError, "HTTPS"):
             register_verified_evidence(b"evidence", url="http://scitt.example")
+
+    def test_zk_proof_content_type_is_bound_into_statement(self) -> None:
+        submission = SimpleNamespace(tx="4.1", response_bytes=b"transparent")
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch("agent.scitt_client._load_or_create_signer", return_value=object()),
+                patch("agent.scitt_client._sign_evidence", return_value=b"signed") as sign,
+                patch(
+                    "agent.scitt_client._submit_and_verify",
+                    return_value=(submission, [{"regtxid": "4.1"}]),
+                ),
+            ):
+                result = register_verified_evidence(
+                    b"zk proof bundle",
+                    content_type=SCITT_ZK_CONTENT_TYPE,
+                    transparent_statement_path=str(Path(directory) / "zk.cose"),
+                )
+        sign.assert_called_once_with(b"zk proof bundle", ANY, SCITT_ZK_CONTENT_TYPE)
+        self.assertEqual(result["content_type"], SCITT_ZK_CONTENT_TYPE)
 
 
 if __name__ == "__main__":

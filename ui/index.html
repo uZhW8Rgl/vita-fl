@@ -706,7 +706,7 @@
               <div>
                 <div class="panel-title">MCP Tool Usage</div>
                 <div class="dashboard-copy" id="agent-dashboard-hint">
-                  Monitor how often the three public MCP tools are used by the agent runtime.
+                  Monitor how often the six public TEE and ZK MCP tools are used by the agent runtime.
                 </div>
               </div>
             </div>
@@ -728,6 +728,7 @@
             <button class="tab-button active" id="contracts-tab" type="button">Smart Contracts</button>
             <button class="tab-button" id="training-tab" type="button" disabled>Training Setup</button>
             <button class="tab-button" id="chat-tab" type="button" disabled>Agent Client</button>
+            <button class="tab-button" id="transparency-tab" type="button" disabled>Transparency Log</button>
           </div>
           <div class="status" id="status">Status: Waiting for smart contracts to initialize.</div>
           <div class="runtime-overview" aria-live="polite">
@@ -843,6 +844,26 @@
               </div>
             </form>
           </section>
+
+          <section class="dashboard hidden" id="transparency-view">
+            <div class="dashboard-card">
+              <div class="dashboard-head">
+                <div>
+                  <div class="panel-title">Attested Inference Transparency Log</div>
+                  <div class="dashboard-copy">
+                    Inspect receipt-verified SCITT entries for AIR/TDX inference evidence and EZKL proof bundles.
+                  </div>
+                </div>
+              </div>
+              <iframe
+                class="dashboard-frame"
+                id="transparency-frame"
+                src="/transparency/"
+                title="Verified SCITT inference evidence"
+                loading="lazy">
+              </iframe>
+            </div>
+          </section>
         </div>
       </main>
       </section>
@@ -915,9 +936,11 @@
     const contractsTabBtn = document.getElementById("contracts-tab");
     const trainingTabBtn = document.getElementById("training-tab");
     const chatTabBtn = document.getElementById("chat-tab");
+    const transparencyTabBtn = document.getElementById("transparency-tab");
     const contractsViewEl = document.getElementById("contracts-view");
     const trainingViewEl = document.getElementById("training-view");
     const chatViewEl = document.getElementById("chat-view");
+    const transparencyViewEl = document.getElementById("transparency-view");
     const contractsDashboardFrameEl = document.getElementById("contracts-dashboard-frame");
     const trainingDashboardFrameEl = document.getElementById("training-dashboard-frame");
     const agentDashboardFrameEl = document.getElementById("agent-dashboard-frame");
@@ -1234,8 +1257,10 @@
       contractsTabBtn.classList.toggle("active", currentMode === "contracts");
       trainingTabBtn.classList.toggle("active", currentMode === "training");
       chatTabBtn.classList.toggle("active", currentMode === "chat");
+      transparencyTabBtn.classList.toggle("active", currentMode === "transparency");
       trainingTabBtn.disabled = !contractsReady();
       chatTabBtn.disabled = !trainingReady() || !workflowState.agent_running;
+      transparencyTabBtn.disabled = !workflowState.agent_running;
     }
 
     function currentStatusText() {
@@ -1260,6 +1285,9 @@
       }
       if (currentMode === "training") {
         return "Status: Dynamic Phala training workers are running.";
+      }
+      if (currentMode === "transparency") {
+        return "Status: Showing receipt-verified SCITT inference evidence.";
       }
       return "Status: Smart contracts ready. Training controls are unlocked.";
     }
@@ -1319,9 +1347,13 @@
       if (currentMode === "chat" && !contractsReady()) {
         currentMode = "contracts";
       }
+      if (currentMode === "transparency" && !workflowState.agent_running) {
+        currentMode = "contracts";
+      }
       contractsViewEl.classList.toggle("hidden", currentMode !== "contracts");
       trainingViewEl.classList.toggle("hidden", currentMode !== "training");
       chatViewEl.classList.toggle("hidden", currentMode !== "chat");
+      transparencyViewEl.classList.toggle("hidden", currentMode !== "transparency");
       syncTabs();
       statusEl.textContent = currentStatusText();
     }
@@ -1736,6 +1768,7 @@
       await pollAgentHealth();
       applyMode("chat");
     });
+    transparencyTabBtn.addEventListener("click", () => applyMode("transparency"));
 
     (async () => {
       await reloadDashboardFrames();

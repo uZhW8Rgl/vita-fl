@@ -14,15 +14,11 @@ RUN apt-get update && \
         curl && \
     rm -rf /var/lib/apt/lists/*
 
-COPY agent ./agent
-COPY data/mnist ./data/mnist
-COPY data/chestmnist/test_data/test-data.npz ./data/chestmnist/test_data/test-data.npz
-COPY tee_inference/air ./tee_inference/air
-COPY tee_inference/protocol ./tee_inference/protocol
+COPY agent/requirements.txt /tmp/agent-requirements.txt
 
 RUN python -m pip install --upgrade pip setuptools wheel && \
     attempts=0 && \
-    until python -m pip install -r agent/requirements.txt; do \
+    until python -m pip install -r /tmp/agent-requirements.txt; do \
         attempts=$((attempts + 1)); \
         if [ "$attempts" -ge 3 ]; then \
             echo "agent pip install failed after ${attempts} attempts"; \
@@ -31,5 +27,12 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
         echo "agent pip install failed (attempt ${attempts}/3), retrying..."; \
         sleep 5; \
     done
+
+COPY agent ./agent
+COPY data/mnist ./data/mnist
+COPY data/chestmnist/test_data/test-data.npz ./data/chestmnist/test_data/test-data.npz
+COPY tee_inference/air ./tee_inference/air
+COPY tee_inference/protocol ./tee_inference/protocol
+COPY tee_inference/vectors ./tee_inference/vectors
 
 CMD ["python", "agent/run_agent.py", "--serve", "--llm", "--source", "contract", "--rpc-url", "http://anvil:8545", "--gm-storage-address", "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0", "--registry-address", "0x5FbDB2315678afecb367f032d93F642f64180aa3", "--ipfs-api-url", "http://ipfs:5001", "--skip-calibration"]

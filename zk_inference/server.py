@@ -37,6 +37,13 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send_json(HTTPStatus.OK, RUNTIME.health())
             return
+        if self.path.startswith("/v1/jobs/") and self.path.endswith("/transparency-bundle"):
+            try:
+                bundle = RUNTIME.transparency_bundle(self.path.split("/")[3])
+                self._send_bytes(HTTPStatus.OK, bundle, "application/cbor")
+            except ZkJobError as exc:
+                self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": str(exc)})
+            return
         if self.path.startswith("/v1/jobs/"):
             try:
                 self._send_json(HTTPStatus.OK, {"ok": True, **RUNTIME.job_metadata(self.path.rsplit("/", 1)[-1])})
@@ -103,8 +110,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         body = json.dumps(payload).encode("utf-8")
+        self._send_bytes(status, body, "application/json")
+
+    def _send_bytes(self, status: HTTPStatus, body: bytes, content_type: str) -> None:
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

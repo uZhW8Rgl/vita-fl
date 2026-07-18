@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 SCITT_CONTENT_TYPE = "application/vnd.master-thesis.tee-inference-evidence+cbor"
+SCITT_ZK_CONTENT_TYPE = "application/vnd.master-thesis.zk-inference-proof+cbor"
 SCITT_EKU = "2.999"
 DEFAULT_SCITT_URL = os.environ.get("SCITT_URL", "https://127.0.0.1:8000").rstrip("/")
 DEFAULT_SCITT_DEVELOPMENT = os.environ.get("SCITT_DEVELOPMENT", "1").strip().lower() in {
@@ -95,13 +96,13 @@ def _load_or_create_signer(directory: Path):
         )
 
 
-def _sign_evidence(evidence: bytes, signer: Any) -> bytes:
+def _sign_evidence(evidence: bytes, signer: Any, content_type: str) -> bytes:
     from pyscitt import crypto
 
     return crypto.sign_statement(
         signer,
         evidence,
-        content_type=SCITT_CONTENT_TYPE,
+        content_type=content_type,
         cwt=True,
     )
 
@@ -133,11 +134,14 @@ def register_verified_evidence(
     development: bool | None = None,
     signer_dir: str | None = None,
     transparent_statement_path: str | None = None,
+    content_type: str = SCITT_CONTENT_TYPE,
 ) -> dict[str, Any]:
     """Submit exact verified evidence bytes and persist only a verified result."""
 
     if not evidence:
         raise ScittRegistrationError("cannot register an empty evidence bundle")
+    if not content_type.startswith("application/vnd.master-thesis.") or not content_type.endswith("+cbor"):
+        raise ScittRegistrationError("SCITT content type must be a master-thesis CBOR media type")
     service_url = (url or DEFAULT_SCITT_URL).rstrip("/")
     if not service_url.startswith("https://"):
         raise ScittRegistrationError("SCITT_URL must use HTTPS")
@@ -145,7 +149,7 @@ def register_verified_evidence(
 
     try:
         signer = _load_or_create_signer(Path(signer_dir or DEFAULT_SCITT_SIGNER_DIR))
-        signed_statement = _sign_evidence(evidence, signer)
+        signed_statement = _sign_evidence(evidence, signer, content_type)
         submission, receipt_details = _submit_and_verify(
             service_url,
             development_mode,
@@ -163,7 +167,7 @@ def register_verified_evidence(
         "status": "registered-and-receipt-verified",
         "service_url": service_url,
         "development_tls": development_mode,
-        "content_type": SCITT_CONTENT_TYPE,
+        "content_type": content_type,
         "transaction_id": submission.tx,
         "evidence_sha256": hashlib.sha256(evidence).hexdigest(),
         "signed_statement_sha256": hashlib.sha256(signed_statement).hexdigest(),
