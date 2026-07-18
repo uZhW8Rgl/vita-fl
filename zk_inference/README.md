@@ -154,6 +154,14 @@ The default fixed-point input and parameter scale is 8, the minimum accepted
 by EZKL 23. Override it with `EZKL_SCALE` or `--scale`; values below 8 are
 rejected before settings generation.
 
+The ChestMNIST service uses four inner circuit columns and resource calibration
+restricted to scale 8 and at most 16 logrows. These defaults can be changed with
+`EZKL_NUM_INNER_COLS`, `EZKL_MAX_LOGROWS`, `--num-inner-cols`, and
+`--max-logrows`. The job-owned MCP proof path always performs calibration; the
+`--skip-calibration` option is retained only for local diagnostics. Phala also
+runs the CPU prover with one Rayon thread to keep its peak memory below the
+20 GB CVM limit.
+
 ## Output Files
 
 `zk_inference/out` normally contains:

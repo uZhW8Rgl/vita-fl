@@ -102,10 +102,14 @@ class ZkJobRuntime:
                 workdir=str(job["workdir"]),
                 model="model_logits.onnx",
                 data="input.json",
-                skip_calibration=True,
+                skip_calibration=False,
             )
             if not result.get("ok"):
-                raise ZkJobError(f"EZKL proof generation or verification failed: {result.get('stderr')}")
+                detail = result.get("stderr") or result.get("stdout") or result.get("error") or "unknown error"
+                raise ZkJobError(
+                    f"EZKL proof generation or verification failed "
+                    f"(returncode={result.get('returncode')}): {detail}"
+                )
             artifact_hashes: dict[str, str] = {}
             for name in ("proof.json", "witness.json", "settings.json", "vk.key"):
                 path = job["workdir"] / name

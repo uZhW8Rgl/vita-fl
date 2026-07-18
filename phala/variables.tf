@@ -528,7 +528,7 @@ variable "tee_inference_image" {
 variable "zk_inference_image" {
   description = "Digest-pinned ZK inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:978b4857d87f7f9b05328e2e0c6141113a4f5f6d3c78d06cb2de87a7c92de2d1"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:4668b0b559656bafc06a485cd574cb02b7ce373a73eb3a88a15a63fe7ba96144"
 
   validation {
     condition = (

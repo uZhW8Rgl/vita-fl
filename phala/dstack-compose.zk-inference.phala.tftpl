@@ -16,8 +16,10 @@ services:
       ZK_INFERENCE_HOST: 0.0.0.0
       ZK_INFERENCE_PORT: "8090"
       ZK_RUNTIME_DIR: /work/zk-inference
-    tmpfs:
-      - /work/zk-inference:size=4096m,mode=0700
+      EZKL_NUM_INNER_COLS: "4"
+      EZKL_MAX_LOGROWS: "16"
+      RAYON_NUM_THREADS: "1"
+      MALLOC_ARENA_MAX: "2"
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/health"]
       interval: 15s

@@ -30,12 +30,15 @@ def load_logrows(settings_path: Path) -> int:
     return int(settings["run_args"]["logrows"])
 
 
-def quantized_run_args(scale: int) -> object:
+def quantized_run_args(scale: int, num_inner_cols: int) -> object:
     if scale < 8:
         raise ValueError("EZKL scale must be at least 8")
+    if num_inner_cols < 1:
+        raise ValueError("EZKL num_inner_cols must be positive")
     run_args = ezkl.PyRunArgs()
     run_args.input_scale = scale
     run_args.param_scale = scale
+    run_args.num_inner_cols = num_inner_cols
     return run_args
 
 
@@ -67,6 +70,8 @@ def run_pipeline(
     target: str,
     skip_calibration: bool,
     scale: int,
+    num_inner_cols: int,
+    max_logrows: int,
 ) -> None:
     model_path = workdir / model_name
     data_path = workdir / data_name
@@ -82,13 +87,13 @@ def run_pipeline(
     print_step(f"model={model_path}")
     print_step(f"data={data_path}")
 
-    print_step(f"gen_settings scale={scale}")
+    print_step(f"gen_settings scale={scale} num_inner_cols={num_inner_cols}")
     require_ok(
         "gen_settings",
         ezkl.gen_settings(
             model=str(model_path),
             output=str(settings_path),
-            py_run_args=quantized_run_args(scale),
+            py_run_args=quantized_run_args(scale, num_inner_cols),
         ),
     )
 
@@ -101,6 +106,8 @@ def run_pipeline(
                 model=str(model_path),
                 settings=str(settings_path),
                 target=target,
+                scales=[scale],
+                max_logrows=max_logrows,
             ),
         )
 
@@ -201,6 +208,18 @@ def main() -> int:
         default=int(os.environ.get("EZKL_SCALE", "8")),
         help="Fixed-point input and parameter scale; EZKL 23 requires at least 8",
     )
+    parser.add_argument(
+        "--num-inner-cols",
+        type=int,
+        default=int(os.environ.get("EZKL_NUM_INNER_COLS", "4")),
+        help="Inner circuit columns; four keeps the ChestMNIST circuit at 16 logrows",
+    )
+    parser.add_argument(
+        "--max-logrows",
+        type=int,
+        default=int(os.environ.get("EZKL_MAX_LOGROWS", "16")),
+        help="Maximum logrows accepted during resource calibration",
+    )
     args = parser.parse_args()
 
     run_pipeline(
@@ -210,6 +229,8 @@ def main() -> int:
         target=args.target,
         skip_calibration=args.skip_calibration,
         scale=args.scale,
+        num_inner_cols=args.num_inner_cols,
+        max_logrows=args.max_logrows,
     )
     return 0
 

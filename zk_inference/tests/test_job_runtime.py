@@ -9,6 +9,8 @@ from zk_inference.job_runtime import ZkJobRuntime
 
 class ZkJobRuntimeTests(unittest.TestCase):
     def test_model_sample_and_verified_proof_are_job_owned(self) -> None:
+        proof_call = {}
+
         def load_model(target: Path):
             target.mkdir(parents=True)
             model = target / "aggregated.bin"
@@ -26,7 +28,8 @@ class ZkJobRuntimeTests(unittest.TestCase):
             Path(input_json).write_text("{}", encoding="utf-8")
             return {"ok": True, "selection": {"source_index": index}}
 
-        def prove(*, workdir, **_kwargs):
+        def prove(*, workdir, **kwargs):
+            proof_call.update(kwargs)
             path = Path(workdir)
             for name in ("proof.json", "witness.json", "settings.json", "vk.key"):
                 (path / name).write_bytes(name.encode())
@@ -43,6 +46,7 @@ class ZkJobRuntimeTests(unittest.TestCase):
         self.assertEqual(model["model_cid"], "cid")
         self.assertEqual(job["source_index"], 4)
         self.assertTrue(result["proof_verified"])
+        self.assertFalse(proof_call["skip_calibration"])
         self.assertEqual(set(result["artifact_sha256"]), {"proof.json", "witness.json", "settings.json", "vk.key"})
 
 
