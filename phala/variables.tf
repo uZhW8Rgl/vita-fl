@@ -77,7 +77,7 @@ variable "enable_phala_agent" {
 variable "agent_image" {
   description = "Digest-pinned LLM/MCP agent image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:2b597425eeebdaeb578aaff9e6db40f456d61cecd1d42678923a02f18585b4e2"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:dad61d90a2399f07c13563b2c7892a4dd809c7584a10d64961a00471862d67e7"
 
   validation {
     condition = (
@@ -244,7 +244,7 @@ variable "enable_phala_ui" {
 variable "ui_image" {
   description = "Digest-pinned browser UI image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:ce436e9bdc096ee2e485218c5709e784452bd5696b0bdee8e99cc7e68a04250f"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:bb65e269363126f68c67f65c6ca3867f08183f6f278f5e47fde0ef24a1c8809f"
 
   validation {
     condition = (
@@ -528,7 +528,7 @@ variable "tee_inference_image" {
 variable "zk_inference_image" {
   description = "Digest-pinned ZK inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:039142e369cbe48bda261c59b15b0c5dc454030d8a764a3bd44f30f067a1051a"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:b176b879559aa20d0d1f321ffa4154d9eb0e60b9407603e0aaf23599bdd49681"
 
   validation {
     condition = (

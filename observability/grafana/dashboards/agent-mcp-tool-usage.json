@@ -389,6 +389,6 @@
   "timezone": "browser",
   "title": "Agent MCP Tool Usage",
   "uid": "agent-mcp-tool-usage",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
