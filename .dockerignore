@@ -15,7 +15,8 @@ dfl/node_server/.env
 .tools/
 .github-build/
 **/.terraform/
-phala/bin/
+phala/bin/*
+!phala/bin/terraform
 zk_inference/out/
 zk_inference/single_query/
 dfl/node_server/node_modules/
