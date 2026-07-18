@@ -1,6 +1,8 @@
 **
 !tee_inference/
 !tee_inference/**
+!agent_receipts/
+!agent_receipts/**
 !dfl/
 !dfl/neural_network/
 !dfl/neural_network/**
