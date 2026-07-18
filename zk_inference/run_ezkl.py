@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import ezkl
@@ -27,6 +28,15 @@ def print_step(message: str) -> None:
 def load_logrows(settings_path: Path) -> int:
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     return int(settings["run_args"]["logrows"])
+
+
+def quantized_run_args(scale: int) -> object:
+    if scale < 8:
+        raise ValueError("EZKL scale must be at least 8")
+    run_args = ezkl.PyRunArgs()
+    run_args.input_scale = scale
+    run_args.param_scale = scale
+    return run_args
 
 
 def ensure_srs(settings_path: Path, srs_path: Path) -> None:
@@ -56,6 +66,7 @@ def run_pipeline(
     data_name: str,
     target: str,
     skip_calibration: bool,
+    scale: int,
 ) -> None:
     model_path = workdir / model_name
     data_path = workdir / data_name
@@ -71,12 +82,13 @@ def run_pipeline(
     print_step(f"model={model_path}")
     print_step(f"data={data_path}")
 
-    print_step("gen_settings")
+    print_step(f"gen_settings scale={scale}")
     require_ok(
         "gen_settings",
         ezkl.gen_settings(
             model=str(model_path),
             output=str(settings_path),
+            py_run_args=quantized_run_args(scale),
         ),
     )
 
@@ -183,6 +195,12 @@ def main() -> int:
         action="store_true",
         help="Skip calibrate_settings for faster debugging",
     )
+    parser.add_argument(
+        "--scale",
+        type=int,
+        default=int(os.environ.get("EZKL_SCALE", "8")),
+        help="Fixed-point input and parameter scale; EZKL 23 requires at least 8",
+    )
     args = parser.parse_args()
 
     run_pipeline(
@@ -191,6 +209,7 @@ def main() -> int:
         data_name=args.data,
         target=args.target,
         skip_calibration=args.skip_calibration,
+        scale=args.scale,
     )
     return 0
 

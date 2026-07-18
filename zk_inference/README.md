@@ -150,6 +150,10 @@ The runner performs:
 7. `prove`
 8. `verify`
 
+The default fixed-point input and parameter scale is 8, the minimum accepted
+by EZKL 23. Override it with `EZKL_SCALE` or `--scale`; values below 8 are
+rejected before settings generation.
+
 ## Output Files
 
 `zk_inference/out` normally contains:

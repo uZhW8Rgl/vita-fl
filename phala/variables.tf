@@ -204,7 +204,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:94ffe549227695c78c71b22d29c091acb3d99426b6ced3a413c19e539af4d779"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:8d371ab6daa173879801ed2834fab81e695b496193421950b7ddcb231d0afbbc"
 
   validation {
     condition = (
@@ -511,7 +511,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:70b65f1c30b5bdf8d50dd3ce01800e5615e5900d500a06be2dbbfdedb606d202"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:59ddb01a8ba38f539c3bb793e80312627513fcfd7f66741d38620190e65053ee"
 }
 
 variable "tee_inference_image" {

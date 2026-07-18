@@ -70,13 +70,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "agent_mcp_tool_calls_current{tool_name=\"fetch_latest_verified_model_bundle\"}",
-          "legendFormat": "fetch_latest_verified_model_bundle",
+          "expr": "agent_mcp_tool_calls_current{tool_name=\"fetch_latest_verified_tee_model_bundle\"}",
+          "legendFormat": "fetch_latest_verified_tee_model_bundle",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Bundle Fetch Calls",
+      "title": "TEE Model Fetch Calls",
       "type": "stat"
     },
     {
@@ -128,13 +128,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "agent_mcp_tool_calls_current{tool_name=\"generate_random_chestmnist_image\"}",
-          "legendFormat": "generate_random_chestmnist_image",
+          "expr": "agent_mcp_tool_calls_current{tool_name=\"generate_random_tee_chestmnist_image\"}",
+          "legendFormat": "generate_random_tee_chestmnist_image",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Image Query Prep Calls",
+      "title": "TEE Image Job Calls",
       "type": "stat"
     },
     {
@@ -186,13 +186,187 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "agent_mcp_tool_calls_current{tool_name=\"generate_zk_inference_proof\"}",
-          "legendFormat": "generate_zk_inference_proof",
+          "expr": "agent_mcp_tool_calls_current{tool_name=\"run_and_verify_tee_inference\"}",
+          "legendFormat": "run_and_verify_tee_inference",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "EZKL Calls",
+      "title": "TEE Inference + Receipt Calls",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 5
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.6.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "agent_mcp_tool_calls_current{tool_name=\"fetch_latest_verified_zk_model_bundle\"}",
+          "legendFormat": "fetch_latest_verified_zk_model_bundle",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "ZK Model Fetch Calls",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 5
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.6.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "agent_mcp_tool_calls_current{tool_name=\"generate_random_zk_chestmnist_image\"}",
+          "legendFormat": "generate_random_zk_chestmnist_image",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "ZK Image Job Calls",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 5
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.6.0",
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "agent_mcp_tool_calls_current{tool_name=\"generate_and_verify_zk_inference_proof\"}",
+          "legendFormat": "generate_and_verify_zk_inference_proof",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "ZK Proof + Verification Calls",
       "type": "stat"
     }
   ],
@@ -215,6 +389,6 @@
   "timezone": "browser",
   "title": "Agent MCP Tool Usage",
   "uid": "agent-mcp-tool-usage",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

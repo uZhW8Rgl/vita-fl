@@ -170,7 +170,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:8b642b56dff2121f9ff4cd9102af388
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:70b65f1c30b5bdf8d50dd3ce01800e5615e5900d500a06be2dbbfdedb606d202
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:59ddb01a8ba38f539c3bb793e80312627513fcfd7f66741d38620190e65053ee
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
