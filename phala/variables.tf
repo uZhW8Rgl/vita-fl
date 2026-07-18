@@ -517,7 +517,7 @@ variable "smart_contracts_image" {
 variable "tee_inference_image" {
   description = "Digest-pinned TEE inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:cf78b6b5515f0d8d61ecb22612088db9dccf43dcd9311783239a30c90dd4054a"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:f1b33351467ede01637e3410b239ce35f2ac178398a7957c3809b3e5010d0f0c"
 
   validation {
     condition     = can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.tee_inference_image))

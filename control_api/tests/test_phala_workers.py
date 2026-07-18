@@ -52,23 +52,10 @@ class FakeRunner:
         return self.workers
 
 
-class FakeChallengeIssuer:
-    def __init__(self) -> None:
-        self.allowed: list[str] = []
-        self.revoked: list[str] = []
-
-    def allow(self, account_address: str) -> None:
-        self.allowed.append(account_address)
-
-    def revoke(self, account_address: str) -> None:
-        self.revoked.append(account_address)
-
-
-def controller(count: int = 3) -> tuple[PhalaWorkerController, FakeRunner, FakeChallengeIssuer]:
+def controller(count: int = 3) -> tuple[PhalaWorkerController, FakeRunner]:
     runner = FakeRunner()
-    issuer = FakeChallengeIssuer()
-    instance = PhalaWorkerController(load_worker_inventory(inventory_json(count)), runner, issuer)
-    return instance, runner, issuer
+    instance = PhalaWorkerController(load_worker_inventory(inventory_json(count)), runner)
+    return instance, runner
 
 
 class WorkerInventoryTests(unittest.TestCase):
@@ -87,7 +74,7 @@ class WorkerInventoryTests(unittest.TestCase):
         self.assertNotIn("secret", redacted)
 
     def test_inventory_is_ordered_and_never_exposes_keys(self) -> None:
-        instance, _runner, issuer = controller()
+        instance, _runner = controller()
 
         result = instance.scale(2)
 
@@ -96,26 +83,24 @@ class WorkerInventoryTests(unittest.TestCase):
         serialized = json.dumps(result)
         self.assertNotIn("private_key", serialized)
         self.assertNotIn("BEGIN PRIVATE KEY", serialized)
-        self.assertEqual(len(issuer.allowed), 2)
 
     def test_scale_down_removes_highest_slots_first(self) -> None:
-        instance, _runner, issuer = controller()
+        instance, _runner = controller()
         instance.scale(3)
 
         result = instance.scale(1)
 
         self.assertEqual([worker["worker"] for worker in result["workers"]], ["worker0"])
-        self.assertEqual(len(issuer.allowed), 3)
 
     def test_training_configuration_is_forwarded_to_terraform(self) -> None:
-        instance, runner, _issuer = controller()
+        instance, runner = controller()
 
         instance.scale(2, {"rounds": 7, "epoch": 3, "client_limit": 1})
 
         self.assertEqual(runner.training_config, {"rounds": 7, "epoch": 3, "client_limit": 1})
 
     def test_attested_worker_configuration_cannot_be_mutated(self) -> None:
-        instance, runner, _issuer = controller()
+        instance, runner = controller()
         initial = {"rounds": 2, "epoch": 1, "client_limit": 1}
         instance.scale(2, initial)
 
@@ -131,11 +116,10 @@ class WorkerInventoryTests(unittest.TestCase):
             load_worker_inventory(json.dumps(payload))
 
     def test_out_of_range_scale_is_rejected_without_apply(self) -> None:
-        instance, runner, issuer = controller(2)
+        instance, runner = controller(2)
         with self.assertRaisesRegex(WorkerConfigurationError, "between 0 and 2"):
             instance.scale(3)
         self.assertEqual(runner.workers, {})
-        self.assertEqual(issuer.allowed, [])
 
 
 if __name__ == "__main__":

@@ -8,9 +8,7 @@ import re
 import subprocess
 import sys
 import threading
-import time
 import urllib.parse
-import urllib.request
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
@@ -104,98 +102,6 @@ class WorkerTerraformRunner(Protocol):
     def apply(self, workers: dict[str, dict[str, Any]]) -> dict[str, Any]: ...
 
     def status(self) -> dict[str, Any]: ...
-
-
-class RegistrationChallengeIssuer(Protocol):
-    def allow(self, account_address: str) -> None: ...
-
-    def revoke(self, account_address: str) -> None: ...
-
-
-class DeviceRegistryChallengeIssuer:
-    """Open one-shot registration challenges without authorizing a device."""
-
-    def __init__(self, rpc_url: str, kubo_api_url: str, owner_private_key: str) -> None:
-        from eth_account import Account
-        from eth_utils import keccak, to_checksum_address
-
-        self.rpc_url = rpc_url.rstrip("/")
-        self.kubo_api_url = kubo_api_url.rstrip("/")
-        self.account = Account.from_key(owner_private_key)
-        self.keccak = keccak
-        self.to_checksum_address = to_checksum_address
-        self._request_id = 0
-
-    def _rpc(self, method: str, params: list[Any]) -> Any:
-        self._request_id += 1
-        body = json.dumps({"jsonrpc": "2.0", "id": self._request_id, "method": method, "params": params}).encode()
-        request = urllib.request.Request(
-            self.rpc_url,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=15) as response:
-            payload = json.loads(response.read())
-        if payload.get("error"):
-            raise WorkerProvisioningError(f"JSON-RPC {method} failed")
-        return payload.get("result")
-
-    def _registry_address(self) -> str:
-        url = self.kubo_api_url + "/api/v0/files/read?arg=" + urllib.parse.quote("/runtime/contracts.json", safe="")
-        request = urllib.request.Request(url, method="POST")
-        with urllib.request.urlopen(request, timeout=15) as response:
-            payload = json.loads(response.read())
-        address = str(payload.get("registry_address", ""))
-        if not ADDRESS_RE.fullmatch(address):
-            raise WorkerProvisioningError("runtime contract manifest has no valid registry address")
-        return self.to_checksum_address(address)
-
-    def _calldata(self, account_address: str, allowed: bool) -> str:
-        selector = self.keccak(text="setRegistrationAllowed(address,bool)")[:4]
-        address_word = bytes.fromhex(account_address[2:]).rjust(32, b"\0")
-        allowed_word = (1 if allowed else 0).to_bytes(32, "big")
-        return "0x" + (selector + address_word + allowed_word).hex()
-
-    def _send(self, account_address: str, allowed: bool) -> None:
-        registry_address = self._registry_address()
-        nonce = int(self._rpc("eth_getTransactionCount", [self.account.address, "pending"]), 16)
-        chain_id = int(self._rpc("eth_chainId", []), 16)
-        gas_price = int(self._rpc("eth_gasPrice", []), 16)
-        transaction = {
-            "to": registry_address,
-            "data": self._calldata(account_address, allowed),
-            "nonce": nonce,
-            "chainId": chain_id,
-            "gasPrice": gas_price,
-        }
-        estimate_payload = {
-            **transaction,
-            "from": self.account.address,
-            "gasPrice": hex(gas_price),
-            "nonce": hex(nonce),
-            "chainId": hex(chain_id),
-        }
-        estimate_payload.pop("to", None)
-        estimate_payload["to"] = registry_address
-        gas = int(self._rpc("eth_estimateGas", [estimate_payload]), 16)
-        signed = self.account.sign_transaction({**transaction, "gas": gas + gas // 5})
-        tx_hash = self._rpc("eth_sendRawTransaction", [signed.raw_transaction.hex()])
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            receipt = self._rpc("eth_getTransactionReceipt", [tx_hash])
-            if receipt is not None:
-                if int(receipt.get("status", "0x0"), 16) != 1:
-                    raise WorkerProvisioningError("registration challenge transaction reverted")
-                return
-            time.sleep(1)
-        raise WorkerProvisioningError("registration challenge transaction timed out")
-
-    def allow(self, account_address: str) -> None:
-        self._send(account_address, True)
-
-    def revoke(self, account_address: str) -> None:
-        self._send(account_address, False)
 
 
 def _pem(value: Any, name: str) -> str:
@@ -376,13 +282,11 @@ class PhalaWorkerController:
         self,
         inventory: tuple[WorkerIdentity, ...],
         runner: WorkerTerraformRunner,
-        challenge_issuer: RegistrationChallengeIssuer | None = None,
     ) -> None:
         if not inventory:
             raise WorkerConfigurationError("worker inventory is empty")
         self.inventory = inventory
         self.runner = runner
-        self.challenge_issuer = challenge_issuer
         self._lock = threading.Lock()
 
     @property
@@ -412,20 +316,7 @@ class PhalaWorkerController:
                         "reset the workers and contract runtime before starting a new configuration"
                     )
                 self.runner.configure(training_config)
-            added = [identity for identity in self.inventory[:worker_count] if identity.key not in current]
-            if added and self.challenge_issuer is None:
-                raise WorkerConfigurationError("registration challenge issuer is not configured")
-            for identity in added:
-                self.challenge_issuer.allow(identity.account_address)
-            try:
-                deployments = self.runner.apply(selected)
-            except Exception:
-                for identity in added:
-                    try:
-                        self.challenge_issuer.revoke(identity.account_address)
-                    except Exception:
-                        pass
-                raise
+            deployments = self.runner.apply(selected)
         return self._public_status(worker_count, deployments)
 
     def status(self) -> dict[str, Any]:
@@ -466,7 +357,6 @@ def controller_from_environment() -> PhalaWorkerController:
         "DYNAMIC_WORKER_KUBO_API_URL": os.environ.get("DYNAMIC_WORKER_KUBO_API_URL", ""),
         "DYNAMIC_WORKER_KUBO_GATEWAY_URL": os.environ.get("DYNAMIC_WORKER_KUBO_GATEWAY_URL", ""),
         "DYNAMIC_WORKER_IMAGE": os.environ.get("DYNAMIC_WORKER_IMAGE", ""),
-        "REGISTRATION_OWNER_PRIVATE_KEY": os.environ.get("REGISTRATION_OWNER_PRIVATE_KEY", ""),
     }
     missing = [name for name, value in required.items() if not value.strip()]
     if missing:
@@ -525,9 +415,4 @@ def controller_from_environment() -> PhalaWorkerController:
         state_dir=state_dir,
         terraform_bin=os.environ.get("TERRAFORM_BIN", "terraform"),
     )
-    challenge_issuer = DeviceRegistryChallengeIssuer(
-        config.rpc_url,
-        config.kubo_api_url,
-        required["REGISTRATION_OWNER_PRIVATE_KEY"],
-    )
-    return PhalaWorkerController(inventory, runner, challenge_issuer)
+    return PhalaWorkerController(inventory, runner)

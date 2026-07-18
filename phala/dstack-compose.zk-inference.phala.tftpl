@@ -3,7 +3,7 @@ services:
     image: ${zk_inference_image}
     restart: unless-stopped
     ports:
-      - "8090:8090"
+      - "8092:8090"
     environment:
       DOCKER: phala
       DATASET_NAME: chestmnist

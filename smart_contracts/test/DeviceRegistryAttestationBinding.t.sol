@@ -48,7 +48,6 @@ contract DeviceRegistryAttestationBindingTest is Test {
         verifier = new MockTdxV4Attestation();
         registry.setTdxV4Attestation(address(verifier));
         registry.setExpectedWorkerImageDigest(imageDigest);
-        registry.setRegistrationAllowed(worker, true);
     }
 
     function testDerivesImageAndComposeIdentityOnChain() public view {
@@ -167,7 +166,6 @@ contract DeviceRegistryAttestationBindingTest is Test {
         vm.prank(worker);
         _register(registry, reportData, appCompose, publicKey);
 
-        registry.setRegistrationAllowed(worker, true);
         vm.expectRevert(bytes("quote report data mismatch"));
         vm.prank(worker);
         _register(registry, reportData, appCompose, publicKey);
@@ -176,7 +174,6 @@ contract DeviceRegistryAttestationBindingTest is Test {
     function testImagePolicyIsFailClosed() public {
         DeviceRegistry unconfigured = new DeviceRegistry(keccak256("unconfigured deployment"));
         unconfigured.setTdxV4Attestation(address(verifier));
-        unconfigured.setRegistrationAllowed(worker, true);
 
         vm.expectRevert(bytes("worker image policy not configured"));
         _reportData(unconfigured, appCompose, publicKey);
@@ -224,22 +221,6 @@ contract DeviceRegistryAttestationBindingTest is Test {
         vm.expectRevert(bytes("quote report data mismatch"));
         vm.prank(worker);
         _register(registry, reportData, appCompose, publicKey);
-    }
-
-    function testReportDataPreparationRequiresRegistrationPermission() public {
-        DeviceRegistry target = new DeviceRegistry(keccak256("permission test"));
-        target.setTdxV4Attestation(address(verifier));
-        target.setExpectedWorkerImageDigest(imageDigest);
-
-        vm.expectRevert(bytes("registration not allowed"));
-        _reportData(target, appCompose, publicKey);
-    }
-
-    function testReportDataPreparationRejectsExpiredChallenge() public {
-        vm.warp(registry.registrationChallengeDeadlines(worker) + 1);
-
-        vm.expectRevert(bytes("registration challenge expired"));
-        _reportData(registry, appCompose, publicKey);
     }
 
     function testReportDataPreparationRequiresPublicKey() public {

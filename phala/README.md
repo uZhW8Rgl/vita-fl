@@ -260,7 +260,7 @@ If only `PHALA_RUNTIME_ENDPOINT_OVERRIDE` is set and it already contains an embe
 
 The on-chain path receives the quote, the exact canonical `app_compose` bytes, and the ordered RTMR3 event fields. It does not accept a worker-provided image identity, compose hash, or precomputed event digest as policy truth.
 
-`DeviceRegistry` strictly derives the Docker image digest first and compares it with `expectedWorkerImageDigest`. Its narrow parser also rejects a second service declaration and YAML flow- or merge-style service declarations. It then computes `SHA-256(app_compose)`. The attestation contract requires the owner-pinned dstack `MRTD`/`RTMR0`--`RTMR2` base-runtime tuple, validates each structured event type, name and payload, computes its SHA-384 digest on-chain, requires exactly one matching `compose-hash` payload, replays the extend chain from the zero RTMR3 value, and requires the result to equal RTMR3 inside the verified quote. The Registry-generated `REPORTDATA` additionally binds the derived image/compose identity to the device address, endpoint metadata, RSA public key, deployment, owner challenge and nonce.
+`DeviceRegistry` strictly derives the Docker image digest first and compares it with `expectedWorkerImageDigest`. Its narrow parser also rejects a second service declaration and YAML flow- or merge-style service declarations. It then computes `SHA-256(app_compose)`. The attestation contract requires the owner-pinned dstack `MRTD`/`RTMR0`--`RTMR2` base-runtime tuple, validates each structured event type, name and payload, computes its SHA-384 digest on-chain, requires exactly one matching `compose-hash` payload, replays the extend chain from the zero RTMR3 value, and requires the result to equal RTMR3 inside the verified quote. The Registry-generated `REPORTDATA` additionally binds the derived image/compose identity to the device address, endpoint metadata, RSA public key, deployment and per-device nonce. No owner-managed address allowlist gates registration; any caller satisfying the attestation and workload policy can register.
 
 This means worker-specific `app-id`, `instance-id`, and compose measurements may still produce different final RTMR3 values, but those final RTMR3 values no longer need to be known in advance. The shared policy anchor is the digest-pinned worker image reference measured inside each worker's Phala app-compose preimage.
 
@@ -300,14 +300,14 @@ Current Terraform defaults in this scaffold match that target layout:
 - `contracts_size = "tdx.small"`
 - `worker_size = "tdx.small"`
 - `os_image = "dstack-dev-0.5.7"`
-- `tee_inference_image = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:cf78b6b5515f0d8d61ecb22612088db9dccf43dcd9311783239a30c90dd4054a"`
+- `tee_inference_image = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:f1b33351467ede01637e3410b239ce35f2ac178398a7957c3809b3e5010d0f0c"`
 - `enable_tee_inference = false` until the updated image has been published
 
 To enable the separate third app:
 
 ```bash
 export ENABLE_TEE_INFERENCE=true
-export TEE_INFERENCE_IMAGE=ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:cf78b6b5515f0d8d61ecb22612088db9dccf43dcd9311783239a30c90dd4054a
+export TEE_INFERENCE_IMAGE=ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:f1b33351467ede01637e3410b239ce35f2ac178398a7957c3809b3e5010d0f0c
 bash phala/tf-env.sh plan -input=false
 bash phala/tf-env.sh apply -input=false -auto-approve
 ```

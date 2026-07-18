@@ -76,15 +76,18 @@ locals {
     ollama_model                      = var.ollama_model
     tee_inference_url                 = local.agent_tee_inference_url
     tee_inference_image_digest        = replace(var.tee_inference_image, "/^.*@/", "")
-    zk_inference_url                  = coalesce(var.zk_inference_url_override, "")
-    agent_available                   = var.enable_phala_agent ? "1" : "0"
-    dynamic_worker_inventory          = var.dynamic_worker_inventory
-    dynamic_worker_rpc_url            = coalesce(var.runtime_rpc_url_override, "")
-    dynamic_worker_kubo_api_url       = coalesce(var.runtime_kubo_api_url_override, "")
-    dynamic_worker_kubo_gateway_url   = coalesce(var.runtime_kubo_gateway_url_override, "")
-    max_dynamic_workers               = var.max_dynamic_workers
-    region                            = var.region
-    os_image                          = var.os_image
+    zk_inference_url = var.zk_inference_url_override != null ? trimsuffix(
+      var.zk_inference_url_override,
+      "/",
+    ) : ""
+    agent_available                 = var.enable_phala_agent ? "1" : "0"
+    dynamic_worker_inventory        = var.dynamic_worker_inventory
+    dynamic_worker_rpc_url          = coalesce(var.runtime_rpc_url_override, "")
+    dynamic_worker_kubo_api_url     = coalesce(var.runtime_kubo_api_url_override, "")
+    dynamic_worker_kubo_gateway_url = coalesce(var.runtime_kubo_gateway_url_override, "")
+    max_dynamic_workers             = var.max_dynamic_workers
+    region                          = var.region
+    os_image                        = var.os_image
   })
 
   ssh_authorized_keys = var.ssh_public_key_path == null ? [] : [trimspace(file(var.ssh_public_key_path))]
@@ -121,6 +124,18 @@ locals {
     var.tee_inference_url_override,
     "/",
   ) : ""
+  inference_runtime_rpc_url = coalesce(
+    var.runtime_rpc_url_override,
+    "http://runtime-endpoint-not-configured.invalid",
+  )
+  inference_runtime_kubo_api_url = coalesce(
+    var.runtime_kubo_api_url_override,
+    "http://runtime-endpoint-not-configured.invalid",
+  )
+  inference_runtime_kubo_gateway_url = coalesce(
+    var.runtime_kubo_gateway_url_override,
+    "http://runtime-endpoint-not-configured.invalid",
+  )
   additional_worker_indices = {
     for worker_key in keys(nonsensitive(var.additional_workers)) :
     worker_key => tonumber(replace(worker_key, "worker", ""))
@@ -145,7 +160,6 @@ resource "phala_app" "contract_runtime" {
     PHALA_CLOUD_API_KEY            = var.phala_cloud_api_key
     DYNAMIC_WORKER_INVENTORY       = var.dynamic_worker_inventory
     CONTROL_ADMIN_TOKEN            = var.control_admin_token
-    REGISTRATION_OWNER_PRIVATE_KEY = var.eth_wallet_private_key != "" ? var.eth_wallet_private_key : var.private_key
     } : {}, var.enable_phala_ui ? {
     UI_BASIC_AUTH_USERNAME = var.ui_basic_auth_username
     UI_BASIC_AUTH_PASSWORD = var.ui_basic_auth_password
@@ -310,9 +324,9 @@ resource "phala_app" "tee_inference" {
   docker_compose = templatefile("${path.module}/dstack-compose.tee-inference.phala.tftpl", {
     tee_inference_image = var.tee_inference_image
     account_address     = var.account_address
-    rpc_url             = local.contracts_rpc_url
-    kubo_api_url        = local.contracts_kubo_api_url
-    kubo_gateway_url    = local.contracts_kubo_gateway
+    rpc_url             = local.inference_runtime_rpc_url
+    kubo_api_url        = local.inference_runtime_kubo_api_url
+    kubo_gateway_url    = local.inference_runtime_kubo_gateway_url
   })
   env = {
     RSA_PRIVATE_KEY = file(var.rsa_private_key_path)
@@ -352,9 +366,9 @@ resource "phala_app" "zk_inference" {
   docker_compose = templatefile("${path.module}/dstack-compose.zk-inference.phala.tftpl", {
     zk_inference_image = var.zk_inference_image
     account_address    = var.account_address
-    rpc_url            = local.contracts_rpc_url
-    kubo_api_url       = local.contracts_kubo_api_url
-    kubo_gateway_url   = local.contracts_kubo_gateway
+    rpc_url            = local.inference_runtime_rpc_url
+    kubo_api_url       = local.inference_runtime_kubo_api_url
+    kubo_gateway_url   = local.inference_runtime_kubo_gateway_url
   })
   env = {
     RSA_PRIVATE_KEY = file(var.rsa_private_key_path)

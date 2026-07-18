@@ -152,46 +152,6 @@ fund_configured_worker_accounts() {
     done
 }
 
-allow_configured_worker_registrations() {
-    local addresses_csv=${WORKER_ACCOUNT_ADDRESSES:-}
-    local addresses=()
-    local address
-    local index
-
-    if [ -n "$addresses_csv" ]; then
-        IFS=',' read -ra addresses <<< "$addresses_csv"
-    fi
-    for index in $(seq 0 $((${WORKER_COUNT:-20} - 1))); do
-        local env_name="W${index}_ACCOUNT_ADDRESS"
-        local env_value=${!env_name:-}
-        if [ -n "$env_value" ]; then
-            addresses+=("$env_value")
-        fi
-    done
-
-    if [ "${#addresses[@]}" -eq 0 ]; then
-        echo "No worker accounts configured for TDX registration."
-        return 0
-    fi
-
-    echo "Pre-authorizing configured worker accounts to submit bound TDX registrations."
-    local allowed_addresses=" "
-    for address in "${addresses[@]}"; do
-        address=$(printf '%s' "$address" | xargs)
-        if [ -z "$address" ]; then
-            continue
-        fi
-        require_address WORKER_ACCOUNT_ADDRESS "$address"
-        if [[ "$allowed_addresses" == *" $address "* ]]; then
-            continue
-        fi
-        allowed_addresses+="$address "
-        cast send --rpc-url "$rpc_url" --private-key "$ETH_WALLET_PRIVATE_KEY" \
-            "$DEVICE_REGISTRY_ADDRESS" "setRegistrationAllowed(address,bool)" "$address" true >/dev/null
-        echo "Allowed bound TDX registration for $address"
-    done
-}
-
 wait_for_anvil
 wait_for_kubo
 clear_runtime_ready_marker
@@ -1042,13 +1002,6 @@ fi
 echo "Expected worker image digest set to sha256:$EXPECTED_WORKER_IMAGE_DIGEST"
 cast send --rpc-url "$rpc_url" --private-key "$ETH_WALLET_PRIVATE_KEY" \
     "$DEVICE_REGISTRY_ADDRESS" "setExpectedWorkerImageDigest(bytes32)" "0x$EXPECTED_WORKER_IMAGE_DIGEST" >/dev/null
-
-if [ "${PREAUTHORIZE_WORKER_REGISTRATIONS:-1}" = "1" ]; then
-    allow_configured_worker_registrations
-else
-    echo "Skipping bulk registration challenges; the dynamic controller opens them just in time."
-fi
-
 
 #echo "Authorization Status:"
 #[ "$(cast call --rpc-url $rpc_url $DEVICE_REGISTRY_ADDRESS "isAuthorized(address)" $ADDRESS_1)" = "0x$(printf '%063d1')" ] && echo $ADDRESS_1: yes || echo $ADDRESS_1: no

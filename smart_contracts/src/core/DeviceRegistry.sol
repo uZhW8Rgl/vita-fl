@@ -23,19 +23,13 @@ contract DeviceRegistry {
     uint256 private constant REPORT_DATA_LENGTH = 64;
 
     bytes32 public constant REGISTRATION_REPORT_DATA_DOMAIN =
-        keccak256("MasterThesis.DeviceRegistry.registration.v2");
-    bytes32 public constant REGISTRATION_CHALLENGE_DOMAIN =
-        keccak256("MasterThesis.DeviceRegistry.challenge.v1");
-    uint256 public constant REGISTRATION_CHALLENGE_TTL = 1 days;
+        keccak256("MasterThesis.DeviceRegistry.registration.v3");
 
     address public owner;
     bytes32 public immutable deploymentId;
     ITdxV4Attestation public tdxV4Attestation;
     bytes32 public expectedWorkerImageDigest;
     mapping(address => Device) public devices;
-    mapping(address => bool) public registrationAllowed;
-    mapping(address => bytes32) public registrationChallenges;
-    mapping(address => uint256) public registrationChallengeDeadlines;
     mapping(address => uint256) public registrationNonces;
     mapping(address => bytes32) public registeredComposeHashes;
     mapping(address => bytes32) public registeredImageDigests;
@@ -47,9 +41,6 @@ contract DeviceRegistry {
     event DeviceAuthorized(address indexed device);
     event DeviceDeauthorized(address indexed device);
     event DeviceLeft(address indexed device);
-    event RegistrationPermissionUpdated(
-        address indexed device, bool allowed, bytes32 indexed challenge, uint256 deadline
-    );
     event ExpectedWorkerImageDigestUpdated(bytes32 expectedWorkerImageDigest);
 
     constructor(bytes32 _deploymentId) {
@@ -71,31 +62,6 @@ contract DeviceRegistry {
     function setExpectedWorkerImageDigest(bytes32 _expectedWorkerImageDigest) public onlyOwner {
         expectedWorkerImageDigest = _expectedWorkerImageDigest;
         emit ExpectedWorkerImageDigestUpdated(_expectedWorkerImageDigest);
-    }
-
-    function setRegistrationAllowed(address _address, bool allowed) external onlyOwner {
-        require(_address != address(0), "invalid device address");
-        registrationAllowed[_address] = allowed;
-        if (allowed) {
-            bytes32 previousBlockHash = block.number == 0 ? bytes32(0) : blockhash(block.number - 1);
-            bytes32 challenge = keccak256(
-                abi.encode(
-                    REGISTRATION_CHALLENGE_DOMAIN,
-                    deploymentId,
-                    _address,
-                    registrationNonces[_address],
-                    previousBlockHash,
-                    block.prevrandao,
-                    block.timestamp
-                )
-            );
-            uint256 deadline = block.timestamp + REGISTRATION_CHALLENGE_TTL;
-            registrationChallenges[_address] = challenge;
-            registrationChallengeDeadlines[_address] = deadline;
-            emit RegistrationPermissionUpdated(_address, true, challenge, deadline);
-        } else {
-            _clearRegistrationPermission(_address);
-        }
     }
 
     function authorizeAddress(address _address) public onlyOwner {
@@ -228,7 +194,6 @@ contract DeviceRegistry {
         _requireBoundReportData(output, binding, nonce);
 
         registrationNonces[_address] = nonce + 1;
-        _clearRegistrationPermission(_address);
         registeredComposeHashes[_address] = composeHash;
         registeredImageDigests[_address] = workerImageDigest;
         _registerVerifiedDevice(_address, _public_ip, _msg_broker_ip, _public_key);
@@ -297,8 +262,6 @@ contract DeviceRegistry {
                 keccak256(_public_key),
                 composeHash,
                 workerImageDigest,
-                registrationChallenges[_address],
-                registrationChallengeDeadlines[_address],
                 nonce
             )
         );
@@ -309,9 +272,6 @@ contract DeviceRegistry {
         view
     {
         require(_address != address(0), "invalid device address");
-        require(registrationAllowed[_address], "registration not allowed");
-        require(registrationChallenges[_address] != bytes32(0), "registration challenge missing");
-        require(block.timestamp <= registrationChallengeDeadlines[_address], "registration challenge expired");
         require(_public_key.length != 0, "public key required");
         require(expectedWorkerImageDigest != bytes32(0), "worker image policy not configured");
         require(workerImageDigest == expectedWorkerImageDigest, "worker image digest mismatch");
@@ -338,13 +298,6 @@ contract DeviceRegistry {
     ) internal {
         addKnownDevice(_address);
         devices[_address] = Device(true, _public_ip, _msg_broker_ip, _public_key);
-    }
-
-    function _clearRegistrationPermission(address _address) internal {
-        registrationAllowed[_address] = false;
-        delete registrationChallenges[_address];
-        delete registrationChallengeDeadlines[_address];
-        emit RegistrationPermissionUpdated(_address, false, bytes32(0), 0);
     }
 
     function addKnownDevice(address _address) internal {

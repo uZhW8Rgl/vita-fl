@@ -100,12 +100,11 @@ The quote's 64-byte `REPORTDATA` has this format:
 ```text
 bytes  0..31  keccak256(domain, deploymentId, chainId, registry,
                         device, endpoint hashes, public-key hash,
-                        composeHash, imageDigest, owner challenge,
-                        challenge deadline, nonce)
+                        composeHash, imageDigest, nonce)
 bytes 32..63  uint256 registration nonce
 ```
 
-The worker asks `DeviceRegistry.registrationReportData(...)` for these exact bytes before requesting its quote. The owner-issued challenge expires after one day and is consumed on success; successful registration also increments the nonce. This binds the quote to the transaction sender, RSA key, endpoints, workload policy, Registry deployment and one fresh registration attempt. The two legacy registration selectors always revert.
+The worker asks `DeviceRegistry.registrationReportData(...)` for these exact bytes before requesting its quote. Successful registration increments the per-device nonce. This binds the quote to the transaction sender, RSA key, endpoints, workload policy, Registry deployment and one registration attempt, while rejecting replay after the nonce changes. Registration is not controlled by an owner-managed address allowlist: any caller that satisfies the complete attestation and workload policy can register. The two legacy registration selectors always revert.
 
 The local Docker flow cannot use one static quote for multiple dynamic worker identities. It therefore deploys `MockTdxV4Attestation` explicitly for Anvil, while exercising the same Registry binding and replay checks. This mock proves no hardware claim and the bootstrap refuses to enable it when `DOCKER=phala`.
 

@@ -56,6 +56,7 @@ services:
       test: ["CMD", "ipfs", "id"]
       interval: 5s
       timeout: 5s
+      start_period: 30s
       retries: 24
 
   smart-contracts:
@@ -102,7 +103,6 @@ services:
       WORKER_ACCOUNT_ADDRESSES: "${worker_account_addresses}"
       WORKER_ACCOUNT_BALANCE_WEI: "10000000000000000000000"
       FUND_WORKER_ACCOUNTS: "0"
-      PREAUTHORIZE_WORKER_REGISTRATIONS: "0"
       INITIAL_GM_SIGNER_ADDRESS: "${initial_gm_signer_address}"
     volumes:
       - evaluation-data:/dfl/data/evaluation
@@ -135,7 +135,6 @@ services:
       CONTROL_ADMIN_TOKEN: "$${CONTROL_ADMIN_TOKEN}"
       PHALA_CLOUD_API_KEY: "$${PHALA_CLOUD_API_KEY}"
       DYNAMIC_WORKER_INVENTORY: "$${DYNAMIC_WORKER_INVENTORY}"
-      REGISTRATION_OWNER_PRIVATE_KEY: "$${REGISTRATION_OWNER_PRIVATE_KEY}"
       DYNAMIC_WORKER_IMAGE: "${worker_image}"
       DYNAMIC_WORKER_RPC_URL: "${dynamic_worker_rpc_url}"
       DYNAMIC_WORKER_KUBO_API_URL: "${dynamic_worker_kubo_api_url}"
