@@ -14,7 +14,7 @@ def check_ollama_readiness(
     timeout: float = 3.0,
 ) -> dict[str, str]:
     service_url = (base_url or os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")).rstrip("/")
-    expected_model = model or os.environ.get("OLLAMA_MODEL", "qwen3:0.6b")
+    expected_model = model or os.environ.get("OLLAMA_MODEL", "qwen3:1.7b")
     api_token = os.environ.get("OLLAMA_API_TOKEN", "")
     headers = {"Authorization": f"Bearer {api_token}"} if api_token else {}
     request = urllib.request.Request(f"{service_url}/api/tags", headers=headers, method="GET")

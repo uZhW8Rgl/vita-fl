@@ -355,6 +355,15 @@
       background: rgba(130, 209, 232, 0.14);
     }
 
+    .session small {
+      color: var(--muted);
+    }
+
+    .session .session-live {
+      color: var(--accent-2);
+      font-weight: 700;
+    }
+
     .main {
       padding: 0;
       border: none;
@@ -552,6 +561,26 @@
         rgba(9, 20, 27, 0.92);
     }
 
+    .chat-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .chat-head h2 {
+      margin: 0;
+      font-family: "Source Serif 4", "Georgia", serif;
+      font-size: 1.45rem;
+    }
+
+    .chat-sync {
+      color: var(--accent-2);
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
     .message {
       margin-bottom: 14px;
       padding: 14px;
@@ -721,8 +750,6 @@
       </aside>
 
       <main class="panel main full-width" id="main-panel">
-        <h2 class="sr-only" id="title">Fresh Session</h2>
-
         <div class="content">
           <div class="tabs content-tabs">
             <button class="tab-button active" id="contracts-tab" type="button">Smart Contracts</button>
@@ -832,6 +859,10 @@
           </section>
 
           <section class="chat-view hidden" id="chat-view">
+            <div class="chat-head">
+              <h2 id="title">Fresh Session</h2>
+              <div class="chat-sync">Live session sync</div>
+            </div>
             <div class="dashboard-note" id="chat-warning">
               The agent is not ready yet. Chat will become available once the training start has launched the agent and `/health` responds.
             </div>
@@ -840,7 +871,7 @@
               <textarea id="input" placeholder="Ask about latest bundles, dataset samples, proofs or artifact provenance..."></textarea>
               <div class="composer-foot">
                 <div class="hint">Press Enter to send. Use Shift+Enter for a new line.</div>
-                <button class="send" type="submit">Send Message</button>
+                <button class="send" id="send-message" type="submit">Send Message</button>
               </div>
             </form>
           </section>
@@ -931,6 +962,7 @@
     const runtimeAgentEl = document.getElementById("runtime-agent");
     const titleEl = document.getElementById("title");
     const inputEl = document.getElementById("input");
+    const sendMessageBtn = document.getElementById("send-message");
     const composerEl = document.getElementById("composer");
     const newSessionBtn = document.getElementById("new-session");
     const contractsTabBtn = document.getElementById("contracts-tab");
@@ -963,8 +995,13 @@
     const trainingInputByField = Object.fromEntries(
       trainingInputs.map((input) => [input.dataset.trainingInput, input])
     );
-    let currentSessionId = null;
+    const selectedSessionStorageKey = "vita-fl.selected-agent-session";
+    let currentSessionId = window.localStorage.getItem(selectedSessionStorageKey);
     let currentMessages = [];
+    let currentSessionBusy = false;
+    let chatRequestInFlight = false;
+    let sessionCreationPromise = null;
+    let activeSessionPollInFlight = false;
     let currentMode = "contracts";
     let agentReady = false;
     let trainingConfigLoaded = false;
@@ -1099,10 +1136,13 @@
       return div.innerHTML;
     }
 
-    function renderMessages(messages) {
+    function renderMessages(messages, busy = false) {
       currentMessages = Array.isArray(messages) ? messages.slice() : [];
       messagesEl.innerHTML = "";
-      for (const message of currentMessages) {
+      const displayedMessages = busy
+        ? [...currentMessages, { role: "assistant", content: "Working on it..." }]
+        : currentMessages;
+      for (const message of displayedMessages) {
         const toolEvents = Array.isArray(message.events)
           ? message.events
           : (Array.isArray(message.tool_events) ? message.tool_events : []);
@@ -1124,6 +1164,15 @@
         messagesEl.appendChild(item);
       }
       messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function applySession(session) {
+      currentSessionId = session.id;
+      currentSessionBusy = Boolean(session.busy);
+      window.localStorage.setItem(selectedSessionStorageKey, currentSessionId);
+      titleEl.textContent = sessionLabel(session);
+      renderMessages(session.messages, currentSessionBusy);
+      renderWorkflow();
     }
 
     async function readJsonResponse(response, fallbackMessage) {
@@ -1320,8 +1369,10 @@
     function renderWorkflow() {
       renderContractState();
       renderTrainingConfig();
-      inputEl.disabled = !agentReady;
-      newSessionBtn.disabled = !agentReady;
+      const chatBusy = currentSessionBusy || chatRequestInFlight;
+      inputEl.disabled = !agentReady || chatBusy;
+      sendMessageBtn.disabled = !agentReady || chatBusy;
+      newSessionBtn.disabled = !agentReady || chatBusy;
       const showSidebar = currentMode === "chat";
       sidebarEl.classList.toggle("hidden", !showSidebar);
       mainPanelEl.classList.toggle("full-width", !showSidebar);
@@ -1550,13 +1601,7 @@
     }
 
     function applyAgentReadiness(ready) {
-      const wasReady = agentReady;
       agentReady = ready && trainingReady();
-      if (agentReady) {
-        if (agentReady && !wasReady && !currentSessionId) {
-          void createSession();
-        }
-      }
       renderWorkflow();
     }
 
@@ -1570,7 +1615,20 @@
           fetch("/health", { cache: "no-store" }),
           fetch("/api/sessions", { cache: "no-store" })
         ]);
-        applyAgentReadiness(healthResponse.ok && sessionsResponse.ok);
+        const ready = healthResponse.ok && sessionsResponse.ok;
+        applyAgentReadiness(ready);
+        if (ready) {
+          const payload = await sessionsResponse.json();
+          const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+          renderSessionList(sessions, currentSessionId);
+          if (!sessions.some((session) => session.id === currentSessionId)) {
+            if (sessions.length > 0) {
+              await loadSession(sessions[0].id, { refreshList: false });
+            } else {
+              await createSession();
+            }
+          }
+        }
       } catch (_error) {
         applyAgentReadiness(false);
       }
@@ -1580,46 +1638,66 @@
       return session.title || "Fresh Session";
     }
 
-    async function refreshSessions(activeId = currentSessionId) {
-      if (!agentReady) {
-        sessionsEl.innerHTML = "";
-        return;
-      }
-      const response = await fetch("/api/sessions");
-      if (!response.ok) {
-        return;
-      }
-      const payload = await response.json();
+    function renderSessionList(sessions, activeId = currentSessionId) {
       sessionsEl.innerHTML = "";
-      for (const session of payload.sessions) {
+      for (const session of sessions) {
         const button = document.createElement("button");
         button.className = `session${session.id === activeId ? " active" : ""}`;
         button.disabled = !agentReady;
-        button.innerHTML = `<b>${escapeHtml(sessionLabel(session))}</b><br><small>${session.message_count} messages</small>`;
+        const activity = session.busy
+          ? '<span class="session-live">Working...</span>'
+          : `${session.message_count} messages`;
+        button.innerHTML = `<b>${escapeHtml(sessionLabel(session))}</b><br><small>${activity}</small>`;
         button.onclick = async () => {
           await pollAgentHealth();
           if (!agentReady) {
             statusEl.textContent = "Status: Agent chat is not ready yet.";
             return;
           }
-          currentSessionId = session.id;
           await loadSession(session.id);
         };
         sessionsEl.appendChild(button);
       }
     }
 
-    async function loadSession(sessionId) {
-      const response = await fetch(`/api/sessions/${sessionId}`);
+    async function refreshSessions(activeId = currentSessionId) {
+      if (!agentReady) {
+        sessionsEl.innerHTML = "";
+        return [];
+      }
+      const response = await fetch("/api/sessions", { cache: "no-store" });
       if (!response.ok) {
-        statusEl.textContent = "Status: Session could not be loaded.";
+        return [];
+      }
+      const payload = await response.json();
+      const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+      renderSessionList(sessions, activeId);
+      return sessions;
+    }
+
+    async function loadSession(sessionId, options = {}) {
+      const response = await fetch(`/api/sessions/${sessionId}`, { cache: "no-store" });
+      if (!response.ok) {
+        if (response.status === 404 && currentSessionId === sessionId) {
+          currentSessionId = null;
+          currentSessionBusy = false;
+          window.localStorage.removeItem(selectedSessionStorageKey);
+          const sessions = await refreshSessions(null);
+          if (sessions.length > 0) {
+            await loadSession(sessions[0].id, { refreshList: false });
+          } else if (agentReady) {
+            await createSession();
+          }
+        } else {
+          statusEl.textContent = "Status: Session could not be loaded.";
+        }
         return;
       }
       const payload = await response.json();
-      currentSessionId = payload.session.id;
-      titleEl.textContent = sessionLabel(payload.session);
-      renderMessages(payload.session.messages);
-      await refreshSessions(currentSessionId);
+      applySession(payload.session);
+      if (options.refreshList !== false) {
+        await refreshSessions(currentSessionId);
+      }
     }
 
     async function createSession(options = {}) {
@@ -1627,7 +1705,11 @@
         statusEl.textContent = "Status: Agent chat is not ready yet.";
         return;
       }
-      try {
+      if (sessionCreationPromise) {
+        return sessionCreationPromise;
+      }
+      sessionCreationPromise = (async () => {
+        try {
         const response = await fetch("/api/sessions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1639,67 +1721,81 @@
           return;
         }
         const payload = await response.json();
-        await loadSession(payload.session.id);
+        applySession(payload.session);
+        await refreshSessions(payload.session.id);
         applyAgentReadiness(true);
         if (agentReady && currentMode === "chat") {
           inputEl.focus();
         }
-      } catch (_error) {
+        } catch (_error) {
         applyAgentReadiness(false);
         statusEl.textContent = "Status: Waiting for the agent backend.";
-      }
+        } finally {
+          sessionCreationPromise = null;
+        }
+      })();
+      return sessionCreationPromise;
     }
 
-    async function resetSessionsAndCreateFreshOne() {
-      if (!agentReady) {
-        statusEl.textContent = "Status: Agent chat is not ready yet.";
+    async function pollActiveSession() {
+      if (!agentReady || currentMode !== "chat" || !currentSessionId || activeSessionPollInFlight) {
         return;
       }
-      statusEl.textContent = "Status: Clearing session history...";
-      currentSessionId = null;
-      titleEl.textContent = "Fresh Session";
-      renderMessages([]);
-      sessionsEl.innerHTML = "";
-      const response = await fetch("/api/sessions", { method: "DELETE" });
-      if (!response.ok) {
-        statusEl.textContent = "Status: Old sessions could not be removed.";
-        return;
+      activeSessionPollInFlight = true;
+      try {
+        await loadSession(currentSessionId, { refreshList: false });
+        await refreshSessions(currentSessionId);
+        if (currentSessionBusy) {
+          statusEl.textContent = "Status: Agent is processing the current message...";
+        } else if (!chatRequestInFlight) {
+          statusEl.textContent = "Status: Agent chat is synchronized.";
+        }
+      } finally {
+        activeSessionPollInFlight = false;
       }
-      await createSession({ resetMetrics: true });
     }
 
     composerEl.addEventListener("submit", async (event) => {
       event.preventDefault();
       await pollAgentHealth();
       const message = inputEl.value.trim();
-      if (!agentReady || !message || !currentSessionId) {
+      if (!agentReady || !message || !currentSessionId || currentSessionBusy || chatRequestInFlight) {
         statusEl.textContent = "Status: Agent chat is not ready yet.";
         return;
       }
+      const submittedSessionId = currentSessionId;
       inputEl.value = "";
       renderMessages([
         ...currentMessages,
-        { role: "user", content: message },
-        { role: "assistant", content: "Working on it..." }
-      ]);
+        { role: "user", content: message }
+      ], true);
+      chatRequestInFlight = true;
+      currentSessionBusy = true;
+      renderWorkflow();
       statusEl.textContent = "Status: Sending message to the agent...";
       try {
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: currentSessionId, message })
+          body: JSON.stringify({ session_id: submittedSessionId, message })
         });
         const payload = await readJsonResponse(response, "Chat request failed.");
-        titleEl.textContent = sessionLabel(payload.session);
-        renderMessages(payload.session.messages);
+        if (currentSessionId === submittedSessionId) {
+          applySession(payload.session);
+        }
         await refreshSessions(currentSessionId);
         statusEl.textContent = "Status: Message delivered.";
       } catch (error) {
-        renderMessages([
-          ...currentMessages.slice(0, -1),
-          { role: "assistant", content: `Request failed: ${error.message || error}` }
-        ]);
-        statusEl.textContent = `Status: ERROR :: ${error.message || error}`;
+        statusEl.textContent = "Status: Chat connection interrupted; synchronizing the session...";
+        await loadSession(submittedSessionId, { refreshList: false });
+        if (currentSessionBusy) {
+          statusEl.textContent = "Status: Agent is still processing the message in the background.";
+        } else if (currentMessages.length === 0 || currentMessages.at(-1)?.role !== "assistant") {
+          statusEl.textContent = `Status: ERROR :: ${error.message || error}`;
+        }
+      } finally {
+        chatRequestInFlight = false;
+        renderWorkflow();
       }
     });
 
@@ -1713,7 +1809,7 @@
 
     newSessionBtn.addEventListener("click", async () => {
       await pollAgentHealth();
-      await resetSessionsAndCreateFreshOne();
+      await createSession();
     });
 
     for (const button of trainingStepBtns) {
@@ -1773,14 +1869,12 @@
     (async () => {
       await reloadDashboardFrames();
       applyAgentReadiness(false);
-      await pollAgentHealth();
       await refreshWorkflowStatus();
+      await pollAgentHealth();
       window.setInterval(pollAgentHealth, 15000);
       window.setInterval(refreshWorkflowStatus, 15000);
+      window.setInterval(pollActiveSession, 2000);
       applyMode("contracts");
-      if (agentReady) {
-        await createSession();
-      }
     })();
   </script>
 </body>

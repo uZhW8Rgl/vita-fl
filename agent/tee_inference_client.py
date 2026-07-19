@@ -414,7 +414,7 @@ def verify_tee_inference_bundle(
         "verification_scope": "air-signature-reportdata-rtmr3-compose-image-policy",
         "dcap_collateral_verified": False,
         "manifest_sha256": manifest_digest.hex(),
-        "model_id": manifest[2],
+        "model_id": manifest[2].hex() if isinstance(manifest[2], bytes) else str(manifest[2]),
         "model_version": manifest[3],
         "image_reference": image_reference,
         "quote_sha256": hashlib.sha256(quote).hexdigest(),

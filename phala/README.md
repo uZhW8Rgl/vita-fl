@@ -318,7 +318,7 @@ bash phala/tf-env.sh apply -input=false -auto-approve
 The browser agent runs inside the contract-runtime CVM so the authenticated UI
 can reach it as `agent:8089`. Its SCITT-CCF transparency log runs alongside it
 with a fresh tmpfs ledger on every container start. Ollama runs in a separate
-`tdx.small` CVM with 20 GB disk and pulls `qwen3:0.6b` during startup. Only the
+`tdx.medium` CVM with 20 GB disk and pulls `qwen3:1.7b` during startup. Only the
 Bearer-authenticated proxy is exposed through the Ollama app gateway; the raw
 Ollama API is not published.
 
@@ -331,7 +331,8 @@ ENABLE_PHALA_AGENT=true
 AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:dad61d90a2399f07c13563b2c7892a4dd809c7584a10d64961a00471862d67e7
 TRANSPARENCY_LOG_IMAGE=ghcr.io/uzhw8rgl/master-thesis-transparency-log@sha256:4c6789921d5ff89e546c65c435bc19d479acc8248715dff3f5b1536e2c8af723
 ENABLE_OLLAMA=true
-OLLAMA_MODEL=qwen3:0.6b
+OLLAMA_MODEL=qwen3:1.7b
+OLLAMA_SIZE=tdx.medium
 OLLAMA_API_TOKEN=replace-with-at-least-24-url-safe-characters
 ```
 
@@ -345,13 +346,16 @@ For receiver-attested confidential receipts on all six public MCP tools,
 generate the Sello key material once and add its output to `.env.phala.anvil`:
 
 ```bash
-python phala/generate_sello_env.py --scitt-url https://CONTRACT_APP_ID-8000.dstack-REGION.phala.network
+python phala/generate_sello_env.py --scitt-url https://CONTRACT_APP_ID-8000s.dstack-REGION.phala.network
 ```
+
+The trailing `s` selects dstack-gateway TLS passthrough, so the inference CVMs
+connect directly to SCITT-CCF's own TLS listener without an HTTP proxy.
 
 With `ENABLE_SELLO_RECEIPTS=true`, Terraform gives each inference receiver only
 its own signing seed and the token-issuer public key. The agent receives the
 owner token/HPKE private material and a public registry for both receivers. Each
 receiver registers its signed, owner-encrypted receipt directly with SCITT and
 releases the tool response only after verifying the inclusion receipt. Set
-`SELLO_SCITT_URL` to the contract-runtime app's public port-8000 gateway URL so
-the separate inference CVMs can reach it.
+`SELLO_SCITT_URL` to the contract-runtime app's public `-8000s` TLS-passthrough
+URL so the separate inference CVMs can reach SCITT-CCF directly.

@@ -67,7 +67,7 @@ class OllamaProxyHandler(BaseHTTPRequestHandler):
 
     def _health(self) -> None:
         upstream = os.environ.get("OLLAMA_UPSTREAM", "http://ollama:11434").rstrip("/")
-        model = os.environ.get("OLLAMA_MODEL", "qwen3:0.6b")
+        model = os.environ.get("OLLAMA_MODEL", "qwen3:1.7b")
         try:
             with urllib.request.urlopen(f"{upstream}/api/tags", timeout=3) as response:
                 payload = json.loads(response.read(1_048_577).decode("utf-8"))

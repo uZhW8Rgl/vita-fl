@@ -154,7 +154,7 @@ The output includes:
 The current LLM mode uses local Ollama, not an OpenAI API key:
 
 ```bash
-ollama pull qwen3:0.6b
+ollama pull qwen3:1.7b
 ollama serve
 ```
 
@@ -162,7 +162,7 @@ Then:
 
 ```bash
 export OLLAMA_BASE_URL=http://127.0.0.1:11434
-export OLLAMA_MODEL=qwen3:0.6b
+export OLLAMA_MODEL=qwen3:1.7b
 
 .venv/bin/python agent/run_agent.py --llm --source contract --skip-calibration
 ```
@@ -174,7 +174,7 @@ In this mode LangChain should prefer the six public TEE and ZK skills instead of
 The Compose stack now includes:
 
 - `ollama`: the Ollama API server on the internal Docker network
-- `ollama-init`: a one-shot initializer that automatically pulls `qwen3:0.6b`
+- `ollama-init`: a one-shot initializer that automatically pulls `qwen3:1.7b`
 - `agent`: the persistent API/session backend
 - `ui`: a separate frontend container that talks to the agent API and embeds Grafana
 
@@ -279,7 +279,7 @@ result is not released if direct SCITT publication fails.
 Generate a coherent prototype key set with:
 
 ```bash
-python phala/generate_sello_env.py --scitt-url https://CONTRACT_APP_ID-8000.dstack-REGION.phala.network
+python phala/generate_sello_env.py --scitt-url https://CONTRACT_APP_ID-8000s.dstack-REGION.phala.network
 ```
 
 Copy the resulting lines into `.env.phala.anvil`, then keep
@@ -287,8 +287,10 @@ Copy the resulting lines into `.env.phala.anvil`, then keep
 their respective encrypted Phala app environments; the agent receives only the
 corresponding public-key registry.
 
-`SELLO_SCITT_URL` must be the contract-runtime gateway URL for port 8000, not
-the Compose-only hostname `transparency-log`.
+`SELLO_SCITT_URL` must use the contract-runtime app's public `-8000s` endpoint.
+The trailing `s` enables TLS passthrough to SCITT-CCF's TLS listener, avoiding
+an intermediate HTTP proxy. Do not use the Compose-only hostname
+`transparency-log` from a separate inference CVM.
 
 Container paths are internal and are not exposed as MCP arguments. Configure
 the inference workflows with `TEE_INFERENCE_URL`, `ZK_INFERENCE_URL`,

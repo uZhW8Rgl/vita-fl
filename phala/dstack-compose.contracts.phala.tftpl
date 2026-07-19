@@ -194,74 +194,6 @@ services:
       start_period: 30s
       retries: 30
 
-  scitt-proxy:
-    image: ${smart_contracts_image}
-    restart: unless-stopped
-    depends_on:
-      transparency-log:
-        condition: service_healthy
-    command:
-      - python3
-      - -c
-      - |
-        import http.server
-        import ssl
-        import urllib.error
-        import urllib.request
-
-        target = "https://transparency-log:8000"
-        context = ssl._create_unverified_context()
-        hop_by_hop = {"connection", "content-length", "host", "transfer-encoding"}
-
-        class Proxy(http.server.BaseHTTPRequestHandler):
-            protocol_version = "HTTP/1.1"
-
-            def forward(self):
-                length = int(self.headers.get("Content-Length", "0"))
-                body = self.rfile.read(length) if length else None
-                headers = {
-                    key: value
-                    for key, value in self.headers.items()
-                    if key.lower() not in hop_by_hop
-                }
-                request = urllib.request.Request(
-                    target + self.path,
-                    data=body,
-                    headers=headers,
-                    method=self.command,
-                )
-                try:
-                    response = urllib.request.urlopen(request, context=context, timeout=120)
-                except urllib.error.HTTPError as error:
-                    response = error
-                response_body = response.read()
-                self.send_response(response.status)
-                for key, value in response.headers.items():
-                    if key.lower() not in hop_by_hop:
-                        self.send_header(key, value)
-                self.send_header("Content-Length", str(len(response_body)))
-                self.send_header("Connection", "close")
-                self.end_headers()
-                self.wfile.write(response_body)
-
-            do_GET = forward
-            do_POST = forward
-            do_PUT = forward
-            do_DELETE = forward
-
-            def log_message(self, format, *args):
-                return
-
-        http.server.ThreadingHTTPServer(("0.0.0.0", 8002), Proxy).serve_forever()
-    ports:
-      - "8002:8002"
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/node/network', timeout=5).read()"]
-      interval: 10s
-      timeout: 7s
-      start_period: 30s
-      retries: 30
-
   agent:
     image: ${agent_image}
     restart: unless-stopped
@@ -288,6 +220,7 @@ services:
       OLLAMA_MODEL: "${ollama_model}"
       OLLAMA_API_TOKEN: "$${OLLAMA_API_TOKEN}"
       OLLAMA_NUM_PREDICT: "256"
+      OLLAMA_NUM_CTX: "4096"
       AGENT_CHAT_TIMEOUT_SECONDS: "600"
       AGENT_PORT: "8089"
       AGENT_DOWNLOAD_DIR: /tmp/agent-downloads

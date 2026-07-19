@@ -173,7 +173,7 @@ variable "ollama_image" {
 variable "ollama_model" {
   description = "Ollama model pulled into the fresh LLM CVM at startup."
   type        = string
-  default     = "qwen3:0.6b"
+  default     = "qwen3:1.7b"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9._/-]+:[A-Za-z0-9._-]+$", var.ollama_model))
@@ -365,7 +365,7 @@ variable "zk_inference_size" {
 variable "ollama_size" {
   description = "Phala CVM size slug for the separate Ollama app."
   type        = string
-  default     = "tdx.small"
+  default     = "tdx.medium"
 }
 
 variable "region" {
@@ -585,7 +585,7 @@ variable "tee_inference_image" {
 variable "zk_inference_image" {
   description = "Digest-pinned ZK inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:c476dddef8f032523c6a793b50ab7e951b8b161510c7d096b8600886cd9f87d2"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:ad357e6e1dd014724322cde22975b6b679b6948532e93ad7c2f826ab1000ed39"
 
   validation {
     condition = (

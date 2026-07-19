@@ -291,6 +291,7 @@ configure_phala_agent() {
   append_var_if_set "transparency_log_image" "TRANSPARENCY_LOG_IMAGE"
   append_var_if_set "ollama_image" "OLLAMA_IMAGE"
   append_var_if_set "ollama_model" "OLLAMA_MODEL"
+  append_var_if_set "ollama_size" "OLLAMA_SIZE"
   append_var_if_set "ollama_base_url_override" "OLLAMA_BASE_URL_OVERRIDE"
   append_var_if_set "tee_inference_url_override" "TEE_INFERENCE_URL_OVERRIDE"
   append_var_if_set "zk_inference_url_override" "ZK_INFERENCE_URL_OVERRIDE"

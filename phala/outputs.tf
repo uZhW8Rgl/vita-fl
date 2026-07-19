@@ -32,10 +32,10 @@ output "grafana_endpoint" {
 }
 
 output "scitt_endpoint" {
-  description = "Public SCITT endpoint used for receiver-direct receipt publication."
+  description = "Public end-to-end TLS-passthrough SCITT endpoint used for receiver-direct receipt publication."
   value = var.enable_phala_agent ? (
     can(regex("-[0-9]+\\.", local.contracts_endpoint_base))
-    ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8000.")
+    ? replace(local.contracts_endpoint_base, "/-[0-9]+\\./", "-8000s.")
     : "${local.contracts_endpoint_base}:8000"
   ) : null
 }

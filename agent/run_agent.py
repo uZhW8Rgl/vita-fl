@@ -11,6 +11,7 @@ import os
 import sys
 import traceback
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -514,9 +515,10 @@ class AgentRuntime:
                 f"LangChain mode dependencies are missing or incompatible. Original import error: {exc}"
             ) from exc
 
-        model_name = os.environ.get("OLLAMA_MODEL", "qwen3:0.6b")
+        model_name = os.environ.get("OLLAMA_MODEL", "qwen3:1.7b")
         base_url = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
         num_predict = int(os.environ.get("OLLAMA_NUM_PREDICT", "64"))
+        num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", "4096"))
         api_token = os.environ.get("OLLAMA_API_TOKEN", "")
         client_kwargs = {"headers": {"Authorization": f"Bearer {api_token}"}} if api_token else {}
         return ChatOllama(
@@ -525,6 +527,7 @@ class AgentRuntime:
             reasoning=False,
             temperature=0,
             num_predict=num_predict,
+            num_ctx=num_ctx,
             client_kwargs=client_kwargs,
         )
 
@@ -860,12 +863,19 @@ class AgentRuntime:
         return latest_response, timed_out
 
     def create_session(self, title: str | None = None) -> dict[str, Any]:
+        for existing_id, existing in list(self._sessions.items()):
+            if not existing["messages"] and not existing.get("busy", False):
+                del self._sessions[existing_id]
         session_id = uuid.uuid4().hex[:12]
+        now = datetime.now(timezone.utc).isoformat()
         session = {
             "id": session_id,
             "title": title or "New session",
             "messages": [],
             "state": {"id": session_id},
+            "busy": False,
+            "created_at": now,
+            "updated_at": now,
         }
         self._sessions[session_id] = session
         return session
@@ -880,24 +890,48 @@ class AgentRuntime:
         return session
 
     def list_sessions(self) -> list[dict[str, Any]]:
-        return [
+        sessions = [
             {
                 "id": session["id"],
                 "title": session["title"],
                 "message_count": len(session["messages"]),
+                "busy": bool(session.get("busy", False)),
+                "created_at": session.get("created_at", ""),
+                "updated_at": session.get("updated_at", ""),
             }
             for session in self._sessions.values()
         ]
+        return sorted(sessions, key=lambda session: session["updated_at"], reverse=True)
 
     def _public_session(self, session: dict[str, Any]) -> dict[str, Any]:
         return {
             "id": session["id"],
             "title": session["title"],
             "messages": session["messages"],
+            "busy": bool(session.get("busy", False)),
+            "created_at": session.get("created_at", ""),
+            "updated_at": session.get("updated_at", ""),
         }
 
     async def chat(self, session_id: str, user_message: str) -> dict[str, Any]:
         session = self.get_session(session_id)
+        if session.get("busy", False):
+            raise RuntimeError("This session is already processing a message.")
+        session["busy"] = True
+        session["updated_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            await self._chat_session(session, session_id, user_message)
+        finally:
+            session["busy"] = False
+            session["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return self._public_session(session)
+
+    async def _chat_session(
+        self,
+        session: dict[str, Any],
+        session_id: str,
+        user_message: str,
+    ) -> None:
         if session["title"] == "New session":
             session["title"] = user_message[:60] or "New session"
         session["messages"].append({"role": "user", "content": user_message})
@@ -918,7 +952,13 @@ class AgentRuntime:
                 CURRENT_SESSION_STATE.reset(token)
             if response is not None:
                 content, tool_events = self._extract_agent_reply(response)
-                if self._assistant_claims_tool_completion(content, tool_events):
+                requested_skill = self._infer_requested_skill(user_message)
+                if not tool_events and requested_skill is not None:
+                    fallback_message = self._execute_skill_fallback(session_state, user_message)
+                    if fallback_message is None:
+                        raise RuntimeError(f"Requested skill is not executable: {requested_skill}")
+                    assistant_message = fallback_message
+                elif self._assistant_claims_tool_completion(content, tool_events):
                     fallback_message = self._execute_skill_fallback(session_state, user_message)
                     if fallback_message is not None:
                         assistant_message = fallback_message
@@ -962,7 +1002,6 @@ class AgentRuntime:
                 [{"type": "error", "label": "Agent Error", "detail": str(exc)}],
             )
         session["messages"].append({"role": "assistant", **assistant_message})
-        return self._public_session(session)
 
     async def run_prompt(self, prompt: str) -> dict[str, Any]:
         session = self.create_session("CLI prompt")
@@ -1057,13 +1096,7 @@ async def serve_agent(args: argparse.Namespace) -> None:
 
             reset_mcp_tool_call_metrics()
         session = runtime.create_session()
-        return {
-            "session": {
-                "id": session["id"],
-                "title": session["title"],
-                "messages": session["messages"],
-            }
-        }
+        return {"session": runtime._public_session(session)}
 
     @app.delete("/api/sessions")
     async def clear_sessions() -> dict[str, bool]:

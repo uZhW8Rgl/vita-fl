@@ -59,6 +59,16 @@ def record_mcp_tool_call(tool_name: str) -> None:
     MCP_TOOL_CALLS_CURRENT.labels(tool_name=tool_name).inc()
 
 
+def _json_response(value: Any) -> str:
+    """Serialize an MCP result while preserving binary evidence as hexadecimal."""
+
+    return json.dumps(
+        value,
+        indent=2,
+        default=lambda item: item.hex() if isinstance(item, bytes) else str(item),
+    )
+
+
 reset_mcp_tool_call_metrics()
 
 
@@ -312,9 +322,8 @@ def fetch_latest_verified_zk_model_bundle() -> str:
         "/v1/models/fetch", {}, timeout=600,
         receipt_action="fetch_latest_verified_zk_model_bundle",
     )
-    return json.dumps(
+    return _json_response(
         {"skill": "fetch_latest_verified_zk_model_bundle", "stage": "verified-model-ready", **result},
-        indent=2,
     )
 
 
@@ -327,9 +336,8 @@ def generate_random_zk_chestmnist_image(index: int | None = None) -> str:
         "/v1/jobs", {"index": normalize_optional_index(index)},
         receipt_action="generate_random_zk_chestmnist_image",
     )
-    return json.dumps(
+    return _json_response(
         {"skill": "generate_random_zk_chestmnist_image", "stage": "zk-query-ready", **result},
-        indent=2,
     )
 
 
@@ -391,7 +399,7 @@ def generate_and_verify_zk_inference_proof(job_id: str) -> str:
         transparency=transparency,
         verification=verification,
     )
-    return json.dumps(
+    return _json_response(
         {
             "skill": "generate_and_verify_zk_inference_proof",
             "stage": "proof-verified-and-transparency-logged",
@@ -400,7 +408,6 @@ def generate_and_verify_zk_inference_proof(job_id: str) -> str:
             "transparency_log": transparency,
             "transparency_record_id": record["record_id"],
         },
-        indent=2,
     )
 
 
@@ -411,7 +418,7 @@ def fetch_latest_verified_model_bundle(out_dir: str = "zk_inference/out") -> str
         out_dir=out_dir,
         fetch_bundle_fn=lambda *, out_dir: _fetch_current_onchain_model_bundle(out_dir=out_dir),
     )
-    return json.dumps(result, indent=2)
+    return _json_response(result)
 
 
 def generate_random_chestmnist_image(
@@ -427,7 +434,7 @@ def generate_random_chestmnist_image(
         input_json=input_json,
         create_query_fn=_create_single_image_query,
     )
-    return json.dumps(result, indent=2)
+    return _json_response(result)
 
 
 def generate_zk_inference_proof(
@@ -450,7 +457,7 @@ def generate_zk_inference_proof(
             skip_calibration=bool(payload.get("skip_calibration", True)),
         ),
     )
-    return json.dumps(result, indent=2)
+    return _json_response(result)
 
 
 @mcp.tool()
@@ -462,7 +469,7 @@ def fetch_latest_verified_tee_model_bundle() -> str:
         from .tee_inference_client import fetch_latest_verified_tee_model_bundle as run_impl
     except ImportError:
         from tee_inference_client import fetch_latest_verified_tee_model_bundle as run_impl
-    return json.dumps(run_impl(), indent=2)
+    return _json_response(run_impl())
 
 
 @mcp.tool()
@@ -474,7 +481,7 @@ def generate_random_tee_chestmnist_image(index: int | None = None) -> str:
         from .tee_inference_client import generate_random_tee_chestmnist_image as run_impl
     except ImportError:
         from tee_inference_client import generate_random_tee_chestmnist_image as run_impl
-    return json.dumps(run_impl(index=normalize_optional_index(index)), indent=2)
+    return _json_response(run_impl(index=normalize_optional_index(index)))
 
 
 @mcp.tool()
@@ -486,7 +493,7 @@ def run_and_verify_tee_inference(job_id: str) -> str:
         from .tee_inference_client import run_and_verify_tee_inference as run_impl
     except ImportError:
         from tee_inference_client import run_and_verify_tee_inference as run_impl
-    return json.dumps(run_impl(job_id), indent=2)
+    return _json_response(run_impl(job_id))
 
 
 def run_verified_tee_inference(
@@ -510,7 +517,7 @@ def run_verified_tee_inference(
     result = run_impl(
         index=normalize_optional_index(index),
     )
-    return json.dumps(result, indent=2)
+    return _json_response(result)
 
 
 if __name__ == "__main__":

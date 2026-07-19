@@ -31,6 +31,7 @@ class ZkTransparencyTests(unittest.TestCase):
             "proof_verified": True,
             "artifact_sha256": {"proof.json": "34" * 32},
             "transparency_bundle_sha256": hashlib.sha256(bundle).hexdigest(),
+            "tool_receipt": {"receiver_kid": bytes.fromhex("ab" * 32)},
         }
         transparency = {
             "status": "registered-and-receipt-verified",
@@ -40,7 +41,9 @@ class ZkTransparencyTests(unittest.TestCase):
             "signed_statement_sha256": "56" * 32,
             "transparent_statement_sha256": "78" * 32,
             "transparent_statement_bytes": 321,
-            "receipts": [{"regtxid": "5.1"}],
+            "receipts": [{"regtxid": "5.1", "claim_digest": bytes.fromhex("cd" * 32)}],
+            "_signed_statement": b"signed statement",
+            "_transparent_statement": b"transparent statement",
         }
         with (
             patch("agent.mcp_server._remote_call", return_value=proof_result),
@@ -58,6 +61,8 @@ class ZkTransparencyTests(unittest.TestCase):
         self.assertEqual(result["stage"], "proof-verified-and-transparency-logged")
         self.assertTrue(result["proof_verified"])
         self.assertEqual(result["transparency_log"]["transaction_id"], "5.1")
+        self.assertEqual(result["tool_receipt"]["receiver_kid"], "ab" * 32)
+        self.assertEqual(result["transparency_log"]["receipts"][0]["claim_digest"], "cd" * 32)
 
 
 if __name__ == "__main__":
