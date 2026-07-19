@@ -328,7 +328,7 @@ digest-pinned references in `.env.phala.anvil`:
 
 ```dotenv
 ENABLE_PHALA_AGENT=true
-AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:dad61d90a2399f07c13563b2c7892a4dd809c7584a10d64961a00471862d67e7
+AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:135c3d5ed035087c3d32ba4ddd8bc62eff382fd9266e9e4b44fdef4181c606cd
 TRANSPARENCY_LOG_IMAGE=ghcr.io/uzhw8rgl/master-thesis-transparency-log@sha256:4c6789921d5ff89e546c65c435bc19d479acc8248715dff3f5b1536e2c8af723
 ENABLE_OLLAMA=true
 OLLAMA_MODEL=qwen3:1.7b

@@ -1137,6 +1137,7 @@
     }
 
     function renderMessages(messages, busy = false) {
+      const previousScrollTop = messagesEl.scrollTop;
       currentMessages = Array.isArray(messages) ? messages.slice() : [];
       messagesEl.innerHTML = "";
       const displayedMessages = busy
@@ -1163,7 +1164,8 @@
         }
         messagesEl.appendChild(item);
       }
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      const maximumScrollTop = Math.max(0, messagesEl.scrollHeight - messagesEl.clientHeight);
+      messagesEl.scrollTop = Math.min(previousScrollTop, maximumScrollTop);
     }
 
     function applySession(session) {

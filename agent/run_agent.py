@@ -91,7 +91,7 @@ TRANSPARENCY_VIEW_HTML = """<!doctype html>
     #records { display: grid; gap: 12px; }
     .empty, article { border: 1px solid #28404a; border-radius: 14px; background: #0c1a21; padding: 16px; }
     .top { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
-    .badge { border: 1px solid #4d91a4; border-radius: 999px; color: #9ce6f2; padding: 4px 9px; font-size: .72rem; }
+    .badge { flex: 0 0 auto; white-space: nowrap; border: 1px solid #4d91a4; border-radius: 999px; color: #9ce6f2; padding: 4px 9px; font-size: .72rem; }
     .badge.zk { border-color: #9b7ec8; color: #d4baff; }
     dl { display: grid; grid-template-columns: minmax(130px, .35fr) 1fr; gap: 7px 14px; margin: 14px 0 0; }
     dt { color: #91a9b0; }
@@ -117,6 +117,21 @@ TRANSPARENCY_VIEW_HTML = """<!doctype html>
       if (className) dd.className = className;
       list.append(dt, dd);
     }
+    function evidenceLabel(item) {
+      const action = item?.verification?.action || "";
+      const labels = {
+        fetch_latest_verified_tee_model_bundle: "TEE BUNDLE FETCH",
+        generate_random_tee_chestmnist_image: "TEE IMAGE PICK",
+        run_and_verify_tee_inference: "TEE INFERENCE",
+        fetch_latest_verified_zk_model_bundle: "ZK BUNDLE FETCH",
+        generate_random_zk_chestmnist_image: "ZK IMAGE PICK",
+        generate_and_verify_zk_inference_proof: "ZK INFERENCE",
+      };
+      if (labels[action]) return labels[action];
+      if (item.evidence_type === "tee-inference-receipt") return "TEE INFERENCE";
+      if (item.evidence_type === "zk-inference-proof") return "ZK INFERENCE";
+      return "VERIFIED RECEIPT";
+    }
     function render(items) {
       records.replaceChildren();
       if (!items.length) {
@@ -131,8 +146,9 @@ TRANSPARENCY_VIEW_HTML = """<!doctype html>
         const isToolReceipt = item.evidence_type === "agent-tool-receipt";
         title.textContent = isToolReceipt ? "Receiver-attested MCP tool receipt" : (item.evidence_type === "zk-inference-proof" ? "EZKL inference proof" : "AIR / TDX inference receipt");
         const badge = document.createElement("span");
-        badge.className = item.evidence_type === "zk-inference-proof" ? "badge zk" : "badge";
-        badge.textContent = isToolReceipt ? "TOOL" : (item.evidence_type === "zk-inference-proof" ? "ZK" : "TEE");
+        const label = evidenceLabel(item);
+        badge.className = label.startsWith("ZK ") ? "badge zk" : "badge";
+        badge.textContent = label;
         top.append(title, badge);
         const list = document.createElement("dl");
         field(list, "SCITT status", item.status, "ok");
