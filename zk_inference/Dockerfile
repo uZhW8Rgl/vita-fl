@@ -59,6 +59,7 @@ COPY tee_inference/service/__init__.py tee_inference/service/model_source.py ./t
 COPY agent/blockchain_source.py agent/ipfs_bundle.py ./agent/
 
 RUN python -m pip install -e dfl/neural_network
+RUN python -c "import nacl; import agent_receipts.environment; import zk_inference.server"
 
 EXPOSE 8090
 
