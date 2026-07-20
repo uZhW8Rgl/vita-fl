@@ -10,6 +10,7 @@ const web3 = new Web3(process.env.SEPOLIA_RPC_URL);
 const gm_storage_address = process.env.GM_STORAGE_ADDRESS;
 const aggregator_address = process.env.AGGREGATOR_ADDRESS;
 const device_registry_address = process.env.REGISTRY_ADDRESS;
+const medical_signer_registry_address = process.env.MEDICAL_SIGNER_REGISTRY_ADDRESS;
 const privateKey = process.env.PRIVATE_KEY;
 
 const addAccountToWallet = (account) => {
@@ -704,6 +705,58 @@ export const getAuthorizedDevices = async () => {
     const contract = new web3.eth.Contract(abi, device_registry_address);
     const result = await contract.methods.getAuthorizedDevices().call();
     return Array.from(result || []);
+};
+
+const decodeBytes32Text = (value) => {
+    if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value)) {
+        throw new Error(`Invalid bytes32 signer id: ${value}`);
+    }
+    return Buffer.from(value.slice(2), "hex").toString("utf8").replace(/\0+$/g, "");
+};
+
+export const getMedicalSignerSnapshot = async () => {
+    if (!medical_signer_registry_address) {
+        throw new Error("MEDICAL_SIGNER_REGISTRY_ADDRESS is required for signed ChestMNIST training data");
+    }
+    const abi = JSON.parse(fs.readFileSync("./abi/medical_signer_registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, medical_signer_registry_address);
+    const blockNumber = await web3.eth.getBlockNumber();
+    const block = await web3.eth.getBlock(blockNumber);
+    const callAtSnapshot = (method) => method.call({}, blockNumber);
+    const [keySetVersion, deviceIds, radiologistIds] = await Promise.all([
+        callAtSnapshot(contract.methods.keySetVersion()),
+        callAtSnapshot(contract.methods.getActiveSignerIds(1)),
+        callAtSnapshot(contract.methods.getActiveSignerIds(2)),
+    ]);
+    const signerEntries = await Promise.all(
+        [
+            ...Array.from(deviceIds || []).map((id) => ({ id, expectedRole: 1, roleName: "XRAY_DEVICE" })),
+            ...Array.from(radiologistIds || []).map((id) => ({ id, expectedRole: 2, roleName: "RADIOLOGIST" })),
+        ].map(async ({ id, expectedRole, roleName }) => {
+            const result = await callAtSnapshot(contract.methods.getSigner(id));
+            const actualRole = Number((result.role ?? result[1])?.toString?.() ?? result.role ?? result[1]);
+            if (actualRole !== expectedRole) {
+                throw new Error(`Medical signer ${id} changed role inside block snapshot`);
+            }
+            const activeValue = result.active ?? result[0];
+            return {
+                signer_id: decodeBytes32Text(String(id)),
+                active: activeValue === true || activeValue === "true",
+                role: roleName,
+                display_name: String(result.displayName ?? result[2]),
+                public_key_der_hex: String(result.publicKeyDer ?? result[3]),
+                certificate_der_hex: String(result.certificateDer ?? result[4]),
+                certificate_fingerprint: String(result.certificateFingerprint ?? result[5]),
+            };
+        })
+    );
+    return {
+        registry_address: medical_signer_registry_address,
+        block_number: Number(blockNumber),
+        block_hash: String(block?.hash || ""),
+        key_set_version: String(keySetVersion?.toString?.() ?? keySetVersion),
+        signers: signerEntries,
+    };
 };
 
 // get device public key (bytes) from registry by device address

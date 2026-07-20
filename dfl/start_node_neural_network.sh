@@ -118,6 +118,7 @@ contracts = {
     "REGISTRY_ADDRESS": os.environ.get("REGISTRY_ADDRESS", "").strip(),
     "AGGREGATOR_ADDRESS": os.environ.get("AGGREGATOR_ADDRESS", "").strip(),
     "GM_STORAGE_ADDRESS": os.environ.get("GM_STORAGE_ADDRESS", "").strip(),
+    "MEDICAL_SIGNER_REGISTRY_ADDRESS": os.environ.get("MEDICAL_SIGNER_REGISTRY_ADDRESS", "").strip(),
 }
 
 kubo_api = (os.environ.get("KUBO_API") or "").rstrip("/")
@@ -153,6 +154,7 @@ if kubo_api:
                 "registry_address",
                 "aggregator_address",
                 "gm_storage_address",
+                "medical_signer_registry_address",
             )
         ),
     )
@@ -162,6 +164,7 @@ if kubo_api:
         ("REGISTRY_ADDRESS", "registry_address"),
         ("AGGREGATOR_ADDRESS", "aggregator_address"),
         ("GM_STORAGE_ADDRESS", "gm_storage_address"),
+        ("MEDICAL_SIGNER_REGISTRY_ADDRESS", "medical_signer_registry_address"),
     ):
         if missing(contracts[env_name]):
             resolved = str(manifest.get(manifest_key, "")).strip()

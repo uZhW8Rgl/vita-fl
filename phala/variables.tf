@@ -134,7 +134,7 @@ variable "sello_scitt_url" {
 variable "agent_image" {
   description = "Digest-pinned LLM/MCP agent image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:135c3d5ed035087c3d32ba4ddd8bc62eff382fd9266e9e4b44fdef4181c606cd"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:c3a58099f60cc105f7031dfdd5b58295344801cea1f38b5aa387050019e8a88a"
 
   validation {
     condition = (
@@ -301,7 +301,7 @@ variable "enable_phala_ui" {
 variable "ui_image" {
   description = "Digest-pinned browser UI image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:1eb7083cfbd8a6d856d05471bbdc65c3f94cb6b43758ee6c2d2b2002a5374e5b"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:cfa6bf74771b4b16e3bf928ff9f3d7066e924ec728875dbc05cda9e312389a22"
 
   validation {
     condition = (

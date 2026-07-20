@@ -3,7 +3,7 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getLastRoundsAggregator, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
+import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, getLastRoundsAggregator, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
 import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
 import fs from 'fs/promises';
@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from 'fs';
 import { DstackClient, TappdClient, getComposeHash } from '@phala/dstack-sdk';
 import crypto from 'crypto';
 import http from 'http';
+import { emitTelemetryEvent } from "./telemetry.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const deviceID = process.env.DEVICE_ID;
@@ -80,7 +81,7 @@ async function assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel) {
     return current;
 }
 async function runtimeEvent(name, attributes = {}) {
-    return undefined;
+    void emitTelemetryEvent(name, attributes);
 }
 async function runOperation(name, attributes, operation) {
     return operation();
@@ -935,6 +936,20 @@ const stateMachine = async () => {
                         await sleep(2000);
                         continue;
                     }
+                    let medicalSignerSnapshot = null;
+                    if ((process.env.DATASET_NAME || "mnist").toLowerCase() === "chestmnist") {
+                        medicalSignerSnapshot = await runOperation("worker.fetch_medical_signers", { role: "worker", round: currentRound }, () => getMedicalSignerSnapshot());
+                        console.log(`Fetched ${medicalSignerSnapshot.signers.length} approved medical signer keys ` +
+                            `from block ${medicalSignerSnapshot.block_number} (key set ${medicalSignerSnapshot.key_set_version}).`);
+                        await runtimeEvent("worker.medical_signers.fetched", {
+                            role: "worker",
+                            round: currentRound,
+                            block_number: medicalSignerSnapshot.block_number,
+                            block_hash: medicalSignerSnapshot.block_hash,
+                            key_set_version: medicalSignerSnapshot.key_set_version,
+                            signer_count: medicalSignerSnapshot.signers.length,
+                        });
+                    }
                     console.log("Fetching the global model from IPFS ...");
                     await runtimeEvent("worker.fetch_global_model.started", { role: "worker" });
                     let fetchedGlobalModel;
@@ -988,6 +1003,7 @@ const stateMachine = async () => {
                         await runOperation("worker.training", { role: "worker" }, async () => callPythonService('/train', {
                             epochs: Number(process.env.EPOCH),
                             aggregator_public_key_der_hex: await getDevicePublicKey(state[1]),
+                            medical_signer_snapshot: medicalSignerSnapshot,
                         }));
                     }
                     catch (e) {

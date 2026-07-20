@@ -41,6 +41,7 @@ contract DeviceRegistry {
     event DeviceAuthorized(address indexed device);
     event DeviceDeauthorized(address indexed device);
     event DeviceLeft(address indexed device);
+    event DeviceDeregistered(address indexed device, uint256 registrationNonce);
     event ExpectedWorkerImageDigestUpdated(bytes32 expectedWorkerImageDigest);
 
     constructor(bytes32 _deploymentId) {
@@ -77,10 +78,14 @@ contract DeviceRegistry {
     }
 
     function leaveNetwork() public {
-        require(knownDevice[msg.sender], "device not registered");
-        require(isAuthorized(msg.sender), "device not authorized");
-        devices[msg.sender].authorized = false;
+        _deregisterDevice(msg.sender);
         emit DeviceLeft(msg.sender);
+    }
+
+    /// @notice Removes the caller's own verified registration and workload identity.
+    /// @dev The registration nonce is intentionally retained to prevent replay of an old quote.
+    function deregisterDevice() external {
+        _deregisterDevice(msg.sender);
     }
 
     function isAuthorized(address _address) public view returns (bool) {
@@ -305,5 +310,35 @@ contract DeviceRegistry {
             knownDevice[_address] = true;
             deviceAddresses.push(_address);
         }
+    }
+
+    function _deregisterDevice(address _address) internal {
+        require(_address == msg.sender, "only device can deregister itself");
+        require(knownDevice[_address], "device not registered");
+
+        delete devices[_address];
+        delete registeredComposeHashes[_address];
+        delete registeredImageDigests[_address];
+        knownDevice[_address] = false;
+        _removeDeviceAddress(_address);
+
+        emit DeviceDeregistered(_address, registrationNonces[_address]);
+    }
+
+    function _removeDeviceAddress(address _address) internal {
+        for (uint256 i = 0; i < deviceAddresses.length; i++) {
+            if (deviceAddresses[i] != _address) {
+                continue;
+            }
+
+            uint256 lastIndex = deviceAddresses.length - 1;
+            if (i != lastIndex) {
+                deviceAddresses[i] = deviceAddresses[lastIndex];
+            }
+            deviceAddresses.pop();
+            return;
+        }
+
+        revert("device registry invariant violated");
     }
 }

@@ -21,6 +21,7 @@ import {console2} from "forge-std/console2.sol";
 import {DeviceRegistry} from "../src/core/DeviceRegistry.sol";
 import {AggregatorSelection} from "../src/core/AggregatorSelection.sol";
 import {GMStorage} from "../src/core/GMStorage.sol";
+import {MedicalSignerRegistry} from "../src/core/MedicalSignerRegistry.sol";
 
 
 
@@ -69,6 +70,31 @@ contract DeviceRegistryDeploy is Script {
         );
         console2.log("Deployed GMStorage to", address(gmStorage));
 
+        MedicalSignerRegistry medicalSignerRegistry = new MedicalSignerRegistry();
+        console2.log("Deployed MedicalSignerRegistry to", address(medicalSignerRegistry));
+        _configureMedicalSigners(medicalSignerRegistry);
+
         vm.stopBroadcast();
+    }
+
+    function _configureMedicalSigners(MedicalSignerRegistry registry) private {
+        for (uint256 i = 0; i < 5; i++) {
+            string memory prefix = string.concat("data/medical_signers/xray-device-", vm.toString(i));
+            registry.configureSigner(
+                bytes32(bytes(string.concat("XRAY_DEVICE_", vm.toString(i)))),
+                MedicalSignerRegistry.SignerRole.XRAY_DEVICE,
+                string.concat("Synthetic X-Ray Device ", vm.toString(i)),
+                vm.readFileBinary(string.concat(prefix, "-public.der")),
+                vm.readFileBinary(string.concat(prefix, "-certificate.der"))
+            );
+        }
+
+        registry.configureSigner(
+            bytes32("RADIOLOGIST_0"),
+            MedicalSignerRegistry.SignerRole.RADIOLOGIST,
+            "Synthetic Radiologist 0",
+            vm.readFileBinary("data/medical_signers/radiologist-0-public.der"),
+            vm.readFileBinary("data/medical_signers/radiologist-0-certificate.der")
+        );
     }
 }

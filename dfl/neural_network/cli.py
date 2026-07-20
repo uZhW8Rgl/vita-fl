@@ -17,6 +17,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .dicom_provenance import verify_training_provenance
+
 torch.backends.nnpack.enabled = False
 torch.backends.nnpack.set_flags(False)
 
@@ -562,25 +564,31 @@ def _evaluate_multilabel(
         fn_total += fn
         precision = _safe_ratio(tp, tp + fp)
         recall = _safe_ratio(tp, tp + fn)
-        f1 = None if precision is None or recall is None or precision + recall == 0 else 2 * precision * recall / (precision + recall)
-        label_rows.append({
-            **base,
-            "kind": "global_model_label_evaluation",
-            "label_index": label_idx,
-            "label_name": f"label_{label_idx}",
-            "sample_count": int(truth.size),
-            "positive_count": int(truth.sum()),
-            "negative_count": int(truth.size - truth.sum()),
-            "true_positive": tp,
-            "true_negative": tn,
-            "false_positive": fp,
-            "false_negative": fn,
-            "accuracy_percent": _safe_percent(tp + tn, truth.size),
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "auroc": _binary_auc(probabilities[:, label_idx], truth),
-        })
+        f1 = (
+            None
+            if precision is None or recall is None or precision + recall == 0
+            else 2 * precision * recall / (precision + recall)
+        )
+        label_rows.append(
+            {
+                **base,
+                "kind": "global_model_label_evaluation",
+                "label_index": label_idx,
+                "label_name": f"label_{label_idx}",
+                "sample_count": int(truth.size),
+                "positive_count": int(truth.sum()),
+                "negative_count": int(truth.size - truth.sum()),
+                "true_positive": tp,
+                "true_negative": tn,
+                "false_positive": fp,
+                "false_negative": fn,
+                "accuracy_percent": _safe_percent(tp + tn, truth.size),
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "auroc": _binary_auc(probabilities[:, label_idx], truth),
+            }
+        )
 
     micro_precision = _safe_ratio(tp_total, tp_total + fp_total)
     micro_recall = _safe_ratio(tp_total, tp_total + fn_total)
@@ -611,17 +619,19 @@ def _evaluate_multilabel(
     sample_rows: list[dict[str, Any]] = []
     if _write_sample_metrics_enabled():
         for sample_idx in range(y_true.shape[0]):
-            sample_rows.append({
-                **base,
-                "kind": "global_model_sample_evaluation",
-                "sample_index": sample_idx,
-                "sample_accuracy_percent": float(sample_accuracy[sample_idx] * 100.0),
-                "exact_match": int(exact_matches[sample_idx]),
-                "sample_loss": float(sample_losses[sample_idx]),
-                "positive_label_count": int(y_true[sample_idx].sum()),
-                "predicted_positive_label_count": int(y_pred[sample_idx].sum()),
-                "mean_probability": float(probabilities[sample_idx].mean()),
-            })
+            sample_rows.append(
+                {
+                    **base,
+                    "kind": "global_model_sample_evaluation",
+                    "sample_index": sample_idx,
+                    "sample_accuracy_percent": float(sample_accuracy[sample_idx] * 100.0),
+                    "exact_match": int(exact_matches[sample_idx]),
+                    "sample_loss": float(sample_losses[sample_idx]),
+                    "positive_label_count": int(y_true[sample_idx].sum()),
+                    "predicted_positive_label_count": int(y_pred[sample_idx].sum()),
+                    "mean_probability": float(probabilities[sample_idx].mean()),
+                }
+            )
 
     return summary, label_rows, sample_rows
 
@@ -652,25 +662,31 @@ def _evaluate_multiclass(
         fn_total += fn
         precision = _safe_ratio(tp, tp + fp)
         recall = _safe_ratio(tp, tp + fn)
-        f1 = None if precision is None or recall is None or precision + recall == 0 else 2 * precision * recall / (precision + recall)
-        label_rows.append({
-            **base,
-            "kind": "global_model_label_evaluation",
-            "label_index": label_idx,
-            "label_name": str(label_idx),
-            "sample_count": int(y_true.size),
-            "positive_count": int(truth.sum()),
-            "negative_count": int(truth.size - truth.sum()),
-            "true_positive": tp,
-            "true_negative": tn,
-            "false_positive": fp,
-            "false_negative": fn,
-            "accuracy_percent": _safe_percent(tp + tn, truth.size),
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "auroc": _binary_auc(probabilities[:, label_idx], truth),
-        })
+        f1 = (
+            None
+            if precision is None or recall is None or precision + recall == 0
+            else 2 * precision * recall / (precision + recall)
+        )
+        label_rows.append(
+            {
+                **base,
+                "kind": "global_model_label_evaluation",
+                "label_index": label_idx,
+                "label_name": str(label_idx),
+                "sample_count": int(y_true.size),
+                "positive_count": int(truth.sum()),
+                "negative_count": int(truth.size - truth.sum()),
+                "true_positive": tp,
+                "true_negative": tn,
+                "false_positive": fp,
+                "false_negative": fn,
+                "accuracy_percent": _safe_percent(tp + tn, truth.size),
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "auroc": _binary_auc(probabilities[:, label_idx], truth),
+            }
+        )
 
     micro_precision = _safe_ratio(tp_total, tp_total + fp_total)
     micro_recall = _safe_ratio(tp_total, tp_total + fn_total)
@@ -701,17 +717,19 @@ def _evaluate_multiclass(
     sample_rows: list[dict[str, Any]] = []
     if _write_sample_metrics_enabled():
         for sample_idx in range(y_true.size):
-            sample_rows.append({
-                **base,
-                "kind": "global_model_sample_evaluation",
-                "sample_index": sample_idx,
-                "sample_accuracy_percent": 100.0 if correct_mask[sample_idx] else 0.0,
-                "exact_match": int(correct_mask[sample_idx]),
-                "sample_loss": float(sample_losses[sample_idx]),
-                "true_label": int(y_true[sample_idx]),
-                "predicted_label": int(y_pred[sample_idx]),
-                "true_class_probability": float(probabilities[sample_idx, y_true[sample_idx]]),
-            })
+            sample_rows.append(
+                {
+                    **base,
+                    "kind": "global_model_sample_evaluation",
+                    "sample_index": sample_idx,
+                    "sample_accuracy_percent": 100.0 if correct_mask[sample_idx] else 0.0,
+                    "exact_match": int(correct_mask[sample_idx]),
+                    "sample_loss": float(sample_losses[sample_idx]),
+                    "true_label": int(y_true[sample_idx]),
+                    "predicted_label": int(y_pred[sample_idx]),
+                    "true_class_probability": float(probabilities[sample_idx, y_true[sample_idx]]),
+                }
+            )
 
     return summary, label_rows, sample_rows
 
@@ -740,10 +758,20 @@ def _persist_evaluation_metrics(
     return persisted_summary
 
 
-def train_model(epochs: int, aggregator_public_key_der_hex: str) -> None:
+def train_model(
+    epochs: int,
+    aggregator_public_key_der_hex: str,
+    medical_signer_snapshot: dict[str, Any] | None = None,
+) -> None:
     gm_path = data_dir() / "gm.bin"
     print(f"Starting local training from on-chain resolved global model: {gm_path}")
     model = read_model_bin(gm_path)
+    if is_multilabel_dataset():
+        if not medical_signer_snapshot:
+            raise ValueError("signed ChestMNIST training requires an on-chain medical signer snapshot")
+        train_data_path, _ = train_dataset_paths()
+        provenance = verify_training_provenance(train_data_path, medical_signer_snapshot)
+        print(f"Verified signed ChestMNIST provenance: {json.dumps(provenance, sort_keys=True)}")
     images, labels = load_training_dataset()
     num_images = int(images.shape[0])
     optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)

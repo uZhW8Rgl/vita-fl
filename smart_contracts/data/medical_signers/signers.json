@@ -1,0 +1,41 @@
+{
+  "fixture_only": true,
+  "signers": [
+    {
+      "file_stem": "xray-device-0",
+      "common_name": "Synthetic X-Ray Device 0",
+      "public_key_der": "smart_contracts/data/medical_signers/xray-device-0-public.der",
+      "certificate_der": "smart_contracts/data/medical_signers/xray-device-0-certificate.der"
+    },
+    {
+      "file_stem": "xray-device-1",
+      "common_name": "Synthetic X-Ray Device 1",
+      "public_key_der": "smart_contracts/data/medical_signers/xray-device-1-public.der",
+      "certificate_der": "smart_contracts/data/medical_signers/xray-device-1-certificate.der"
+    },
+    {
+      "file_stem": "xray-device-2",
+      "common_name": "Synthetic X-Ray Device 2",
+      "public_key_der": "smart_contracts/data/medical_signers/xray-device-2-public.der",
+      "certificate_der": "smart_contracts/data/medical_signers/xray-device-2-certificate.der"
+    },
+    {
+      "file_stem": "xray-device-3",
+      "common_name": "Synthetic X-Ray Device 3",
+      "public_key_der": "smart_contracts/data/medical_signers/xray-device-3-public.der",
+      "certificate_der": "smart_contracts/data/medical_signers/xray-device-3-certificate.der"
+    },
+    {
+      "file_stem": "xray-device-4",
+      "common_name": "Synthetic X-Ray Device 4",
+      "public_key_der": "smart_contracts/data/medical_signers/xray-device-4-public.der",
+      "certificate_der": "smart_contracts/data/medical_signers/xray-device-4-certificate.der"
+    },
+    {
+      "file_stem": "radiologist-0",
+      "common_name": "Synthetic Radiologist 0",
+      "public_key_der": "smart_contracts/data/medical_signers/radiologist-0-public.der",
+      "certificate_der": "smart_contracts/data/medical_signers/radiologist-0-certificate.der"
+    }
+  ]
+}

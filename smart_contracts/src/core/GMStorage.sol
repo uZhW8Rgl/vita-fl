@@ -202,6 +202,13 @@ contract GMStorage {
             ),
             "Caller is not an aggregator"
         );
+        addContributor(msg.sender);
+        contributions[msg.sender]++;
+        emit ContributionIncremented(
+            round,
+            msg.sender,
+            contributions[msg.sender]
+        );
         round++;
         lastRoundAggregator = msg.sender;
     }

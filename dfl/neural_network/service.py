@@ -8,7 +8,16 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from .cli import aggregate, decrypt_model_package, private_key_path, received_models_dir, save_random, start_client, start_server, train_model
+from .cli import (
+    aggregate,
+    decrypt_model_package,
+    private_key_path,
+    received_models_dir,
+    save_random,
+    start_client,
+    start_server,
+    train_model,
+)
 
 
 server_thread: threading.Thread | None = None
@@ -91,6 +100,7 @@ class Handler(BaseHTTPRequestHandler):
                 train_model(
                     int(payload["epochs"]),
                     str(payload.get("aggregator_public_key_der_hex", "")),
+                    payload.get("medical_signer_snapshot"),
                 )
                 _json_response(self, 200, {"ok": True})
                 return

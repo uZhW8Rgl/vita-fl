@@ -193,6 +193,56 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertFalse(registry.isAuthorized(worker));
     }
 
+    function testRegisteredDeviceCanDeregisterOnlyItself() public {
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        vm.prank(worker);
+        _register(registry, reportData, appCompose, publicKey);
+
+        vm.expectRevert(bytes("device not registered"));
+        vm.prank(attacker);
+        registry.deregisterDevice();
+        assertTrue(registry.isAuthorized(worker));
+
+        vm.prank(worker);
+        registry.deregisterDevice();
+
+        assertFalse(registry.isAuthorized(worker));
+        assertEq(registry.registeredComposeHashes(worker), bytes32(0));
+        assertEq(registry.registeredImageDigests(worker), bytes32(0));
+        assertEq(registry.registrationNonces(worker), 1);
+
+        (bool authorized, string memory publicIp, string memory brokerIp, bytes memory storedKey) =
+            registry.getDevice(worker);
+        assertFalse(authorized);
+        assertEq(bytes(publicIp).length, 0);
+        assertEq(bytes(brokerIp).length, 0);
+        assertEq(storedKey.length, 0);
+        assertEq(registry.getAuthorizedDevices().length, 0);
+    }
+
+    function testDeregisteredDeviceCanRegisterAgainWithoutQuoteReplay() public {
+        bytes memory firstReportData = _reportData(registry, appCompose, publicKey);
+        vm.prank(worker);
+        _register(registry, firstReportData, appCompose, publicKey);
+
+        vm.prank(worker);
+        registry.deregisterDevice();
+
+        vm.expectRevert(bytes("quote report data mismatch"));
+        vm.prank(worker);
+        _register(registry, firstReportData, appCompose, publicKey);
+
+        bytes memory freshReportData = _reportData(registry, appCompose, publicKey);
+        vm.prank(worker);
+        _register(registry, freshReportData, appCompose, publicKey);
+
+        assertTrue(registry.isAuthorized(worker));
+        assertEq(registry.registrationNonces(worker), 2);
+        address[] memory authorizedDevices = registry.getAuthorizedDevices();
+        assertEq(authorizedDevices.length, 1);
+        assertEq(authorizedDevices[0], worker);
+    }
+
     function testRejectsMalformedVerifierOutput() public {
         MalformedTdxV4Attestation malformed = new MalformedTdxV4Attestation();
         malformed.setOutput(hex"00");

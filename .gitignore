@@ -22,6 +22,7 @@ node_modules/
 phala/app_code.txt
 data/rsa_keys/*
 !data/rsa_keys/README.md
+data/chestmnist/provenance/private/
 **/private_key*.pem
 dfl/node_server/public_key.pem
 cache/

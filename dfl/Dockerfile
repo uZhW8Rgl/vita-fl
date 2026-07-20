@@ -51,7 +51,9 @@ RUN python3 -m venv /opt/venv && \
 ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY data/mnist ./config
-COPY data/chestmnist ./config/chestmnist
+COPY data/chestmnist/training_data ./config/chestmnist/training_data
+COPY data/chestmnist/test_data ./config/chestmnist/test_data
+COPY data/chestmnist/README.md ./config/chestmnist/README.md
 COPY data/initial_gm ./initial_gm
 
 COPY dfl/node_server/package*.json ./node_server/

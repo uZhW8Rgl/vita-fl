@@ -112,6 +112,9 @@ jobs:
       - name: Run Phala inventory unit tests
         run: PYTHONPATH=. python -m unittest phala.test_build_worker_inventory -v
 
+      - name: Run DICOM-aligned training provenance tests
+        run: PYTHONPATH=. python -m unittest discover -s dfl/neural_network/tests -v
+
   node-server:
     name: Node Server
     runs-on: ubuntu-latest
