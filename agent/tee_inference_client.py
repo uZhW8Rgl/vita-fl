@@ -10,6 +10,7 @@ import re
 import secrets
 import struct
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,7 @@ TDX_REPORTDATA_OFFSET = TDX_HEADER_SIZE + 520
 TDX_RTMR_SIZE = 48
 TDX_REPORTDATA_SIZE = 64
 RTMR_EVENT_TYPE = 0x08000001
+EVM_ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{40}")
 
 
 class TeeInferenceVerificationError(RuntimeError):
@@ -136,9 +138,7 @@ def _json_request(
                 from .sello_client import complete_receiver_call
             except ImportError:
                 from sello_client import complete_receiver_call
-            complete_receiver_call(
-                receiver_call, exc.headers, raw, exc.code, receiver_base_url=base_url
-            )
+            complete_receiver_call(receiver_call, exc.headers, raw, exc.code, receiver_base_url=base_url)
         body = raw.decode("utf-8", errors="replace")
         raise TeeInferenceVerificationError(f"TEE inference {path} returned HTTP {exc.code}: {body}") from exc
     except (urllib.error.URLError, json.JSONDecodeError) as exc:
@@ -157,7 +157,10 @@ def fetch_latest_verified_tee_model_bundle(
     if not base_url:
         raise TeeInferenceVerificationError("TEE_INFERENCE_URL is not configured")
     prepared = _json_request(
-        base_url, "/v1/models/fetch", timeout_seconds, {},
+        base_url,
+        "/v1/models/fetch",
+        timeout_seconds,
+        {},
         receipt_action="fetch_latest_verified_tee_model_bundle",
     )
     return {
@@ -177,7 +180,10 @@ def generate_random_tee_chestmnist_image(
     if not base_url:
         raise TeeInferenceVerificationError("TEE_INFERENCE_URL is not configured")
     job = _json_request(
-        base_url, "/v1/jobs", timeout_seconds, {"index": index},
+        base_url,
+        "/v1/jobs",
+        timeout_seconds,
+        {"index": index},
         receipt_action="generate_random_tee_chestmnist_image",
     )
     return {
@@ -226,9 +232,7 @@ def _post_job_inference(base_url: str, job_id: str, timeout: int) -> tuple[bytes
                 from .sello_client import complete_receiver_call
             except ImportError:
                 from sello_client import complete_receiver_call
-            complete_receiver_call(
-                receiver_call, exc.headers, raw, exc.code, receiver_base_url=base_url
-            )
+            complete_receiver_call(receiver_call, exc.headers, raw, exc.code, receiver_base_url=base_url)
         body = raw.decode("utf-8", errors="replace")
         raise TeeInferenceVerificationError(f"TEE inference job returned HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
@@ -276,7 +280,123 @@ def _normalize_digest(value: str) -> str:
     return "sha256:" + match.group(1).lower()
 
 
-def _verify_app_compose(app_compose: str, events: list[dict[str, Any]], expected_image_digest: str) -> str:
+def _normalize_runtime_rpc_url(value: str, name: str) -> str:
+    candidate = value.strip().rstrip("/")
+    try:
+        parsed = urllib.parse.urlsplit(candidate)
+        port = parsed.port
+    except ValueError as exc:
+        raise TeeInferenceVerificationError(f"{name} must define a valid runtime RPC URL") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise TeeInferenceVerificationError(f"{name} must define a plain HTTP(S) runtime RPC endpoint")
+    host = parsed.hostname.lower()
+    authority = f"{host}:{port}" if port is not None else host
+    return f"{parsed.scheme.lower()}://{authority}"
+
+
+def _required_contract_policy() -> tuple[str, str, int, str]:
+    gm_storage = os.environ.get("EXPECTED_GM_STORAGE_ADDRESS", "")
+    registry = os.environ.get("EXPECTED_DEVICE_REGISTRY_ADDRESS", "")
+    chain_id_text = os.environ.get("EXPECTED_CHAIN_ID", "")
+    if not EVM_ADDRESS_RE.fullmatch(gm_storage):
+        raise TeeInferenceVerificationError("EXPECTED_GM_STORAGE_ADDRESS must define the local GMStorage policy")
+    if not EVM_ADDRESS_RE.fullmatch(registry):
+        raise TeeInferenceVerificationError(
+            "EXPECTED_DEVICE_REGISTRY_ADDRESS must define the local DeviceRegistry policy"
+        )
+    try:
+        chain_id = int(chain_id_text, 0)
+    except ValueError as exc:
+        raise TeeInferenceVerificationError("EXPECTED_CHAIN_ID must define the local chain policy") from exc
+    if chain_id <= 0:
+        raise TeeInferenceVerificationError("EXPECTED_CHAIN_ID must define the local chain policy")
+    runtime_rpc_url = _normalize_runtime_rpc_url(
+        os.environ.get("EXPECTED_RUNTIME_RPC_URL", ""),
+        "EXPECTED_RUNTIME_RPC_URL",
+    )
+    return gm_storage.lower(), registry.lower(), chain_id, runtime_rpc_url
+
+
+def _compose_environment(compose_file: str) -> dict[str, str]:
+    lines = compose_file.splitlines()
+    headers = [
+        (position, len(match.group(1)))
+        for position, line in enumerate(lines)
+        if (match := re.fullmatch(r"(\s*)environment:\s*(?:#.*)?", line))
+    ]
+    if len(headers) != 1:
+        raise TeeInferenceVerificationError("attested Compose must contain exactly one mapping-style environment block")
+    position, header_indent = headers[0]
+    environment: dict[str, str] = {}
+    for line in lines[position + 1 :]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= header_indent:
+            break
+        match = re.fullmatch(
+            r"\s*([A-Za-z_][A-Za-z0-9_]*):\s*(.*?)\s*",
+            line,
+        )
+        if not match:
+            raise TeeInferenceVerificationError("attested Compose environment must use scalar key/value entries")
+        key, raw_value = match.groups()
+        if key in environment:
+            raise TeeInferenceVerificationError(f"attested Compose environment repeats {key}")
+        if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] == '"':
+            try:
+                value = json.loads(raw_value)
+            except json.JSONDecodeError as exc:
+                raise TeeInferenceVerificationError(
+                    f"attested Compose environment has invalid quoted value for {key}"
+                ) from exc
+        elif len(raw_value) >= 2 and raw_value[0] == raw_value[-1] == "'":
+            value = raw_value[1:-1].replace("''", "'")
+        else:
+            value = raw_value
+        if not isinstance(value, str):
+            raise TeeInferenceVerificationError(f"attested Compose environment value for {key} must be text")
+        environment[key] = value
+    return environment
+
+
+def _verify_model_provenance(
+    manifest: dict[int, Any],
+    expected_gm_storage: str,
+    expected_chain_id: int,
+) -> None:
+    provenance = manifest[5]
+    if not isinstance(provenance, dict):
+        raise TeeInferenceVerificationError("model manifest provenance must be a map")
+    chain_id = provenance.get(1)
+    if isinstance(chain_id, bool) or not isinstance(chain_id, int) or chain_id != expected_chain_id:
+        raise TeeInferenceVerificationError("model manifest chain ID violates local contract policy")
+    gm_storage = provenance.get(2)
+    if (
+        not isinstance(gm_storage, bytes)
+        or len(gm_storage) != 20
+        or gm_storage != bytes.fromhex(expected_gm_storage[2:])
+    ):
+        raise TeeInferenceVerificationError("model manifest GMStorage address violates local contract policy")
+
+
+def _verify_app_compose(
+    app_compose: str,
+    events: list[dict[str, Any]],
+    expected_image_digest: str,
+    expected_gm_storage: str,
+    expected_registry: str,
+    expected_chain_id: int,
+    expected_runtime_rpc_url: str,
+) -> str:
     compose_events = [event for event in events if event.get("event") == "compose-hash"]
     if len(compose_events) != 1:
         raise TeeInferenceVerificationError("RTMR3 log must contain exactly one compose-hash event")
@@ -298,6 +418,30 @@ def _verify_app_compose(app_compose: str, events: list[dict[str, Any]], expected
     measured_digest = _normalize_digest(image_refs[0])
     if measured_digest != _normalize_digest(expected_image_digest):
         raise TeeInferenceVerificationError("attested inference image digest violates local policy")
+    environment = _compose_environment(compose_file)
+    measured_gm_storage = environment.get("EXPECTED_GM_STORAGE_ADDRESS", "")
+    measured_registry = environment.get("EXPECTED_DEVICE_REGISTRY_ADDRESS", "")
+    measured_chain_id = environment.get("EXPECTED_CHAIN_ID", "")
+    if not EVM_ADDRESS_RE.fullmatch(measured_gm_storage):
+        raise TeeInferenceVerificationError("attested Compose lacks a valid GMStorage trust-root pin")
+    if measured_gm_storage.lower() != expected_gm_storage:
+        raise TeeInferenceVerificationError("attested Compose GMStorage pin violates local contract policy")
+    if not EVM_ADDRESS_RE.fullmatch(measured_registry):
+        raise TeeInferenceVerificationError("attested Compose lacks a valid DeviceRegistry trust-root pin")
+    if measured_registry.lower() != expected_registry:
+        raise TeeInferenceVerificationError("attested Compose DeviceRegistry pin violates local contract policy")
+    try:
+        parsed_chain_id = int(measured_chain_id, 0)
+    except ValueError as exc:
+        raise TeeInferenceVerificationError("attested Compose lacks a valid chain-ID trust-root pin") from exc
+    if parsed_chain_id != expected_chain_id:
+        raise TeeInferenceVerificationError("attested Compose chain-ID pin violates local contract policy")
+    measured_runtime_rpc_url = _normalize_runtime_rpc_url(
+        environment.get("RPC_URL", ""),
+        "attested Compose RPC_URL",
+    )
+    if measured_runtime_rpc_url != expected_runtime_rpc_url:
+        raise TeeInferenceVerificationError("attested Compose runtime RPC endpoint violates local deployment policy")
     return image_refs[0]
 
 
@@ -351,6 +495,12 @@ def verify_tee_inference_bundle(
     if not isinstance(manifest_bytes, bytes):
         raise TeeInferenceVerificationError("bundle manifest must be bytes")
     manifest = decode_manifest(manifest_bytes)
+    expected_gm_storage, expected_registry, expected_chain_id, expected_runtime_rpc_url = _required_contract_policy()
+    _verify_model_provenance(
+        manifest,
+        expected_gm_storage,
+        expected_chain_id,
+    )
     manifest_digest = hashlib.sha256(manifest_bytes).digest()
     request_digest = hashlib.sha256(exact_request).digest()
     response_digest = hashlib.sha256(response_bytes).digest()
@@ -398,7 +548,15 @@ def verify_tee_inference_bundle(
     if not isinstance(event_log, str) or not isinstance(app_compose, str):
         raise TeeInferenceVerificationError("event log and app_compose must be text")
     events, replayed_rtmr3 = _verify_rtmr3(event_log, quote)
-    image_reference = _verify_app_compose(app_compose, events, expected_image_digest)
+    image_reference = _verify_app_compose(
+        app_compose,
+        events,
+        expected_image_digest,
+        expected_gm_storage,
+        expected_registry,
+        expected_chain_id,
+        expected_runtime_rpc_url,
+    )
 
     logits = struct.unpack("<14d", response[5])
     probabilities = struct.unpack("<14d", response[6])
@@ -411,7 +569,7 @@ def verify_tee_inference_bundle(
         raise TeeInferenceVerificationError("decision vector does not follow the manifest threshold")
 
     return {
-        "verification_scope": "air-signature-reportdata-rtmr3-compose-image-policy",
+        "verification_scope": ("air-signature-reportdata-rtmr3-compose-image-contract-endpoint-trust-root-policy"),
         "dcap_collateral_verified": False,
         "manifest_sha256": manifest_digest.hex(),
         "model_id": manifest[2].hex() if isinstance(manifest[2], bytes) else str(manifest[2]),

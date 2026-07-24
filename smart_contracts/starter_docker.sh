@@ -397,8 +397,9 @@ prepare_encrypted_initial_gm() {
     fi
 
     if [ "$IPFS_PROVIDER" = "pinata" ]; then
-        echo "Skipping encrypted local bootstrap generation for IPFS_PROVIDER=pinata"
-        return 0
+        echo "Encrypted bootstrap initialization is not implemented for IPFS_PROVIDER=pinata"
+        echo "Use IPFS_PROVIDER=kubo or add an equivalent Pinata upload-and-initialize path"
+        exit 1
     fi
 
     local dataset_name=${DATASET_NAME:-mnist}
@@ -438,12 +439,18 @@ prepare_encrypted_initial_gm() {
     local bundle_path
     local bundle_signature_path
     local key_bundle_path
+    local recipient_count
+    local publisher_public_key_der_hex
     bundle_path=$(printf '%s' "$bootstrap_json" | jq -re '.bundlePath')
     bundle_signature_path=$(printf '%s' "$bootstrap_json" | jq -re '.bundleSignaturePath')
     key_bundle_path=$(printf '%s' "$bootstrap_json" | jq -re '.keyBundlePath')
     recipient_count=$(printf '%s' "$bootstrap_json" | jq -re '.recipientCount')
+    publisher_public_key_der_hex=$(
+        printf '%s' "$bootstrap_json" |
+            jq -re '.publisherPublicKeyDerHex | select(test("^[0-9a-f]+$") and ((length % 2) == 0))'
+    )
 
-    echo "Encrypted bootstrap recipients from on-chain registry: $recipient_count"
+    echo "Encrypted bootstrap recipients from registry, preprovisioned inventory, and fallback: $recipient_count"
 
     local encrypted_model_cid
     local encrypted_sig_cid
@@ -457,8 +464,9 @@ prepare_encrypted_initial_gm() {
     echo "Encrypted initial GM key bundle CID: $encrypted_key_cid"
 
     cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
-        $GMSTORAGE "setGlobalModelAndSignatureAndKeyBundle(string,string,string)" \
-        "$encrypted_model_cid" "$encrypted_sig_cid" "$encrypted_key_cid"
+        $GMSTORAGE "initializeEncryptedBootstrap(string,string,string,bytes)" \
+        "$encrypted_model_cid" "$encrypted_sig_cid" "$encrypted_key_cid" \
+        "0x${publisher_public_key_der_hex}"
 }
 
 prepare_local_initial_gm
@@ -959,7 +967,7 @@ echo "ACCOUNT_ADDRESS= $ADDRESS_0"
 
 echo "SIGNING_ACCOUNT= $ADDRESS_0"
 
-echo "SEPOLIA_RPC_URL= $rpc_url"
+echo "RPC_URL= $rpc_url"
 
 echo "AUTOMATA_DCAP_V3_ ATTESTATION_URL= ${DCAP_ADDRESS:-}"
 

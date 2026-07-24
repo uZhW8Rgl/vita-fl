@@ -15,7 +15,12 @@ from nacl.signing import SigningKey
 
 from tee_inference.air.v1 import AirPolicy, verify_receipt
 from tee_inference.service.attestation import AirEvidenceEmitter
-from tee_inference.service.model_source import _assert_w0_authorized, _contracts_manifest, provision_latest_model
+from tee_inference.service.model_source import (
+    _assert_w0_authorized,
+    _contracts_manifest,
+    _verified_contract_trust_root,
+    provision_latest_model,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 VECTOR = ROOT / "tee_inference" / "vectors" / "v1-chestmnist.json"
@@ -31,6 +36,15 @@ def private_pem(key: rsa.RSAPrivateKey) -> str:
 
 
 class ModelAuthorizationTests(unittest.TestCase):
+    GM_STORAGE = "0x" + "11" * 20
+    REGISTRY = "0x" + "33" * 20
+    TRUST_ROOT_ENV = {
+        "EXPECTED_GM_STORAGE_ADDRESS": GM_STORAGE,
+        "EXPECTED_DEVICE_REGISTRY_ADDRESS": REGISTRY,
+        "EXPECTED_CHAIN_ID": "31337",
+        "EXPECTED_RUNTIME_RPC_URL": "http://rpc",
+    }
+
     def test_contract_manifest_retries_transient_gateway_failure(self) -> None:
         response = MagicMock()
         response.__enter__.return_value = response
@@ -38,13 +52,135 @@ class ModelAuthorizationTests(unittest.TestCase):
             {"gm_storage_address": "0x" + "11" * 20, "registry_address": "0x" + "22" * 20}
         ).encode()
         env = {"RUNTIME_MANIFEST_TIMEOUT_SECONDS": "5", "RUNTIME_MANIFEST_RETRY_SECONDS": "0.1"}
-        with patch.dict("os.environ", env, clear=False), patch(
-            "tee_inference.service.model_source.urllib.request.urlopen",
-            side_effect=[urllib.error.URLError("temporary TLS EOF"), response],
-        ) as urlopen, patch("tee_inference.service.model_source.time.sleep"):
+        with (
+            patch.dict("os.environ", env, clear=False),
+            patch(
+                "tee_inference.service.model_source.urllib.request.urlopen",
+                side_effect=[urllib.error.URLError("temporary TLS EOF"), response],
+            ) as urlopen,
+            patch("tee_inference.service.model_source.time.sleep"),
+        ):
             manifest = _contracts_manifest("https://runtime-5001.example")
         self.assertEqual(manifest["gm_storage_address"], "0x" + "11" * 20)
         self.assertEqual(urlopen.call_count, 2)
+
+    def test_accepts_manifest_and_rpc_matching_measured_trust_root(self) -> None:
+        contracts = {
+            "gm_storage_address": self.GM_STORAGE.upper().replace("0X", "0x"),
+            "registry_address": self.REGISTRY.upper().replace("0X", "0x"),
+        }
+        with (
+            patch.dict("os.environ", self.TRUST_ROOT_ENV, clear=True),
+            patch(
+                "tee_inference.service.model_source.rpc_call",
+                return_value=hex(31337),
+            ),
+        ):
+            gm_storage, registry, chain_id = _verified_contract_trust_root(
+                "http://rpc",
+                contracts,
+            )
+        self.assertEqual(gm_storage, self.GM_STORAGE)
+        self.assertEqual(registry, self.REGISTRY)
+        self.assertEqual(chain_id, 31337)
+
+    def test_rejects_runtime_contract_address_mismatch_before_rpc_access(self) -> None:
+        contracts = {
+            "gm_storage_address": "0x" + "44" * 20,
+            "registry_address": self.REGISTRY,
+        }
+        with (
+            patch.dict("os.environ", self.TRUST_ROOT_ENV, clear=True),
+            patch(
+                "tee_inference.service.model_source.rpc_call",
+            ) as rpc,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "GMStorage address"):
+                _verified_contract_trust_root("http://rpc", contracts)
+        rpc.assert_not_called()
+
+    def test_rejects_rpc_chain_id_mismatch(self) -> None:
+        contracts = {
+            "gm_storage_address": self.GM_STORAGE,
+            "registry_address": self.REGISTRY,
+        }
+        with (
+            patch.dict("os.environ", self.TRUST_ROOT_ENV, clear=True),
+            patch(
+                "tee_inference.service.model_source.rpc_call",
+                return_value=hex(1),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "RPC chain ID"):
+                _verified_contract_trust_root("http://rpc", contracts)
+
+    def test_rejects_runtime_rpc_endpoint_mismatch(self) -> None:
+        contracts = {
+            "gm_storage_address": self.GM_STORAGE,
+            "registry_address": self.REGISTRY,
+        }
+        with (
+            patch.dict("os.environ", self.TRUST_ROOT_ENV, clear=True),
+            patch(
+                "tee_inference.service.model_source.rpc_call",
+            ) as rpc,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "compose-measured runtime endpoint"):
+                _verified_contract_trust_root("http://another-runtime", contracts)
+        rpc.assert_not_called()
+
+    def test_rejects_missing_measured_trust_root_configuration(self) -> None:
+        contracts = {
+            "gm_storage_address": self.GM_STORAGE,
+            "registry_address": self.REGISTRY,
+        }
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "tee_inference.service.model_source.rpc_call",
+            ) as rpc,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "EXPECTED_GM_STORAGE_ADDRESS"):
+                _verified_contract_trust_root("http://rpc", contracts)
+        rpc.assert_not_called()
+
+    def test_rejects_substituted_manifest_before_registry_or_model_access(self) -> None:
+        env = {
+            "RPC_URL": "http://rpc",
+            "KUBO_API": "http://ipfs",
+            "ACCOUNT_ADDRESS": "0x" + "22" * 20,
+            "RSA_PRIVATE_KEY": "not-read-before-trust-root-verification",
+            **self.TRUST_ROOT_ENV,
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict(
+                "os.environ",
+                env,
+                clear=False,
+            ),
+            patch(
+                "tee_inference.service.model_source._contracts_manifest",
+                return_value={
+                    "gm_storage_address": "0x" + "44" * 20,
+                    "registry_address": self.REGISTRY,
+                },
+            ),
+            patch(
+                "tee_inference.service.model_source.rpc_call",
+            ) as rpc,
+            patch(
+                "tee_inference.service.model_source._assert_w0_authorized",
+            ) as authorize,
+            patch(
+                "tee_inference.service.model_source.read_current_bundle_from_contract",
+            ) as read_bundle,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "GMStorage address"):
+                provision_latest_model(Path(directory))
+        rpc.assert_not_called()
+        authorize.assert_not_called()
+        read_bundle.assert_not_called()
 
     def test_rejects_w0_private_key_not_matching_registry(self) -> None:
         registered = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -65,19 +201,85 @@ class ModelAuthorizationTests(unittest.TestCase):
             "KUBO_API": "http://ipfs",
             "ACCOUNT_ADDRESS": "0x" + "22" * 20,
             "RSA_PRIVATE_KEY": private_pem(key),
+            **self.TRUST_ROOT_ENV,
         }
-        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", env, clear=False), patch(
-            "tee_inference.service.model_source._contracts_manifest",
-            return_value={"gm_storage_address": "0x" + "11" * 20, "registry_address": "0x" + "33" * 20},
-        ), patch("tee_inference.service.model_source._assert_w0_authorized"), patch(
-            "tee_inference.service.model_source.read_current_bundle_from_contract",
-            return_value={"model_cid": "bafy-model", "signature_cid": "bafy-sig", "key_bundle_cid": "bafy-key", "last_aggregator": "0x" + "44" * 20, "gm_storage_address": "0x" + "11" * 20},
-        ), patch(
-            "tee_inference.service.model_source.fetch_onchain_bundle",
-            return_value={"model_path": str(MODEL), "decryption": {"round": 4}},
-        ), patch("tee_inference.service.model_source.verify_download_with_registry", return_value={"ok": False}):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict("os.environ", env, clear=False),
+            patch(
+                "tee_inference.service.model_source._contracts_manifest",
+                return_value={"gm_storage_address": "0x" + "11" * 20, "registry_address": "0x" + "33" * 20},
+            ),
+            patch("tee_inference.service.model_source._assert_w0_authorized"),
+            patch(
+                "tee_inference.service.model_source.read_current_bundle_from_contract",
+                return_value={
+                    "model_cid": "bafy-model",
+                    "signature_cid": "bafy-sig",
+                    "key_bundle_cid": "bafy-key",
+                    "last_aggregator": "0x" + "44" * 20,
+                    "finalized_model_round": 4,
+                    "gm_storage_address": "0x" + "11" * 20,
+                },
+            ),
+            patch(
+                "tee_inference.service.model_source.fetch_onchain_bundle",
+                return_value={"model_path": str(MODEL), "decryption": {"round": 4}},
+            ),
+            patch(
+                "tee_inference.service.model_source.verify_download_with_registry",
+                return_value={"ok": False},
+            ),
+            patch("tee_inference.service.model_source.rpc_call", return_value=hex(31337)),
+        ):
             with self.assertRaisesRegex(RuntimeError, "signature"):
                 provision_latest_model(Path(directory))
+
+    def test_rejects_key_bundle_round_not_matching_finalized_contract_view(self) -> None:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        env = {
+            "RPC_URL": "http://rpc",
+            "KUBO_API": "http://ipfs",
+            "ACCOUNT_ADDRESS": "0x" + "22" * 20,
+            "RSA_PRIVATE_KEY": private_pem(key),
+            **self.TRUST_ROOT_ENV,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "model.bin"
+            model_path.write_bytes(b"model")
+            with (
+                patch.dict("os.environ", env, clear=False),
+                patch(
+                    "tee_inference.service.model_source._contracts_manifest",
+                    return_value={"gm_storage_address": "0x" + "11" * 20, "registry_address": "0x" + "33" * 20},
+                ),
+                patch("tee_inference.service.model_source._assert_w0_authorized"),
+                patch(
+                    "tee_inference.service.model_source.read_current_bundle_from_contract",
+                    return_value={
+                        "model_cid": "bafy-model",
+                        "signature_cid": "bafy-sig",
+                        "key_bundle_cid": "bafy-key",
+                        "last_aggregator": "0x" + "44" * 20,
+                        "finalized_model_round": 5,
+                        "gm_storage_address": "0x" + "11" * 20,
+                    },
+                ),
+                patch(
+                    "tee_inference.service.model_source.fetch_onchain_bundle",
+                    return_value={"model_path": str(model_path), "decryption": {"round": 4}},
+                ),
+                patch(
+                    "tee_inference.service.model_source.verify_download_with_registry",
+                    return_value={"ok": True},
+                ),
+                patch(
+                    "tee_inference.service.model_source.rpc_call",
+                    return_value=hex(31337),
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "finalized model round"):
+                    provision_latest_model(Path(directory))
 
 
 class FakeDstack:
@@ -91,7 +293,7 @@ class FakeDstack:
                 "rtmr1": "30" * 48,
                 "rtmr2": "40" * 48,
                 "rtmr3": "50" * 48,
-                "app_compose": "{\"docker_compose_file\":\"services: {}\"}",
+                "app_compose": '{"docker_compose_file":"services: {}"}',
             }
             return {"tcb_info": json.dumps(tcb)}
         raise AssertionError(path)

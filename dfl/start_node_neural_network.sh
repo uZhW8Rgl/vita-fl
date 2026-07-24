@@ -113,13 +113,27 @@ def missing(value):
     value = (value or "").strip()
     return not value or value.startswith("REPLACE_WITH_")
 
-rpc_url = (os.environ.get("SEPOLIA_RPC_URL") or "").strip()
+rpc_url = (os.environ.get("RPC_URL") or "").strip()
 contracts = {
     "REGISTRY_ADDRESS": os.environ.get("REGISTRY_ADDRESS", "").strip(),
     "AGGREGATOR_ADDRESS": os.environ.get("AGGREGATOR_ADDRESS", "").strip(),
     "GM_STORAGE_ADDRESS": os.environ.get("GM_STORAGE_ADDRESS", "").strip(),
     "MEDICAL_SIGNER_REGISTRY_ADDRESS": os.environ.get("MEDICAL_SIGNER_REGISTRY_ADDRESS", "").strip(),
 }
+expected_contracts = {
+    "REGISTRY_ADDRESS": os.environ.get("EXPECTED_DEVICE_REGISTRY_ADDRESS", "").strip(),
+    "AGGREGATOR_ADDRESS": os.environ.get("EXPECTED_AGGREGATOR_ADDRESS", "").strip(),
+    "GM_STORAGE_ADDRESS": os.environ.get("EXPECTED_GM_STORAGE_ADDRESS", "").strip(),
+    "MEDICAL_SIGNER_REGISTRY_ADDRESS": os.environ.get(
+        "EXPECTED_MEDICAL_SIGNER_REGISTRY_ADDRESS",
+        "",
+    ).strip(),
+}
+expected_chain_id_text = os.environ.get("EXPECTED_CHAIN_ID", "").strip()
+if any(missing(value) for value in expected_contracts.values()) or missing(expected_chain_id_text):
+    raise SystemExit(
+        "Compose-measured EXPECTED_* contract addresses and EXPECTED_CHAIN_ID are required"
+    )
 
 kubo_api = (os.environ.get("KUBO_API") or "").rstrip("/")
 runtime_ready = None
@@ -159,6 +173,18 @@ if kubo_api:
         ),
     )
 
+    for env_name, manifest_key in (
+        ("REGISTRY_ADDRESS", "registry_address"),
+        ("AGGREGATOR_ADDRESS", "aggregator_address"),
+        ("GM_STORAGE_ADDRESS", "gm_storage_address"),
+        ("MEDICAL_SIGNER_REGISTRY_ADDRESS", "medical_signer_registry_address"),
+    ):
+        discovered = str(manifest.get(manifest_key, "")).strip()
+        if discovered.lower() != expected_contracts[env_name].lower():
+            raise SystemExit(
+                f"{manifest_key} from runtime manifest does not match measured {env_name} policy"
+            )
+
     rpc_url = rpc_url if not missing(rpc_url) else str(manifest.get("rpc_url", "")).strip()
     for env_name, manifest_key in (
         ("REGISTRY_ADDRESS", "registry_address"),
@@ -172,16 +198,28 @@ if kubo_api:
                 contracts[env_name] = resolved
                 os.environ[env_name] = resolved
     if rpc_url:
-        os.environ["SEPOLIA_RPC_URL"] = rpc_url
+        os.environ["RPC_URL"] = rpc_url
 
 if not rpc_url or not all(contracts.values()):
     raise SystemExit("Runtime RPC URL or contract addresses are missing")
 
 if not re.match(r"^https?://[A-Za-z0-9._:/-]+$", rpc_url):
     raise SystemExit(f"Invalid runtime RPC URL: {rpc_url}")
+for name, address in expected_contracts.items():
+    if not re.match(r"^0x[0-9a-fA-F]{40}$", address):
+        raise SystemExit(f"Invalid measured {name} policy: {address}")
 for name, address in contracts.items():
     if not re.match(r"^0x[0-9a-fA-F]{40}$", address):
         raise SystemExit(f"Invalid {name}: {address}")
+    if address.lower() != expected_contracts[name].lower():
+        raise SystemExit(f"{name} does not match its compose-measured trust-root policy")
+
+try:
+    expected_chain_id = int(expected_chain_id_text, 0)
+except ValueError as exc:
+    raise SystemExit("EXPECTED_CHAIN_ID must be a positive integer") from exc
+if expected_chain_id <= 0:
+    raise SystemExit("EXPECTED_CHAIN_ID must be a positive integer")
 
 def rpc(method, params):
     payload = json.dumps({
@@ -202,18 +240,28 @@ def rpc(method, params):
         raise RuntimeError(body["error"])
     return body.get("result")
 
-live_chain_id = str(int(str(rpc("eth_chainId", []) or "0x0"), 16))
+live_chain_id = int(str(rpc("eth_chainId", []) or "0x0"), 16)
+if live_chain_id != expected_chain_id:
+    raise SystemExit(
+        f"RPC chain ID {live_chain_id} does not match measured policy {expected_chain_id}"
+    )
 for source, value in (
     ("runtime ready marker", runtime_ready),
     ("runtime contract manifest", manifest),
 ):
     if value is None:
         continue
-    expected_chain_id = str(value.get("chain_id", "")).strip()
-    if expected_chain_id and expected_chain_id != live_chain_id:
-        raise SystemExit(
-            f"Chain ID mismatch: {source} has {expected_chain_id}, RPC has {live_chain_id}"
-        )
+    source_chain_id = str(value.get("chain_id", "")).strip()
+    if source_chain_id:
+        try:
+            parsed_source_chain_id = int(source_chain_id, 0)
+        except ValueError as exc:
+            raise SystemExit(f"{source} contains an invalid chain ID") from exc
+        if parsed_source_chain_id != live_chain_id:
+            raise SystemExit(
+                f"Chain ID mismatch: {source} has {parsed_source_chain_id}, "
+                f"RPC has {live_chain_id}"
+            )
 
 deadline = time.time() + 180
 last_missing = list(contracts)
@@ -242,7 +290,7 @@ if not ready:
     )
 
 runtime_env = {
-    "SEPOLIA_RPC_URL": rpc_url,
+    "RPC_URL": rpc_url,
     **contracts,
 }
 Path(os.environ["RUNTIME_ENV_FILE"]).write_text(

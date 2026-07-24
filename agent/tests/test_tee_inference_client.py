@@ -27,6 +27,16 @@ from tee_inference.protocol.v1 import build_response, decode_manifest, encode_de
 ROOT = Path(__file__).resolve().parents[2]
 VECTOR = ROOT / "tee_inference" / "vectors" / "v1-chestmnist.json"
 IMAGE_DIGEST = "sha256:" + "cf" * 32
+GM_STORAGE_ADDRESS = "0x" + "11" * 20
+DEVICE_REGISTRY_ADDRESS = "0x" + "33" * 20
+CHAIN_ID = 31337
+RUNTIME_RPC_URL = "https://runtime-8545.example"
+CONTRACT_POLICY_ENV = {
+    "EXPECTED_GM_STORAGE_ADDRESS": GM_STORAGE_ADDRESS,
+    "EXPECTED_DEVICE_REGISTRY_ADDRESS": DEVICE_REGISTRY_ADDRESS,
+    "EXPECTED_CHAIN_ID": str(CHAIN_ID),
+    "EXPECTED_RUNTIME_RPC_URL": RUNTIME_RPC_URL,
+}
 
 
 class _JsonResponse:
@@ -73,6 +83,12 @@ def valid_fixture() -> tuple[bytes, bytes]:
     vector = json.loads(VECTOR.read_text(encoding="utf-8"))
     manifest_bytes = bytes.fromhex(vector["manifest"]["deterministic_cbor_hex"])
     manifest = decode_manifest(manifest_bytes)
+    manifest[5] = {
+        **manifest[5],
+        1: CHAIN_ID,
+        2: bytes.fromhex(GM_STORAGE_ADDRESS[2:]),
+    }
+    manifest_bytes = encode_deterministic(manifest)
     manifest_hash = hashlib.sha256(manifest_bytes).digest()
     request = encode_deterministic(
         {
@@ -97,7 +113,18 @@ def valid_fixture() -> tuple[bytes, bytes]:
         )
     )
     app_compose = json.dumps(
-        {"docker_compose_file": (f"services:\n  tee-inference:\n    image: ghcr.io/example/tee@{IMAGE_DIGEST}\n")},
+        {
+            "docker_compose_file": (
+                "services:\n"
+                "  tee-inference:\n"
+                f"    image: ghcr.io/example/tee@{IMAGE_DIGEST}\n"
+                "    environment:\n"
+                f'      EXPECTED_GM_STORAGE_ADDRESS: "{GM_STORAGE_ADDRESS}"\n'
+                f'      EXPECTED_DEVICE_REGISTRY_ADDRESS: "{DEVICE_REGISTRY_ADDRESS}"\n'
+                f'      EXPECTED_CHAIN_ID: "{CHAIN_ID}"\n'
+                f'      RPC_URL: "{RUNTIME_RPC_URL}"\n'
+            )
+        },
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -167,6 +194,17 @@ def valid_fixture() -> tuple[bytes, bytes]:
 
 
 class TeeInferenceBundleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.contract_policy = patch.dict(
+            "os.environ",
+            CONTRACT_POLICY_ENV,
+            clear=False,
+        )
+        self.contract_policy.start()
+
+    def tearDown(self) -> None:
+        self.contract_policy.stop()
+
     def test_combined_tee_tool_verifies_and_transparency_logs_job(self) -> None:
         request, bundle = valid_fixture()
         job_id = "ab" * 16
@@ -264,6 +302,55 @@ class TeeInferenceBundleTests(unittest.TestCase):
         request, bundle = valid_fixture()
         with self.assertRaisesRegex(TeeInferenceVerificationError, "image digest"):
             verify_tee_inference_bundle(bundle, request, "sha256:" + "00" * 32)
+
+    def test_model_manifest_gm_storage_substitution_is_rejected(self) -> None:
+        request, bundle = valid_fixture()
+        with patch.dict(
+            "os.environ",
+            {"EXPECTED_GM_STORAGE_ADDRESS": "0x" + "44" * 20},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(TeeInferenceVerificationError, "manifest GMStorage"):
+                verify_tee_inference_bundle(bundle, request, IMAGE_DIGEST)
+
+    def test_model_manifest_chain_substitution_is_rejected(self) -> None:
+        request, bundle = valid_fixture()
+        with patch.dict(
+            "os.environ",
+            {"EXPECTED_CHAIN_ID": "1"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(TeeInferenceVerificationError, "manifest chain ID"):
+                verify_tee_inference_bundle(bundle, request, IMAGE_DIGEST)
+
+    def test_measured_registry_pin_substitution_is_rejected(self) -> None:
+        request, bundle = valid_fixture()
+        with patch.dict(
+            "os.environ",
+            {"EXPECTED_DEVICE_REGISTRY_ADDRESS": "0x" + "44" * 20},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(TeeInferenceVerificationError, "Compose DeviceRegistry"):
+                verify_tee_inference_bundle(bundle, request, IMAGE_DIGEST)
+
+    def test_measured_runtime_rpc_endpoint_substitution_is_rejected(self) -> None:
+        request, bundle = valid_fixture()
+        with patch.dict(
+            "os.environ",
+            {"EXPECTED_RUNTIME_RPC_URL": "https://another-runtime-8545.example"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(TeeInferenceVerificationError, "runtime RPC endpoint"):
+                verify_tee_inference_bundle(bundle, request, IMAGE_DIGEST)
+
+    def test_missing_local_contract_policy_is_rejected(self) -> None:
+        request, bundle = valid_fixture()
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(
+                TeeInferenceVerificationError,
+                "EXPECTED_GM_STORAGE_ADDRESS",
+            ):
+                verify_tee_inference_bundle(bundle, request, IMAGE_DIGEST)
 
     def test_modified_event_log_is_rejected(self) -> None:
         request, bundle_bytes = valid_fixture()

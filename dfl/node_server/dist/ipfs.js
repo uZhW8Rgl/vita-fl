@@ -1,7 +1,7 @@
 import axios from "axios";
 import fs from "fs";
 import FormData from "form-data";
-import { getAuthorizedDevices, getCurrentGM, getCurrentGMKeyBundle, getCurrentGMSignature, getDevicePublicKey, getRound, setGlobalModelAndSignatureAndKeyBundle, } from "./bc_client.js";
+import { getActiveModelBundle, getAuthorizedDevices, getDevicePublicKey, getRound, setGlobalModelAndSignatureAndKeyBundle, } from "./bc_client.js";
 import { buildEncryptedGlobalModelArtifacts, decryptEncryptedGlobalModelArtifacts, } from "./gm_crypto.js";
 export const pinFile = async (filePath) => {
     try {
@@ -48,8 +48,7 @@ const ipfsArchiveDir = () => {
     }
     return raw.replace(/\/+$/, "");
 };
-const timestampedArtifactName = async (baseName) => {
-    const round = Number(await getRound().catch(() => 0)) + 1;
+const timestampedArtifactName = (baseName, round) => {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     return `round-${round}-${stamp}-${baseName}`;
 };
@@ -84,12 +83,12 @@ const copyCidToKuboMfs = async (cid, destPath) => {
         },
     });
 };
-const archivePinnedFileToKubo = async (cid, baseName) => {
+const archivePinnedFileToKubo = async (cid, baseName, round) => {
     if (process.env.IPFS_PROVIDER !== "kubo") {
         return;
     }
     const dir = ipfsArchiveDir();
-    const filename = await timestampedArtifactName(baseName);
+    const filename = timestampedArtifactName(baseName, round);
     const destPath = dir === "/" ? `/${filename}` : `${dir}/${filename}`;
     if (dir !== "/") {
         await ensureKuboMfsDir(dir);
@@ -141,10 +140,17 @@ const encryptedBundlePaths = () => ({
     bundleSignaturePath: "./data/results_iid/aggregated.bundle.enc.sig",
     keyBundlePath: "./data/results_iid/aggregated.bundle.keys.json",
 });
-export const updateGM = async () => {
+export const updateGM = async (expectedModelRound) => {
     const modelPath = "./data/results_iid/aggregated.bin";
     const sigPath = "./data/results_iid/aggregated.bin.sig";
-    const round = Number(await getRound().catch(() => 0)) + 1;
+    if (!Number.isSafeInteger(expectedModelRound) || expectedModelRound <= 0) {
+        throw new Error(`Invalid expected global-model round: ${expectedModelRound}`);
+    }
+    const sourceRound = Number(await getRound());
+    if (!Number.isSafeInteger(sourceRound) || sourceRound < 0 || sourceRound + 1 !== expectedModelRound) {
+        throw new Error(`Global-model round changed before publication: expected source round ${expectedModelRound - 1}, got ${sourceRound}`);
+    }
+    const round = expectedModelRound;
     const recipients = [];
     for (const address of await getAuthorizedDevices()) {
         const publicKeyDerHex = await getDevicePublicKey(address);
@@ -167,15 +173,15 @@ export const updateGM = async () => {
     const modelCid = await pinFile(bundlePath);
     if (!modelCid)
         throw new Error("Pinning failed for encrypted model bundle, no CID returned");
-    await archivePinnedFileToKubo(modelCid, "aggregated.bundle.enc");
+    await archivePinnedFileToKubo(modelCid, "aggregated.bundle.enc", round);
     const sigCid = await pinFile(bundleSignaturePath);
     if (!sigCid)
         throw new Error("Pinning failed for encrypted bundle signature, no CID returned");
-    await archivePinnedFileToKubo(sigCid, "aggregated.bundle.enc.sig");
+    await archivePinnedFileToKubo(sigCid, "aggregated.bundle.enc.sig", round);
     const keyBundleCid = await pinFile(keyBundlePath);
     if (!keyBundleCid)
         throw new Error("Pinning failed for encrypted key bundle, no CID returned");
-    await archivePinnedFileToKubo(keyBundleCid, "aggregated.bundle.keys.json");
+    await archivePinnedFileToKubo(keyBundleCid, "aggregated.bundle.keys.json", round);
     console.log("New encrypted GM bundle CID:", modelCid);
     console.log("New encrypted GM bundle signature CID:", sigCid);
     console.log("New encrypted GM key bundle CID:", keyBundleCid);
@@ -183,9 +189,10 @@ export const updateGM = async () => {
     console.log("Encrypted global model bundle + signature + key bundle updated (on-chain)");
 };
 export const getCurrentModel = async () => {
-    const modelCid = String(await getCurrentGM() || "");
-    const sigCid = String(await getCurrentGMSignature() || "");
-    const keyBundleCid = String(await getCurrentGMKeyBundle() || "");
+    const activeModel = await getActiveModelBundle();
+    const modelCid = String(activeModel.modelCid || "");
+    const sigCid = String(activeModel.sigCid || "");
+    const keyBundleCid = String(activeModel.keyBundleCid || "");
     if (!modelCid) {
         throw new Error("Missing encrypted global model bundle CID on-chain.");
     }
@@ -213,5 +220,11 @@ export const getCurrentModel = async () => {
         outSignaturePath: "./data/gm.bin.sig",
     });
     console.log("Encrypted global model bundle fetched + decrypted");
-    return { modelCid, sigCid, keyBundleCid };
+    return {
+        modelCid,
+        sigCid,
+        keyBundleCid,
+        publisher: activeModel.publisher,
+        publisherPublicKeyDerHex: activeModel.publisherPublicKeyDerHex,
+    };
 };

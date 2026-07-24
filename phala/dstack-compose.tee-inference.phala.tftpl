@@ -13,8 +13,12 @@ services:
       RSA_PRIVATE_KEY: "$${RSA_PRIVATE_KEY}"
       RSA_PUBLIC_KEY: "$${RSA_PUBLIC_KEY}"
       RPC_URL: "${rpc_url}"
+      EXPECTED_RUNTIME_RPC_URL: "${rpc_url}"
       KUBO_API: "${kubo_api_url}"
       KUBO_GATEWAY: "${kubo_gateway_url}"
+      EXPECTED_GM_STORAGE_ADDRESS: "${expected_gm_storage_address}"
+      EXPECTED_DEVICE_REGISTRY_ADDRESS: "${expected_device_registry_address}"
+      EXPECTED_CHAIN_ID: "${expected_chain_id}"
       TEE_MODEL_DIR: /tmp/tee-inference/model
       TEE_JOB_DIR: /tmp/tee-inference/jobs
       CHESTMNIST_TEST_DATA: /app/data/chestmnist/test_data/test-data.npz

@@ -68,12 +68,14 @@ Create worker shards from the official `chestmnist.npz` bundle with:
 
 ## HTTP Service
 
-The Docker worker starts the Python service and the Node.js worker process together. The service listens on port `8000` inside the container and exposes endpoints for:
+The Docker worker starts the Python service and the Node.js worker process together. The service listens only on the container loopback interface at `127.0.0.1:8000` and exposes endpoints for:
 
 - local training,
 - client transfer,
 - aggregation,
 - starting and stopping the ZMQ aggregation server.
+
+These control endpoints are not the cross-CVM model receiver. The Node.js process exposes the authenticated receiver on port `8001`; it verifies the signed round, aggregator, parent-model, worker, and ciphertext context before forwarding a package to the loopback-only Python service.
 
 For local development:
 

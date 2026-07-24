@@ -99,11 +99,7 @@ class ZkJobRuntime:
 
     def job_metadata(self, job_id: str) -> dict[str, Any]:
         job = self._job(job_id)
-        return {
-            key: value
-            for key, value in job.items()
-            if key not in {"workdir", "selection", "transparency_path"}
-        }
+        return {key: value for key, value in job.items() if key not in {"workdir", "selection", "transparency_path"}}
 
     def run_and_verify(self, job_id: str) -> dict[str, Any]:
         with self._lock:
@@ -117,8 +113,7 @@ class ZkJobRuntime:
             if not result.get("ok"):
                 detail = result.get("stderr") or result.get("stdout") or result.get("error") or "unknown error"
                 raise ZkJobError(
-                    f"EZKL proof generation or verification failed "
-                    f"(returncode={result.get('returncode')}): {detail}"
+                    f"EZKL proof generation or verification failed (returncode={result.get('returncode')}): {detail}"
                 )
             artifact_hashes: dict[str, str] = {}
             for name in ("proof.json", "witness.json", "settings.json", "vk.key"):

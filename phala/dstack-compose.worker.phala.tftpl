@@ -28,9 +28,13 @@ services:
       REGISTRY_ADDRESS: ""
       AGGREGATOR_ADDRESS: ""
       GM_STORAGE_ADDRESS: ""
-      # Legacy variable name in the application code; in the Phala deployment
-      # this points to the contract-runtime TEE's internal Anvil RPC endpoint.
-      SEPOLIA_RPC_URL: "${rpc_url}"
+      MEDICAL_SIGNER_REGISTRY_ADDRESS: ""
+      EXPECTED_DEVICE_REGISTRY_ADDRESS: "${expected_device_registry_address}"
+      EXPECTED_AGGREGATOR_ADDRESS: "${expected_aggregator_address}"
+      EXPECTED_GM_STORAGE_ADDRESS: "${expected_gm_storage_address}"
+      EXPECTED_MEDICAL_SIGNER_REGISTRY_ADDRESS: "${expected_medical_signer_registry_address}"
+      EXPECTED_CHAIN_ID: "${expected_chain_id}"
+      RPC_URL: "${rpc_url}"
 
       CLIENT_LIMIT: "${client_limit}"
       EPOCH: "${epoch}"

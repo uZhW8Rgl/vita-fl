@@ -91,7 +91,10 @@ TRANSPARENCY_VIEW_HTML = """<!doctype html>
     #records { display: grid; gap: 12px; }
     .empty, article { border: 1px solid #28404a; border-radius: 14px; background: #0c1a21; padding: 16px; }
     .top { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
-    .badge { flex: 0 0 auto; white-space: nowrap; border: 1px solid #4d91a4; border-radius: 999px; color: #9ce6f2; padding: 4px 9px; font-size: .72rem; }
+    .badge {
+      flex: 0 0 auto; white-space: nowrap; border: 1px solid #4d91a4;
+      border-radius: 999px; color: #9ce6f2; padding: 4px 9px; font-size: .72rem;
+    }
     .badge.zk { border-color: #9b7ec8; color: #d4baff; }
     dl { display: grid; grid-template-columns: minmax(130px, .35fr) 1fr; gap: 7px 14px; margin: 14px 0 0; }
     dt { color: #91a9b0; }
@@ -104,7 +107,10 @@ TRANSPARENCY_VIEW_HTML = """<!doctype html>
 </head>
 <body>
   <header>
-    <div><h1>Verified SCITT Evidence</h1><div class="copy">Receipt-verified view of TEE and ZK inference statements</div></div>
+    <div>
+      <h1>Verified SCITT Evidence</h1>
+      <div class="copy">Receipt-verified view of TEE and ZK inference statements</div>
+    </div>
     <div id="status">Loading…</div>
   </header>
   <main id="records"></main>
@@ -144,7 +150,11 @@ TRANSPARENCY_VIEW_HTML = """<!doctype html>
         const top = document.createElement("div"); top.className = "top";
         const title = document.createElement("strong");
         const isToolReceipt = item.evidence_type === "agent-tool-receipt";
-        title.textContent = isToolReceipt ? "Receiver-attested MCP tool receipt" : (item.evidence_type === "zk-inference-proof" ? "EZKL inference proof" : "AIR / TDX inference receipt");
+        title.textContent = isToolReceipt
+          ? "Receiver-attested MCP tool receipt"
+          : (item.evidence_type === "zk-inference-proof"
+              ? "EZKL inference proof"
+              : "AIR / TDX inference receipt");
         const badge = document.createElement("span");
         const label = evidenceLabel(item);
         badge.className = label.startsWith("ZK ") ? "badge zk" : "badge";
@@ -159,7 +169,10 @@ TRANSPARENCY_VIEW_HTML = """<!doctype html>
         field(list, "Content type", item.content_type);
         field(list, "Evidence SHA-256", item.evidence_sha256);
         field(list, "Transparent statement", item.transparent_statement_sha256);
-        const receiptIds = (item.receipt_transactions || []).map((entry) => entry.sigtxid || entry.regtxid).filter(Boolean).join(", ");
+        const receiptIds = (item.receipt_transactions || [])
+          .map((entry) => entry.sigtxid || entry.regtxid)
+          .filter(Boolean)
+          .join(", ");
         field(list, "Receipt transaction", receiptIds || "verified");
         const details = document.createElement("details");
         const summary = document.createElement("summary"); summary.textContent = "Verified evidence details";
@@ -173,7 +186,8 @@ TRANSPARENCY_VIEW_HTML = """<!doctype html>
         const response = await fetch("/api/transparency/records", { cache: "no-store" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json(); render(payload.records || []);
-        status.textContent = `${payload.records?.length || 0} verified entr${payload.records?.length === 1 ? "y" : "ies"}`;
+        const count = payload.records?.length || 0;
+        status.textContent = `${count} verified entr${count === 1 ? "y" : "ies"}`;
       } catch (error) { status.textContent = `Unavailable: ${error.message || error}`; }
     }
     refresh(); setInterval(refresh, 5000);

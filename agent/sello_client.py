@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-import urllib.parse
-import urllib.request
 
 from agent_receipts.environment import RECEIPT_HEADER, decode_receipt_header, owner_from_environment
 from agent_receipts.receiver_log import SCITT_BUNDLE_URL_HEADER, SCITT_TRANSACTION_HEADER

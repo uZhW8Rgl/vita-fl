@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import base64
+import hashlib
 import os
+import tempfile
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +13,7 @@ from typing import Any
 from .cli import (
     aggregate,
     decrypt_model_package,
+    model_from_bytes,
     private_key_path,
     received_models_dir,
     save_random,
@@ -23,6 +26,7 @@ from .cli import (
 server_thread: threading.Thread | None = None
 server_stop_event: threading.Event | None = None
 server_lock = threading.Lock()
+model_receive_lock = threading.Lock()
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
@@ -39,6 +43,57 @@ def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     if length <= 0:
         return {}
     return json.loads(handler.rfile.read(length).decode("utf-8"))
+
+
+def _receive_model(payload: dict[str, Any]) -> dict[str, Any]:
+    with model_receive_lock:
+        device_id = str(payload["device_id"]).lower()
+        if not device_id.startswith("0x") or len(device_id) != 42:
+            raise ValueError("invalid Ethereum device address")
+        int(device_id[2:], 16)
+        package = base64.b64decode(str(payload["package_base64"]), validate=True)
+        plain = decrypt_model_package(package, private_key_path(payload.get("private_key")))
+        model_from_bytes(plain, f"worker model from {device_id}")
+        model_sha256 = hashlib.sha256(plain).hexdigest()
+        expected_model_sha256 = payload.get("expected_model_sha256")
+        if expected_model_sha256:
+            normalized_expected = str(expected_model_sha256).lower()
+            if normalized_expected.startswith("0x"):
+                normalized_expected = normalized_expected[2:]
+            if len(normalized_expected) != 64 or any(
+                character not in "0123456789abcdef" for character in normalized_expected
+            ):
+                raise ValueError("expected_model_sha256 must be a 32-byte hexadecimal digest")
+            if model_sha256 != normalized_expected:
+                raise ValueError("decrypted model does not match the already accepted on-chain hash")
+
+        destination = received_models_dir() / f"wb_client_{device_id}.bin"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=destination.parent,
+                prefix=f".{destination.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary:
+                temporary.write(plain)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+                temporary_path = temporary.name
+            os.replace(temporary_path, destination)
+            temporary_path = None
+        finally:
+            if temporary_path:
+                try:
+                    os.unlink(temporary_path)
+                except FileNotFoundError:
+                    pass
+        return {
+            "ok": True,
+            "bytes": len(plain),
+            "model_sha256": model_sha256,
+        }
 
 
 def _start_zmq_server(client_limit: int, private_key: str | None = None) -> dict[str, Any]:
@@ -113,16 +168,7 @@ class Handler(BaseHTTPRequestHandler):
                 _json_response(self, 200, {"ok": True})
                 return
             if self.path == "/model/receive":
-                device_id = str(payload["device_id"])
-                if not device_id.startswith("0x") or len(device_id) != 42:
-                    raise ValueError("invalid Ethereum device address")
-                int(device_id[2:], 16)
-                package = base64.b64decode(str(payload["package_base64"]), validate=True)
-                plain = decrypt_model_package(package, private_key_path(payload.get("private_key")))
-                destination = received_models_dir() / f"wb_client_{device_id}.bin"
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(plain)
-                _json_response(self, 200, {"ok": True, "bytes": len(plain)})
+                _json_response(self, 200, _receive_model(payload))
                 return
             if self.path == "/aggregate":
                 result = aggregate(
@@ -161,7 +207,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    host = os.environ.get("PYTHON_SERVICE_HOST", "0.0.0.0")
+    host = os.environ.get("PYTHON_SERVICE_HOST", "127.0.0.1")
     port = int(os.environ.get("PYTHON_SERVICE_PORT", "8000"))
     httpd = ThreadingHTTPServer((host, port), Handler)
     print(f"Python ML service listening on http://{host}:{port}")

@@ -6,6 +6,7 @@ import unittest
 from control_api.phala_workers import (
     PhalaWorkerController,
     WorkerConfigurationError,
+    WorkerDeploymentConfig,
     load_worker_inventory,
     redact_terraform_output,
 )
@@ -59,6 +60,32 @@ def controller(count: int = 3) -> tuple[PhalaWorkerController, FakeRunner]:
 
 
 class WorkerInventoryTests(unittest.TestCase):
+    def test_deployment_tfvars_include_the_measured_contract_trust_root(self) -> None:
+        config = WorkerDeploymentConfig(
+            phala_cloud_api_key="phak_test",
+            worker_image="ghcr.io/example/worker@sha256:" + "11" * 32,
+            rpc_url="https://rpc.example",
+            kubo_api_url="https://kubo.example",
+            kubo_gateway_url="https://gateway.example",
+            telemetry_url="https://telemetry.example",
+            expected_device_registry_address="0x" + "11" * 20,
+            expected_aggregator_address="0x" + "22" * 20,
+            expected_gm_storage_address="0x" + "33" * 20,
+            expected_medical_signer_registry_address="0x" + "44" * 20,
+            expected_chain_id=31337,
+        )
+
+        values = config.terraform_values()
+
+        self.assertEqual(values["expected_device_registry_address"], "0x" + "11" * 20)
+        self.assertEqual(values["expected_aggregator_address"], "0x" + "22" * 20)
+        self.assertEqual(values["expected_gm_storage_address"], "0x" + "33" * 20)
+        self.assertEqual(
+            values["expected_medical_signer_registry_address"],
+            "0x" + "44" * 20,
+        )
+        self.assertEqual(values["expected_chain_id"], 31337)
+
     def test_terraform_diagnostics_are_redacted(self) -> None:
         private_key = "0x" + "ab" * 32
         diagnostic = (

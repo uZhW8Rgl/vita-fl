@@ -10,10 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
-DEFAULT_INDEX_PATH = Path(
-    os.environ.get("TRANSPARENCY_INDEX_PATH", "/tmp/transparency-log/records.jsonl")
-)
+DEFAULT_INDEX_PATH = Path(os.environ.get("TRANSPARENCY_INDEX_PATH", "/tmp/transparency-log/records.jsonl"))
 
 
 def _receipt_transactions(transparency: dict[str, Any]) -> list[dict[str, str]]:
@@ -22,11 +19,7 @@ def _receipt_transactions(transparency: dict[str, Any]) -> list[dict[str, str]]:
         if not isinstance(receipt, dict):
             continue
         transactions.append(
-            {
-                key: str(receipt[key])
-                for key in ("iss", "sigtxid", "regtxid")
-                if receipt.get(key) is not None
-            }
+            {key: str(receipt[key]) for key in ("iss", "sigtxid", "regtxid") if receipt.get(key) is not None}
         )
     return transactions
 

@@ -159,6 +159,14 @@ jobs:
       - name: Show Foundry version
         run: forge --version
 
+      - name: Set up Node.js for bootstrap tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Test encrypted bootstrap recipients and signer derivation
+        run: node --test test/bootstrap_recipients.test.mjs
+
       - name: Build contracts
         run: forge build
 

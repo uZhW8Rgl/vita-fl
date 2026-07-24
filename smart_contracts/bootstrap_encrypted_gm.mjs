@@ -2,6 +2,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  canonicalizeRsaPublicKey,
+  deriveRsaPublicKeyDer,
+  mergeBootstrapRecipients,
+  normalizeRecipientAddress,
+  parseDynamicWorkerInventoryRecipients,
+} from "./bootstrap_recipients.mjs";
 
 const args = process.argv.slice(2);
 const readArg = (flag) => {
@@ -143,8 +150,8 @@ const loadRecipientsFromRegistry = async () => {
       continue;
     }
     recipients.push({
-      address: address.toLowerCase(),
-      der: publicKeyDer,
+      address: normalizeRecipientAddress(address, "on-chain registry recipient"),
+      der: canonicalizeRsaPublicKey(publicKeyDer, `on-chain registry recipient ${address}`),
     });
   }
 
@@ -152,26 +159,30 @@ const loadRecipientsFromRegistry = async () => {
 };
 
 const loadBootstrapRecipient = () => {
-  if (!bootstrapAddress || !bootstrapPublicKeyPath) {
+  if (!bootstrapAddress && !bootstrapPublicKeyPath) {
     return null;
   }
+  if (!bootstrapAddress || !bootstrapPublicKeyPath) {
+    throw new Error(
+      "Fallback bootstrap recipient requires both --bootstrap-address and --bootstrap-public-key."
+    );
+  }
 
-  const derOrPem = fs.readFileSync(bootstrapPublicKeyPath);
-  const publicKey = crypto.createPublicKey(
-    bootstrapPublicKeyPath.endsWith(".pem")
-      ? derOrPem.toString("utf8").replace(/\\n/g, "\n")
-      : { key: derOrPem, format: "der", type: "spki" }
-  );
+  const keyBytes = fs.readFileSync(bootstrapPublicKeyPath);
 
   return {
-    address: bootstrapAddress,
-    der: publicKey.export({ format: "der", type: "spki" }),
+    address: normalizeRecipientAddress(bootstrapAddress, "fallback bootstrap recipient"),
+    der: canonicalizeRsaPublicKey(keyBytes, "fallback bootstrap recipient"),
   };
 };
 
 const modelBytes = fs.readFileSync(modelPath);
 const signatureBytes = fs.readFileSync(signaturePath);
 const signingKeyPem = fs.readFileSync(privateKeyPath, "utf8");
+const publisherPublicKeyDer = deriveRsaPublicKeyDer(
+  signingKeyPem,
+  "initial global-model signing key"
+);
 const signingKey = crypto.createPrivateKey(signingKeyPem);
 
 fs.mkdirSync(outDir, { recursive: true });
@@ -194,10 +205,19 @@ const ciphertext = Buffer.concat([cipher.update(payload), cipher.final()]);
 const authTag = cipher.getAuthTag();
 
 const wrappedKeys = {};
-const recipients = await loadRecipientsFromRegistry();
+const registryRecipients = await loadRecipientsFromRegistry();
+const inventoryRecipients = parseDynamicWorkerInventoryRecipients(
+  process.env.DYNAMIC_WORKER_INVENTORY
+);
 const bootstrapRecipient = loadBootstrapRecipient();
-if (bootstrapRecipient && !recipients.some((recipient) => recipient.address === bootstrapRecipient.address)) {
-  recipients.push(bootstrapRecipient);
+const fallbackRecipients = bootstrapRecipient ? [bootstrapRecipient] : [];
+const recipients = mergeBootstrapRecipients(
+  registryRecipients,
+  inventoryRecipients,
+  fallbackRecipients
+);
+if (recipients.length === 0) {
+  throw new Error("Encrypted bootstrap requires at least one valid RSA recipient.");
 }
 for (const recipient of recipients) {
   const publicKey = crypto.createPublicKey({
@@ -243,4 +263,5 @@ process.stdout.write(JSON.stringify({
   keyBundlePath,
   recipientCount: recipients.length,
   recipients: recipients.map((recipient) => recipient.address),
+  publisherPublicKeyDerHex: publisherPublicKeyDer.toString("hex"),
 }) + "\n");

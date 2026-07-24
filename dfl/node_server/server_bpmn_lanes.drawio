@@ -70,10 +70,10 @@
         <mxCell id="aAggState" value="AGGREGATING?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneAggregator" vertex="1">
           <mxGeometry x="1240" y="55" width="110" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="aWaitModels" value="Wait for worker model files" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneAggregator" vertex="1">
+        <mxCell id="aWaitModels" value="Receive signed worker package&#xa;verify identity, signature, and bytes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneAggregator" vertex="1">
           <mxGeometry x="1410" y="65" width="170" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="aStage" value="Stage models for aggregation&#xa;copy/rename to `results_iid`" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneAggregator" vertex="1">
+        <mxCell id="aStage" value="Stage accepted models&#xa;rehash bytes and compare on-chain record" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneAggregator" vertex="1">
           <mxGeometry x="1640" y="65" width="190" height="60" as="geometry" />
         </mxCell>
         <mxCell id="aHasModels" value="Any models?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneAggregator" vertex="1">
@@ -112,7 +112,7 @@
         <mxCell id="bAuth" value="Check device authorization" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneBlockchain" vertex="1">
           <mxGeometry x="1540" y="160" width="170" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="bContrib" value="Increment contribution" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneBlockchain" vertex="1">
+        <mxCell id="bContrib" value="Aggregator records accepted decrypted-model hash and increments that worker's score atomically" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneBlockchain" vertex="1">
           <mxGeometry x="1970" y="160" width="140" height="60" as="geometry" />
         </mxCell>
         <mxCell id="bSetAggregating" value="setSystemState(AGGREGATING)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneBlockchain" vertex="1">
@@ -124,7 +124,7 @@
         <mxCell id="bSetGm" value="Update on-chain GM CID&#xa;and signature CID" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneBlockchain" vertex="1">
           <mxGeometry x="1750" y="90" width="220" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="bRound" value="incrementRound()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneBlockchain" vertex="1">
+        <mxCell id="bRound" value="Finalize published round and increment aggregator score once" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneBlockchain" vertex="1">
           <mxGeometry x="1910" y="240" width="120" height="50" as="geometry" />
         </mxCell>
         <mxCell id="bTraining" value="setSystemState(TRAINING)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneBlockchain" vertex="1">
@@ -264,7 +264,7 @@
         <mxCell id="m7" value="isAuthorized()" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=8 8;strokeWidth=1.5;endArrow=open;endFill=0;" parent="1" source="wSendModel" target="bAuth" edge="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="m8" value="setContribution()" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=8 8;strokeWidth=1.5;endArrow=open;endFill=0;" parent="1" source="wSendModel" target="bContrib" edge="1">
+        <mxCell id="m8" value="recordModelSubmission(round, worker, SHA-256(bytes))" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=8 8;strokeWidth=1.5;endArrow=open;endFill=0;" parent="1" source="aWaitModels" target="bContrib" edge="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="m9" value="setCurrentState(AGGREGATING)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=8 8;strokeWidth=1.5;endArrow=open;endFill=0;" parent="1" source="aStartServer" target="bSetAggregating" edge="1">

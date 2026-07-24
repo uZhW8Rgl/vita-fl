@@ -173,9 +173,7 @@ def _remote_call(
                 from .sello_client import complete_receiver_call
             except ImportError:
                 from sello_client import complete_receiver_call
-            complete_receiver_call(
-                receiver_call, exc.headers, body_bytes, exc.code, receiver_base_url=ZK_INFERENCE_URL
-            )
+            complete_receiver_call(receiver_call, exc.headers, body_bytes, exc.code, receiver_base_url=ZK_INFERENCE_URL)
         body = body_bytes.decode("utf-8", errors="replace")
         raise RuntimeError(f"zk_inference service returned HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
@@ -319,7 +317,9 @@ def fetch_latest_verified_zk_model_bundle() -> str:
 
     record_mcp_tool_call("fetch_latest_verified_zk_model_bundle")
     result = _remote_call(
-        "/v1/models/fetch", {}, timeout=600,
+        "/v1/models/fetch",
+        {},
+        timeout=600,
         receipt_action="fetch_latest_verified_zk_model_bundle",
     )
     return _json_response(
@@ -333,7 +333,8 @@ def generate_random_zk_chestmnist_image(index: int | None = None) -> str:
 
     record_mcp_tool_call("generate_random_zk_chestmnist_image")
     result = _remote_call(
-        "/v1/jobs", {"index": normalize_optional_index(index)},
+        "/v1/jobs",
+        {"index": normalize_optional_index(index)},
         receipt_action="generate_random_zk_chestmnist_image",
     )
     return _json_response(
@@ -349,7 +350,9 @@ def generate_and_verify_zk_inference_proof(job_id: str) -> str:
     if len(job_id) != 32 or any(character not in "0123456789abcdef" for character in job_id):
         raise ValueError("job_id must contain exactly 32 lowercase hexadecimal characters")
     result = _remote_call(
-        f"/v1/jobs/{job_id}/run-and-verify", {}, timeout=900,
+        f"/v1/jobs/{job_id}/run-and-verify",
+        {},
+        timeout=900,
         receipt_action="generate_and_verify_zk_inference_proof",
         receipt_input=json.dumps({"job_id": job_id}, sort_keys=True, separators=(",", ":")).encode(),
     )

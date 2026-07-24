@@ -41,6 +41,64 @@ variable "tee_inference_app_name" {
   default     = "master-thesis-tee-inference"
 }
 
+variable "expected_gm_storage_address" {
+  description = "Compose-measured GMStorage trust-root address expected by TEE inference and DFL workers."
+  type        = string
+  default     = "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+
+  validation {
+    condition     = can(regex("^0x[0-9a-fA-F]{40}$", var.expected_gm_storage_address))
+    error_message = "expected_gm_storage_address must be a 20-byte EVM address."
+  }
+}
+
+variable "expected_device_registry_address" {
+  description = "Compose-measured DeviceRegistry trust-root address expected by TEE inference and DFL workers."
+  type        = string
+  default     = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+
+  validation {
+    condition     = can(regex("^0x[0-9a-fA-F]{40}$", var.expected_device_registry_address))
+    error_message = "expected_device_registry_address must be a 20-byte EVM address."
+  }
+}
+
+variable "expected_chain_id" {
+  description = "Compose-measured EVM chain ID expected by TEE inference and DFL workers."
+  type        = number
+  default     = 31337
+
+  validation {
+    condition = (
+      var.expected_chain_id >= 1 &&
+      floor(var.expected_chain_id) == var.expected_chain_id
+    )
+    error_message = "expected_chain_id must be a positive integer."
+  }
+}
+
+variable "expected_aggregator_address" {
+  description = "Compose-measured AggregatorSelection trust-root address expected by DFL workers."
+  type        = string
+  default     = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+
+  validation {
+    condition     = can(regex("^0x[0-9a-fA-F]{40}$", var.expected_aggregator_address))
+    error_message = "expected_aggregator_address must be a 20-byte EVM address."
+  }
+}
+
+variable "expected_medical_signer_registry_address" {
+  description = "Compose-measured MedicalSignerRegistry trust-root address expected by DFL workers."
+  type        = string
+  default     = "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+
+  validation {
+    condition     = can(regex("^0x[0-9a-fA-F]{40}$", var.expected_medical_signer_registry_address))
+    error_message = "expected_medical_signer_registry_address must be a 20-byte EVM address."
+  }
+}
+
 variable "enable_ollama" {
   description = "Deploy a separate Ollama Phala app for the LLM used by the agent."
   type        = bool

@@ -35,6 +35,51 @@ variable "kubo_api_url" { type = string }
 variable "kubo_gateway_url" { type = string }
 variable "telemetry_url" { type = string }
 
+variable "expected_device_registry_address" {
+  type = string
+
+  validation {
+    condition     = can(regex("^0x[0-9a-fA-F]{40}$", var.expected_device_registry_address))
+    error_message = "expected_device_registry_address must be a 20-byte EVM address."
+  }
+}
+
+variable "expected_aggregator_address" {
+  type = string
+
+  validation {
+    condition     = can(regex("^0x[0-9a-fA-F]{40}$", var.expected_aggregator_address))
+    error_message = "expected_aggregator_address must be a 20-byte EVM address."
+  }
+}
+
+variable "expected_gm_storage_address" {
+  type = string
+
+  validation {
+    condition     = can(regex("^0x[0-9a-fA-F]{40}$", var.expected_gm_storage_address))
+    error_message = "expected_gm_storage_address must be a 20-byte EVM address."
+  }
+}
+
+variable "expected_medical_signer_registry_address" {
+  type = string
+
+  validation {
+    condition     = can(regex("^0x[0-9a-fA-F]{40}$", var.expected_medical_signer_registry_address))
+    error_message = "expected_medical_signer_registry_address must be a 20-byte EVM address."
+  }
+}
+
+variable "expected_chain_id" {
+  type = number
+
+  validation {
+    condition     = var.expected_chain_id >= 1 && floor(var.expected_chain_id) == var.expected_chain_id
+    error_message = "expected_chain_id must be a positive integer."
+  }
+}
+
 variable "region" {
   type    = string
   default = "US-WEST-1"

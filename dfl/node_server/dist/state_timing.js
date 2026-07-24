@@ -61,8 +61,48 @@ export function nextGMTimeoutState({ missedLoops, maxLoops }) {
         shouldReportTimeout: nextMissedLoops >= maxLoops,
     };
 }
+export function nextAggregatorTimeoutTracker({ tracker = {}, expectedRound, expectedAggregator, maxLoops, }) {
+    const round = Number(expectedRound);
+    const aggregator = String(expectedAggregator || "").toLowerCase();
+    if (!Number.isSafeInteger(round) || round < 0) {
+        throw new Error(`Invalid timeout-report round: ${expectedRound}`);
+    }
+    if (!/^0x[0-9a-f]{40}$/.test(aggregator)) {
+        throw new Error(`Invalid timeout-report aggregator: ${expectedAggregator}`);
+    }
+    const contextKey = `${round}:${aggregator}`;
+    const priorMissedLoops = tracker.contextKey === contextKey
+        ? Number(tracker.missedLoops || 0)
+        : 0;
+    const next = nextGMTimeoutState({ missedLoops: priorMissedLoops, maxLoops });
+    return {
+        contextKey,
+        missedLoops: next.missedLoops,
+        failureCount: priorMissedLoops + 1,
+        shouldReportTimeout: next.shouldReportTimeout,
+        expectedRound: round,
+        expectedAggregator: aggregator,
+    };
+}
 export function requiredTimeoutReports({ eligibleReporters, thresholdPercent }) {
     if (eligibleReporters <= 0)
         return 0;
     return Math.max(1, Math.ceil((eligibleReporters * thresholdPercent) / 100));
+}
+export function selectionGapRecoveryNeeded({ state, observedRound, lastSelectionRound, completedRounds, targetRounds, }) {
+    const round = Number(observedRound);
+    const selectedRound = Number(lastSelectionRound);
+    const completed = Number(completedRounds);
+    const target = Number(targetRounds);
+    return String(state) === "UPDATING"
+        && Number.isSafeInteger(round)
+        && Number.isSafeInteger(selectedRound)
+        && Number.isSafeInteger(completed)
+        && Number.isSafeInteger(target)
+        && round >= 0
+        && selectedRound >= 0
+        && completed >= 0
+        && target > 0
+        && completed < target
+        && round > selectedRound;
 }

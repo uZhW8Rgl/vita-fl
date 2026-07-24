@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - reported at runtime
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV_FILE = REPO_ROOT / ".env"
-DEFAULT_RPC_URL = os.environ.get("RPC_URL") or os.environ.get("SEPOLIA_RPC_URL") or "http://127.0.0.1:8545"
+DEFAULT_RPC_URL = os.environ.get("RPC_URL") or "http://127.0.0.1:8545"
 DEFAULT_GM_STORAGE_ADDRESS = os.environ.get("GM_STORAGE_ADDRESS", "")
 DEFAULT_REGISTRY_ADDRESS = os.environ.get("REGISTRY_ADDRESS", "")
 
@@ -110,6 +110,7 @@ def function_selector(signature: str) -> str:
             "getGlobalModelSignature()": "0xac77077f",
             "getGlobalModelKeyBundle()": "0x6f86433c",
             "getLastRoundsAggregator()": "0x95f17aed",
+            "getFinalizedModelBundle()": "0xfd419631",
             "getDevice(address)": "0x00d55318",
             "devices(address)": "0xe7b4cac6",
         }
@@ -151,13 +152,56 @@ def decode_abi_address(hex_data: str) -> str:
 
 
 def _read_word(data: bytes, offset: int) -> int:
+    if offset < 0 or offset + 32 > len(data):
+        raise RuntimeError("ABI result does not contain the requested 32-byte word.")
     return int.from_bytes(data[offset : offset + 32], "big")
 
 
-def _decode_dynamic_bytes(data: bytes, offset_word_index: int) -> bytes:
+def _decode_dynamic_bytes(data: bytes, offset_word_index: int, *, minimum_offset: int = 0) -> bytes:
     offset = _read_word(data, offset_word_index * 32)
+    if offset % 32 != 0:
+        raise RuntimeError("ABI dynamic-value offset is not word aligned.")
+    if offset < minimum_offset:
+        raise RuntimeError("ABI dynamic-value offset overlaps the tuple head.")
     length = _read_word(data, offset)
-    return data[offset + 32 : offset + 32 + length]
+    start = offset + 32
+    end = start + length
+    if end > len(data):
+        raise RuntimeError("ABI dynamic value exceeds the returned data.")
+    return data[start:end]
+
+
+def decode_finalized_model_bundle(hex_data: str) -> tuple[str, str, str, str, int, bytes]:
+    data = bytes.fromhex(hex_data.removeprefix("0x"))
+    head_size = 6 * 32
+    if len(data) < head_size:
+        raise RuntimeError(f"Cannot decode finalized model tuple from short result: {hex_data}")
+    try:
+        model_cid = _decode_dynamic_bytes(data, 0, minimum_offset=head_size).decode("utf-8")
+        signature_cid = _decode_dynamic_bytes(data, 1, minimum_offset=head_size).decode("utf-8")
+        key_bundle_cid = _decode_dynamic_bytes(data, 2, minimum_offset=head_size).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("Finalized model tuple contains a non-UTF-8 CID.") from exc
+    aggregator_word = data[3 * 32 : 4 * 32]
+    if aggregator_word[:12] != b"\x00" * 12:
+        raise RuntimeError("Finalized model tuple contains non-canonical address padding.")
+    last_aggregator = "0x" + aggregator_word[12:32].hex()
+    model_round = _read_word(data, 4 * 32)
+    publisher_public_key = _decode_dynamic_bytes(data, 5, minimum_offset=head_size)
+    if not model_cid or not signature_cid or not key_bundle_cid:
+        raise RuntimeError("GMStorage returned an incomplete finalized model bundle.")
+    if last_aggregator == "0x" + "00" * 20:
+        raise RuntimeError("GMStorage returned an empty finalized model aggregator.")
+    if not publisher_public_key:
+        raise RuntimeError("GMStorage returned an empty finalized publisher public key.")
+    return (
+        model_cid,
+        signature_cid,
+        key_bundle_cid,
+        last_aggregator,
+        model_round,
+        publisher_public_key,
+    )
 
 
 def decode_device_public_key(hex_data: str) -> bytes:
@@ -220,19 +264,34 @@ def read_current_bundle_from_contract(
     rpc_url: str,
     contract_address: str,
     registry_address: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     validate_contract_addresses(contract_address, registry_address)
-    model_cid = eth_call_string(rpc_url, contract_address, "getGlobalModel()")
-    signature_cid = eth_call_string(rpc_url, contract_address, "getGlobalModelSignature()")
-    key_bundle_cid = eth_call_string(rpc_url, contract_address, "getGlobalModelKeyBundle()")
-    last_aggregator = eth_call_address(rpc_url, contract_address, "getLastRoundsAggregator()")
-    if not model_cid:
-        raise RuntimeError("GMStorage returned an empty model CID or signature CID.")
+    result = rpc_call(
+        rpc_url,
+        "eth_call",
+        [
+            {
+                "to": contract_address,
+                "data": function_selector("getFinalizedModelBundle()"),
+            },
+            "latest",
+        ],
+    )
+    (
+        model_cid,
+        signature_cid,
+        key_bundle_cid,
+        last_aggregator,
+        model_round,
+        publisher_public_key,
+    ) = decode_finalized_model_bundle(result)
     bundle = {
         "model_cid": model_cid,
         "signature_cid": signature_cid,
         "key_bundle_cid": key_bundle_cid,
         "last_aggregator": last_aggregator,
+        "finalized_model_round": model_round,
+        "publisher_public_key_der_hex": publisher_public_key.hex(),
         "rpc_url": rpc_url,
         "gm_storage_address": contract_address,
     }
@@ -284,6 +343,9 @@ def _decrypt_encrypted_bundle(
 
     bundle_doc = json.loads(encrypted_model_path.read_text(encoding="utf-8"))
     key_bundle_doc = json.loads(key_bundle_path.read_text(encoding="utf-8"))
+    key_bundle_round = key_bundle_doc.get("round")
+    if isinstance(key_bundle_round, bool) or not isinstance(key_bundle_round, int) or key_bundle_round < 0:
+        raise RuntimeError("Encrypted global model key bundle contains an invalid round.")
     wrapped_keys = key_bundle_doc.get("wrapped_keys_b64", {})
     wrapped_key_b64 = wrapped_keys.get(own_address)
     if not isinstance(wrapped_key_b64, str) or not wrapped_key_b64:
@@ -308,7 +370,7 @@ def _decrypt_encrypted_bundle(
     plain_signature_path.write_bytes(base64.b64decode(payload["signature_b64"]))
     return {
         "encrypted": True,
-        "round": int(key_bundle_doc.get("round") or 0),
+        "round": key_bundle_round,
         "recipient_address": own_address,
         "private_key_source": private_key_source,
         "plain_model_path": str(plain_model_path),
@@ -405,7 +467,10 @@ def verify_download_with_registry(
     registry_address: str,
 ) -> dict[str, Any]:
     validate_contract_addresses(bundle["gm_storage_address"], registry_address)
-    public_key_der = read_device_public_key_der(rpc_url, registry_address, bundle["last_aggregator"])
+    public_key_hex = str(bundle.get("publisher_public_key_der_hex") or "")
+    if not re.fullmatch(r"(?:[0-9a-fA-F]{2})+", public_key_hex):
+        raise RuntimeError("Finalized model bundle does not contain a valid publisher public key snapshot.")
+    public_key_der = bytes.fromhex(public_key_hex)
     encrypted_bundle = bool(download.get("encrypted_bundle"))
     if encrypted_bundle:
         outer_verification = verify_model_signature(

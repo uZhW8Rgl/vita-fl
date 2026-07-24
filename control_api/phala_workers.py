@@ -70,6 +70,11 @@ class WorkerDeploymentConfig:
     kubo_api_url: str
     kubo_gateway_url: str
     telemetry_url: str
+    expected_device_registry_address: str
+    expected_aggregator_address: str
+    expected_gm_storage_address: str
+    expected_medical_signer_registry_address: str
+    expected_chain_id: int
     region: str = "US-WEST-1"
     os_image: str = "dstack-dev-0.5.7"
     client_limit: int = 2
@@ -237,9 +242,7 @@ class SubprocessTerraformRunner:
                 output = "Terraform produced no diagnostic output"
             output = output[-4000:]
             print(f"Dynamic worker Terraform failed:\n{output}", file=sys.stderr, flush=True)
-            raise WorkerProvisioningError(
-                f"Terraform failed with exit code {result.returncode}: {output}"
-            )
+            raise WorkerProvisioningError(f"Terraform failed with exit code {result.returncode}: {output}")
         return result
 
     def _write_tfvars(self, workers: dict[str, dict[str, Any]]) -> None:
@@ -306,9 +309,7 @@ class PhalaWorkerController:
                 requested = {
                     "rounds": int(training_config.get("rounds", configured.get("rounds", 1))),
                     "epoch": int(training_config.get("epoch", configured.get("epoch", 1))),
-                    "client_limit": int(
-                        training_config.get("client_limit", configured.get("client_limit", 1))
-                    ),
+                    "client_limit": int(training_config.get("client_limit", configured.get("client_limit", 1))),
                 }
                 if current and requested != configured:
                     raise WorkerConfigurationError(
@@ -375,9 +376,7 @@ def controller_from_environment() -> PhalaWorkerController:
         telemetry_host = re.sub(r"-[0-9]+(?=\.dstack-)", "-8091", parsed_rpc_url.hostname or "")
         if not telemetry_host:
             raise WorkerConfigurationError("could not derive the control API telemetry URL")
-        telemetry_url = urllib.parse.urlunsplit(
-            (parsed_rpc_url.scheme or "https", telemetry_host, "", "", "")
-        )
+        telemetry_url = urllib.parse.urlunsplit((parsed_rpc_url.scheme or "https", telemetry_host, "", "", ""))
     config = WorkerDeploymentConfig(
         phala_cloud_api_key=required["PHALA_CLOUD_API_KEY"],
         worker_image=required["DYNAMIC_WORKER_IMAGE"],
@@ -385,6 +384,23 @@ def controller_from_environment() -> PhalaWorkerController:
         kubo_api_url=required["DYNAMIC_WORKER_KUBO_API_URL"],
         kubo_gateway_url=required["DYNAMIC_WORKER_KUBO_GATEWAY_URL"],
         telemetry_url=telemetry_url,
+        expected_device_registry_address=os.environ.get(
+            "DYNAMIC_WORKER_EXPECTED_DEVICE_REGISTRY_ADDRESS",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        ),
+        expected_aggregator_address=os.environ.get(
+            "DYNAMIC_WORKER_EXPECTED_AGGREGATOR_ADDRESS",
+            "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+        ),
+        expected_gm_storage_address=os.environ.get(
+            "DYNAMIC_WORKER_EXPECTED_GM_STORAGE_ADDRESS",
+            "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+        ),
+        expected_medical_signer_registry_address=os.environ.get(
+            "DYNAMIC_WORKER_EXPECTED_MEDICAL_SIGNER_REGISTRY_ADDRESS",
+            "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+        ),
+        expected_chain_id=integer("DYNAMIC_WORKER_EXPECTED_CHAIN_ID", 31337),
         region=os.environ.get("PHALA_REGION", "US-WEST-1"),
         os_image=os.environ.get("PHALA_OS_IMAGE", "dstack-dev-0.5.7"),
         client_limit=integer("CLIENT_LIMIT", 2),

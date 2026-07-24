@@ -3,9 +3,9 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, getLastRoundsAggregator, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
+import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, recordModelSubmission, closeModelSubmissions, hasSubmittedModel, getModelSubmissionHash, penalizeContribution } from "./bc_client.js";
 import { getCurrentModel, updateGM } from "./ipfs.js";
-import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
+import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
 import fs from 'fs/promises';
 import { existsSync, readFileSync } from 'fs';
 import { DstackClient, TappdClient, getComposeHash } from '@phala/dstack-sdk';
@@ -18,6 +18,8 @@ const deviceID = process.env.DEVICE_ID;
 let currentState = "";
 let aggregatorServerRunning = false;
 let modelUploadServer;
+let modelUploadQueue = Promise.resolve();
+const activeModelUploadHandlers = new Set();
 const pythonServiceUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
 const modelUploadPort = Number(process.env.MODEL_UPLOAD_PORT || 8001);
 const maxModelUploadBytes = Number(process.env.MODEL_UPLOAD_MAX_BYTES || 25 * 1024 * 1024);
@@ -53,7 +55,7 @@ const modelTransferRetryDelayMs = timingConfig.modelTransferRetryDelayMs;
 for (const warning of validateTimingConfig(timingConfig)) {
     console.warn("Timing config warning:", warning);
 }
-let missedGMUpdateLoops = 0;
+let aggregatorTimeoutTracker = { contextKey: "", missedLoops: 0 };
 function sameAddress(left, right) {
     return String(left || '').toLowerCase() === String(right || '').toLowerCase();
 }
@@ -61,32 +63,82 @@ function targetRound() {
     return Number(process.env.ROUND || 0);
 }
 async function assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel) {
-    const current = {
-        modelCid: String(await getCurrentGM() || ""),
-        sigCid: String(await getCurrentGMSignature() || ""),
-        keyBundleCid: String(await getCurrentGMKeyBundle() || ""),
-    };
+    const current = await getActiveModelBundle();
     const fetched = {
         modelCid: String(fetchedGlobalModel?.modelCid || ""),
         sigCid: String(fetchedGlobalModel?.sigCid || ""),
         keyBundleCid: String(fetchedGlobalModel?.keyBundleCid || ""),
+        publisher: String(fetchedGlobalModel?.publisher || ""),
+        publisherPublicKeyDerHex: String(fetchedGlobalModel?.publisherPublicKeyDerHex || ""),
     };
     if (!fetched.modelCid ||
         fetched.modelCid !== current.modelCid ||
         fetched.sigCid !== current.sigCid ||
-        fetched.keyBundleCid !== current.keyBundleCid) {
-        throw new Error("Fetched global model is no longer the current on-chain model; skipping local training.");
+        fetched.keyBundleCid !== current.keyBundleCid ||
+        !sameAddress(fetched.publisher, current.publisher) ||
+        fetched.publisherPublicKeyDerHex !== current.publisherPublicKeyDerHex) {
+        throw new Error("Fetched global model or publisher key is no longer the active on-chain bundle; skipping local training.");
     }
-    console.log("Fetched global model matches current on-chain CIDs.");
+    console.log("Fetched global model and publisher key match the active on-chain bundle.");
     return current;
 }
 async function runtimeEvent(name, attributes = {}) {
-    void emitTelemetryEvent(name, attributes);
+    await emitTelemetryEvent(name, attributes);
 }
 async function runOperation(name, attributes, operation) {
     return operation();
 }
-async function waitForSubmittedRoundToAdvance(currentRound) {
+function resetAggregatorTimeoutTracker() {
+    aggregatorTimeoutTracker = { contextKey: "", missedLoops: 0 };
+}
+async function recordMissedAggregatorProgress(expectedRound, expectedAggregator, reason, error = null) {
+    const next = nextAggregatorTimeoutTracker({
+        tracker: aggregatorTimeoutTracker,
+        expectedRound,
+        expectedAggregator,
+        maxLoops: gmUpdateTimeoutLoops,
+    });
+    aggregatorTimeoutTracker = {
+        contextKey: next.contextKey,
+        missedLoops: next.missedLoops,
+    };
+    console.warn(`Aggregator ${next.expectedAggregator} made no observable progress for round ${next.expectedRound} ` +
+        `(${reason}); failure ${next.failureCount}/${gmUpdateTimeoutLoops}.`);
+    await runtimeEvent("worker.aggregator_progress.missed", {
+        role: "worker",
+        round: next.expectedRound,
+        aggregator: next.expectedAggregator,
+        reason,
+        missed_loops: next.failureCount,
+        error: error ? (error?.message || String(error)) : undefined,
+    });
+    if (!next.shouldReportTimeout) {
+        return;
+    }
+    console.warn(`Reporting timeout for observed aggregator ${next.expectedAggregator} in round ${next.expectedRound}.`);
+    try {
+        await reportAggregatorTimeout(next.expectedRound, next.expectedAggregator);
+        await runtimeEvent("worker.aggregator_timeout.reported", {
+            role: "worker",
+            round: next.expectedRound,
+            aggregator: next.expectedAggregator,
+            reason,
+            missed_loops: next.failureCount,
+        });
+    }
+    catch (reportError) {
+        console.error("Error reporting aggregator timeout:", reportError);
+        await runtimeEvent("worker.aggregator_timeout.report_failed", {
+            role: "worker",
+            round: next.expectedRound,
+            aggregator: next.expectedAggregator,
+            reason,
+            missed_loops: next.failureCount,
+            error: reportError?.message || String(reportError),
+        });
+    }
+}
+async function waitForSubmittedRoundToAdvance(currentRound, expectedAggregator) {
     console.log(`Model already submitted for round ${currentRound}. Waiting for round advance instead of retraining.`);
     await runtimeEvent("worker.round_already_submitted.waiting", {
         role: "worker",
@@ -97,27 +149,91 @@ async function waitForSubmittedRoundToAdvance(currentRound) {
             pollMs: gmUpdatePollMs,
             timeoutMs: gmUpdateTimeoutMs,
         });
-        missedGMUpdateLoops = 0;
+        resetAggregatorTimeoutTracker();
         console.log(`Round advanced from ${currentRound} to ${nextRound}.`);
     }
     catch (e) {
-        missedGMUpdateLoops++;
-        console.warn(`Round ${currentRound} did not advance within timeout. Missed update loop ${missedGMUpdateLoops}/${gmUpdateTimeoutLoops}.`);
-        if (missedGMUpdateLoops >= gmUpdateTimeoutLoops) {
-            console.warn("Reporting aggregator timeout onchain.");
-            await runtimeEvent("worker.aggregator_timeout.reported", {
-                role: "worker",
-                missed_loops: missedGMUpdateLoops,
-            });
-            try {
-                await reportAggregatorTimeout();
-            }
-            catch (reportError) {
-                console.error("Error reporting aggregator timeout:", reportError);
-            }
-            missedGMUpdateLoops = 0;
+        await recordMissedAggregatorProgress(currentRound, expectedAggregator, "round_not_advanced", e);
+    }
+}
+async function monitorNonAggregatorStateProgress(observedRound, expectedAggregator, observedState) {
+    console.log(`Waiting for aggregator ${expectedAggregator} to advance round ${observedRound} ` +
+        `from state ${observedState}.`);
+    try {
+        const nextRound = await waitForRoundAdvance(observedRound, {
+            pollMs: gmUpdatePollMs,
+            timeoutMs: gmUpdateTimeoutMs,
+        });
+        resetAggregatorTimeoutTracker();
+        console.log(`Round advanced from ${observedRound} to ${nextRound}.`);
+    }
+    catch (error) {
+        await recordMissedAggregatorProgress(observedRound, expectedAggregator, `aggregator_state_stalled_${String(observedState || "unknown").toLowerCase()}`, error);
+    }
+    await sleep(2000);
+}
+async function recoverSelectionGap(observedRound, expectedAggregator, observedState) {
+    const [lastSelectionRound, completedRounds] = await Promise.all([
+        getLastSelectionRound(),
+        getCompletedRoundCount(),
+    ]);
+    if (Number(completedRounds) >= targetRound()) {
+        resetAggregatorTimeoutTracker();
+        console.log(`Configured target of ${targetRound()} successful rounds is already complete; ` +
+            "no further aggregator selection is required.");
+        return "training-complete";
+    }
+    if (!selectionGapRecoveryNeeded({
+        state: observedState,
+        observedRound,
+        lastSelectionRound: Number(lastSelectionRound),
+        completedRounds: Number(completedRounds),
+        targetRounds: targetRound(),
+    })) {
+        return null;
+    }
+    const [latestState, latestRound] = await Promise.all([
+        getCurrentState(),
+        getRound(),
+    ]);
+    if (Number(latestRound) !== Number(observedRound)
+        || String(latestState[0]) !== "UPDATING"
+        || !sameAddress(latestState[1], expectedAggregator)) {
+        if (Number(latestRound) === Number(observedRound)
+            && String(latestState[0]) === "TRAINING"
+            && Number(await getLastSelectionRound()) === Number(observedRound)) {
+            resetAggregatorTimeoutTracker();
+            return true;
+        }
+        return null;
+    }
+    console.warn(`Detected an unfinished aggregator-selection transition for round ${observedRound}; ` +
+        "attempting authorized recovery.");
+    try {
+        await triggerAggregatorSelection();
+    }
+    catch (error) {
+        const reconciledState = await getCurrentState().catch(() => null);
+        const reconciledRound = Number(await getRound().catch(() => -1));
+        const reconciledSelectionRound = Number(await getLastSelectionRound().catch(() => -1));
+        if (reconciledState
+            && reconciledRound === Number(observedRound)
+            && String(reconciledState[0]) === "TRAINING"
+            && reconciledSelectionRound === Number(observedRound)) {
+            console.log("Another authorized worker completed the aggregator-selection recovery.");
+        }
+        else {
+            console.error("Aggregator-selection gap recovery failed:", error);
+            return false;
         }
     }
+    resetAggregatorTimeoutTracker();
+    await runtimeEvent("worker.aggregator_selection_gap.recovered", {
+        role: "worker",
+        round: Number(observedRound),
+        previous_aggregator: String(expectedAggregator),
+    });
+    return true;
 }
 async function callPythonService(endpoint, payload = {}, { timeoutMs = 0 } = {}) {
     const controller = timeoutMs > 0 ? new AbortController() : null;
@@ -150,9 +266,17 @@ async function callPythonService(endpoint, payload = {}, { timeoutMs = 0 } = {})
     }
 }
 async function stopAggregatorServer() {
-    if (!aggregatorServerRunning)
-        return;
-    await callPythonService('/server/stop');
+    const server = modelUploadServer;
+    modelUploadServer = undefined;
+    if (server) {
+        await new Promise((resolve, reject) => {
+            server.close((error) => error ? reject(error) : resolve());
+        });
+        while (activeModelUploadHandlers.size > 0) {
+            await Promise.allSettled(Array.from(activeModelUploadHandlers));
+        }
+        console.log("Authenticated model upload server stopped.");
+    }
     aggregatorServerRunning = false;
 }
 function normalizeHexBytes(input) {
@@ -174,9 +298,42 @@ function rsaPublicKeyDerHex() {
     const der = key.export({ format: 'der', type: 'spki' });
     return `0x${Buffer.from(der).toString('hex')}`;
 }
-async function localModelPackageHash() {
-    const data = await fs.readFile('./data/lm.bin.enc');
+function modelBytesHash(data) {
     return `0x${crypto.createHash('sha256').update(data).digest('hex')}`;
+}
+async function modelFileHash(filePath) {
+    return modelBytesHash(await fs.readFile(filePath));
+}
+function uint256Bytes(value, label) {
+    const integer = BigInt(value);
+    if (integer < 0n || integer >= (1n << 256n)) {
+        throw new Error(`${label} is outside the uint256 range`);
+    }
+    return Buffer.from(integer.toString(16).padStart(64, '0'), 'hex');
+}
+function addressBytes(value, label) {
+    const address = String(value || '');
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+        throw new Error(`${label} must be a 20-byte Ethereum address`);
+    }
+    return Buffer.from(address.slice(2), 'hex');
+}
+function sha256Bytes(value) {
+    return crypto.createHash('sha256').update(value).digest();
+}
+function modelUploadSigningPayload({ packageBytes, round, chainId, gmStorageAddress, aggregatorAddress, workerAddress, parentModelCid, parentSignatureCid, parentKeyBundleCid, }) {
+    return Buffer.concat([
+        sha256Bytes(Buffer.from('VITAFL_MODEL_UPLOAD_V1', 'utf8')),
+        uint256Bytes(round, 'model upload round'),
+        uint256Bytes(chainId, 'model upload chain id'),
+        addressBytes(gmStorageAddress, 'GMStorage address'),
+        addressBytes(aggregatorAddress, 'expected aggregator'),
+        addressBytes(workerAddress, 'worker address'),
+        sha256Bytes(Buffer.from(String(parentModelCid), 'utf8')),
+        sha256Bytes(Buffer.from(String(parentSignatureCid), 'utf8')),
+        sha256Bytes(Buffer.from(String(parentKeyBundleCid), 'utf8')),
+        sha256Bytes(packageBytes),
+    ]);
 }
 function gatewayDomainFromEnvironment() {
     const explicit = String(process.env.DSTACK_GATEWAY_DOMAIN || '').trim().replace(/^\./, '');
@@ -194,9 +351,21 @@ function ownModelUploadEndpoint(appId) {
         throw new Error(`Invalid dstack app_id: ${appId}`);
     return `https://${id}-${modelUploadPort}.${gatewayDomainFromEnvironment()}`;
 }
-async function uploadLocalModel(endpoint, deviceId) {
+async function uploadLocalModel(endpoint, deviceId, expectedRound, expectedAggregator, parentModel) {
     const packageBytes = await fs.readFile('./data/lm.bin.enc');
-    const signature = crypto.sign('sha256', packageBytes, rsaPrivateKey).toString('base64');
+    const chainId = await getBlockchainChainId();
+    const signingPayload = modelUploadSigningPayload({
+        packageBytes,
+        round: expectedRound,
+        chainId,
+        gmStorageAddress: process.env.GM_STORAGE_ADDRESS,
+        aggregatorAddress: expectedAggregator,
+        workerAddress: deviceId,
+        parentModelCid: parentModel.modelCid,
+        parentSignatureCid: parentModel.sigCid,
+        parentKeyBundleCid: parentModel.keyBundleCid,
+    });
+    const signature = crypto.sign('sha256', signingPayload, rsaPrivateKey).toString('base64');
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), modelTransferTimeoutMs);
     try {
@@ -205,6 +374,11 @@ async function uploadLocalModel(endpoint, deviceId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 device_id: deviceId,
+                expected_round: expectedRound,
+                expected_aggregator: expectedAggregator,
+                parent_model_cid: parentModel.modelCid,
+                parent_signature_cid: parentModel.sigCid,
+                parent_key_bundle_cid: parentModel.keyBundleCid,
                 package_base64: packageBytes.toString('base64'),
                 signature_base64: signature,
             }),
@@ -242,6 +416,7 @@ async function handleModelUpload(request, response) {
         return reply(200, { ok: true });
     if (request.method !== 'POST' || request.url !== '/model')
         return reply(404, { ok: false, error: 'not found' });
+    let releaseUpload = () => { };
     try {
         const chunks = [];
         let length = 0;
@@ -252,40 +427,124 @@ async function handleModelUpload(request, response) {
             chunks.push(chunk);
         }
         const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        const deviceId = String(payload.device_id || '');
-        const chainState = await getCurrentState();
+        const previousUpload = modelUploadQueue;
+        modelUploadQueue = new Promise((resolve) => {
+            releaseUpload = resolve;
+        });
+        await previousUpload;
+        const deviceId = String(payload.device_id || '').toLowerCase();
+        const expectedAggregator = String(payload.expected_aggregator || '');
+        const expectedRound = Number(payload.expected_round);
+        const parentModel = {
+            modelCid: String(payload.parent_model_cid || ''),
+            sigCid: String(payload.parent_signature_cid || ''),
+            keyBundleCid: String(payload.parent_key_bundle_cid || ''),
+        };
+        const [chainState, currentRound, currentModelCid, currentSignatureCid, currentKeyBundleCid, chainId] = await Promise.all([
+            getCurrentState(),
+            getRound(),
+            getCurrentGM(),
+            getCurrentGMSignature(),
+            getCurrentGMKeyBundle(),
+            getBlockchainChainId(),
+        ]);
         if (!sameAddress(chainState[1], process.env.ACCOUNT_ADDRESS)) {
             return reply(409, { ok: false, error: 'this worker is not the current aggregator' });
+        }
+        if (!['TRAINING', 'AGGREGATING'].includes(String(chainState[0]))) {
+            return reply(409, {
+                ok: false,
+                error: `model uploads are closed while the system is ${String(chainState[0])}`,
+            });
+        }
+        if (!sameAddress(expectedAggregator, chainState[1])) {
+            return reply(409, { ok: false, error: 'signed upload targets a different aggregator' });
+        }
+        if (!Number.isSafeInteger(expectedRound) || expectedRound < 0 || expectedRound !== Number(currentRound)) {
+            return reply(409, { ok: false, error: 'signed upload targets a different round' });
+        }
+        if (!parentModel.modelCid ||
+            parentModel.modelCid !== String(currentModelCid) ||
+            parentModel.sigCid !== String(currentSignatureCid) ||
+            parentModel.keyBundleCid !== String(currentKeyBundleCid)) {
+            return reply(409, { ok: false, error: 'signed upload targets a stale global-model bundle' });
         }
         if (!/^0x[0-9a-fA-F]{40}$/.test(deviceId) || !(await isAuthorized(deviceId))) {
             return reply(403, { ok: false, error: 'device is not authorized' });
         }
+        const alreadySubmitted = await hasSubmittedModel(expectedRound, deviceId);
+        const recordedModelHash = alreadySubmitted
+            ? normalizeHashHex(await getModelSubmissionHash(expectedRound, deviceId), 32, "recorded decrypted model SHA-256")
+            : null;
         const packageBytes = Buffer.from(String(payload.package_base64 || ''), 'base64');
         const signature = Buffer.from(String(payload.signature_base64 || ''), 'base64');
         const publicKeyDer = Buffer.from(String(await getDevicePublicKey(deviceId)).replace(/^0x/, ''), 'hex');
         const publicKey = crypto.createPublicKey({ key: publicKeyDer, format: 'der', type: 'spki' });
-        if (!crypto.verify('sha256', packageBytes, publicKey, signature)) {
+        const signingPayload = modelUploadSigningPayload({
+            packageBytes,
+            round: expectedRound,
+            chainId,
+            gmStorageAddress: process.env.GM_STORAGE_ADDRESS,
+            aggregatorAddress: expectedAggregator,
+            workerAddress: deviceId,
+            parentModelCid: parentModel.modelCid,
+            parentSignatureCid: parentModel.sigCid,
+            parentKeyBundleCid: parentModel.keyBundleCid,
+        });
+        if (!crypto.verify('sha256', signingPayload, publicKey, signature)) {
             return reply(403, { ok: false, error: 'invalid model package signature' });
         }
-        await callPythonService('/model/receive', {
+        const acceptedModel = await callPythonService('/model/receive', {
             device_id: deviceId,
             package_base64: packageBytes.toString('base64'),
+            expected_model_sha256: recordedModelHash,
         }, { timeoutMs: modelTransferTimeoutMs });
-        return reply(200, { ok: true });
+        const modelHash = normalizeHashHex(acceptedModel.model_sha256, 32, "decrypted model SHA-256");
+        await recordModelSubmission(expectedRound, deviceId, modelHash);
+        return reply(200, {
+            ok: true,
+            round: expectedRound,
+            model_hash: modelHash,
+        });
     }
     catch (error) {
         console.error('Model upload rejected:', error);
         return reply(400, { ok: false, error: error?.message || String(error) });
     }
+    finally {
+        releaseUpload();
+    }
 }
 async function startModelUploadServer() {
     if (modelUploadServer)
         return;
-    modelUploadServer = http.createServer((request, response) => void handleModelUpload(request, response));
-    await new Promise((resolve, reject) => {
-        modelUploadServer.once('error', reject);
-        modelUploadServer.listen(modelUploadPort, '0.0.0.0', resolve);
+    const server = http.createServer((request, response) => {
+        const task = handleModelUpload(request, response).catch((error) => {
+            console.error("Unhandled authenticated model-upload error:", error);
+            if (!response.headersSent && !response.destroyed) {
+                const body = Buffer.from(JSON.stringify({ ok: false, error: error?.message || String(error) }));
+                response.writeHead(500, {
+                    'Content-Type': 'application/json',
+                    'Content-Length': body.length,
+                });
+                response.end(body);
+            }
+        });
+        activeModelUploadHandlers.add(task);
+        void task.finally(() => activeModelUploadHandlers.delete(task));
     });
+    modelUploadServer = server;
+    try {
+        await new Promise((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(modelUploadPort, '0.0.0.0', resolve);
+        });
+    }
+    catch (error) {
+        if (modelUploadServer === server)
+            modelUploadServer = undefined;
+        throw error;
+    }
     console.log(`Authenticated model upload server listening on port ${modelUploadPort}.`);
 }
 function serializePhalaEventLog(eventLog) {
@@ -582,6 +841,7 @@ async function expectedWorkerAddresses() {
         .filter(address => address.toLowerCase() !== own);
 }
 async function receivedWorkerModelFiles() {
+    const currentRound = Number(await getRound());
     const expected = new Set((await expectedWorkerAddresses()).map(address => address.toLowerCase()));
     const entries = await fs.readdir(srcModelsDir, { withFileTypes: true }).catch(err => {
         if (err && err.code === 'ENOENT')
@@ -603,17 +863,51 @@ async function receivedWorkerModelFiles() {
             files.push({ name: entry.name, path: filePath, authorized: false, reason: "filename does not contain a device address" });
             continue;
         }
-        if (!expected.has(address.toLowerCase())) {
-            files.push({ name: entry.name, path: filePath, address, authorized: false, reason: "not expected this round" });
+        const normalizedAddress = address.toLowerCase();
+        if (entry.name !== `wb_client_${normalizedAddress}.bin`) {
+            files.push({
+                name: entry.name,
+                path: filePath,
+                address: normalizedAddress,
+                authorized: false,
+                reason: "non-canonical or duplicate device-address filename",
+            });
             continue;
         }
-        const authorized = await isAuthorized(address);
+        if (!expected.has(normalizedAddress)) {
+            files.push({ name: entry.name, path: filePath, address: normalizedAddress, authorized: false, reason: "not expected this round" });
+            continue;
+        }
+        const authorizedOnchain = await isAuthorized(normalizedAddress);
+        let authorized = authorizedOnchain;
+        let reason = authorized ? "" : "not TEE authorized";
+        let actualHash = "";
+        let recordedHash = "";
+        if (authorized) {
+            const [submitted, onchainHash, fileHash] = await Promise.all([
+                hasSubmittedModel(currentRound, normalizedAddress),
+                getModelSubmissionHash(currentRound, normalizedAddress),
+                modelFileHash(filePath),
+            ]);
+            actualHash = normalizeHashHex(fileHash, 32, "received model hash");
+            recordedHash = normalizeHashHex(onchainHash, 32, "onchain model submission hash");
+            if (!submitted) {
+                authorized = false;
+                reason = `model package not accepted onchain for round ${currentRound}`;
+            }
+            else if (actualHash !== recordedHash) {
+                authorized = false;
+                reason = `model file hash does not match onchain acceptance for round ${currentRound}`;
+            }
+        }
         files.push({
             name: entry.name,
             path: filePath,
-            address,
+            address: normalizedAddress,
             authorized,
-            reason: authorized ? "" : "not TEE authorized",
+            reason,
+            actualHash,
+            recordedHash,
         });
     }
     return files.sort((a, b) => a.name.localeCompare(b.name));
@@ -654,7 +948,7 @@ async function registerWithLocalTdxMock() {
     if (process.env.LOCAL_TDX_MOCK !== '1') {
         throw new Error('Local TDX registration requires LOCAL_TDX_MOCK=1 or a live TEE quote path');
     }
-    const rpcUrl = String(process.env.SEPOLIA_RPC_URL || '');
+    const rpcUrl = String(process.env.RPC_URL || '');
     const localRpc = /^http:\/\/(anvil|127\.0\.0\.1|localhost):8545\/?$/i.test(rpcUrl);
     if (!localRpc || await getBlockchainChainId() !== 31337) {
         throw new Error('LOCAL_TDX_MOCK is restricted to the local Anvil endpoint on chain 31337');
@@ -830,11 +1124,10 @@ async function signFileWithLocalRsaKey(inputPath, outputSignaturePath) {
 }
 async function prepareRoundZeroBootstrapRollover() {
     console.log("Round 0 bootstrap rollover: fetching current encrypted GM bundle.");
-    await getCurrentModel();
-    const lastSignerAddress = await getLastRoundsAggregator();
-    const lastSignersPubKey = await getDevicePublicKey(lastSignerAddress);
+    const fetchedGlobalModel = await getCurrentModel();
+    const activeGlobalModel = await assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel);
     const sigOk = await verifyDownloadedGlobalModelSignature({
-        publicKeyDerHex: lastSignersPubKey,
+        publicKeyDerHex: activeGlobalModel.publisherPublicKeyDerHex,
         modelPath: "./data/gm.bin",
         sigPath: "./data/gm.bin.sig",
     });
@@ -866,7 +1159,7 @@ const stateMachine = async () => {
     else {
         await registerWithLocalTdxMock();
     }
-    while (Number(await getRound()) < targetRound()) {
+    while (Number(await getCompletedRoundCount()) < targetRound()) {
         let state = await getCurrentState();
         switch (state["0"]) {
             case "TRAINING":
@@ -932,7 +1225,7 @@ const stateMachine = async () => {
                     const currentRound = Number(await getRound());
                     console.log("Round %d.", currentRound);
                     if (await hasSubmittedModel(currentRound, process.env.ACCOUNT_ADDRESS)) {
-                        await waitForSubmittedRoundToAdvance(currentRound);
+                        await waitForSubmittedRoundToAdvance(currentRound, String(state[1]));
                         await sleep(2000);
                         continue;
                     }
@@ -966,7 +1259,7 @@ const stateMachine = async () => {
                             round: currentRound,
                             reason: "missing_round_key",
                         });
-                        await waitForRoundAdvance(currentRound, { pollMs: gmUpdatePollMs });
+                        await monitorNonAggregatorStateProgress(currentRound, String(state[1]), "TRAINING_MISSING_ROUND_KEY");
                         continue;
                     }
                     await runtimeEvent("worker.fetch_global_model.finished", { role: "worker" });
@@ -985,10 +1278,8 @@ const stateMachine = async () => {
                         continue;
                     }
                     const prevGM = currentGlobalModel.modelCid;
-                    const lastSignerAddress = await getLastRoundsAggregator();
-                    const lastSignersPubKey = await getDevicePublicKey(lastSignerAddress);
                     const sigOk = await verifyDownloadedGlobalModelSignature({
-                        publicKeyDerHex: lastSignersPubKey,
+                        publicKeyDerHex: currentGlobalModel.publisherPublicKeyDerHex,
                         modelPath: "./data/gm.bin",
                         sigPath: "./data/gm.bin.sig",
                     });
@@ -997,12 +1288,13 @@ const stateMachine = async () => {
                         return;
                     }
                     console.log("Global model signature verification successful.");
+                    const trainingAggregator = String(state[1]);
                     console.log("Starting local training ...");
                     await runtimeEvent("worker.training.started", { role: "worker" });
                     try {
                         await runOperation("worker.training", { role: "worker" }, async () => callPythonService('/train', {
                             epochs: Number(process.env.EPOCH),
-                            aggregator_public_key_der_hex: await getDevicePublicKey(state[1]),
+                            aggregator_public_key_der_hex: await getDevicePublicKey(trainingAggregator),
                             medical_signer_snapshot: medicalSignerSnapshot,
                         }));
                     }
@@ -1013,11 +1305,28 @@ const stateMachine = async () => {
                     console.log("Local training complete.");
                     await runtimeEvent("worker.training.finished", { role: "worker" });
                     const latestState = await getCurrentState();
-                    if (sameAddress(latestState[1], process.env.ACCOUNT_ADDRESS)) {
-                        console.log("I became the aggregator before model transfer. Returning to the state loop to start the aggregator server.");
-                        await runtimeEvent("worker.promoted_to_aggregator_before_transfer", {
-                            role: "aggregator",
-                            previous_aggregator: String(state["1"]),
+                    const latestRound = Number(await getRound());
+                    if (latestRound !== currentRound ||
+                        !sameAddress(latestState[1], trainingAggregator)) {
+                        console.log("Round or aggregator changed during training. Discarding the stale encrypted update and returning to the state loop.");
+                        await runtimeEvent("worker.training_context_changed_before_transfer", {
+                            role: sameAddress(latestState[1], process.env.ACCOUNT_ADDRESS) ? "aggregator" : "worker",
+                            trained_round: currentRound,
+                            current_round: latestRound,
+                            trained_for_aggregator: trainingAggregator,
+                            current_aggregator: String(latestState[1]),
+                        });
+                        continue;
+                    }
+                    try {
+                        await assertFetchedGlobalModelIsStillCurrent(currentGlobalModel);
+                    }
+                    catch (error) {
+                        console.warn(error?.message || String(error));
+                        await runtimeEvent("worker.training_parent_changed_before_transfer", {
+                            role: "worker",
+                            round: currentRound,
+                            error: error?.message || String(error),
                         });
                         continue;
                     }
@@ -1030,22 +1339,9 @@ const stateMachine = async () => {
                             role: "worker",
                             aggregator: String(state["1"]),
                         }, async () => {
-                            const endpoint = await waitForAggregatorModelEndpoint(state[1]);
-                            await uploadLocalModel(endpoint, String(process.env.ACCOUNT_ADDRESS));
+                            const endpoint = await waitForAggregatorModelEndpoint(trainingAggregator);
+                            await uploadLocalModel(endpoint, String(process.env.ACCOUNT_ADDRESS), currentRound, trainingAggregator, currentGlobalModel);
                         });
-                        if (await hasSubmittedModel(currentRound, process.env.ACCOUNT_ADDRESS)) {
-                            console.log(`Model submission already recorded for round ${currentRound}; skipping duplicate submit/contribution transactions.`);
-                        }
-                        else {
-                            await runOperation("worker.submit_model", {
-                                role: "worker",
-                                aggregator: String(state["1"]),
-                            }, async () => submitModel(await localModelPackageHash()));
-                            await runOperation("worker.set_contribution", {
-                                role: "worker",
-                                aggregator: String(state["1"]),
-                            }, () => setContribution([process.env.ACCOUNT_ADDRESS]));
-                        }
                         await runtimeEvent("worker.model_transfer.finished", { role: "worker", aggregator: String(state["1"]) });
                     }
                     catch (e) {
@@ -1055,35 +1351,21 @@ const stateMachine = async () => {
                             aggregator: String(state["1"]),
                             error: e?.message || String(e),
                         });
+                        await recordMissedAggregatorProgress(currentRound, trainingAggregator, "model_transfer_failed", e);
                         await sleep(modelTransferRetryDelayMs);
                         continue;
                     }
                     console.log("Top contributor:", await getTopContributor());
                     console.log("Transfer complete. Send local model to aggregator.");
-                    console.log("Rounds left: ", (targetRound() - Number(await getRound())));
+                    console.log("Completed training rounds left: ", (targetRound() - Number(await getCompletedRoundCount())));
                     console.log("Waiting till next round.");
                     try {
                         const newGM = await waitForGMUpdate(prevGM, { pollMs: gmUpdatePollMs, timeoutMs: gmUpdateTimeoutMs });
-                        missedGMUpdateLoops = 0;
+                        resetAggregatorTimeoutTracker();
                         console.log("New Global Model detected:", newGM);
                     }
                     catch (e) {
-                        missedGMUpdateLoops++;
-                        console.warn(`No new GM within timeout. Missed update loop ${missedGMUpdateLoops}/${gmUpdateTimeoutLoops}.`);
-                        if (missedGMUpdateLoops >= gmUpdateTimeoutLoops) {
-                            console.warn("Reporting aggregator timeout onchain.");
-                            await runtimeEvent("worker.aggregator_timeout.reported", {
-                                role: "worker",
-                                missed_loops: missedGMUpdateLoops,
-                            });
-                            try {
-                                await reportAggregatorTimeout();
-                            }
-                            catch (reportError) {
-                                console.error("Error reporting aggregator timeout:", reportError);
-                            }
-                            missedGMUpdateLoops = 0;
-                        }
+                        await recordMissedAggregatorProgress(currentRound, trainingAggregator, "global_model_not_updated", e);
                     }
                     await sleep(2000);
                     continue;
@@ -1097,13 +1379,14 @@ const stateMachine = async () => {
                     try {
                         const currentRound = Number(await getRound());
                         const expected = Number(process.env.CLIENT_LIMIT || 1);
+                        await closeModelSubmissions(currentRound);
                         const present = await waitForModels(expected, {
                             dir: srcModelsDir,
                             pollMs: 2000,
                             timeoutMs: 1,
                         });
                         console.log(`Models present before aggregation: ${present}/${expected}`);
-                        if (aggregatorServerRunning) {
+                        if (aggregatorServerRunning || modelUploadServer) {
                             console.log("Stopping aggregator server before aggregation...");
                             await stopAggregatorServer();
                         }
@@ -1124,7 +1407,8 @@ const stateMachine = async () => {
                                 await setCurrentState("UPDATING");
                                 continue;
                             }
-                            console.log("No models to aggregate (count=0). Keeping round open and waiting for workers.");
+                            console.log("No valid models remain in the closed submission snapshot. " +
+                                "Keeping AGGREGATING so workers can trigger timeout recovery.");
                             await sleep(5000);
                             continue;
                         }
@@ -1176,6 +1460,8 @@ const stateMachine = async () => {
                     }
                     catch (e) {
                         console.error("Error during aggregation:", e);
+                        console.log("Keeping the immutable submission window closed and retrying AGGREGATING; " +
+                            "a quorum timeout can replace this aggregator if recovery fails.");
                         await sleep(2000);
                         continue;
                     }
@@ -1184,67 +1470,294 @@ const stateMachine = async () => {
                     await setCurrentState("UPDATING");
                     continue;
                 }
-                break;
+                await monitorNonAggregatorStateProgress(Number(await getRound()), String(state[1]), "AGGREGATING");
+                continue;
             case "UPDATING":
                 if (sameAddress(state[1], process.env.ACCOUNT_ADDRESS)) {
                     currentState = "UPDATING";
                     console.log("I am the aggregator");
                     console.log("Starting the updating process ...");
-                    await runtimeEvent("aggregator.update.started", { role: "aggregator" });
+                    const journalPath = path.join(resultsIIDDir, ".updating-finalization.json");
+                    const journalTempPath = `${journalPath}.${process.pid}.tmp`;
+                    const aggregatedModelPath = path.join(resultsIIDDir, "aggregated.bin");
+                    let artifactFingerprint;
                     try {
-                        await runOperation("aggregator.update_global_model", { role: "aggregator" }, () => updateGM());
+                        const [artifactStat, artifactHash] = await Promise.all([
+                            fs.stat(aggregatedModelPath, { bigint: true }),
+                            modelFileHash(aggregatedModelPath),
+                        ]);
+                        artifactFingerprint =
+                            `${artifactStat.size}:${artifactStat.mtimeNs}:${artifactHash}`;
                     }
                     catch (e) {
-                        console.error("Error during updating the global model:", e);
-                        return;
+                        console.error("Cannot finalize UPDATING without the aggregated model artifact:", e);
+                        await sleep(2000);
+                        continue;
                     }
-                    console.log("Updating complete.");
-                    await runtimeEvent("aggregator.update.finished", { role: "aggregator" });
-                    console.log("Current Global Model:", await getCurrentGM());
-                    await stageCleaning();
-                    console.log("Passed cleaning");
-                    await incrementRound();
-                    const nextRound = Number(await getRound());
-                    console.log("Rounds left: ", (targetRound() - nextRound));
-                    if (nextRound >= targetRound()) {
+                    let finalization = null;
+                    try {
+                        const parsed = JSON.parse(await fs.readFile(journalPath, "utf8"));
+                        if (parsed.artifact_fingerprint === artifactFingerprint) {
+                            const sourceRound = Number(parsed.source_round);
+                            const expectedNextRound = Number(parsed.expected_next_round);
+                            if (parsed.version !== 1 ||
+                                !Number.isSafeInteger(sourceRound) ||
+                                sourceRound < 0 ||
+                                sourceRound >= Number.MAX_SAFE_INTEGER ||
+                                expectedNextRound !== sourceRound + 1) {
+                                throw new Error("invalid UPDATING finalization journal");
+                            }
+                            finalization = {
+                                sourceRound,
+                                expectedNextRound,
+                                artifactFingerprint,
+                            };
+                        }
+                        else {
+                            console.warn("Ignoring a stale UPDATING journal for an older aggregate artifact.");
+                        }
+                    }
+                    catch (e) {
+                        if (e?.code !== "ENOENT") {
+                            console.error("Cannot read the UPDATING finalization journal:", e);
+                            await sleep(2000);
+                            continue;
+                        }
+                    }
+                    if (!finalization) {
+                        const sourceRound = Number(await getRound());
+                        if (!Number.isSafeInteger(sourceRound) ||
+                            sourceRound < 0 ||
+                            sourceRound >= Number.MAX_SAFE_INTEGER) {
+                            console.error("Cannot finalize UPDATING with an invalid on-chain round:", sourceRound);
+                            await sleep(2000);
+                            continue;
+                        }
+                        finalization = {
+                            sourceRound,
+                            expectedNextRound: sourceRound + 1,
+                            artifactFingerprint,
+                        };
+                        await fs.mkdir(resultsIIDDir, { recursive: true });
+                        try {
+                            await fs.writeFile(journalTempPath, JSON.stringify({
+                                version: 1,
+                                source_round: finalization.sourceRound,
+                                expected_next_round: finalization.expectedNextRound,
+                                artifact_fingerprint: finalization.artifactFingerprint,
+                            }));
+                            await fs.rename(journalTempPath, journalPath);
+                        }
+                        catch (e) {
+                            console.error("Cannot persist the UPDATING finalization journal:", e);
+                            await sleep(2000);
+                            continue;
+                        }
+                        finally {
+                            await fs.unlink(journalTempPath).catch(() => { });
+                        }
+                    }
+                    let observedRound;
+                    try {
+                        observedRound = Number(await getRound());
+                    }
+                    catch (e) {
+                        console.error("Cannot read the round before UPDATING reconciliation:", e);
+                        await sleep(2000);
+                        continue;
+                    }
+                    if (observedRound < finalization.sourceRound) {
+                        console.error(`On-chain round ${observedRound} is behind the persisted UPDATING round ${finalization.sourceRound}.`);
+                        await sleep(2000);
+                        continue;
+                    }
+                    if (observedRound === finalization.sourceRound) {
+                        await runtimeEvent("aggregator.update.started", {
+                            role: "aggregator",
+                            round: finalization.sourceRound,
+                        });
+                        try {
+                            await runOperation("aggregator.update_global_model", { role: "aggregator", round: finalization.sourceRound }, () => updateGM(finalization.expectedNextRound));
+                        }
+                        catch (e) {
+                            console.error("Error during updating the global model; keeping UPDATING for retry:", e);
+                            await runtimeEvent("aggregator.update.failed", {
+                                role: "aggregator",
+                                round: finalization.sourceRound,
+                                error: e?.message || String(e),
+                            });
+                            await sleep(2000);
+                            continue;
+                        }
+                        console.log("Updating complete.");
+                        await runtimeEvent("aggregator.update.finished", {
+                            role: "aggregator",
+                            round: finalization.sourceRound,
+                        });
+                        console.log("Current Global Model:", await getCurrentGM());
+                        try {
+                            await incrementRound();
+                        }
+                        catch (incrementError) {
+                            try {
+                                observedRound = Number(await getRound());
+                            }
+                            catch (reconciliationError) {
+                                console.error("Round increment failed and its on-chain outcome could not be reconciled:", incrementError, reconciliationError);
+                                await sleep(2000);
+                                continue;
+                            }
+                            if (observedRound < finalization.expectedNextRound) {
+                                console.error("Round increment failed without advancing the on-chain round; keeping UPDATING for retry:", incrementError);
+                                await sleep(2000);
+                                continue;
+                            }
+                            console.warn(`Round increment receipt was unavailable, but on-chain round ${observedRound} confirms advancement.`);
+                        }
+                    }
+                    else {
+                        console.log(`Recovered UPDATING finalization after round advancement ` +
+                            `${finalization.sourceRound} -> ${observedRound}; skipping duplicate publication and increment.`);
+                    }
+                    try {
+                        observedRound = Number(await getRound());
+                    }
+                    catch (e) {
+                        console.error("Cannot confirm the on-chain round after increment:", e);
+                        await sleep(2000);
+                        continue;
+                    }
+                    if (observedRound < finalization.expectedNextRound) {
+                        console.error(`Round ${finalization.sourceRound} is not yet finalized on-chain; keeping UPDATING for retry.`);
+                        await sleep(2000);
+                        continue;
+                    }
+                    const completedRounds = Number(await getCompletedRoundCount());
+                    console.log("Completed training rounds left: ", (targetRound() - completedRounds));
+                    if (completedRounds >= targetRound()) {
+                        await stageCleaning();
+                        console.log("Cleaned finalized round artifacts.");
                         console.log(`Reached configured final round ${targetRound()}. Skipping next aggregator selection and stopping the worker loop.`);
                         await runtimeEvent("training.completed", {
                             role: "aggregator",
-                            final_round: nextRound,
+                            final_round: observedRound,
+                            completed_rounds: completedRounds,
                         });
                         return;
                     }
+                    const readSelectionOutcome = async () => {
+                        const [selectionState, selectionRoundValue] = await Promise.all([
+                            getCurrentState(),
+                            getRound(),
+                        ]);
+                        return {
+                            state: String(selectionState[0]),
+                            aggregator: String(selectionState[1]),
+                            round: Number(selectionRoundValue),
+                        };
+                    };
+                    const selectionIsConfirmed = (outcome) => outcome.round >= finalization.expectedNextRound &&
+                        outcome.state === "TRAINING";
+                    let selectionOutcome;
                     try {
-                        await runOperation("aggregator.selection", { role: "aggregator" }, () => triggerAggregatorSelection());
-                        console.log("Triggered new aggregator selection");
-                        await runtimeEvent("aggregator.selection.triggered", { role: "aggregator" });
+                        selectionOutcome = await readSelectionOutcome();
                     }
                     catch (e) {
-                        console.error("Aggregator selection failed; falling back to current aggregator for next round:", e);
-                        await runtimeEvent("aggregator.selection.failed", {
-                            role: "aggregator",
-                            error: e?.message || String(e),
-                        });
-                        await setCurrentState("TRAINING");
-                        console.log("Set state to TRAINING for next round with the current aggregator");
+                        console.error("Cannot read on-chain selection state; keeping UPDATING for retry:", e);
                         await sleep(2000);
+                        continue;
                     }
+                    let selectionReconciled = selectionIsConfirmed(selectionOutcome);
+                    let selectionRecovered = selectionReconciled;
+                    if (!selectionReconciled) {
+                        if (selectionOutcome.round !== finalization.expectedNextRound ||
+                            selectionOutcome.state !== "UPDATING" ||
+                            !sameAddress(selectionOutcome.aggregator, process.env.ACCOUNT_ADDRESS)) {
+                            console.error("On-chain state is not safe for normal aggregator selection; keeping UPDATING for retry:", selectionOutcome);
+                            await sleep(2000);
+                            continue;
+                        }
+                        try {
+                            await runOperation("aggregator.selection", { role: "aggregator", round: finalization.expectedNextRound }, () => triggerAggregatorSelection());
+                            selectionOutcome = await readSelectionOutcome();
+                            selectionReconciled = selectionIsConfirmed(selectionOutcome);
+                            selectionRecovered = false;
+                            if (!selectionReconciled) {
+                                throw new Error("selection transaction returned without an on-chain TRAINING state");
+                            }
+                        }
+                        catch (selectionError) {
+                            try {
+                                selectionOutcome = await readSelectionOutcome();
+                                selectionReconciled = selectionIsConfirmed(selectionOutcome);
+                                selectionRecovered = selectionReconciled;
+                            }
+                            catch (reconciliationError) {
+                                console.error("Aggregator selection failed and its on-chain outcome could not be reconciled:", selectionError, reconciliationError);
+                                await sleep(2000);
+                                continue;
+                            }
+                            if (!selectionReconciled) {
+                                console.error("Aggregator selection failed without an on-chain state change; keeping UPDATING for retry:", selectionError);
+                                await runtimeEvent("aggregator.selection.failed", {
+                                    role: "aggregator",
+                                    round: finalization.expectedNextRound,
+                                    error: selectionError?.message || String(selectionError),
+                                });
+                                await sleep(2000);
+                                continue;
+                            }
+                            console.warn("Aggregator selection receipt was unavailable, but on-chain state confirms selection.", selectionOutcome);
+                        }
+                    }
+                    else {
+                        console.log("Recovered an already completed aggregator selection from on-chain state.");
+                    }
+                    console.log("Aggregator selection confirmed:", selectionOutcome);
+                    await runtimeEvent("aggregator.selection.triggered", {
+                        role: "aggregator",
+                        round: finalization.expectedNextRound,
+                        selected_aggregator: selectionOutcome.aggregator,
+                        reconciled: selectionRecovered,
+                    });
+                    await stageCleaning();
+                    console.log("Cleaned finalized round artifacts.");
                     continue;
                 }
-                //return;
-                break;
+                const selectionGapRecovery = await recoverSelectionGap(Number(await getRound()), String(state[1]), "UPDATING");
+                if (selectionGapRecovery !== null) {
+                    if (selectionGapRecovery === "training-complete") {
+                        await runtimeEvent("training.completed", {
+                            role: "worker",
+                            final_round: Number(await getRound()),
+                            completed_rounds: Number(await getCompletedRoundCount()),
+                        });
+                        return;
+                    }
+                    await sleep(2000);
+                    continue;
+                }
+                await monitorNonAggregatorStateProgress(Number(await getRound()), String(state[1]), "UPDATING");
+                continue;
             default:
                 console.log("Unknown state:", state);
                 currentState = "IDLE";
+                if (!sameAddress(state[1], process.env.ACCOUNT_ADDRESS)) {
+                    await monitorNonAggregatorStateProgress(Number(await getRound()), String(state[1]), String(state[0] || "UNKNOWN"));
+                    continue;
+                }
                 await sleep(2000);
-                continue; // nicht beenden
+                continue;
         }
     }
 };
 const srcModelsDir = path.join(__dirname, '../received_models');
 const resultsIIDDir = path.join(__dirname, '../data/results_iid');
+const aggregationInputsDir = path.join(resultsIIDDir, 'aggregation_inputs');
 async function stageAggregation() {
     await fs.mkdir(resultsIIDDir, { recursive: true });
+    await fs.rm(aggregationInputsDir, { recursive: true, force: true });
+    await fs.mkdir(aggregationInputsDir, { recursive: true });
     try {
         const destEntries = await fs.readdir(resultsIIDDir);
         await Promise.all(destEntries
@@ -1266,6 +1779,13 @@ async function stageAggregation() {
     console.log("Received TEE-authorized model files:");
     for (const file of acceptedFiles) {
         console.log(" - %s (%s)", file.path, file.address);
+        const stagedPath = path.join(aggregationInputsDir, file.name);
+        await fs.copyFile(file.path, stagedPath);
+        const stagedHash = normalizeHashHex(await modelFileHash(stagedPath), 32, "staged model hash");
+        if (stagedHash !== file.recordedHash) {
+            await fs.unlink(stagedPath).catch(() => { });
+            throw new Error(`Staged model hash changed for ${file.address}`);
+        }
     }
     return acceptedFiles.length;
 }
@@ -1336,20 +1856,29 @@ async function runService() {
     }
 }
 runService();
-process.on('SIGINT', () => {
-    console.log('SIGINT received. Exiting.');
-    stopAggregatorServer().catch(() => { });
-    process.exit(0);
-});
-process.on('SIGTERM', () => {
-    console.log('SIGTERM received. Exiting.');
-    stopAggregatorServer().catch(() => { });
-    process.exit(0);
-});
+let shuttingDown = false;
+async function shutdown(signal) {
+    if (shuttingDown)
+        return;
+    shuttingDown = true;
+    console.log(`${signal} received. Closing the model receiver before exiting.`);
+    try {
+        await stopAggregatorServer();
+    }
+    catch (error) {
+        console.error("Error while closing the model receiver:", error);
+    }
+    finally {
+        process.exit(0);
+    }
+}
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
 async function stageCleaning() {
     await Promise.all([
         cleanFilesInDir(srcModelsDir),
         cleanFilesInDir(resultsIIDDir),
+        fs.rm(aggregationInputsDir, { recursive: true, force: true }),
     ]);
     console.log("Cleaned files in %s and %s", srcModelsDir, resultsIIDDir);
 }

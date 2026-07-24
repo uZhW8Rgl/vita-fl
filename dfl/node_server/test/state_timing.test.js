@@ -8,8 +8,10 @@ import {
     deriveTimingConfig,
     gmUpdateWaitBudgetMs,
     nextGMTimeoutState,
+    nextAggregatorTimeoutTracker,
     recommendedGMUpdateBudgetMs,
     requiredTimeoutReports,
+    selectionGapRecoveryNeeded,
     shouldStartAggregation,
     validateTimingConfig,
 } from '../dist/state_timing.js';
@@ -155,9 +157,102 @@ test('nextGMTimeoutState reports only after the configured number of missed loop
     });
 });
 
+test('timeout tracking preserves the observed round and aggregator instead of retargeting a successor', () => {
+    const aggregatorA = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const aggregatorB = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    let tracker = {};
+
+    let result = nextAggregatorTimeoutTracker({
+        tracker,
+        expectedRound: 4,
+        expectedAggregator: aggregatorA,
+        maxLoops: 3,
+    });
+    tracker = result;
+    result = nextAggregatorTimeoutTracker({
+        tracker,
+        expectedRound: 4,
+        expectedAggregator: aggregatorA,
+        maxLoops: 3,
+    });
+    tracker = result;
+    result = nextAggregatorTimeoutTracker({
+        tracker,
+        expectedRound: 4,
+        expectedAggregator: aggregatorA,
+        maxLoops: 3,
+    });
+
+    assert.equal(result.shouldReportTimeout, true);
+    assert.equal(result.expectedRound, 4);
+    assert.equal(result.expectedAggregator, aggregatorA);
+
+    const successorResult = nextAggregatorTimeoutTracker({
+        tracker: result,
+        expectedRound: 5,
+        expectedAggregator: aggregatorB,
+        maxLoops: 3,
+    });
+    assert.equal(successorResult.failureCount, 1);
+    assert.equal(successorResult.shouldReportTimeout, false);
+    assert.equal(successorResult.expectedAggregator, aggregatorB);
+});
+
+test('model-transfer failures use the same bounded timeout progression as missing model updates', () => {
+    const aggregator = '0xcccccccccccccccccccccccccccccccccccccccc';
+    const first = nextAggregatorTimeoutTracker({
+        tracker: {},
+        expectedRound: 2,
+        expectedAggregator: aggregator,
+        maxLoops: 2,
+    });
+    const second = nextAggregatorTimeoutTracker({
+        tracker: first,
+        expectedRound: 2,
+        expectedAggregator: aggregator,
+        maxLoops: 2,
+    });
+
+    assert.equal(first.shouldReportTimeout, false);
+    assert.equal(second.shouldReportTimeout, true);
+    assert.equal(second.expectedRound, 2);
+    assert.equal(second.expectedAggregator, aggregator);
+});
+
 test('requiredTimeoutReports mirrors the on-chain percentage threshold', () => {
     assert.equal(requiredTimeoutReports({ eligibleReporters: 2, thresholdPercent: 50 }), 1);
     assert.equal(requiredTimeoutReports({ eligibleReporters: 2, thresholdPercent: 51 }), 2);
     assert.equal(requiredTimeoutReports({ eligibleReporters: 3, thresholdPercent: 50 }), 2);
     assert.equal(requiredTimeoutReports({ eligibleReporters: 0, thresholdPercent: 50 }), 0);
+});
+
+test('selection-gap recovery is attempted only after a completed round advanced beyond its selection marker', () => {
+    assert.equal(selectionGapRecoveryNeeded({
+        state: 'UPDATING',
+        observedRound: 4,
+        lastSelectionRound: 3,
+        completedRounds: 4,
+        targetRounds: 5,
+    }), true);
+    assert.equal(selectionGapRecoveryNeeded({
+        state: 'UPDATING',
+        observedRound: 4,
+        lastSelectionRound: 4,
+        completedRounds: 4,
+        targetRounds: 5,
+    }), false);
+    assert.equal(selectionGapRecoveryNeeded({
+        state: 'AGGREGATING',
+        observedRound: 4,
+        lastSelectionRound: 3,
+        completedRounds: 4,
+        targetRounds: 5,
+    }), false);
+    assert.equal(selectionGapRecoveryNeeded({
+        state: 'UPDATING',
+        observedRound: 5,
+        lastSelectionRound: 4,
+        completedRounds: 5,
+        targetRounds: 5,
+    }), false);
 });

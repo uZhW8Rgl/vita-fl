@@ -4,7 +4,6 @@ import unittest
 
 from agent import mcp_server
 
-
 EXPECTED_TOOLS = {
     "fetch_latest_verified_tee_model_bundle",
     "generate_random_tee_chestmnist_image",

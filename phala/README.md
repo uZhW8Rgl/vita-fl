@@ -219,7 +219,7 @@ That file is a fully rendered runtime compose for the current `phala` image set 
 
 Important caveat:
 
-- the worker TEEs currently reference the runtime TEE by its concrete Phala endpoint URL for `KUBO_API`, `KUBO_GATEWAY`, and `SEPOLIA_RPC_URL`
+- the worker TEEs currently reference the runtime TEE by its concrete Phala endpoint URL for `KUBO_API`, `KUBO_GATEWAY`, and `RPC_URL`
 - if the runtime app is recreated and gets a new endpoint, the workers must be updated to the new runtime endpoint before they can talk to Anvil/IPFS again
 - this is the main reason a full Terraform apply currently wants to replace the workers too
 - Phala can encode the exposed service port directly in the hostname, e.g. `https://<app>-5001.dstack-...`; worker wiring must replace that embedded port marker with `-8545`, `-5001`, and `-8080` rather than appending `:8545`, `:5001`, or `:8080`
@@ -228,7 +228,7 @@ So the safe manual order is:
 
 1. Redeploy the runtime app with `dstack-compose.contracts.runtime-only.yml`.
 2. Note the new runtime endpoint.
-3. Update the worker app compose files so `KUBO_API`, `KUBO_GATEWAY`, and `SEPOLIA_RPC_URL` point at that new runtime endpoint.
+3. Update the worker app compose files so `KUBO_API`, `KUBO_GATEWAY`, and `RPC_URL` point at that new runtime endpoint.
 4. Redeploy the workers only if the runtime endpoint changed.
 
 ## Worker Attestation Notes

@@ -145,6 +145,10 @@ def received_models_dir() -> Path:
     return node_server_dir() / "received_models"
 
 
+def aggregation_inputs_dir() -> Path:
+    return results_dir() / "aggregation_inputs"
+
+
 def private_key_path(path: str | None = None) -> Path:
     return node_server_dir() / (path or "private_key.pem")
 
@@ -193,28 +197,35 @@ def _read_tensor(blob: bytes, offset: int, shape: tuple[int, ...]) -> tuple[torc
     if len(chunk) != byte_count:
         raise ValueError("Unexpected end of model file")
     values = torch.tensor(struct.unpack("<" + "d" * count, chunk), dtype=torch.float64)
+    if not torch.isfinite(values).all():
+        raise ValueError("Model file contains a non-finite parameter")
     return values.reshape(shape).contiguous(), offset + byte_count
 
 
-def read_model_bin(path: Path) -> FederatedCNN:
+def model_from_bytes(blob: bytes, source: str = "<memory>") -> FederatedCNN:
     model = FederatedCNN().double()
-    blob = path.read_bytes()
     offset = 0
     state = {}
     for name, shape in MODEL_LAYOUT:
         tensor, offset = _read_tensor(blob, offset, shape)
         state[name] = tensor
     if offset != len(blob):
-        raise ValueError(f"{path} contains {len(blob) - offset} trailing bytes")
+        raise ValueError(f"{source} contains {len(blob) - offset} trailing bytes")
     model.load_state_dict(state)
     model.train()
     return model
+
+
+def read_model_bin(path: Path) -> FederatedCNN:
+    return model_from_bytes(path.read_bytes(), str(path))
 
 
 def tensor_to_save_bytes(tensor: torch.Tensor, shape: tuple[int, ...]) -> bytes:
     values = tensor.detach().cpu().to(torch.float64)
     if tuple(values.shape) != shape:
         raise ValueError(f"Tensor shape mismatch: got {tuple(values.shape)}, expected {shape}")
+    if not torch.isfinite(values).all():
+        raise ValueError("Refusing to serialize a model with a non-finite parameter")
     flat = values.reshape(-1).tolist()
     return struct.pack("<" + "d" * len(flat), *flat)
 
@@ -982,7 +993,7 @@ def aggregate(
     expected_models: int | None = None,
     participant_count: int | None = None,
 ) -> dict[str, Any]:
-    model_paths = sorted(received_models_dir().glob("*.bin"), key=lambda p: p.name)
+    model_paths = sorted(aggregation_inputs_dir().glob("*.bin"), key=lambda p: p.name)
     if num_files is not None and len(model_paths) != num_files:
         print(f"Aggregating {len(model_paths)} received model file(s), expected {num_files}.")
     else:
@@ -998,7 +1009,10 @@ def aggregate(
     avg_model = FederatedCNN().double()
     avg_state = {}
     for key in avg_model.state_dict().keys():
-        avg_state[key] = torch.stack([m.state_dict()[key] for m in models]).mean(dim=0)
+        averaged = torch.stack([m.state_dict()[key] for m in models]).mean(dim=0)
+        if not torch.isfinite(averaged).all():
+            raise ValueError(f"Federated average contains a non-finite parameter in {key}")
+        avg_state[key] = averaged
     avg_model.load_state_dict(avg_state)
     out_path = results_dir() / "aggregated.bin"
     write_model_bin(avg_model, out_path)

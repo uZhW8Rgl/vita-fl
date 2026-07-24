@@ -45,6 +45,19 @@
   },
   {
     "type": "function",
+    "name": "activeModelPublisherPublicKey",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "aggregator_selection_address",
     "inputs": [],
     "outputs": [
@@ -97,6 +110,45 @@
   },
   {
     "type": "function",
+    "name": "bootstrapAuthority",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "closeModelSubmissions",
+    "inputs": [
+      {
+        "name": "expectedRound",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "completedRoundCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "contributions",
     "inputs": [
       {
@@ -123,6 +175,39 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getActiveModelBundle",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "model",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "signature",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "keyBundle",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "publisher",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "publisherPublicKey",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "stateMutability": "view"
@@ -168,6 +253,19 @@
   },
   {
     "type": "function",
+    "name": "getCompletedRoundCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getContribution",
     "inputs": [
       {
@@ -181,6 +279,44 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getFinalizedModelBundle",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "model",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "signature",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "keyBundle",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "aggregator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "modelRound",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "publisherPublicKey",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "stateMutability": "view"
@@ -334,6 +470,63 @@
   },
   {
     "type": "function",
+    "name": "globalModelPublished",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "globalModelPublisher",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "globalModelPublisherPublicKey",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "globalModelSignature",
     "inputs": [],
     "outputs": [
@@ -341,6 +534,19 @@
         "name": "",
         "type": "string",
         "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hasFinalizedModel",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -371,12 +577,34 @@
   },
   {
     "type": "function",
-    "name": "incrementContribution",
+    "name": "incrementRound",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "initializeEncryptedBootstrap",
     "inputs": [
       {
-        "name": "_addresses",
-        "type": "address[]",
-        "internalType": "address[]"
+        "name": "encryptedModel",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "encryptedSignature",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "encryptedKeyBundle",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "publisherPublicKey",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -384,10 +612,29 @@
   },
   {
     "type": "function",
-    "name": "incrementRound",
+    "name": "lastFinalizedModelRound",
     "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lastFinalizedPublisherPublicKey",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -398,6 +645,25 @@
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "modelSubmissionCount",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -422,6 +688,25 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "modelSubmissionsClosed",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -454,6 +739,16 @@
     "type": "function",
     "name": "penalizeContribution",
     "inputs": [
+      {
+        "name": "expectedRound",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expectedAggregator",
+        "type": "address",
+        "internalType": "address"
+      },
       {
         "name": "_addresses",
         "type": "address[]",
@@ -499,6 +794,29 @@
   },
   {
     "type": "function",
+    "name": "recordModelSubmission",
+    "inputs": [
+      {
+        "name": "expectedRound",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "worker",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "modelHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "round",
     "inputs": [],
     "outputs": [
@@ -506,6 +824,44 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "roundAborted",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "roundCompleted",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -585,19 +941,6 @@
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "submitModel",
-    "inputs": [
-      {
-        "name": "modelHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
     "name": "ContributionDecremented",
     "inputs": [
@@ -655,7 +998,44 @@
   },
   {
     "type": "event",
-    "name": "ModelSubmitted",
+    "name": "EncryptedBootstrapInitialized",
+    "inputs": [
+      {
+        "name": "authority",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "model",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "signature",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "keyBundle",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "publisherPublicKeyHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GlobalModelPublished",
     "inputs": [
       {
         "name": "round",
@@ -664,7 +1044,50 @@
         "internalType": "uint256"
       },
       {
-        "name": "device",
+        "name": "aggregator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "model",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "signature",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      },
+      {
+        "name": "keyBundle",
+        "type": "string",
+        "indexed": false,
+        "internalType": "string"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ModelSubmissionRecorded",
+    "inputs": [
+      {
+        "name": "round",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "aggregator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "worker",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -674,6 +1097,31 @@
         "type": "bytes32",
         "indexed": false,
         "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ModelSubmissionsClosed",
+    "inputs": [
+      {
+        "name": "round",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "aggregator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "acceptedModels",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

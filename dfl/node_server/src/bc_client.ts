@@ -3,9 +3,10 @@ import Web3 from "web3";
 import fs from "fs";
 import 'dotenv/config';
 import { emitTelemetryEvent } from "./telemetry.js";
+import { normalizePublisherPublicKeyDerHex } from "./model_publisher.js";
 // setup client´
 //const web3 = new Web3("https://eth-sepolia.g.alchemy.com/v2/pFowzUSGYob62Q7i2YVsF0LFUX3WiCT2");
-const web3 = new Web3(process.env.SEPOLIA_RPC_URL);
+const web3 = new Web3(process.env.RPC_URL);
 // define smart contract addresses
 const gm_storage_address = process.env.GM_STORAGE_ADDRESS;
 const aggregator_address = process.env.AGGREGATOR_ADDRESS;
@@ -212,6 +213,20 @@ export const getCurrentGMKeyBundle = async () => {
     return cid;
 };
 
+export const getActiveModelBundle = async () => {
+    const contract = getGMStorageContract();
+    const result = await contract.methods.getActiveModelBundle().call();
+    return {
+        modelCid: String(result.model ?? result[0] ?? ""),
+        sigCid: String(result.signature ?? result[1] ?? ""),
+        keyBundleCid: String(result.keyBundle ?? result[2] ?? ""),
+        publisher: String(result.publisher ?? result[3] ?? ""),
+        publisherPublicKeyDerHex: normalizePublisherPublicKeyDerHex(
+            result.publisherPublicKey ?? result[4]
+        ),
+    };
+};
+
 export const getLastRoundsAggregator = async () => {
     const contract = getGMStorageContract();
     let agg = await contract.methods.getLastRoundsAggregator().call().then((result) => {
@@ -382,36 +397,6 @@ export const setLastRoundAggregator = async () => {
         throw error;
     }
 };
-// set the contribution of the devices
-export const setContribution = async (deviceID) => {
-    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
-    const address = gm_storage_address;
-    const contract = new web3.eth.Contract(abi, address);
-    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
-    addAccountToWallet(account);
-    const gasPrice = await web3.eth.getGasPrice();
-    const gasEstimate = await contract.methods.incrementContribution(deviceID).estimateGas({ from: account.address });
-    const tx = {
-        from: account.address,
-        to: address,
-        gas: gasEstimate,
-        gasPrice: gasPrice,
-        data: contract.methods.incrementContribution(deviceID).encodeABI(),
-    };
-    try {
-        const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
-        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
-        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
-        await logWorkerScore(deviceID?.[0] || account.address, "increment");
-        console.log("Transaction receipt: ", receipt);
-        return receipt;
-    }
-    catch (error) {
-        console.error("Error sending transaction: ", error);
-        throw error;
-    }
-};
-
 const logWorkerScore = async (deviceAddress, reason = "update") => {
     try {
         const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
@@ -432,16 +417,26 @@ export const penalizeContribution = async (deviceIDs, reason) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
     const contract = new web3.eth.Contract(abi, address);
+    const selectionAbi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
+    const selectionContract = new web3.eth.Contract(selectionAbi, aggregator_address);
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
+    const expectedRound = await getRound();
+    const expectedAggregator = await selectionContract.methods.getCurrentAggregator().call();
     const gasPrice = await web3.eth.getGasPrice();
-    const gasEstimate = await contract.methods.penalizeContribution(deviceIDs, reason).estimateGas({ from: account.address });
+    const method = contract.methods.penalizeContribution(
+        expectedRound,
+        expectedAggregator,
+        deviceIDs,
+        reason,
+    );
+    const gasEstimate = await method.estimateGas({ from: account.address });
     const tx = {
         from: account.address,
         to: address,
         gas: gasEstimate,
         gasPrice: gasPrice,
-        data: contract.methods.penalizeContribution(deviceIDs, reason).encodeABI(),
+        data: method.encodeABI(),
     };
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
@@ -459,25 +454,27 @@ export const penalizeContribution = async (deviceIDs, reason) => {
     }
 };
 
-export const submitModel = async (modelHash) => {
+export const recordModelSubmission = async (expectedRound, workerAddress, modelHash) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
     const contract = new web3.eth.Contract(abi, address);
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
     const gasPrice = await web3.eth.getGasPrice();
-    const gasEstimate = await contract.methods.submitModel(modelHash).estimateGas({ from: account.address });
+    const method = contract.methods.recordModelSubmission(expectedRound, workerAddress, modelHash);
+    const gasEstimate = await method.estimateGas({ from: account.address });
     const tx = {
         from: account.address,
         to: address,
         gas: gasEstimate,
         gasPrice: gasPrice,
-        data: contract.methods.submitModel(modelHash).encodeABI(),
+        data: method.encodeABI(),
     };
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
+        await logWorkerScore(workerAddress, "model_submission");
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -487,11 +484,47 @@ export const submitModel = async (modelHash) => {
     }
 };
 
+export const closeModelSubmissions = async (expectedRound) => {
+    const contract = getGMStorageContract();
+    if (await contract.methods.modelSubmissionsClosed(expectedRound).call()) {
+        return null;
+    }
+    const account = web3.eth.accounts.privateKeyToAccount(privateKey);
+    addAccountToWallet(account);
+    const gasPrice = await web3.eth.getGasPrice();
+    const method = contract.methods.closeModelSubmissions(expectedRound);
+    const gasEstimate = await method.estimateGas({ from: account.address });
+    const tx = {
+        from: account.address,
+        to: gm_storage_address,
+        gas: withGasBuffer(gasEstimate).toString(),
+        gasPrice,
+        data: method.encodeABI(),
+    };
+    try {
+        const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
+        const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
+        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
+        console.log("Model-submission window closed:", receipt);
+        return receipt;
+    }
+    catch (error) {
+        console.error("Error closing the model-submission window:", error);
+        throw error;
+    }
+};
+
 export const hasSubmittedModel = async (round, address) => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, gm_storage_address);
     const result = await contract.methods.hasSubmittedModel(round, address).call();
     return result;
+};
+
+export const getModelSubmissionHash = async (round, address) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, gm_storage_address);
+    return contract.methods.modelSubmissionHash(round, address).call();
 };
 
 export const getTopContributor = async () => {
@@ -512,6 +545,15 @@ export const getRound = async () => {
     });
     return round;
 };
+export const getCompletedRoundCount = async () => {
+    const contract = getGMStorageContract();
+    const count = await contract.methods.getCompletedRoundCount().call();
+    return Number(count);
+};
+export const getLastSelectionRound = async () => {
+    const contract = getAggregatorSelectionContract();
+    return Number(await contract.methods.lastSelectionRound().call());
+};
 export const incrementRound = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
@@ -531,6 +573,7 @@ export const incrementRound = async () => {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
+        await logWorkerScore(account.address, "aggregation");
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
@@ -664,25 +707,38 @@ export const triggerAggregatorSelection = async () => {
     
 };
 
-export const reportAggregatorTimeout = async () => {
+export const reportAggregatorTimeout = async (expectedRound, expectedAggregator) => {
     const abi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
     const address = aggregator_address;
     const contract = new web3.eth.Contract(abi, address);
     const account = web3.eth.accounts.privateKeyToAccount(privateKey);
     addAccountToWallet(account);
+    const reportedRound = Number(expectedRound);
+    const reportedAggregator = String(expectedAggregator || "").toLowerCase();
+    if (!Number.isSafeInteger(reportedRound) || reportedRound < 0) {
+        throw new Error(`Invalid observed timeout round: ${expectedRound}`);
+    }
+    if (!/^0x[0-9a-f]{40}$/.test(reportedAggregator)) {
+        throw new Error(`Invalid observed timeout aggregator: ${expectedAggregator}`);
+    }
     const gasPrice = await web3.eth.getGasPrice();
-    const gasEstimate = await contract.methods.reportAggregatorTimeout().estimateGas({ from: account.address });
+    const method = contract.methods.reportAggregatorTimeout(reportedRound, reportedAggregator);
+    const gasEstimate = await method.estimateGas({ from: account.address });
     const tx = {
         from: account.address,
         to: address,
         gas: gasEstimate,
         gasPrice: gasPrice,
-        data: contract.methods.reportAggregatorTimeout().encodeABI(),
+        data: method.encodeABI(),
     };
     try {
         const signedTx = await web3.eth.accounts.signTransaction(tx, privateKey);
         const receipt = await web3.eth.sendSignedTransaction(signedTx.rawTransaction);
         logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
+        const currentAggregator = await contract.methods.getCurrentAggregator().call();
+        if (String(currentAggregator).toLowerCase() !== String(reportedAggregator).toLowerCase()) {
+            await logWorkerScore(reportedAggregator, "aggregator_timeout_consensus");
+        }
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }
