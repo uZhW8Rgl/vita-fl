@@ -24,7 +24,7 @@ services:
       retries: 24
 
   rpc-proxy:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:59ddb01a8ba38f539c3bb793e80312627513fcfd7f66741d38620190e65053ee
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:320d40c4d5fa4cf944b851b926546609cb8c6a4683d3f8bd4ae74ca319d60cba
     restart: unless-stopped
     read_only: true
     cap_drop: ["ALL"]
@@ -59,7 +59,7 @@ services:
       retries: 24
 
   smart-contracts:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:59ddb01a8ba38f539c3bb793e80312627513fcfd7f66741d38620190e65053ee
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:320d40c4d5fa4cf944b851b926546609cb8c6a4683d3f8bd4ae74ca319d60cba
     restart: "no"
     depends_on:
       anvil:
@@ -83,7 +83,7 @@ services:
       DEPLOY_TDX_V4_DCAP: "1"
       VERIFY_TDX_QUOTE_ONCHAIN: "1"
       AGGREGATOR_TIMEOUT_REPORT_PERCENT: "50"
-      EXPECTED_WORKER_IMAGE: "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:8b642b56dff2121f9ff4cd9102af3886ae444a8bca4ae96449b19f72859a32ff"
+      EXPECTED_WORKER_IMAGE: "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:dc32e935b805bdd1a81f14b1941ed066b3e0cea50e9443c3a718373547133150"
       PCCS_QUOTE_PATH: /dfl/data/phala_tdx_quote
       TDX_REFERENCE_QUOTE_PATH: ""
       DATASET_NAME: mnist

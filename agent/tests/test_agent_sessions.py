@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from agent.run_agent import AgentRuntime
 
@@ -42,6 +42,129 @@ class AgentSessionAsyncTests(unittest.IsolatedAsyncioTestCase):
             await runtime.chat(session["id"], "test")
 
         self.assertFalse(session["busy"])
+
+    async def test_exact_skill_bypasses_llm_planner(self) -> None:
+        runtime = AgentRuntime(args=None)
+        session = runtime.create_session()
+        expected = runtime._assistant_response(
+            "Tool completed.",
+            [{"type": "tool", "label": "fetch_latest_verified_tee_model_bundle", "detail": "{}"}],
+        )
+        runtime.ensure_agent_model = AsyncMock(side_effect=AssertionError("LLM planner must not run"))
+
+        with patch.object(runtime, "_execute_skill_fallback", return_value=expected) as execute:
+            updated = await runtime.chat(session["id"], "fetch_latest_verified_tee_model_bundle")
+
+        execute.assert_called_once_with(session["state"], "fetch_latest_verified_tee_model_bundle")
+        self.assertEqual(updated["messages"][-1]["content"], "Tool completed.")
+        self.assertFalse(updated["busy"])
+
+    async def test_requested_target_tool_closes_agent_stream_before_llm_tail(self) -> None:
+        class Stream:
+            def __init__(self) -> None:
+                self.items = iter(
+                    [
+                        {"messages": [{"type": "tool", "name": "preparation_tool", "content": "{}"}]},
+                        {
+                            "messages": [
+                                {
+                                    "type": "tool",
+                                    "name": "run_and_verify_tee_inference",
+                                    "content": '{"ok":true}',
+                                }
+                            ]
+                        },
+                        {"messages": [{"type": "assistant", "content": "slow LLM tail"}]},
+                    ]
+                )
+                self.closed = False
+                self.yielded = 0
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    item = next(self.items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+                self.yielded += 1
+                return item
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        class Executor:
+            def __init__(self, stream: Stream) -> None:
+                self.stream = stream
+
+            def astream(self, *_args, **_kwargs):
+                return self.stream
+
+        runtime = AgentRuntime(args=None)
+        runtime._agent_backend = "langchain_v1"
+        stream = Stream()
+        runtime._agent_executor = Executor(stream)
+
+        response, timed_out, completed = await runtime._run_agent_with_timeout(
+            [],
+            {},
+            timeout_seconds=1,
+            target_skill="run_and_verify_tee_inference",
+        )
+
+        self.assertFalse(timed_out)
+        self.assertTrue(completed)
+        self.assertTrue(stream.closed)
+        self.assertEqual(stream.yielded, 2)
+        self.assertEqual(response["messages"][0]["name"], "run_and_verify_tee_inference")
+
+    async def test_unrelated_tool_does_not_close_agent_stream(self) -> None:
+        class Stream:
+            def __init__(self) -> None:
+                self.items = iter(
+                    [
+                        {"messages": [{"type": "tool", "name": "preparation_tool", "content": "{}"}]},
+                        {"messages": [{"type": "assistant", "content": "done"}]},
+                    ]
+                )
+                self.closed = False
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                try:
+                    return next(self.items)
+                except StopIteration as exc:
+                    raise StopAsyncIteration from exc
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        class Executor:
+            def __init__(self, stream: Stream) -> None:
+                self.stream = stream
+
+            def astream(self, *_args, **_kwargs):
+                return self.stream
+
+        runtime = AgentRuntime(args=None)
+        runtime._agent_backend = "langchain_v1"
+        stream = Stream()
+        runtime._agent_executor = Executor(stream)
+
+        response, timed_out, completed = await runtime._run_agent_with_timeout(
+            [],
+            {},
+            timeout_seconds=1,
+            target_skill="run_and_verify_tee_inference",
+        )
+
+        self.assertFalse(timed_out)
+        self.assertFalse(completed)
+        self.assertFalse(stream.closed)
+        self.assertEqual(response["messages"][0]["content"], "done")
 
 
 if __name__ == "__main__":

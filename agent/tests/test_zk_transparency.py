@@ -63,6 +63,8 @@ class ZkTransparencyTests(unittest.TestCase):
         self.assertEqual(result["transparency_log"]["transaction_id"], "5.1")
         self.assertEqual(result["tool_receipt"]["receiver_kid"], "ab" * 32)
         self.assertEqual(result["transparency_log"]["receipts"][0]["claim_digest"], "cd" * 32)
+        self.assertNotIn("_signed_statement", result["transparency_log"])
+        self.assertNotIn("_transparent_statement", result["transparency_log"])
 
 
 if __name__ == "__main__":

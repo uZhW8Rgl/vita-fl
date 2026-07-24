@@ -653,6 +653,25 @@ class AgentRuntime:
                 ]
             )
 
+        if label in {"run_and_verify_tee_inference", "generate_and_verify_zk_inference_proof"} and isinstance(
+            parsed, dict
+        ):
+            transparency = parsed.get("transparency_log", {})
+            verification = parsed.get("verification", {})
+            proof_verified = parsed.get("proof_verified", verification.get("proof_verified", "n/a"))
+            return "\n".join(
+                [
+                    f"Tool `{label}` completed.",
+                    "",
+                    f"stage={parsed.get('stage', 'unknown')}",
+                    f"ok={parsed.get('ok', False)}",
+                    f"job_id={parsed.get('job_id', 'unknown')}",
+                    f"proof_verified={proof_verified}",
+                    f"transparency_status={transparency.get('status', 'unknown')}",
+                    f"transparency_transaction={transparency.get('transaction_id', 'unknown')}",
+                ]
+            )
+
         return f"Tool `{label}` completed.\n\n{detail}"
 
     def _fallback_content_from_events(self, events: list[dict[str, str]]) -> str:
@@ -740,6 +759,12 @@ class AgentRuntime:
             return "generate_random_chestmnist_image"
         if "proof" in lowered or "ezkl" in lowered:
             return "generate_and_verify_zk_inference_proof"
+        return None
+
+    def _exact_requested_skill(self, user_message: str) -> str | None:
+        normalized = user_message.strip().strip("`").strip().lower()
+        if normalized in PUBLIC_SKILL_NAMES:
+            return normalized
         return None
 
     def _execute_skill_fallback(
@@ -877,20 +902,36 @@ class AgentRuntime:
         session_messages: list[dict[str, Any]],
         session_state: dict[str, Any] | None,
         timeout_seconds: float,
-    ) -> tuple[dict[str, Any] | None, bool]:
+        target_skill: str | None = None,
+    ) -> tuple[dict[str, Any] | None, bool, bool]:
         latest_response: dict[str, Any] | None = None
         timed_out = False
+        target_skill_completed = False
+        stream = self._agent_executor.astream(
+            {"messages": _history_messages(session_messages, session_state=session_state)},
+            stream_mode="values",
+        )
         try:
             async with asyncio.timeout(timeout_seconds):
-                async for chunk in self._agent_executor.astream(
-                    {"messages": _history_messages(session_messages, session_state=session_state)},
-                    stream_mode="values",
-                ):
+                async for chunk in stream:
                     if isinstance(chunk, dict):
                         latest_response = chunk
+                        if target_skill is not None:
+                            _content, events = self._extract_agent_reply(chunk)
+                            if any(
+                                event.get("type") == "tool" and event.get("label") == target_skill
+                                for event in events
+                            ):
+                                target_skill_completed = True
+                                break
         except TimeoutError:
             timed_out = True
-        return latest_response, timed_out
+        finally:
+            if target_skill_completed:
+                close = getattr(stream, "aclose", None)
+                if callable(close):
+                    await close()
+        return latest_response, timed_out, target_skill_completed
 
     def create_session(self, title: str | None = None) -> dict[str, Any]:
         for existing_id, existing in list(self._sessions.items()):
@@ -967,23 +1008,42 @@ class AgentRuntime:
         session["messages"].append({"role": "user", "content": user_message})
 
         try:
-            await self.ensure_agent_model()
-            print(f"[route] agent_planner message={user_message!r}", file=sys.stderr)
             session_state = session.setdefault("state", {})
             session_state.setdefault("id", session_id)
+            exact_skill = self._exact_requested_skill(user_message)
+            if exact_skill is not None:
+                print(f"[route] explicit_skill skill={exact_skill}", file=sys.stderr)
+                assistant_message = await asyncio.to_thread(
+                    self._execute_skill_fallback,
+                    session_state,
+                    exact_skill,
+                )
+                if assistant_message is None:
+                    raise RuntimeError(f"Requested skill is not executable: {exact_skill}")
+                session["messages"].append({"role": "assistant", **assistant_message})
+                return
+
+            await self.ensure_agent_model()
+            print(f"[route] agent_planner message={user_message!r}", file=sys.stderr)
+            requested_skill = self._infer_requested_skill(user_message)
             token = CURRENT_SESSION_STATE.set(session_state)
             try:
-                response, timed_out = await self._run_agent_with_timeout(
+                response, timed_out, target_skill_completed = await self._run_agent_with_timeout(
                     session["messages"],
                     session_state,
                     timeout_seconds=float(os.environ.get("AGENT_CHAT_TIMEOUT_SECONDS", "300")),
+                    target_skill=requested_skill,
                 )
             finally:
                 CURRENT_SESSION_STATE.reset(token)
             if response is not None:
                 content, tool_events = self._extract_agent_reply(response)
-                requested_skill = self._infer_requested_skill(user_message)
-                if not tool_events and requested_skill is not None:
+                if target_skill_completed and tool_events:
+                    assistant_message = self._assistant_response(
+                        self._fallback_content_from_events(tool_events),
+                        tool_events,
+                    )
+                elif not tool_events and requested_skill is not None:
                     fallback_message = self._execute_skill_fallback(session_state, user_message)
                     if fallback_message is None:
                         raise RuntimeError(f"Requested skill is not executable: {requested_skill}")

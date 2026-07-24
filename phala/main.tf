@@ -395,13 +395,16 @@ resource "phala_app" "zk_inference" {
 
   name = var.zk_inference_app_name
   docker_compose = templatefile("${path.module}/dstack-compose.zk-inference.phala.tftpl", {
-    zk_inference_image = var.zk_inference_image
-    account_address    = var.account_address
-    rpc_url            = local.inference_runtime_rpc_url
-    kubo_api_url       = local.inference_runtime_kubo_api_url
-    kubo_gateway_url   = local.inference_runtime_kubo_gateway_url
-    sello_required     = var.enable_sello_receipts ? "1" : "0"
-    sello_scitt_url    = var.sello_scitt_url
+    zk_inference_image               = var.zk_inference_image
+    account_address                  = var.account_address
+    rpc_url                          = local.inference_runtime_rpc_url
+    kubo_api_url                     = local.inference_runtime_kubo_api_url
+    kubo_gateway_url                 = local.inference_runtime_kubo_gateway_url
+    expected_gm_storage_address      = var.expected_gm_storage_address
+    expected_device_registry_address = var.expected_device_registry_address
+    expected_chain_id                = var.expected_chain_id
+    sello_required                   = var.enable_sello_receipts ? "1" : "0"
+    sello_scitt_url                  = var.sello_scitt_url
   })
   env = {
     RSA_PRIVATE_KEY               = file(var.rsa_private_key_path)

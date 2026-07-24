@@ -229,6 +229,8 @@ class TeeInferenceBundleTests(unittest.TestCase):
                     return_value={
                         "evidence_sha256": hashlib.sha256(bundle).hexdigest(),
                         "status": "registered-and-receipt-verified",
+                        "_signed_statement": b"signed statement",
+                        "_transparent_statement": b"transparent statement",
                     },
                 ),
                 patch(
@@ -248,6 +250,8 @@ class TeeInferenceBundleTests(unittest.TestCase):
         self.assertEqual(result["sample_index"], 3)
         self.assertEqual(result["ground_truth"], ["mass"])
         self.assertEqual(result["transparency_log"]["status"], "registered-and-receipt-verified")
+        self.assertNotIn("_signed_statement", result["transparency_log"])
+        self.assertNotIn("_transparent_statement", result["transparency_log"])
         self.assertEqual(result["transparency_record_id"], "11" * 32)
 
     def test_model_and_image_tools_use_job_api_without_paths(self) -> None:

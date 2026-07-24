@@ -163,10 +163,36 @@ require_address() {
     local name=$1
     local value=$2
 
-    if ! printf '%s' "$value" | grep -Eq '^0x[0-9a-fA-F]{40}$'; then
+    if [[ ! "$value" =~ ^0x[0-9a-fA-F]{40}$ ]]; then
         echo "Invalid $name address: $value"
         exit 1
     fi
+}
+
+deployed_contract_address() {
+    local contract_name=$1
+    local broadcast_file=$2
+
+    jq -er --arg contract_name "$contract_name" '
+        [
+            .transactions[]
+            | select(
+                (.transactionType == "CREATE" or .transactionType == "CREATE2")
+                and .contractName == $contract_name
+            )
+            | .contractAddress
+        ]
+        | if length == 1 then
+            .[0]
+          else
+            error(
+                "expected exactly one deployment for "
+                + $contract_name
+                + ", found "
+                + (length | tostring)
+            )
+          end
+    ' "$broadcast_file"
 }
 
 fund_configured_worker_accounts
@@ -471,15 +497,20 @@ prepare_encrypted_initial_gm() {
 
 prepare_local_initial_gm
 forge script --rpc-url $rpc_url --broadcast script/Deploy.s.sol
-log_broadcast_gas_cost "deploy_core_contracts" "./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json"
+DEPLOY_BROADCAST_FILE="./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json"
+log_broadcast_gas_cost "deploy_core_contracts" "$DEPLOY_BROADCAST_FILE"
 
-export DEVICE_REGISTRY_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "DeviceRegistry") | .contractAddress' ./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json)
+DEVICE_REGISTRY_ADDRESS=$(deployed_contract_address "DeviceRegistry" "$DEPLOY_BROADCAST_FILE")
+export DEVICE_REGISTRY_ADDRESS
 
-export AGGREGATOR_SELECTION_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "AggregatorSelection") | .contractAddress' ./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json)
+AGGREGATOR_SELECTION_ADDRESS=$(deployed_contract_address "AggregatorSelection" "$DEPLOY_BROADCAST_FILE")
+export AGGREGATOR_SELECTION_ADDRESS
 
-export GMSTORAGE=$(jq -re '.transactions[] | select(.contractName == "GMStorage") | .contractAddress' ./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json)
+GMSTORAGE=$(deployed_contract_address "GMStorage" "$DEPLOY_BROADCAST_FILE")
+export GMSTORAGE
 
-export MEDICAL_SIGNER_REGISTRY_ADDRESS=$(jq -re '.transactions[] | select(.contractName == "MedicalSignerRegistry") | .contractAddress' ./broadcast/Deploy.s.sol/$CHAIN_ID/run-latest.json)
+MEDICAL_SIGNER_REGISTRY_ADDRESS=$(deployed_contract_address "MedicalSignerRegistry" "$DEPLOY_BROADCAST_FILE")
+export MEDICAL_SIGNER_REGISTRY_ADDRESS
 
 ENABLE_DCAP=${ENABLE_DCAP:-1}
 if [ "$ENABLE_DCAP" = "1" ]; then

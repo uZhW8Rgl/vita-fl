@@ -109,8 +109,8 @@ jobs:
       - name: Run control-api unit tests
         run: PYTHONPATH=. python -m unittest discover -s control_api/tests -v
 
-      - name: Run Phala inventory unit tests
-        run: PYTHONPATH=. python -m unittest phala.test_build_worker_inventory -v
+      - name: Run Phala configuration unit tests
+        run: PYTHONPATH=. python -m unittest discover -s phala -p 'test_*.py' -v
 
       - name: Run DICOM-aligned training provenance tests
         run: PYTHONPATH=. python -m unittest discover -s dfl/neural_network/tests -v
@@ -164,8 +164,8 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Test encrypted bootstrap recipients and signer derivation
-        run: node --test test/bootstrap_recipients.test.mjs
+      - name: Test smart-contract bootstrap helpers
+        run: node --test test/*.test.mjs
 
       - name: Build contracts
         run: forge build

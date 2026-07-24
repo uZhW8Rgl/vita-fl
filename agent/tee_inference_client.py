@@ -18,6 +18,7 @@ from typing import Any
 import cbor2
 import numpy as np
 
+from agent_receipts.scitt import public_registration
 from tee_inference.air.v1 import (
     ATTESTATION_DOC_HASH,
     MODEL_ID,
@@ -691,7 +692,7 @@ def run_and_verify_tee_inference(
         "probabilities": {LABELS[position]: value for position, value in enumerate(probabilities)},
         "evidence_path": str(output),
         "verification": verified,
-        "transparency_log": transparency,
+        "transparency_log": public_registration(transparency),
         "transparency_record_id": record["record_id"],
         "tool_receipt": tool_receipt,
     }

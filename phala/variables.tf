@@ -192,7 +192,7 @@ variable "sello_scitt_url" {
 variable "agent_image" {
   description = "Digest-pinned LLM/MCP agent image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:c3a58099f60cc105f7031dfdd5b58295344801cea1f38b5aa387050019e8a88a"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:8b7e53c2d95337351997bf381895342a3f7e38819493c25e63549f2d971f7114"
 
   validation {
     condition = (
@@ -319,7 +319,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:94c6a2312fa570de2d224a8f4e5173888048401e0d0201131fb59e252937166e"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:2a47ed90a2ca19f96097cda10090738b57ea9d2201d4e7da12916fdac0a51bfe"
 
   validation {
     condition = (
@@ -620,19 +620,19 @@ variable "ssh_public_key_path" {
 variable "worker_image" {
   description = "Digest-pinned DFL worker container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:8b642b56dff2121f9ff4cd9102af3886ae444a8bca4ae96449b19f72859a32ff"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:dc32e935b805bdd1a81f14b1941ed066b3e0cea50e9443c3a718373547133150"
 }
 
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:59ddb01a8ba38f539c3bb793e80312627513fcfd7f66741d38620190e65053ee"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:320d40c4d5fa4cf944b851b926546609cb8c6a4683d3f8bd4ae74ca319d60cba"
 }
 
 variable "tee_inference_image" {
   description = "Digest-pinned TEE inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:0a8550dad1728b679d883753a93c39e319f4a0d0d46702395618921f929890dd"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:78ac15494f71b6edd1df7d06b83cc7138c6157f01d87b968a6906aa62b8a5c9b"
 
   validation {
     condition     = can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.tee_inference_image))
@@ -643,7 +643,7 @@ variable "tee_inference_image" {
 variable "zk_inference_image" {
   description = "Digest-pinned ZK inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:ad357e6e1dd014724322cde22975b6b679b6948532e93ad7c2f826ab1000ed39"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:7df4d5632e68e4e97c7585130c99c4dd5eeba736c348a792842aba4b9c1ec8ed"
 
   validation {
     condition = (

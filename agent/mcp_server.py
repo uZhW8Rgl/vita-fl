@@ -13,6 +13,8 @@ from typing import Any
 
 from prometheus_client import Gauge
 
+from agent_receipts.scitt import public_registration
+
 try:
     from .agent_skills import (
         normalize_optional_index,
@@ -408,7 +410,7 @@ def generate_and_verify_zk_inference_proof(job_id: str) -> str:
             "stage": "proof-verified-and-transparency-logged",
             **result,
             "proof_bundle_path": str(bundle_path),
-            "transparency_log": transparency,
+            "transparency_log": public_registration(transparency),
             "transparency_record_id": record["record_id"],
         },
     )
