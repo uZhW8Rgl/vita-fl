@@ -10,7 +10,7 @@ services:
     command:
       - --quiet
       - --accounts
-      - "20"
+      - "500"
       - --hardfork
       - osaka
       - --code-size-limit
@@ -24,7 +24,7 @@ services:
       retries: 24
 
   rpc-proxy:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:320d40c4d5fa4cf944b851b926546609cb8c6a4683d3f8bd4ae74ca319d60cba
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d743a41cae4d51160139b1fec60eb425a3c846bf023e2094728c73acc1fcf867
     restart: unless-stopped
     read_only: true
     cap_drop: ["ALL"]
@@ -59,7 +59,7 @@ services:
       retries: 24
 
   smart-contracts:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:320d40c4d5fa4cf944b851b926546609cb8c6a4683d3f8bd4ae74ca319d60cba
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d743a41cae4d51160139b1fec60eb425a3c846bf023e2094728c73acc1fcf867
     restart: "no"
     depends_on:
       anvil:

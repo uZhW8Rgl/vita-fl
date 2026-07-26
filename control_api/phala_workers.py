@@ -1,4 +1,4 @@
-"""Dynamic Phala worker lifecycle using the fixed W0-W19 identity pool."""
+"""Dynamic Phala worker lifecycle using the fixed W0-W499 identity pool."""
 
 from __future__ import annotations
 
@@ -11,9 +11,11 @@ import threading
 import urllib.parse
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
-MAX_WORKERS = 20
+MAX_WORKERS = 500
+INVENTORY_CHUNK_PREFIX = "DYNAMIC_WORKER_INVENTORY_"
+INVENTORY_CHUNK_RE = re.compile(r"^DYNAMIC_WORKER_INVENTORY_([0-9]{3})$")
 ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 PRIVATE_KEY_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 PRIVATE_KEY_IN_TEXT_RE = re.compile(r"0x[0-9a-fA-F]{64}")
@@ -114,6 +116,57 @@ def _pem(value: Any, name: str) -> str:
     if not text.startswith("-----BEGIN ") or not text.endswith("-----"):
         raise WorkerConfigurationError(f"{name} is not a PEM value")
     return text
+
+
+def dynamic_worker_inventory_json_from_environment(
+    environment: Mapping[str, str] | None = None,
+) -> str:
+    """Reassemble the legacy inventory or its ordered, size-bounded chunks."""
+
+    values = os.environ if environment is None else environment
+    legacy = str(values.get("DYNAMIC_WORKER_INVENTORY", "")).strip()
+    malformed_names = sorted(
+        name
+        for name in values
+        if name.startswith(INVENTORY_CHUNK_PREFIX) and INVENTORY_CHUNK_RE.fullmatch(name) is None
+    )
+    if malformed_names:
+        raise WorkerConfigurationError(
+            f"invalid dynamic worker inventory chunk name: {malformed_names[0]}"
+        )
+
+    indexed_chunks = sorted(
+        (
+            int(match.group(1)),
+            name,
+            str(value),
+        )
+        for name, value in values.items()
+        if (match := INVENTORY_CHUNK_RE.fullmatch(name)) is not None
+    )
+    if legacy and indexed_chunks:
+        raise WorkerConfigurationError(
+            "configure either DYNAMIC_WORKER_INVENTORY or chunked inventory entries, not both"
+        )
+    if not indexed_chunks:
+        return legacy
+
+    indices = [index for index, _name, _value in indexed_chunks]
+    if indices != list(range(len(indices))):
+        raise WorkerConfigurationError(
+            "dynamic worker inventory chunk indices must be contiguous from 000"
+        )
+
+    records: list[Any] = []
+    for _index, name, value in indexed_chunks:
+        try:
+            chunk = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise WorkerConfigurationError(f"{name} is not valid JSON: {exc}") from exc
+        if not isinstance(chunk, list):
+            raise WorkerConfigurationError(f"{name} must contain a JSON array")
+        records.extend(chunk)
+    return json.dumps(records, separators=(",", ":"))
 
 
 def load_worker_inventory(raw: str, *, maximum: int = MAX_WORKERS) -> tuple[WorkerIdentity, ...]:
@@ -351,8 +404,8 @@ class PhalaWorkerController:
 def controller_from_environment() -> PhalaWorkerController:
     """Construct the production controller without ever logging its secrets."""
 
+    inventory_json = dynamic_worker_inventory_json_from_environment()
     required = {
-        "DYNAMIC_WORKER_INVENTORY": os.environ.get("DYNAMIC_WORKER_INVENTORY", ""),
         "PHALA_CLOUD_API_KEY": os.environ.get("PHALA_CLOUD_API_KEY", ""),
         "DYNAMIC_WORKER_RPC_URL": os.environ.get("DYNAMIC_WORKER_RPC_URL", ""),
         "DYNAMIC_WORKER_KUBO_API_URL": os.environ.get("DYNAMIC_WORKER_KUBO_API_URL", ""),
@@ -362,6 +415,8 @@ def controller_from_environment() -> PhalaWorkerController:
     missing = [name for name, value in required.items() if not value.strip()]
     if missing:
         raise WorkerConfigurationError(f"missing dynamic worker configuration: {', '.join(missing)}")
+    if not inventory_json:
+        raise WorkerConfigurationError("missing dynamic worker configuration: DYNAMIC_WORKER_INVENTORY")
 
     def integer(name: str, default: int) -> int:
         try:
@@ -369,7 +424,7 @@ def controller_from_environment() -> PhalaWorkerController:
         except ValueError as exc:
             raise WorkerConfigurationError(f"{name} must be an integer") from exc
 
-    inventory = load_worker_inventory(required["DYNAMIC_WORKER_INVENTORY"])
+    inventory = load_worker_inventory(inventory_json)
     telemetry_url = os.environ.get("DYNAMIC_WORKER_TELEMETRY_URL", "").strip()
     if not telemetry_url:
         parsed_rpc_url = urllib.parse.urlsplit(required["DYNAMIC_WORKER_RPC_URL"])

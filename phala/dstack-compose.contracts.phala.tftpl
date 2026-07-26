@@ -10,7 +10,7 @@ services:
     command:
       - --quiet
       - --accounts
-      - "20"
+      - "${anvil_account_count}"
       - --hardfork
       - osaka
       - --code-size-limit
@@ -82,6 +82,7 @@ services:
       INITIAL_GM_SIGNING_KEY: "$${INITIAL_GM_SIGNING_KEY}"
       INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY: "$${INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY}"
       DYNAMIC_WORKER_INVENTORY: "$${DYNAMIC_WORKER_INVENTORY}"
+${dynamic_worker_inventory_environment}
       INITIAL_GM_CID: "${initial_gm_cid}"
       INITIAL_GM_SIG_CID: "${initial_gm_sig_cid}"
       ETH_EUR_PRICE: "${eth_eur_price}"
@@ -138,6 +139,7 @@ services:
       CONTROL_ADMIN_TOKEN: "$${CONTROL_ADMIN_TOKEN}"
       PHALA_CLOUD_API_KEY: "$${PHALA_CLOUD_API_KEY}"
       DYNAMIC_WORKER_INVENTORY: "$${DYNAMIC_WORKER_INVENTORY}"
+${dynamic_worker_inventory_environment}
       DYNAMIC_WORKER_IMAGE: "${worker_image}"
       DYNAMIC_WORKER_RPC_URL: "${dynamic_worker_rpc_url}"
       DYNAMIC_WORKER_KUBO_API_URL: "${dynamic_worker_kubo_api_url}"
@@ -148,7 +150,7 @@ services:
       DYNAMIC_WORKER_EXPECTED_MEDICAL_SIGNER_REGISTRY_ADDRESS: "${expected_medical_signer_registry_address}"
       DYNAMIC_WORKER_EXPECTED_CHAIN_ID: "${expected_chain_id}"
       MAX_DYNAMIC_WORKERS: "${max_dynamic_workers}"
-      WORKER_COUNT: "${max_dynamic_workers}"
+      WORKER_COUNT: "${initial_dynamic_worker_count}"
       PHALA_REGION: "${region}"
       PHALA_OS_IMAGE: "${os_image}"
       CLIENT_LIMIT: "${client_limit}"

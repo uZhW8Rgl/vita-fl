@@ -3,6 +3,53 @@ import crypto from "node:crypto";
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 const PUBLIC_KEY_PEM_PATTERN = /-----BEGIN (?:RSA )?PUBLIC KEY-----/;
 const PRIVATE_KEY_PEM_PATTERN = /-----BEGIN (?:ENCRYPTED |RSA )?PRIVATE KEY-----/;
+const INVENTORY_CHUNK_PREFIX = "DYNAMIC_WORKER_INVENTORY_";
+const INVENTORY_CHUNK_PATTERN = /^DYNAMIC_WORKER_INVENTORY_([0-9]{3})$/;
+
+export const dynamicWorkerInventoryFromEnvironment = (environment = process.env) => {
+  const legacy = String(environment.DYNAMIC_WORKER_INVENTORY ?? "").trim();
+  const malformedName = Object.keys(environment)
+    .filter((name) => name.startsWith(INVENTORY_CHUNK_PREFIX))
+    .find((name) => !INVENTORY_CHUNK_PATTERN.test(name));
+  if (malformedName) {
+    throw new Error(`Invalid dynamic worker inventory chunk name: ${malformedName}.`);
+  }
+
+  const chunks = Object.entries(environment)
+    .map(([name, value]) => {
+      const match = INVENTORY_CHUNK_PATTERN.exec(name);
+      return match ? { index: Number(match[1]), name, value: String(value) } : null;
+    })
+    .filter((entry) => entry !== null)
+    .sort((left, right) => left.index - right.index);
+
+  if (legacy && chunks.length > 0) {
+    throw new Error(
+      "Configure either DYNAMIC_WORKER_INVENTORY or chunked inventory entries, not both."
+    );
+  }
+  if (chunks.length === 0) {
+    return legacy;
+  }
+  if (chunks.some((chunk, index) => chunk.index !== index)) {
+    throw new Error("Dynamic worker inventory chunk indices must be contiguous from 000.");
+  }
+
+  const inventory = [];
+  for (const chunk of chunks) {
+    let entries;
+    try {
+      entries = JSON.parse(chunk.value);
+    } catch (error) {
+      throw new Error(`${chunk.name} is not valid JSON: ${error.message}`);
+    }
+    if (!Array.isArray(entries)) {
+      throw new Error(`${chunk.name} must contain a JSON array.`);
+    }
+    inventory.push(...entries);
+  }
+  return JSON.stringify(inventory);
+};
 
 export const normalizeRecipientAddress = (value, context = "recipient") => {
   if (typeof value !== "string") {

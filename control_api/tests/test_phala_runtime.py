@@ -1,12 +1,36 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from control_api import server
 
 
 class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    def test_runtime_training_config_exposes_500_slots_with_safe_initial_selection(self) -> None:
+        with (
+            patch.object(server, "phala_runtime_mode", return_value=True),
+            patch.dict(
+                server.os.environ,
+                {
+                    "MAX_DYNAMIC_WORKERS": "500",
+                    "WORKER_COUNT": "3",
+                    "CLIENT_LIMIT": "2",
+                },
+                clear=False,
+            ),
+        ):
+            config = server.read_training_config(
+                Path("/nonexistent/training.env"),
+                Path("/nonexistent/compose.yml"),
+            )
+
+        self.assertEqual(config["worker_count"], 3)
+        self.assertEqual(config["max_worker_count"], 500)
+        self.assertEqual(config["available_workers"][0], "worker0")
+        self.assertEqual(config["available_workers"][-1], "worker499")
+
     def test_user_rounds_exclude_bootstrap_round(self) -> None:
         config = {"rounds": 3, "epoch": 2, "worker_count": 4, "client_limit": 3}
 

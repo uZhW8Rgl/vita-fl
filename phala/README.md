@@ -34,7 +34,7 @@ worker TEEs. Existing deployments need only the final apply.
 
 Dynamic worker TEEs send operational training events to the Control API over
 its Phala `8091` endpoint. Each event is signed by the worker's configured
-Ethereum account, checked against the fixed W0--W19 inventory, protected
+Ethereum account, checked against the fixed W0--W499 inventory, protected
 against nonce replay, and then exposed to Prometheus. This is how the embedded
 training dashboard receives starts, model transfers, aggregation results,
 evaluation metrics, and worker transaction costs even though every worker has
@@ -77,20 +77,25 @@ bash phala/tf-env.sh plan -input=false
 bash phala/tf-env.sh apply
 ```
 
-The wrapper prefers `.env.phala.anvil` by default, falls back to `.env` if needed, and can be pointed at a custom file with `PHALA_ENV_FILE=/path/to/file`.
+The wrapper uses `.env.phala.anvil` by default and can be pointed at another
+complete Phala environment file with `PHALA_ENV_FILE=/path/to/file`. It fails
+if that file is absent. `.env.phala.anvil.example` is the complete tracked
+W0--W499 template; copy it to `.env.phala.anvil` and replace the deployment
+placeholders as needed. The Phala path does not read worker identities from
+`.env.example` or `data/rsa_keys`.
 
 The wrapper reads these values from the selected env file:
 
 - `PHALA_CLOUD_API_KEY`
 - `UI_BASIC_AUTH_USERNAME` and `UI_BASIC_AUTH_PASSWORD` when the UI is enabled
-- `W0_ACCOUNT_ADDRESS`
-- `W0_PRIVATE_KEY`
-- optional `W0_RSA_PRIVATE_KEY_FILE` and `W0_RSA_PUBLIC_KEY_FILE` paths; when those files do not exist, the inline `W0_RSA_PRIVATE_KEY` and `W0_RSA_PUBLIC_KEY` values from `.env.phala.anvil` are materialized into private temporary files
+- mandatory `Wn_ACCOUNT_ADDRESS`, `Wn_PRIVATE_KEY`, `Wn_DEVICE_ID`,
+  `Wn_RSA_PRIVATE_KEY`, and `Wn_RSA_PUBLIC_KEY` values for every configured
+  slot from W0 through W499
 - optional `ENABLE_TEE_INFERENCE` and `TEE_INFERENCE_IMAGE`
 
 It also forwards the current Anvil/DFL profile settings into Terraform, including:
 
-- `W1_ACCOUNT_ADDRESS`, `W1_PRIVATE_KEY`, `W2_ACCOUNT_ADDRESS`, `W2_PRIVATE_KEY`, ... when `WORKER_COUNT` is greater than `1`
+- `WORKER_COUNT`, `MAX_DYNAMIC_WORKERS`, and `ANVIL_ACCOUNT_COUNT`
 - `INITIAL_GM_SIGNER_ADDRESS`
 - `CLIENT_LIMIT`, `EPOCH`, `ROUND`
 - `MODEL_SUBMISSION_DEADLINE_MS`, `GM_UPDATE_TIMEOUT_MS`, `GM_UPDATE_TIMEOUT_LOOPS`
@@ -100,23 +105,33 @@ It also forwards the current Anvil/DFL profile settings into Terraform, includin
 - `DEPLOY_TDX_V4_DCAP`, `VERIFY_TDX_QUOTE_ONCHAIN`, `AGGREGATOR_TIMEOUT_REPORT_PERCENT`
 - `TDX_REFERENCE_QUOTE_PATH` for the owner-reviewed dstack base-runtime quote; when empty, bootstrap falls back to `PCCS_QUOTE_PATH`
 
-This means a Phala deployment can now be driven directly from `.env.phala.anvil` without first rebuilding a combined `.env`.
+The wrapper validates the complete fixed inventory, splits it into numbered
+JSON-array chunks below 60,000 bytes each, and supplies those chunks through a
+temporary mode-0600 Terraform variable file. This avoids the Linux size limit
+for a single environment entry. The Control API and contract bootstrap
+reassemble the chunks in numeric order and reject incomplete, ambiguous, or
+malformed input. The temporary file is removed when Terraform exits.
 
-For a direct Terraform invocation, keep secret values in `TF_VAR_*` process
-environment variables and only non-secret paths in `terraform.tfvars`:
+The selectable pool contains W0 through W499, while the default initial UI
+selection remains three workers. Starting hundreds of simultaneous Phala CVMs
+is still subject to the account quota and cost. The encrypted inventory is
+about 1.2 MiB in total, so a target platform with a stricter aggregate
+environment/request limit may require an external encrypted inventory store.
 
-```bash
-export TF_VAR_private_key="..."
-terraform -chdir=phala plan
-```
+The wrapper is the supported deployment entry point because it validates and
+transports the complete credential inventory. Do not maintain a second copy of
+worker identities in `terraform.tfvars`.
 
 Notes:
 
 - The provider's `env` attribute encrypts wallet and RSA key material for the target Phala app. The measured/public Compose contains only environment-variable names, never their values.
 - Terraform still records sensitive `env` inputs in state. Local state, state backups, `terraform.tfvars`, and exported `app_code.txt` are ignored; use an encrypted, access-controlled remote backend for non-demo deployments.
 - `public_logs` defaults to `true` for this observable Anvil demo deployment. Do not log secrets when adapting it for production.
-- Worker and smart-contract images contain no private keys. Local Compose mounts generated development keys read-only; run `scripts/prepare_dfl_worker_experiment.py` first on a fresh clone.
-- Keys that were committed previously must be treated as compromised and rotated outside this source change before production use.
+- Worker and smart-contract images contain no private keys. Phala credentials
+  come only from the selected Phala environment file. The separate local
+  Compose profile may mount locally generated, ignored development keys.
+- The fixed wallet and RSA credentials are intentionally public test material.
+  They must be replaced for production, real funds, or confidential data.
 - `worker_image` must stay pinned to a `sha256` digest. Its digest is the shared on-chain workload-policy identity; the worker-specific Compose hash is not an allowlist key.
 - `smart_contracts_image` should also be pinned to a `sha256` digest when you want the contract-runtime TEE to be reproducible.
 - The Terraform scaffold now separates `smart-contracts` and `dfl-worker` into different Phala apps / TEEs.
@@ -134,7 +149,10 @@ Notes:
 - Non-secret worker configuration is rendered into Compose; secret values use the provider's encrypted app environment.
 - The default minimal hardware profile is now `tdx.small` with `20 GB` disk.
 - The contract-runtime TEE runs its own local `anvil`; the worker TEE talks to that internal runtime endpoint, not to Sepolia.
-- The contract-runtime compose receives `WORKER_ACCOUNT_ADDRESSES` from Terraform and the `smart-contracts` bootstrap funds those accounts on the embedded Anvil before workers register. This keeps `.env.phala.anvil` worker keys usable even when they are not part of Anvil's initially funded account list.
+- The embedded Anvil runtime creates 500 funded deterministic accounts, matching
+  the fixed W0--W499 prototype pool. Terraform additionally passes explicitly
+  configured static worker addresses through `WORKER_ACCOUNT_ADDRESSES` so the
+  bootstrap can fund non-default static identities before registration.
 - The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
 - The worker now treats `/runtime/contracts.json` as the effective runtime-ready signal. The runtime publishes that manifest only after `smart-contracts` finished its bootstrap path, which avoids startup races even when `/runtime/ready.json` is missing on Phala.
 - The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/dstack.sock` and keeps `/var/run/tappd.sock` only for compatibility.
@@ -170,7 +188,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:dc32e935b805bdd1a81f14b1941ed06
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:320d40c4d5fa4cf944b851b926546609cb8c6a4683d3f8bd4ae74ca319d60cba
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d743a41cae4d51160139b1fec60eb425a3c846bf023e2094728c73acc1fcf867
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
@@ -328,7 +346,7 @@ digest-pinned references in `.env.phala.anvil`:
 
 ```dotenv
 ENABLE_PHALA_AGENT=true
-AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:8b7e53c2d95337351997bf381895342a3f7e38819493c25e63549f2d971f7114
+AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:2d29688287e53ee181151898560c6a80c0ab3ce0fe0ac887eda84083f7adabf2
 TRANSPARENCY_LOG_IMAGE=ghcr.io/uzhw8rgl/master-thesis-transparency-log@sha256:4c6789921d5ff89e546c65c435bc19d479acc8248715dff3f5b1536e2c8af723
 ENABLE_OLLAMA=true
 OLLAMA_MODEL=qwen3:1.7b

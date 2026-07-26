@@ -83,6 +83,7 @@ _telemetry_records: list[dict[str, Any]] = []
 _telemetry_nonces: dict[str, int] = {}
 TELEMETRY_MAX_RECORDS = 20_000
 TELEMETRY_MAX_AGE_MS = 10 * 60 * 1000
+MAX_DYNAMIC_WORKERS = 500
 
 
 def phala_runtime_mode() -> bool:
@@ -173,21 +174,29 @@ def read_env_values(env_file: Path = TRAINING_ENV_FILE) -> dict[str, str]:
     return values
 
 
-def _dynamic_worker_slots() -> dict[str, str]:
+def _dynamic_worker_inventory_records() -> list[dict[str, Any]]:
+    from control_api.phala_workers import (
+        WorkerConfigurationError,
+        dynamic_worker_inventory_json_from_environment,
+    )
+
     try:
-        inventory = json.loads(os.environ.get("DYNAMIC_WORKER_INVENTORY", "[]"))
-    except json.JSONDecodeError:
-        return {}
+        raw_inventory = dynamic_worker_inventory_json_from_environment()
+        inventory = json.loads(raw_inventory or "[]")
+    except (json.JSONDecodeError, WorkerConfigurationError):
+        return []
     if isinstance(inventory, dict):
         records = list(inventory.values())
     elif isinstance(inventory, list):
         records = inventory
     else:
-        return {}
+        return []
+    return [record for record in records if isinstance(record, dict)]
+
+
+def _dynamic_worker_slots() -> dict[str, str]:
     slots: dict[str, str] = {}
-    for record in records:
-        if not isinstance(record, dict):
-            continue
+    for record in _dynamic_worker_inventory_records():
         address = str(record.get("account_address", "")).strip().lower()
         if re.fullmatch(r"0x[a-f0-9]{40}", address):
             slots[address] = str(record.get("slot", ""))
@@ -690,7 +699,13 @@ def read_training_config(
     values = read_env_values(env_file)
 
     if phala_runtime_mode():
-        maximum = max(1, min(_safe_int(os.environ.get("MAX_DYNAMIC_WORKERS"), 20), 20))
+        maximum = max(
+            1,
+            min(
+                _safe_int(os.environ.get("MAX_DYNAMIC_WORKERS"), MAX_DYNAMIC_WORKERS),
+                MAX_DYNAMIC_WORKERS,
+            ),
+        )
         worker_count = max(1, min(_safe_int(os.environ.get("WORKER_COUNT"), 3), maximum))
         client_limit = max(
             1,
@@ -1102,29 +1117,16 @@ def _worker_label_for_address(env_values: dict[str, str], address: str | None) -
     if not address:
         return None
     normalized = address.lower()
-    for index in range(20):
+    for index in range(MAX_DYNAMIC_WORKERS):
         worker_address = env_values.get(f"W{index}_ACCOUNT_ADDRESS", "").strip().lower()
         if worker_address == normalized:
             return f"VM-{index}"
-    try:
-        inventory = json.loads(os.environ.get("DYNAMIC_WORKER_INVENTORY", "[]"))
-    except json.JSONDecodeError:
-        inventory = []
-    if isinstance(inventory, dict):
-        records = list(inventory.values())
-    elif isinstance(inventory, list):
-        records = inventory
-    else:
-        records = []
-    if records:
-        for record in records:
-            if not isinstance(record, dict):
-                continue
-            if str(record.get("account_address", "")).strip().lower() == normalized:
-                try:
-                    return f"VM-{int(record.get('slot'))}"
-                except (TypeError, ValueError):
-                    return None
+    for record in _dynamic_worker_inventory_records():
+        if str(record.get("account_address", "")).strip().lower() == normalized:
+            try:
+                return f"VM-{int(record.get('slot'))}"
+            except (TypeError, ValueError):
+                return None
     return None
 
 

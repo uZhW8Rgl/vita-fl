@@ -7,6 +7,7 @@ from control_api.phala_workers import (
     PhalaWorkerController,
     WorkerConfigurationError,
     WorkerDeploymentConfig,
+    dynamic_worker_inventory_json_from_environment,
     load_worker_inventory,
     redact_terraform_output,
 )
@@ -141,6 +142,44 @@ class WorkerInventoryTests(unittest.TestCase):
         payload[1]["slot"] = 3
         with self.assertRaisesRegex(WorkerConfigurationError, "contiguous"):
             load_worker_inventory(json.dumps(payload))
+
+    def test_inventory_accepts_all_500_fixed_slots(self) -> None:
+        identities = load_worker_inventory(inventory_json(500))
+
+        self.assertEqual(len(identities), 500)
+        self.assertEqual(identities[-1].slot, 499)
+
+    def test_inventory_rejects_more_than_500_slots(self) -> None:
+        with self.assertRaisesRegex(WorkerConfigurationError, "maximum of 500"):
+            load_worker_inventory(inventory_json(501))
+
+    def test_chunked_inventory_is_reassembled_in_numeric_order(self) -> None:
+        records = json.loads(inventory_json(3))
+        environment = {
+            "DYNAMIC_WORKER_INVENTORY_001": json.dumps(records[2:]),
+            "DYNAMIC_WORKER_INVENTORY_000": json.dumps(records[:2]),
+        }
+
+        restored = json.loads(dynamic_worker_inventory_json_from_environment(environment))
+
+        self.assertEqual([record["slot"] for record in restored], [0, 1, 2])
+
+    def test_inventory_reassembly_fails_closed_for_ambiguous_or_missing_chunks(self) -> None:
+        with self.assertRaisesRegex(WorkerConfigurationError, "either"):
+            dynamic_worker_inventory_json_from_environment(
+                {
+                    "DYNAMIC_WORKER_INVENTORY": inventory_json(1),
+                    "DYNAMIC_WORKER_INVENTORY_000": inventory_json(1),
+                }
+            )
+        with self.assertRaisesRegex(WorkerConfigurationError, "contiguous"):
+            dynamic_worker_inventory_json_from_environment(
+                {"DYNAMIC_WORKER_INVENTORY_001": inventory_json(1)}
+            )
+        with self.assertRaisesRegex(WorkerConfigurationError, "must contain a JSON array"):
+            dynamic_worker_inventory_json_from_environment(
+                {"DYNAMIC_WORKER_INVENTORY_000": "{}"}
+            )
 
     def test_out_of_range_scale_is_rejected_without_apply(self) -> None:
         instance, runner = controller(2)

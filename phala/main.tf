@@ -14,6 +14,11 @@ provider "phala" {
 }
 
 locals {
+  dynamic_worker_inventory_environment = join("\n", [
+    for name in sort(nonsensitive(keys(var.dynamic_worker_inventory_chunks))) :
+    format("      %s: \"$${%s}\"", name, name)
+  ])
+
   worker_account_addresses = distinct(concat(
     [var.account_address],
     [for worker_key in keys(nonsensitive(var.additional_workers)) : var.additional_workers[worker_key].account_address],
@@ -22,6 +27,7 @@ locals {
   contracts_compose_content = templatefile("${path.module}/dstack-compose.contracts.phala.tftpl", {
     smart_contracts_image                    = var.smart_contracts_image
     anvil_image                              = var.anvil_image
+    anvil_account_count                      = var.anvil_account_count
     ipfs_image                               = var.ipfs_image
     w0_account_address                       = var.account_address
     w1_account_address                       = coalesce(var.runtime_w1_account_address, var.account_address)
@@ -89,16 +95,18 @@ locals {
       var.zk_inference_url_override,
       "/",
     ) : ""
-    agent_available                 = var.enable_phala_agent ? "1" : "0"
-    dynamic_worker_inventory        = var.dynamic_worker_inventory
-    dynamic_worker_rpc_url          = coalesce(var.runtime_rpc_url_override, "")
-    dynamic_worker_kubo_api_url     = coalesce(var.runtime_kubo_api_url_override, "")
-    dynamic_worker_kubo_gateway_url = coalesce(var.runtime_kubo_gateway_url_override, "")
-    max_dynamic_workers             = var.max_dynamic_workers
-    region                          = var.region
-    os_image                        = var.os_image
-    sello_required                  = var.enable_sello_receipts ? "1" : "0"
-    sello_scitt_url                 = var.sello_scitt_url
+    agent_available                      = var.enable_phala_agent ? "1" : "0"
+    dynamic_worker_inventory             = var.dynamic_worker_inventory
+    dynamic_worker_inventory_environment = local.dynamic_worker_inventory_environment
+    dynamic_worker_rpc_url               = coalesce(var.runtime_rpc_url_override, "")
+    dynamic_worker_kubo_api_url          = coalesce(var.runtime_kubo_api_url_override, "")
+    dynamic_worker_kubo_gateway_url      = coalesce(var.runtime_kubo_gateway_url_override, "")
+    max_dynamic_workers                  = var.max_dynamic_workers
+    initial_dynamic_worker_count         = min(var.initial_dynamic_worker_count, var.max_dynamic_workers)
+    region                               = var.region
+    os_image                             = var.os_image
+    sello_required                       = var.enable_sello_receipts ? "1" : "0"
+    sello_scitt_url                      = var.sello_scitt_url
   })
 
   ssh_authorized_keys = var.ssh_public_key_path == null ? [] : [trimspace(file(var.ssh_public_key_path))]
@@ -165,18 +173,18 @@ resource "phala_app" "contract_runtime" {
   docker_compose = local.contracts_compose_content
   env = merge({
     ETH_WALLET_PRIVATE_KEY                 = var.eth_wallet_private_key != "" ? var.eth_wallet_private_key : var.private_key
-    INITIAL_GM_SIGNING_KEY                 = file(var.initial_gm_signing_key_path)
-    INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY = file(var.rsa_public_key_path)
+    INITIAL_GM_SIGNING_KEY                 = var.initial_gm_signing_key
+    INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY = var.rsa_public_key
     DYNAMIC_WORKER_INVENTORY               = var.dynamic_worker_inventory
-    }, var.enable_phala_control_api ? {
+    }, var.dynamic_worker_inventory_chunks, var.enable_phala_control_api ? {
     PHALA_CLOUD_API_KEY = var.phala_cloud_api_key
     CONTROL_ADMIN_TOKEN = var.control_admin_token
     } : {}, var.enable_phala_ui ? {
     UI_BASIC_AUTH_USERNAME = var.ui_basic_auth_username
     UI_BASIC_AUTH_PASSWORD = var.ui_basic_auth_password
     } : {}, var.enable_phala_agent ? {
-    AGENT_RSA_PRIVATE_KEY           = file(var.rsa_private_key_path)
-    AGENT_RSA_PUBLIC_KEY            = file(var.rsa_public_key_path)
+    AGENT_RSA_PRIVATE_KEY           = var.rsa_private_key
+    AGENT_RSA_PUBLIC_KEY            = var.rsa_public_key
     OLLAMA_API_TOKEN                = var.ollama_api_token
     SELLO_TOKEN_ISSUER_SIGNING_SEED = var.sello_token_issuer_signing_seed
     SELLO_OWNER_HPKE_PRIVATE_KEY    = var.sello_owner_hpke_private_key
@@ -245,8 +253,8 @@ resource "phala_app" "dfl_worker" {
   })
   env = {
     PRIVATE_KEY     = var.private_key
-    RSA_PRIVATE_KEY = file(var.rsa_private_key_path)
-    RSA_PUBLIC_KEY  = file(var.rsa_public_key_path)
+    RSA_PRIVATE_KEY = var.rsa_private_key
+    RSA_PUBLIC_KEY  = var.rsa_public_key
   }
   size = var.worker_size
 
@@ -311,8 +319,8 @@ resource "phala_app" "dfl_worker_additional" {
   })
   env = {
     PRIVATE_KEY     = var.additional_workers[each.key].private_key
-    RSA_PRIVATE_KEY = file(var.additional_workers[each.key].rsa_private_key_path)
-    RSA_PUBLIC_KEY  = file(var.additional_workers[each.key].rsa_public_key_path)
+    RSA_PRIVATE_KEY = var.additional_workers[each.key].rsa_private_key
+    RSA_PUBLIC_KEY  = var.additional_workers[each.key].rsa_public_key
   }
   size = var.worker_size
 
@@ -358,8 +366,8 @@ resource "phala_app" "tee_inference" {
     sello_scitt_url                  = var.sello_scitt_url
   })
   env = {
-    RSA_PRIVATE_KEY               = file(var.rsa_private_key_path)
-    RSA_PUBLIC_KEY                = file(var.rsa_public_key_path)
+    RSA_PRIVATE_KEY               = var.rsa_private_key
+    RSA_PUBLIC_KEY                = var.rsa_public_key
     SELLO_SERVICE_SIGNING_SEED    = var.sello_tee_service_signing_seed
     SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
   }
@@ -407,8 +415,8 @@ resource "phala_app" "zk_inference" {
     sello_scitt_url                  = var.sello_scitt_url
   })
   env = {
-    RSA_PRIVATE_KEY               = file(var.rsa_private_key_path)
-    RSA_PUBLIC_KEY                = file(var.rsa_public_key_path)
+    RSA_PRIVATE_KEY               = var.rsa_private_key
+    RSA_PUBLIC_KEY                = var.rsa_public_key
     SELLO_SERVICE_SIGNING_SEED    = var.sello_zk_service_signing_seed
     SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
   }

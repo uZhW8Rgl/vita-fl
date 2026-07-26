@@ -116,7 +116,7 @@ services:
     command:
       - --quiet
       - --accounts
-      - ${ANVIL_ACCOUNT_COUNT:-20}
+      - ${ANVIL_ACCOUNT_COUNT:-500}
       - --hardfork
       - ${ANVIL_HARDFORK:-osaka}
       - --code-size-limit
@@ -225,7 +225,7 @@ services:
       INITIAL_GM_CID: ${INITIAL_GM_CID}
       INITIAL_GM_SIG_CID: ${INITIAL_GM_SIG_CID}
       INITIAL_GM_SIGNER_ADDRESS: ${INITIAL_GM_SIGNER_ADDRESS}
-      WORKER_COUNT: ${WORKER_COUNT:-20}
+      WORKER_COUNT: ${WORKER_COUNT:-500}
       WORKER_ACCOUNT_ADDRESSES: ${WORKER_ACCOUNT_ADDRESSES:-}
       INITIAL_GM_SIGNING_KEY_PATH: /run/dfl-dev-keys/private_key.pem
       INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY_PATH: /run/dfl-dev-keys/public_key.pem

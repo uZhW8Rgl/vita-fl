@@ -4,7 +4,7 @@ variable "phala_cloud_api_key" {
 }
 
 variable "workers" {
-  description = "Fixed W0-W19 identities selected for this dynamic worker set."
+  description = "Fixed W0-W499 identities selected for this dynamic worker set."
   type = map(object({
     app_name        = string
     account_address = string
@@ -16,8 +16,8 @@ variable "workers" {
   sensitive = true
 
   validation {
-    condition     = length(var.workers) <= 20
-    error_message = "At most 20 fixed worker identities may be selected."
+    condition     = length(var.workers) <= 500
+    error_message = "At most 500 fixed worker identities may be selected."
   }
 }
 

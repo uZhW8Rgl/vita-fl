@@ -51,6 +51,21 @@ class SignedTelemetryTests(unittest.TestCase):
         self.assertEqual(records[0]["round"], "1")
         self.assertEqual(records[0]["accuracy_percent"], "75.5")
 
+    def test_signed_event_accepts_chunked_worker_inventory(self) -> None:
+        payload = self.payload()
+        with patch.dict(
+            os.environ,
+            {
+                "DYNAMIC_WORKER_INVENTORY": "",
+                "DYNAMIC_WORKER_INVENTORY_000": self.inventory,
+            },
+            clear=False,
+        ):
+            server._record_telemetry(payload, self.signature(payload))
+
+        records = server.telemetry_evaluation_records(server._telemetry_snapshot())
+        self.assertEqual(records[0]["round"], "1")
+
     def test_replayed_nonce_is_rejected(self) -> None:
         payload = self.payload()
         with patch.dict(os.environ, {"DYNAMIC_WORKER_INVENTORY": self.inventory}):

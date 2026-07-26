@@ -5,15 +5,15 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
 SHARED_ENV_FILE="${ROOT_DIR}/.env.shared"
 DEFAULT_ENV_FILE="${ROOT_DIR}/.env.phala.anvil"
-FALLBACK_ENV_FILE="${ROOT_DIR}/.env"
 REPO_TERRAFORM_BIN="${SCRIPT_DIR}/bin/terraform"
+DYNAMIC_WORKER_TFVARS_FILE=""
 
 if [ -n "${PHALA_ENV_FILE:-}" ]; then
   ENV_FILE="${PHALA_ENV_FILE}"
 elif [ -f "${DEFAULT_ENV_FILE}" ]; then
   ENV_FILE="${DEFAULT_ENV_FILE}"
 else
-  ENV_FILE="${FALLBACK_ENV_FILE}"
+  ENV_FILE="${DEFAULT_ENV_FILE}"
 fi
 
 if [ ! -f "${ENV_FILE}" ]; then
@@ -28,6 +28,13 @@ if [ -f "${SHARED_ENV_FILE}" ]; then
 fi
 
 ENV_FILES+=("${ENV_FILE}")
+
+cleanup_dynamic_worker_tfvars() {
+  if [ -n "${DYNAMIC_WORKER_TFVARS_FILE}" ]; then
+    rm -f "${DYNAMIC_WORKER_TFVARS_FILE}"
+  fi
+}
+trap cleanup_dynamic_worker_tfvars EXIT
 
 read_env_value() {
   local key="$1"
@@ -49,6 +56,14 @@ read_env_value() {
   printf '%s' "${value}"
 }
 
+read_worker_env_value() {
+  local key="$1"
+  local match
+  match=$(grep -E "^${key}=" "${ENV_FILE}" | tail -n 1 || true)
+
+  printf '%s' "${match#*=}"
+}
+
 require_env_value() {
   local key="$1"
   local value
@@ -62,69 +77,26 @@ require_env_value() {
   printf '%s' "${value}"
 }
 
+require_worker_env_value() {
+  local key="$1"
+  local value
+  value=$(read_worker_env_value "${key}")
+
+  if [ -z "${value}" ]; then
+    echo "${key} is required in ${ENV_FILE}"
+    exit 1
+  fi
+
+  printf '%s' "${value}"
+}
+
 PHALA_CLOUD_API_KEY=$(require_env_value "PHALA_CLOUD_API_KEY")
-W0_ACCOUNT_ADDRESS=$(require_env_value "W0_ACCOUNT_ADDRESS")
-W0_PRIVATE_KEY=$(require_env_value "W0_PRIVATE_KEY")
-
-resolve_required_file() {
-  local configured_path="$1"
-  local description="$2"
-  local resolved_path="${configured_path}"
-
-  if [[ "${resolved_path}" != /* ]]; then
-    resolved_path="${ROOT_DIR}/${resolved_path}"
-  fi
-  if [ ! -r "${resolved_path}" ]; then
-    echo "Missing ${description}: ${resolved_path}" >&2
-    echo "Generate local demo keys with scripts/prepare_dfl_worker_experiment.py or configure an explicit file path." >&2
-    exit 1
-  fi
-
-  printf '%s/%s' "$(cd "$(dirname "${resolved_path}")" && pwd)" "$(basename "${resolved_path}")"
-}
-
-resolve_key_file_or_inline() {
-  local configured_path="$1"
-  local description="$2"
-  local env_name="$3"
-  local output_name="$4"
-  local mode="$5"
-  local resolved_path="${configured_path}"
-
-  if [[ "${resolved_path}" != /* ]]; then
-    resolved_path="${ROOT_DIR}/${resolved_path}"
-  fi
-  if [ -r "${resolved_path}" ]; then
-    printf '%s' "${resolved_path}"
-    return
-  fi
-
-  local inline_value
-  inline_value=$(read_env_value "${env_name}")
-  if [ -z "${inline_value}" ]; then
-    echo "Missing ${description}: ${resolved_path}, and ${env_name} is empty" >&2
-    exit 1
-  fi
-
-  local output_dir="${TMPDIR:-/tmp}/master-thesis-phala-keys"
-  local output_path="${output_dir}/${output_name}"
-  mkdir -p "${output_dir}"
-  inline_value=${inline_value//\\n/$'\n'}
-  (umask 077; printf '%s\n' "${inline_value}" >"${output_path}")
-  chmod "${mode}" "${output_path}"
-  printf '%s' "${output_path}"
-}
-
-W0_RSA_PRIVATE_KEY_FILE=$(read_env_value "W0_RSA_PRIVATE_KEY_FILE")
-W0_RSA_PUBLIC_KEY_FILE=$(read_env_value "W0_RSA_PUBLIC_KEY_FILE")
-W0_RSA_PRIVATE_KEY_FILE=${W0_RSA_PRIVATE_KEY_FILE:-data/rsa_keys/private_key.pem}
-W0_RSA_PUBLIC_KEY_FILE=${W0_RSA_PUBLIC_KEY_FILE:-data/rsa_keys/public_key.pem}
-W0_RSA_PRIVATE_KEY_PATH=$(resolve_key_file_or_inline "${W0_RSA_PRIVATE_KEY_FILE}" "worker-0 RSA private key" "W0_RSA_PRIVATE_KEY" "w0-private.pem" 600)
-W0_RSA_PUBLIC_KEY_PATH=$(resolve_key_file_or_inline "${W0_RSA_PUBLIC_KEY_FILE}" "worker-0 RSA public key" "W0_RSA_PUBLIC_KEY" "w0-public.pem" 644)
-
-INITIAL_GM_SIGNING_KEY_FILE=$(read_env_value "INITIAL_GM_SIGNING_KEY_FILE")
-INITIAL_GM_SIGNING_KEY_FILE=${INITIAL_GM_SIGNING_KEY_FILE:-${W0_RSA_PRIVATE_KEY_FILE}}
-INITIAL_GM_SIGNING_KEY_PATH=$(resolve_key_file_or_inline "${INITIAL_GM_SIGNING_KEY_FILE}" "initial GM signing key" "W0_RSA_PRIVATE_KEY" "initial-gm-signing-key.pem" 600)
+W0_ACCOUNT_ADDRESS=$(require_worker_env_value "W0_ACCOUNT_ADDRESS")
+W0_PRIVATE_KEY=$(require_worker_env_value "W0_PRIVATE_KEY")
+W0_RSA_PRIVATE_KEY=$(require_worker_env_value "W0_RSA_PRIVATE_KEY")
+W0_RSA_PUBLIC_KEY=$(require_worker_env_value "W0_RSA_PUBLIC_KEY")
+W0_RSA_PRIVATE_KEY=${W0_RSA_PRIVATE_KEY//\\n/$'\n'}
+W0_RSA_PUBLIC_KEY=${W0_RSA_PUBLIC_KEY//\\n/$'\n'}
 
 ETH_WALLET_PRIVATE_KEY=$(read_env_value "ETH_WALLET_PRIVATE_KEY")
 ETH_WALLET_PRIVATE_KEY=${ETH_WALLET_PRIVATE_KEY:-${W0_PRIVATE_KEY}}
@@ -149,9 +121,9 @@ export TF_VAR_phala_cloud_api_key="${PHALA_CLOUD_API_KEY}"
 export TF_VAR_account_address="${W0_ACCOUNT_ADDRESS}"
 export TF_VAR_private_key="${W0_PRIVATE_KEY}"
 export TF_VAR_eth_wallet_private_key="${ETH_WALLET_PRIVATE_KEY}"
-export TF_VAR_rsa_private_key_path="${W0_RSA_PRIVATE_KEY_PATH}"
-export TF_VAR_rsa_public_key_path="${W0_RSA_PUBLIC_KEY_PATH}"
-export TF_VAR_initial_gm_signing_key_path="${INITIAL_GM_SIGNING_KEY_PATH}"
+export TF_VAR_rsa_private_key="${W0_RSA_PRIVATE_KEY}"
+export TF_VAR_rsa_public_key="${W0_RSA_PUBLIC_KEY}"
+export TF_VAR_initial_gm_signing_key="${W0_RSA_PRIVATE_KEY}"
 
 append_var_if_set() {
   local tf_name="$1"
@@ -176,66 +148,41 @@ build_additional_workers_var() {
   local worker_count
   worker_count=$(read_env_value "WORKER_COUNT")
   worker_count="${worker_count:-1}"
-  local map_entries=()
-  local idx
 
-  if ! [[ "${worker_count}" =~ ^[0-9]+$ ]]; then
-    return
+  if ! [[ "${worker_count}" =~ ^[0-9]+$ ]] || [ "${worker_count}" -lt 1 ] || [ "${worker_count}" -gt 500 ]; then
+    echo "WORKER_COUNT must be an integer between 1 and 500" >&2
+    exit 1
   fi
 
-  for ((idx = 1; idx < worker_count; idx++)); do
-    local account_var="W${idx}_ACCOUNT_ADDRESS"
-    local key_var="W${idx}_PRIVATE_KEY"
-    local account_value
-    local key_value
-    local key_suffix
-    local rsa_private_file
-    local rsa_public_file
-    local rsa_private_path
-    local rsa_public_path
-    account_value=$(read_env_value "${account_var}")
-    key_value=$(read_env_value "${key_var}")
-
-    if [ -z "${account_value}" ] || [ -z "${key_value}" ]; then
-      continue
-    fi
-
-    key_suffix="_${idx}"
-    rsa_private_file=$(read_env_value "W${idx}_RSA_PRIVATE_KEY_FILE")
-    rsa_public_file=$(read_env_value "W${idx}_RSA_PUBLIC_KEY_FILE")
-    rsa_private_file=${rsa_private_file:-data/rsa_keys/private_key${key_suffix}.pem}
-    rsa_public_file=${rsa_public_file:-data/rsa_keys/public_key${key_suffix}.pem}
-    rsa_private_path=$(resolve_required_file "${rsa_private_file}" "worker-${idx} RSA private key")
-    rsa_public_path=$(resolve_required_file "${rsa_public_file}" "worker-${idx} RSA public key")
-
-    map_entries+=(
-      "\"worker${idx}\"={app_name=\"master-thesis-dfl-worker-${idx}\",account_address=\"${account_value}\",private_key=\"${key_value}\",rsa_private_key_path=\"${rsa_private_path}\",rsa_public_key_path=\"${rsa_public_path}\"}"
-    )
-  done
-
-  if [ "${#map_entries[@]}" -gt 0 ]; then
-    local joined
-    joined=$(IFS=,; echo "${map_entries[*]}")
-    export TF_VAR_additional_workers="{${joined}}"
-  fi
+  export TF_VAR_additional_workers
+  TF_VAR_additional_workers=$(
+    python3 "${SCRIPT_DIR}/build_worker_inventory.py" \
+      --max-workers "${worker_count}" \
+      --output-format additional-workers \
+      --env-file "${ENV_FILE}"
+  )
 }
 
 build_dynamic_worker_inventory() {
   local maximum
   maximum=$(read_env_value "MAX_DYNAMIC_WORKERS")
-  maximum="${maximum:-20}"
-  if ! [[ "${maximum}" =~ ^[0-9]+$ ]] || [ "${maximum}" -lt 1 ] || [ "${maximum}" -gt 20 ]; then
-    echo "MAX_DYNAMIC_WORKERS must be an integer between 1 and 20" >&2
+  maximum="${maximum:-500}"
+  if ! [[ "${maximum}" =~ ^[0-9]+$ ]] || [ "${maximum}" -lt 1 ] || [ "${maximum}" -gt 500 ]; then
+    echo "MAX_DYNAMIC_WORKERS must be an integer between 1 and 500" >&2
     exit 1
   fi
 
-  local command=(python3 "${SCRIPT_DIR}/build_worker_inventory.py" --max-workers "${maximum}")
-  local file
-  for file in "${ENV_FILES[@]}"; do
-    command+=(--env-file "${file}")
-  done
-  export TF_VAR_dynamic_worker_inventory
-  TF_VAR_dynamic_worker_inventory=$("${command[@]}")
+  local command=(
+    python3
+    "${SCRIPT_DIR}/build_worker_inventory.py"
+    --max-workers "${maximum}"
+    --output-format terraform-var-file
+    --env-file "${ENV_FILE}"
+  )
+
+  DYNAMIC_WORKER_TFVARS_FILE=$(mktemp "${SCRIPT_DIR}/.dynamic-worker-inventory.XXXXXX.auto.tfvars.json")
+  chmod 600 "${DYNAMIC_WORKER_TFVARS_FILE}"
+  "${command[@]}" >"${DYNAMIC_WORKER_TFVARS_FILE}"
   export TF_VAR_max_dynamic_workers="${maximum}"
 }
 
@@ -352,7 +299,12 @@ derive_runtime_service_urls() {
   fi
 }
 
-append_var_if_set "runtime_w1_account_address" "W1_ACCOUNT_ADDRESS"
+runtime_w1_account_address=$(read_worker_env_value "W1_ACCOUNT_ADDRESS")
+if [ -n "${runtime_w1_account_address}" ]; then
+  export TF_VAR_runtime_w1_account_address="${runtime_w1_account_address}"
+fi
+append_var_if_set "initial_dynamic_worker_count" "WORKER_COUNT"
+append_var_if_set "anvil_account_count" "ANVIL_ACCOUNT_COUNT"
 append_var_if_set "worker_image" "WORKER_IMAGE"
 append_var_if_set "smart_contracts_image" "SMART_CONTRACTS_IMAGE"
 append_var_if_set "initial_gm_signer_address" "INITIAL_GM_SIGNER_ADDRESS"
@@ -417,4 +369,4 @@ configure_phala_agent
 
 export PHALA_CLOUD_API_KEY
 
-exec "${TERRAFORM_CMD}" "${terraform_args[@]}"
+"${TERRAFORM_CMD}" "${terraform_args[@]}"

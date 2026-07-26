@@ -7,22 +7,21 @@
 # - contracts_disk_size = 20
 # - worker_disk_size    = 20
 # - worker_replicas = 1
-
-account_address             = "0xYOUR_WORKER_ADDRESS"
-rsa_private_key_path        = "../data/rsa_keys/private_key.pem"
-rsa_public_key_path         = "../data/rsa_keys/public_key.pem"
-initial_gm_signing_key_path = "../data/rsa_keys/private_key.pem"
-
-# Do not put wallet or RSA private-key contents in this file. Supply the
-# sensitive wallet input with TF_VAR_private_key or use phala/tf-env.sh.
+#
+# Keep this file limited to non-secret Terraform overrides. Use phala/tf-env.sh
+# for deployment; it supplies every worker identity from the selected
+# .env.phala.anvil-style file.
 
 # Optional overrides:
 # contracts_app_name = "master-thesis-contract-runtime-phala"
 # worker_app_name    = "master-thesis-dfl-worker-0"
 # worker_replicas    = 1
+# max_dynamic_workers = 500
+# initial_dynamic_worker_count = 3
+# anvil_account_count = 500
 # worker_image     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:dc32e935b805bdd1a81f14b1941ed066b3e0cea50e9443c3a718373547133150"
-# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:320d40c4d5fa4cf944b851b926546609cb8c6a4683d3f8bd4ae74ca319d60cba"
-# control_api_image = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:2a47ed90a2ca19f96097cda10090738b57ea9d2201d4e7da12916fdac0a51bfe"
+# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d743a41cae4d51160139b1fec60eb425a3c846bf023e2094728c73acc1fcf867"
+# control_api_image = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:6dd07b61359cd4762c54be3b102cf338b58bbdae421d73583e730d4dfb0efb2b"
 # ui_image = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:cfa6bf74771b4b16e3bf928ff9f3d7066e924ec728875dbc05cda9e312389a22"
 # ui_basic_auth_username = "operator"
 # ui_basic_auth_password = "replace-with-at-least-16-characters"
@@ -37,7 +36,7 @@ initial_gm_signing_key_path = "../data/rsa_keys/private_key.pem"
 # zk_inference_image = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:7df4d5632e68e4e97c7585130c99c4dd5eeba736c348a792842aba4b9c1ec8ed"
 # zk_inference_size = "tdx.medium"
 # enable_phala_agent = true
-# agent_image = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:8b7e53c2d95337351997bf381895342a3f7e38819493c25e63549f2d971f7114"
+# agent_image = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:2d29688287e53ee181151898560c6a80c0ab3ce0fe0ac887eda84083f7adabf2"
 # transparency_log_image = "ghcr.io/uzhw8rgl/master-thesis-transparency-log@sha256:4c6789921d5ff89e546c65c435bc19d479acc8248715dff3f5b1536e2c8af723"
 # enable_ollama = true
 # ollama_model = "qwen3:1.7b"
@@ -51,6 +50,7 @@ initial_gm_signing_key_path = "../data/rsa_keys/private_key.pem"
 # desired_power_state = "running" # or "stopped"
 # ssh_public_key_path = "/absolute/path/to/id_ed25519.pub"
 #
-# For multiple workers, prefer phala/tf-env.sh. It builds the sensitive
-# additional_workers value in the process environment instead of writing it
-# into this file or the command line.
+# For dynamic workers, use phala/tf-env.sh. The selected Phala env file is the
+# sole source for all W0-W499 Ethereum and RSA identities. Sensitive inventory
+# chunks are written only to a temporary, mode-0600 auto tfvars file and
+# removed when Terraform exits.

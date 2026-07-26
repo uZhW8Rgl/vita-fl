@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   canonicalizeRsaPublicKey,
   deriveRsaPublicKeyDer,
+  dynamicWorkerInventoryFromEnvironment,
   mergeBootstrapRecipients,
   parseDynamicWorkerInventoryRecipients,
 } from "../bootstrap_recipients.mjs";
@@ -62,8 +63,8 @@ test("bootstrap publisher derivation rejects non-RSA and undersized signing keys
   );
 });
 
-test("inventory parser retains all twenty preprovisioned public recipients", () => {
-  const inventory = Array.from({ length: 20 }, (_, index) => ({
+test("inventory parser retains all 500 preprovisioned public recipients", () => {
+  const inventory = Array.from({ length: 500 }, (_, index) => ({
     account_address: `0x${(index + 1).toString(16).padStart(40, "0")}`,
     private_key: `unused-private-key-${index}`,
     rsa_private_key: `unused-rsa-private-key-${index}`,
@@ -71,9 +72,47 @@ test("inventory parser retains all twenty preprovisioned public recipients", () 
   }));
   const recipients = parseDynamicWorkerInventoryRecipients(JSON.stringify(inventory));
 
-  assert.equal(recipients.length, 20);
+  assert.equal(recipients.length, 500);
   assert.equal(recipients[0].address, "0x0000000000000000000000000000000000000001");
-  assert.equal(recipients[19].address, "0x0000000000000000000000000000000000000014");
+  assert.equal(recipients[499].address, "0x00000000000000000000000000000000000001f4");
+});
+
+test("chunked inventory is reconstructed in numeric order", () => {
+  const first = [{ account_address: firstAddress, rsa_public_key: firstPublicPem }];
+  const second = [{ account_address: secondAddress, rsa_public_key: secondPublicPem }];
+  const raw = dynamicWorkerInventoryFromEnvironment({
+    DYNAMIC_WORKER_INVENTORY: "",
+    DYNAMIC_WORKER_INVENTORY_001: JSON.stringify(second),
+    DYNAMIC_WORKER_INVENTORY_000: JSON.stringify(first),
+  });
+
+  const recipients = parseDynamicWorkerInventoryRecipients(raw);
+  assert.deepEqual(
+    recipients.map((recipient) => recipient.address),
+    [firstAddress.toLowerCase(), secondAddress.toLowerCase()]
+  );
+});
+
+test("chunked inventory fails closed for ambiguous or incomplete input", () => {
+  assert.throws(
+    () => dynamicWorkerInventoryFromEnvironment({
+      DYNAMIC_WORKER_INVENTORY: "[]",
+      DYNAMIC_WORKER_INVENTORY_000: "[]",
+    }),
+    /either DYNAMIC_WORKER_INVENTORY/
+  );
+  assert.throws(
+    () => dynamicWorkerInventoryFromEnvironment({
+      DYNAMIC_WORKER_INVENTORY_001: "[]",
+    }),
+    /contiguous/
+  );
+  assert.throws(
+    () => dynamicWorkerInventoryFromEnvironment({
+      DYNAMIC_WORKER_INVENTORY_000: "{}",
+    }),
+    /JSON array/
+  );
 });
 
 test("recipient merge deduplicates the same address and key across sources", () => {

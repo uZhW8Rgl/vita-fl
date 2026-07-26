@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import {
   canonicalizeRsaPublicKey,
   deriveRsaPublicKeyDer,
+  dynamicWorkerInventoryFromEnvironment,
   mergeBootstrapRecipients,
   normalizeRecipientAddress,
   parseDynamicWorkerInventoryRecipients,
@@ -207,7 +208,7 @@ const authTag = cipher.getAuthTag();
 const wrappedKeys = {};
 const registryRecipients = await loadRecipientsFromRegistry();
 const inventoryRecipients = parseDynamicWorkerInventoryRecipients(
-  process.env.DYNAMIC_WORKER_INVENTORY
+  dynamicWorkerInventoryFromEnvironment(process.env)
 );
 const bootstrapRecipient = loadBootstrapRecipient();
 const fallbackRecipients = bootstrapRecipient ? [bootstrapRecipient] : [];

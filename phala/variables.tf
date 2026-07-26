@@ -192,7 +192,7 @@ variable "sello_scitt_url" {
 variable "agent_image" {
   description = "Digest-pinned LLM/MCP agent image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:8b7e53c2d95337351997bf381895342a3f7e38819493c25e63549f2d971f7114"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:2d29688287e53ee181151898560c6a80c0ab3ce0fe0ac887eda84083f7adabf2"
 
   validation {
     condition = (
@@ -282,31 +282,68 @@ variable "tee_inference_url_override" {
 variable "additional_workers" {
   description = "Additional DFL worker apps with independent account/key pairs."
   type = map(object({
-    app_name             = string
-    account_address      = string
-    private_key          = string
-    rsa_private_key_path = string
-    rsa_public_key_path  = string
+    app_name        = string
+    account_address = string
+    private_key     = string
+    rsa_private_key = string
+    rsa_public_key  = string
   }))
   sensitive = true
   default   = {}
 }
 
 variable "dynamic_worker_inventory" {
-  description = "Encrypted JSON inventory containing the existing fixed W0-W19 worker identities."
+  description = "Legacy single-entry JSON inventory for small fixed worker pools."
   type        = string
   sensitive   = true
   default     = ""
 }
 
+variable "dynamic_worker_inventory_chunks" {
+  description = "Encrypted, size-bounded environment chunks containing the fixed W0-W499 worker identities."
+  type        = map(string)
+  sensitive   = true
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for name, value in var.dynamic_worker_inventory_chunks :
+      can(regex("^DYNAMIC_WORKER_INVENTORY_[0-9]{3}$", name)) && length(value) <= 60000
+    ])
+    error_message = "Inventory chunk names must use DYNAMIC_WORKER_INVENTORY_NNN and each value must contain at most 60000 bytes."
+  }
+}
+
 variable "max_dynamic_workers" {
   description = "Maximum number of fixed worker identities exposed to the Phala control API."
   type        = number
-  default     = 20
+  default     = 500
 
   validation {
-    condition     = var.max_dynamic_workers >= 1 && var.max_dynamic_workers <= 20
-    error_message = "max_dynamic_workers must be between 1 and 20."
+    condition     = var.max_dynamic_workers >= 1 && var.max_dynamic_workers <= 500
+    error_message = "max_dynamic_workers must be between 1 and 500."
+  }
+}
+
+variable "initial_dynamic_worker_count" {
+  description = "Initially selected worker count in the Control API; the UI may select any count up to max_dynamic_workers."
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.initial_dynamic_worker_count >= 1 && var.initial_dynamic_worker_count <= 500
+    error_message = "initial_dynamic_worker_count must be between 1 and 500."
+  }
+}
+
+variable "anvil_account_count" {
+  description = "Number of deterministic development accounts funded by the embedded Anvil runtime."
+  type        = number
+  default     = 500
+
+  validation {
+    condition     = var.anvil_account_count >= 1 && var.anvil_account_count <= 500
+    error_message = "anvil_account_count must be between 1 and 500."
   }
 }
 
@@ -319,7 +356,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:2a47ed90a2ca19f96097cda10090738b57ea9d2201d4e7da12916fdac0a51bfe"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:6dd07b61359cd4762c54be3b102cf338b58bbdae421d73583e730d4dfb0efb2b"
 
   validation {
     condition = (
@@ -626,7 +663,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:320d40c4d5fa4cf944b851b926546609cb8c6a4683d3f8bd4ae74ca319d60cba"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d743a41cae4d51160139b1fec60eb425a3c846bf023e2094728c73acc1fcf867"
 }
 
 variable "tee_inference_image" {
@@ -792,22 +829,22 @@ variable "gm_update_poll_ms" {
   default     = "5000"
 }
 
-variable "rsa_private_key_path" {
-  description = "Local path to the worker RSA private key; encrypted by the Phala provider before deployment."
+variable "rsa_private_key" {
+  description = "Worker RSA private key supplied from the selected Phala environment file and encrypted by the provider."
   type        = string
-  default     = "../data/rsa_keys/private_key.pem"
+  sensitive   = true
 }
 
-variable "rsa_public_key_path" {
-  description = "Local path to the worker RSA public key; delivered with the encrypted app environment."
+variable "rsa_public_key" {
+  description = "Worker RSA public key supplied from the selected Phala environment file."
   type        = string
-  default     = "../data/rsa_keys/public_key.pem"
+  sensitive   = true
 }
 
-variable "initial_gm_signing_key_path" {
-  description = "Local path to the initial global-model signing key; encrypted before delivery to the contract-runtime TEE."
+variable "initial_gm_signing_key" {
+  description = "Initial global-model signing key supplied from the selected Phala environment file and encrypted before delivery."
   type        = string
-  default     = "../data/rsa_keys/private_key.pem"
+  sensitive   = true
 }
 
 variable "train_images_src" {

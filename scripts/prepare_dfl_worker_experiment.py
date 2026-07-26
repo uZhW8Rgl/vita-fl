@@ -252,7 +252,12 @@ def render_worker_services(worker_count: int) -> str:
 
 def update_compose(compose_path: Path, worker_count: int) -> None:
     text = compose_path.read_text(encoding="utf-8")
-    text = text.replace('      - "20"\n      - --hardfork', '      - ${ANVIL_ACCOUNT_COUNT:-20}\n      - --hardfork')
+    text = re.sub(
+        r'      - (?:"\d+"|\$\{ANVIL_ACCOUNT_COUNT:-\d+\})\n      - --hardfork',
+        '      - ${ANVIL_ACCOUNT_COUNT:-500}\n      - --hardfork',
+        text,
+        count=1,
+    )
     text = re.sub(r"\n\s+RSA_PRIVATE_KEY: \$\{W0_RSA_PRIVATE_KEY\}\n\s+RSA_PUBLIC_KEY: \$\{W0_RSA_PUBLIC_KEY\}", "", text)
 
     marker = "\n  VM-0:\n"
@@ -331,7 +336,12 @@ def main() -> int:
     parser.add_argument("--keys-dir", type=Path, default=Path("data/rsa_keys"))
     parser.add_argument("--compose", type=Path, default=Path("compose.yml"))
     parser.add_argument("--env", type=Path, default=Path(".env"))
-    parser.add_argument("--env-example", type=Path, default=Path(".env.example"))
+    parser.add_argument(
+        "--env-example",
+        type=Path,
+        default=None,
+        help="Optional additional env file to update; omitted by default so tracked templates stay single-source.",
+    )
     parser.add_argument("--skip-compose", action="store_true")
     parser.add_argument("--skip-env", action="store_true")
     parser.add_argument("--skip-keys", action="store_true")
@@ -359,8 +369,9 @@ def main() -> int:
         print(f"Updated {args.compose} with {args.workers} VM services")
 
     if not args.skip_env:
-        update_env_file(args.env_example, accounts, args.workers)
-        print(f"Updated {args.env_example} with {args.workers} worker accounts")
+        if args.env_example is not None:
+            update_env_file(args.env_example, accounts, args.workers)
+            print(f"Updated {args.env_example} with {args.workers} worker accounts")
         update_env_file(args.env, accounts, args.workers)
         print(f"Updated {args.env} with {args.workers} worker accounts")
 

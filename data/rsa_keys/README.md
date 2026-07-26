@@ -1,7 +1,7 @@
 # Local RSA keys
 
-This directory contains generated development keys and is intentionally ignored by Git.
-Create the key pairs required by the local Compose profile before starting it:
+This directory contains generated development keys for the local Compose
+profile and is intentionally ignored by Git. Create them before a local start:
 
 ```bash
 python3 scripts/prepare_dfl_worker_experiment.py \
@@ -10,9 +10,10 @@ python3 scripts/prepare_dfl_worker_experiment.py \
   --skip-env
 ```
 
-The local worker and contract containers receive these files through read-only bind mounts.
-Production/Phala images do not contain private keys; the Terraform provider encrypts the
-configured key material for the target TEE.
+Phala does not read this directory. Its complete W0--W499 Ethereum and RSA
+inventory is stored inline in `.env.phala.anvil` or
+`.env.phala.anvil.example`, whichever is selected for the deployment.
 
-Previously committed keys must be treated as compromised. Generating replacements with
-`--force-keys` is an explicit rotation and requires updating every dependent deployment.
+The local worker and contract containers receive generated files through
+read-only bind mounts. These are prototype credentials and must not be used for
+production identities, public-chain funds, or confidential data.

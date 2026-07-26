@@ -19,7 +19,7 @@ The current prototype combines:
 ## Repository Structure
 
 - [compose.yml](./compose.yml): Docker Compose entry point for local end-to-end runs.
-- [.env.example](./.env.example): Legacy all-in-one example runtime configuration.
+- [.env.example](./.env.example): Local runtime settings without worker identities.
 - [.env.shared.example](./.env.shared.example): Shared configuration across local Anvil and Sepolia profiles.
 - [.env.phala.anvil.example](./.env.phala.anvil.example): Chain-specific values for local Anvil runs.
 - [.env.sepolia.example](./.env.sepolia.example): Chain-specific values for Sepolia runs.
@@ -185,9 +185,10 @@ sequenceDiagram
 For a clean local demo, start from a fresh stack and use Docker Compose as the single entry point:
 
 ```bash
-cp .env.example .env
-docker compose down --volumes --remove-orphans
-KEEP_ALIVE=0 docker compose up --build --force-recreate
+docker compose --env-file .env.example --env-file .env.phala.anvil.example \
+  down --volumes --remove-orphans
+KEEP_ALIVE=0 docker compose --env-file .env.example \
+  --env-file .env.phala.anvil.example up --build --force-recreate
 ```
 
 If Docker reports `Conflict. The container name "/ipfs_local" is already in use`, a separate Kubo/IPFS container is already running on your machine with the same fixed name and host ports. Stop and remove that old container before starting this stack:
@@ -238,9 +239,10 @@ The most important generated outputs are:
 The Docker setup is the primary way to run the DFL prototype:
 
 ```bash
-cp .env.example .env
-docker compose down --volumes --remove-orphans
-KEEP_ALIVE=0 docker compose up --build --force-recreate
+docker compose --env-file .env.example --env-file .env.phala.anvil.example \
+  down --volumes --remove-orphans
+KEEP_ALIVE=0 docker compose --env-file .env.example \
+  --env-file .env.phala.anvil.example up --build --force-recreate
 ```
 
 This starts Anvil, Kubo/IPFS, observability services, deploys the smart contracts, registers workers through an explicitly local mock verifier with the same address/key/nonce binding as production, runs training, aggregates local models, stores the new global model and signature in IPFS, and updates the on-chain model metadata. The local mock is not a hardware attestation; Phala uses live TDX quotes only.
@@ -255,7 +257,14 @@ The local stack starts:
 - three DFL worker containers,
 - Grafana and Prometheus.
 
-The root `.env` file provides the local timing, account, contract, IPFS, and dataset configuration. Use `.env.example` as the tracked template and keep local edits in `.env`. `IPFS_PROVIDER` is a strict switch: `kubo` uses only the local Kubo API/gateway, while `pinata` uses only the configured Pinata gateway/JWT path. Generate the ignored development RSA keys under `data/rsa_keys` with `scripts/prepare_dfl_worker_experiment.py`; private keys are mounted read-only and are not copied into images.
+`.env.example` provides local timing, contract, IPFS, and dataset settings;
+`.env.phala.anvil.example` is the single tracked worker-identity source. Pass
+them to Compose in that order so the worker fields come from the latter file.
+`IPFS_PROVIDER` is a strict switch: `kubo` uses only the local Kubo
+API/gateway, while `pinata` uses only the configured Pinata gateway/JWT path.
+Generate the ignored development RSA files needed by the local bind mounts
+with `scripts/prepare_dfl_worker_experiment.py`; they are runtime material, not
+a Phala credential source, and are not copied into images.
 
 For dataset experiments, `DATASET_NAME=mnist` remains the default. `DATASET_NAME=chestmnist` switches the worker training path to ChestMNIST `.npz` shards under `data/chestmnist`.
 

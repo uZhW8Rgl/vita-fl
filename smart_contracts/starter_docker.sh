@@ -122,7 +122,7 @@ fund_configured_worker_accounts() {
         IFS=',' read -ra addresses <<< "$addresses_csv"
     fi
 
-    for index in $(seq 0 $((${WORKER_COUNT:-20} - 1))); do
+    for index in $(seq 0 $((${WORKER_COUNT:-500} - 1))); do
         local env_name="W${index}_ACCOUNT_ADDRESS"
         local env_value=${!env_name:-}
         if [ -n "$env_value" ]; then
