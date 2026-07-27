@@ -86,6 +86,8 @@ ${dynamic_worker_inventory_environment}
       INITIAL_GM_SIG_CID: "${initial_gm_sig_cid}"
       ETH_EUR_PRICE: "${eth_eur_price}"
       TRANSACTION_COST_CSV: "${transaction_cost_csv}"
+      CLIENT_LIMIT: "${client_limit}"
+      MODEL_SUBMISSION_DEADLINE_MS: "${model_submission_deadline_ms}"
       PCCS_FMSPC: "${pccs_fmspc}"
       PCCS_FETCH: "${pccs_fetch}"
       PCCS_TEE: "${pccs_tee}"
@@ -145,6 +147,9 @@ ${dynamic_worker_inventory_environment}
       PYTHONPATH: /app
       CONTROL_ADMIN_TOKEN: "$${CONTROL_ADMIN_TOKEN}"
       PHALA_CLOUD_API_KEY: "$${PHALA_CLOUD_API_KEY}"
+      ETH_WALLET_PRIVATE_KEY: "$${ETH_WALLET_PRIVATE_KEY}"
+      RPC_URL: http://anvil:8545
+      KUBO_API_URL: http://ipfs:5001
       DYNAMIC_WORKER_INVENTORY: "$${DYNAMIC_WORKER_INVENTORY}"
 ${dynamic_worker_inventory_environment}
       DYNAMIC_WORKER_IMAGE: "${worker_image}"

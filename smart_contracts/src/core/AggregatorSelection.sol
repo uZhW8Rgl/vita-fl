@@ -14,6 +14,7 @@ interface IGMStorage {
     function getWeightedRandomContributor(uint256 randomness) external view returns (address);
     function getWeightedRandomContributorExcluding(uint256 randomness, address excluded) external view returns (address);
     function device_registry_address() external view returns (address);
+    function aggregation_policy_address() external view returns (address);
     function penalizeContribution(
         uint256 expectedRound,
         address expectedAggregator,
@@ -22,6 +23,24 @@ interface IGMStorage {
     ) external;
     function abortRound(address failedAggregator) external;
     function roundCompleted(uint256 round) external view returns (bool);
+}
+
+interface IAggregationPolicy {
+    function getRoundPolicy(uint256 round)
+        external
+        view
+        returns (
+            bool opened,
+            bool closed,
+            uint64 openedAt,
+            uint64 deadline,
+            uint32 requiredSubmissions,
+            uint32 acceptedSubmissions,
+            uint64 roundConfigurationVersion,
+            bytes32 algorithmHash,
+            bytes32 policyHash,
+            bytes32 inputRoot
+        );
 }
 
 contract AggregatorSelection {
@@ -180,6 +199,23 @@ contract AggregatorSelection {
         require(lastSelectionRound == round, "aggregator not selected for current round");
         address reportedAggregator = expectedAggregator;
         require(!roundAborted[round], "round already aborted");
+        address aggregationPolicyAddress = gm_storage.aggregation_policy_address();
+        require(aggregationPolicyAddress != address(0), "aggregation policy not configured");
+        (
+            bool policyOpened,
+            bool policyClosed,
+            ,
+            uint64 submissionDeadline,
+            uint32 requiredSubmissions,
+            ,
+            ,
+            ,
+            ,
+        ) = IAggregationPolicy(aggregationPolicyAddress).getRoundPolicy(round);
+        require(
+            !policyOpened || policyClosed || requiredSubmissions == 0 || block.timestamp > submissionDeadline,
+            "submission window is still active"
+        );
 
         IDeviceRegistry deviceRegistry = IDeviceRegistry(gm_storage.device_registry_address());
         address reporter = deviceRegistry.resolveAuthorizedParticipant(msg.sender);

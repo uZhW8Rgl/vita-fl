@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
+import {AggregationPolicy} from "../src/core/AggregationPolicy.sol";
 import {GMStorage} from "../src/core/GMStorage.sol";
 
 contract ContributionDeviceRegistryStub {
@@ -73,6 +74,7 @@ contract ContributionAggregatorSelectionStub {
 
 contract GMStorageContributionTest is Test {
     GMStorage private gmStorage;
+    AggregationPolicy private aggregationPolicy;
     ContributionDeviceRegistryStub private registry;
     ContributionAggregatorSelectionStub private selection;
     address private aggregator;
@@ -109,6 +111,11 @@ contract GMStorageContributionTest is Test {
 
         gmStorage =
             new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
+        aggregationPolicy = new AggregationPolicy(address(gmStorage));
+        aggregationPolicy.configureDefaultPolicy(1, 3600);
+        gmStorage.setAggregationPolicyAddress(address(aggregationPolicy));
+        vm.prank(aggregatorAction);
+        gmStorage.openModelSubmissions(0);
     }
 
     function prepareSubmission(uint256 expectedRound, address target, bytes32 modelHash)
@@ -165,18 +172,47 @@ contract GMStorageContributionTest is Test {
     }
 
     function completeCurrentRound() private {
-        vm.startPrank(aggregatorAction);
-        gmStorage.closeModelSubmissions(gmStorage.getRound());
-        gmStorage.setGlobalModelAndSignatureAndKeyBundle("global-model", "global-signature", "global-key-bundle");
-        gmStorage.incrementRound();
-        vm.stopPrank();
+        finalizeCurrentRound("global-model", "global-signature", "global-key-bundle");
         selection.setSelectionRound(1);
+        vm.prank(aggregatorAction);
+        gmStorage.openModelSubmissions(1);
     }
 
     function closeCurrentRound() private {
         uint256 currentRound = gmStorage.getRound();
         vm.prank(aggregatorAction);
         gmStorage.closeModelSubmissions(currentRound);
+    }
+
+    function finalizeCurrentRound(string memory model, string memory signatureCid, string memory keyBundle) private {
+        uint256 currentRound = gmStorage.getRound();
+        if (!gmStorage.modelSubmissionsClosed(currentRound)) {
+            vm.prank(aggregatorAction);
+            gmStorage.closeModelSubmissions(currentRound);
+        }
+        (,,,,, uint32 inputCount,, bytes32 algorithmHash, bytes32 policyHash, bytes32 inputRoot) =
+            aggregationPolicy.getRoundPolicy(currentRound);
+        bytes32 outputModelHash = keccak256(bytes(model));
+        bytes32 outputBundleHash = keccak256(abi.encode(model, signatureCid, keyBundle, outputModelHash));
+        bytes32 publicationHash = keccak256(abi.encode(model, signatureCid, keyBundle));
+        bytes32 digest = aggregationPolicy.aggregationStatementDigest(
+            currentRound,
+            aggregator,
+            inputRoot,
+            inputCount,
+            algorithmHash,
+            policyHash,
+            outputModelHash,
+            outputBundleHash,
+            publicationHash,
+            aggregationPolicy.aggregationNonces(aggregator)
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKeys[aggregator], digest);
+
+        vm.prank(aggregatorAction);
+        gmStorage.finalizeRoundWithAggregation(
+            model, signatureCid, keyBundle, outputModelHash, outputBundleHash, abi.encodePacked(r, s, v)
+        );
     }
 
     function testAggregatorConfirmationAwardsWorkerExactlyOnePoint() public {
@@ -286,11 +322,11 @@ contract GMStorageContributionTest is Test {
     function testParentHashCommitsToModelSignatureAndKeyBundle() public {
         assertEq(gmStorage.currentParentModelHash(), keccak256(abi.encode("initial-model", "initial-signature", "")));
 
-        vm.startPrank(aggregatorAction);
-        gmStorage.closeModelSubmissions(0);
-        gmStorage.setGlobalModelAndSignatureAndKeyBundle("next-model", "next-signature", "next-key-bundle");
-        vm.stopPrank();
-        assertEq(gmStorage.currentParentModelHash(), keccak256(abi.encode("initial-model", "initial-signature", "")));
+        finalizeCurrentRound("next-model", "next-signature", "next-key-bundle");
+
+        assertEq(
+            gmStorage.currentParentModelHash(), keccak256(abi.encode("next-model", "next-signature", "next-key-bundle"))
+        );
     }
 
     function testDifferentHashForSameWorkerAndRoundReverts() public {
@@ -358,13 +394,11 @@ contract GMStorageContributionTest is Test {
         assertEq(gmStorage.getContribution(worker), 0);
     }
 
-    function testSubmissionAfterGlobalModelPublicationReverts() public {
-        vm.startPrank(aggregatorAction);
-        gmStorage.closeModelSubmissions(0);
-        gmStorage.setGlobalModelAndSignatureAndKeyBundle("global-model", "global-signature", "global-key-bundle");
-        vm.stopPrank();
+    function testSubmissionForFinalizedRoundReverts() public {
+        finalizeCurrentRound("global-model", "global-signature", "global-key-bundle");
+        selection.setSelectionRound(1);
 
-        expectRecordRevert(bytes("Model submissions are closed"), aggregatorAction, 0, worker, keccak256("late-model"));
+        expectRecordRevert(bytes("Submission round mismatch"), aggregatorAction, 0, worker, keccak256("late-model"));
 
         assertEq(gmStorage.modelSubmissionCount(0), 0);
         assertEq(gmStorage.getContribution(worker), 0);

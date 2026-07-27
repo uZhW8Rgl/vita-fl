@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
+import {AggregationPolicy} from "../src/core/AggregationPolicy.sol";
 import {GMStorage} from "../src/core/GMStorage.sol";
 import {ActionKeyTest} from "./helpers/ActionKeyTest.sol";
 
@@ -67,6 +68,7 @@ contract AggregatorSelectionStub {
 
 contract GMStorageAggregatorRewardTest is ActionKeyTest {
     GMStorage private gmStorage;
+    AggregationPolicy private aggregationPolicy;
     RewardDeviceRegistryStub private registry;
     AggregatorSelectionStub private selection;
     address private aggregator;
@@ -86,25 +88,103 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         selection.setAggregator(aggregator);
         gmStorage =
             new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
-    }
-
-    function publishCurrentRound(address publisher, string memory suffix) private {
-        vm.startPrank(publisher);
-        uint256 currentRound = gmStorage.getRound();
-        if (!gmStorage.modelSubmissionsClosed(currentRound)) {
-            gmStorage.closeModelSubmissions(currentRound);
-        }
-        gmStorage.setGlobalModelAndSignatureAndKeyBundle(
-            string.concat("model-", suffix), string.concat("signature-", suffix), string.concat("key-bundle-", suffix)
-        );
-        vm.stopPrank();
-    }
-
-    function testPublishedRoundRewardsPublishingAggregatorOnce() public {
-        publishCurrentRound(aggregator, "round-zero");
-
+        aggregationPolicy = new AggregationPolicy(address(gmStorage));
+        aggregationPolicy.configureDefaultPolicy(1, 3600);
+        gmStorage.setAggregationPolicyAddress(address(aggregationPolicy));
         vm.prank(aggregator);
-        gmStorage.incrementRound();
+        gmStorage.openModelSubmissions(0);
+    }
+
+    function _statementSignature(
+        address publisher,
+        uint256 sourceRound,
+        string memory model,
+        string memory signatureCid,
+        string memory keyBundle,
+        bytes32 outputModelHash,
+        bytes32 outputBundleHash
+    ) private view returns (bytes memory) {
+        (
+            ,
+            bool closed,
+            ,
+            ,
+            ,
+            uint32 accepted,
+            ,
+            bytes32 algorithmHash,
+            bytes32 policyHash,
+            bytes32 inputRoot
+        ) = aggregationPolicy.getRoundPolicy(sourceRound);
+        require(closed, "test round must be closed");
+        bytes32 publicationHash = keccak256(abi.encode(model, signatureCid, keyBundle));
+        uint256 nonce = aggregationPolicy.aggregationNonces(publisher);
+        bytes32 digest = aggregationPolicy.aggregationStatementDigest(
+            sourceRound,
+            publisher,
+            inputRoot,
+            accepted,
+            algorithmHash,
+            policyHash,
+            outputModelHash,
+            outputBundleHash,
+            publicationHash,
+            nonce
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(actionPrivateKeys[publisher], digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _finalizeCurrentRound(address publisher, string memory suffix) private {
+        uint256 sourceRound = gmStorage.getRound();
+        vm.startPrank(publisher);
+        if (!gmStorage.modelSubmissionsClosed(sourceRound)) {
+            gmStorage.closeModelSubmissions(sourceRound);
+        }
+        vm.stopPrank();
+
+        string memory model = string.concat("model-", suffix);
+        string memory signatureCid = string.concat("signature-", suffix);
+        string memory keyBundle = string.concat("key-bundle-", suffix);
+        bytes32 outputModelHash = keccak256(abi.encodePacked("plaintext:", suffix));
+        bytes32 outputBundleHash = keccak256(abi.encodePacked("bundle:", suffix));
+        bytes memory actionSignature = _statementSignature(
+            publisher,
+            sourceRound,
+            model,
+            signatureCid,
+            keyBundle,
+            outputModelHash,
+            outputBundleHash
+        );
+        vm.prank(publisher);
+        gmStorage.finalizeRoundWithAggregation(
+            model,
+            signatureCid,
+            keyBundle,
+            outputModelHash,
+            outputBundleHash,
+            actionSignature
+        );
+    }
+
+    function _openAndSubmitRoundOne(address publisher) private {
+        selection.setAggregator(publisher);
+        selection.setSelectionRound(1);
+        vm.prank(publisher);
+        gmStorage.openModelSubmissions(1);
+        _recordSignedModelSubmission(
+            gmStorage,
+            publisher,
+            publisher,
+            worker,
+            1,
+            keccak256("worker-round-one")
+        );
+    }
+
+    function testAtomicFinalizationPublishesAdvancesAndRewardsExactlyOnce() public {
+        _finalizeCurrentRound(aggregator, "round-zero");
 
         assertEq(gmStorage.getRound(), 1);
         assertEq(gmStorage.getContribution(aggregator), 1);
@@ -113,6 +193,13 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         assertEq(gmStorage.globalModelPublisher(0), aggregator);
         assertTrue(gmStorage.roundCompleted(0));
         assertEq(gmStorage.getCompletedRoundCount(), 1);
+
+        vm.expectRevert(bytes("Aggregator not selected for current round"));
+        vm.prank(aggregator);
+        gmStorage.finalizeRoundWithAggregation(
+            "other", "other-signature", "other-keys", keccak256("other"), keccak256("other-bundle"), hex"00"
+        );
+        assertEq(gmStorage.getContribution(aggregator), 1);
     }
 
     function testEncryptedBootstrapIsOneShotAndDoesNotFinalizeRound() public {
@@ -123,8 +210,6 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         assertEq(gmStorage.getGlobalModel(), "bootstrap-model");
         assertEq(gmStorage.getGlobalModelSignature(), "bootstrap-signature");
         assertEq(gmStorage.getGlobalModelKeyBundle(), "bootstrap-key-bundle");
-        assertEq(gmStorage.getBackupGlobalModel(), "bootstrap-model");
-        assertEq(gmStorage.activeModelPublisherPublicKey(), bytes("bootstrap-publisher-key"));
         assertEq(gmStorage.getCompletedRoundCount(), 0);
         assertFalse(gmStorage.globalModelPublished(0));
         assertEq(gmStorage.bootstrapAuthority(), address(0));
@@ -141,282 +226,159 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         gmStorage.initializeEncryptedBootstrap(
             "bootstrap-model", "bootstrap-signature", "bootstrap-key-bundle", bytes("bootstrap-publisher-key")
         );
-
-        assertEq(gmStorage.getGlobalModel(), "initial-model");
-        assertEq(gmStorage.getGlobalModelKeyBundle(), "");
     }
 
-    function testEncryptedBootstrapRejectsEmptyPublisherKeyAtomically() public {
-        vm.expectRevert(bytes("Bootstrap publisher public key is empty"));
-        gmStorage.initializeEncryptedBootstrap("bootstrap-model", "bootstrap-signature", "bootstrap-key-bundle", "");
-
-        assertEq(gmStorage.getGlobalModel(), "initial-model");
-        assertEq(gmStorage.getGlobalModelKeyBundle(), "");
-        assertEq(gmStorage.activeModelPublisherPublicKey(), "");
-        assertEq(gmStorage.bootstrapAuthority(), address(this));
-    }
-
-    function testActiveBundleUsesBootstrapSignerUntilSuccessfulFinalization() public {
+    function testAtomicFinalizationPromotesPublisherKeyAndFinalizedBundle() public {
         gmStorage.initializeEncryptedBootstrap(
             "bootstrap-model", "bootstrap-signature", "bootstrap-key-bundle", bytes("bootstrap-publisher-key")
         );
+        _finalizeCurrentRound(aggregator, "round-zero");
 
         (
-            string memory bootstrapModel,
-            string memory bootstrapSignature,
-            string memory bootstrapKeyBundle,
-            address bootstrapPublisher,
-            bytes memory bootstrapPublisherKey
-        ) = gmStorage.getActiveModelBundle();
-        assertEq(bootstrapModel, "bootstrap-model");
-        assertEq(bootstrapSignature, "bootstrap-signature");
-        assertEq(bootstrapKeyBundle, "bootstrap-key-bundle");
-        assertEq(bootstrapPublisher, aggregator);
-        assertEq(bootstrapPublisherKey, bytes("bootstrap-publisher-key"));
-
-        publishCurrentRound(aggregator, "round-zero");
-
-        (
-            string memory pendingModel,
-            string memory pendingSignature,
-            string memory pendingKeyBundle,
-            address pendingPublisher,
-            bytes memory pendingPublisherKey
-        ) = gmStorage.getActiveModelBundle();
-        assertEq(pendingModel, "bootstrap-model");
-        assertEq(pendingSignature, "bootstrap-signature");
-        assertEq(pendingKeyBundle, "bootstrap-key-bundle");
-        assertEq(pendingPublisher, aggregator);
-        assertEq(pendingPublisherKey, bytes("bootstrap-publisher-key"));
-
-        vm.prank(aggregator);
-        gmStorage.incrementRound();
-
-        (
-            string memory finalizedModel,
-            string memory finalizedSignature,
-            string memory finalizedKeyBundle,
-            address finalizedPublisher,
-            bytes memory finalizedPublisherKey
-        ) = gmStorage.getActiveModelBundle();
-        assertEq(finalizedModel, "model-round-zero");
-        assertEq(finalizedSignature, "signature-round-zero");
-        assertEq(finalizedKeyBundle, "key-bundle-round-zero");
-        assertEq(finalizedPublisher, aggregator);
-        assertEq(finalizedPublisherKey, bytes("publisher-public-key"));
+            string memory model,
+            string memory signatureCid,
+            string memory keyBundle,
+            address publisher,
+            uint256 modelRound,
+            bytes memory publisherKey
+        ) = gmStorage.getFinalizedModelBundle();
+        assertEq(model, "model-round-zero");
+        assertEq(signatureCid, "signature-round-zero");
+        assertEq(keyBundle, "key-bundle-round-zero");
+        assertEq(publisher, aggregator);
+        assertEq(modelRound, 1);
+        assertEq(publisherKey, bytes("publisher-public-key"));
         assertEq(gmStorage.activeModelPublisherPublicKey(), bytes("publisher-public-key"));
     }
 
-    function testFinalizationPromotesPublisherKeyCapturedAtomicallyWithPublication() public {
-        publishCurrentRound(aggregator, "round-zero");
-        assertEq(gmStorage.globalModelPublisherPublicKey(0), bytes("publisher-public-key"));
-
+    function testPublisherKeyIsSnapshottedInsideAtomicFinalization() public {
+        _finalizeCurrentRound(aggregator, "round-zero");
         registry.setPublicKey(aggregator, bytes("rotated-after-publication"));
-        vm.prank(aggregator);
-        gmStorage.incrementRound();
 
-        assertEq(gmStorage.activeModelPublisherPublicKey(), bytes("publisher-public-key"));
+        assertEq(gmStorage.globalModelPublisherPublicKey(0), bytes("publisher-public-key"));
         (,,,,, bytes memory finalizedPublisherKey) = gmStorage.getFinalizedModelBundle();
         assertEq(finalizedPublisherKey, bytes("publisher-public-key"));
     }
 
-    function testRoundZeroAbortRetainsBootstrapBundleAndPublisherKey() public {
+    function testRoundZeroAbortRetainsBootstrapBundleAndNextRoundCanFinalize() public {
         gmStorage.initializeEncryptedBootstrap(
             "bootstrap-model", "bootstrap-signature", "bootstrap-key-bundle", bytes("bootstrap-publisher-key")
         );
-
         vm.prank(address(selection));
         gmStorage.abortRound(aggregator);
 
-        (
-            string memory model,
-            string memory signature,
-            string memory keyBundle,
-            address publisher,
-            bytes memory publisherKey
-        ) = gmStorage.getActiveModelBundle();
-        assertEq(model, "bootstrap-model");
-        assertEq(signature, "bootstrap-signature");
-        assertEq(keyBundle, "bootstrap-key-bundle");
-        assertEq(publisher, aggregator);
-        assertEq(publisherKey, bytes("bootstrap-publisher-key"));
         assertEq(gmStorage.getRound(), 1);
         assertTrue(gmStorage.roundAborted(0));
+        assertEq(gmStorage.getGlobalModel(), "bootstrap-model");
+        assertEq(gmStorage.activeModelPublisherPublicKey(), bytes("bootstrap-publisher-key"));
 
         selection.setAggregator(replacementAggregator);
         selection.setSelectionRound(1);
-        _recordSignedModelSubmission(
-            gmStorage, replacementAggregator, replacementAggregator, worker, 1, keccak256("replacement-worker-model")
-        );
-        publishCurrentRound(replacementAggregator, "replacement-round");
         vm.prank(replacementAggregator);
-        gmStorage.incrementRound();
+        gmStorage.openModelSubmissions(1);
+        _recordSignedModelSubmission(
+            gmStorage,
+            replacementAggregator,
+            replacementAggregator,
+            worker,
+            1,
+            keccak256("replacement-worker-model")
+        );
+        _finalizeCurrentRound(replacementAggregator, "replacement-round");
 
-        (string memory replacementModel,,, address replacementPublisher, bytes memory replacementPublisherKey) =
-            gmStorage.getActiveModelBundle();
-        assertEq(replacementModel, "model-replacement-round");
-        assertEq(replacementPublisher, replacementAggregator);
-        assertEq(replacementPublisherKey, bytes("replacement-publisher-public-key"));
+        assertEq(gmStorage.getGlobalModel(), "model-replacement-round");
+        assertEq(gmStorage.getLastRoundsAggregator(), replacementAggregator);
         assertEq(gmStorage.activeModelPublisherPublicKey(), bytes("replacement-publisher-public-key"));
     }
 
-    function testFinalizedBundleViewRejectsPendingPublicationAndReturnsOnlyCompletedModel() public {
-        vm.expectRevert(bytes("No finalized model"));
-        gmStorage.getFinalizedModelBundle();
-
-        publishCurrentRound(aggregator, "round-zero");
-        vm.prank(aggregator);
-        gmStorage.incrementRound();
-
-        (
-            string memory model,
-            string memory signature,
-            string memory keyBundle,
-            address publisher,
-            uint256 modelRound,
-            bytes memory publisherPublicKey
-        ) = gmStorage.getFinalizedModelBundle();
-        assertEq(model, "model-round-zero");
-        assertEq(signature, "signature-round-zero");
-        assertEq(keyBundle, "key-bundle-round-zero");
-        assertEq(publisher, aggregator);
-        assertEq(modelRound, 1);
-        assertEq(publisherPublicKey, bytes("publisher-public-key"));
-
-        registry.setAuthorized(aggregator, false);
-        (,,,,, bytes memory retainedPublisherPublicKey) = gmStorage.getFinalizedModelBundle();
-        assertEq(retainedPublisherPublicKey, bytes("publisher-public-key"));
-        registry.setAuthorized(aggregator, true);
-
+    function testNonBootstrapRoundRequiresConfiguredMinimum() public {
+        _finalizeCurrentRound(aggregator, "round-zero");
         selection.setSelectionRound(1);
-        _recordSignedModelSubmission(gmStorage, aggregator, aggregator, worker, 1, keccak256("worker-round-one"));
-        publishCurrentRound(aggregator, "round-one");
+        vm.prank(aggregator);
+        gmStorage.openModelSubmissions(1);
 
-        vm.expectRevert(bytes("Current round publication is not finalized"));
-        gmStorage.getFinalizedModelBundle();
+        vm.expectRevert(bytes("required submissions not reached"));
+        vm.prank(aggregator);
+        gmStorage.closeModelSubmissions(1);
+        assertFalse(gmStorage.modelSubmissionsClosed(1));
     }
 
-    function testNextRoundRequiresSelectionBeforeAnotherCompletion() public {
-        publishCurrentRound(aggregator, "round-zero");
+    function testLegacyPublishAndIncrementSelectorsCannotBypassStatement() public {
+        vm.expectRevert(bytes("Aggregation statement and atomic finalization required"));
+        vm.prank(aggregator);
+        gmStorage.setGlobalModelAndSignatureAndKeyBundle("model", "signature", "keys");
+
+        vm.expectRevert(bytes("Round advancement requires atomic aggregation finalization"));
         vm.prank(aggregator);
         gmStorage.incrementRound();
+    }
+
+    function testAggregationPolicyPointerRejectsAccountsAndWrongLedgerBinding() public {
+        GMStorage otherStorage =
+            new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
+
+        vm.expectRevert(bytes("aggregation policy has no code"));
+        otherStorage.setAggregationPolicyAddress(makeAddr("not-a-contract"));
+
+        vm.expectRevert(bytes("aggregation policy is bound to another GMStorage"));
+        otherStorage.setAggregationPolicyAddress(address(aggregationPolicy));
+
+        assertEq(otherStorage.aggregation_policy_address(), address(0));
+    }
+
+    function testNextRoundRequiresFreshSelectionAndFreshPolicySnapshot() public {
+        _finalizeCurrentRound(aggregator, "round-zero");
 
         vm.expectRevert(bytes("Aggregator not selected for current round"));
         vm.prank(aggregator);
-        gmStorage.closeModelSubmissions(1);
+        gmStorage.openModelSubmissions(1);
 
-        selection.setSelectionRound(1);
-        _recordSignedModelSubmission(gmStorage, aggregator, aggregator, worker, 1, keccak256("worker-round-one"));
-        publishCurrentRound(aggregator, "round-one");
-        vm.prank(aggregator);
-        gmStorage.incrementRound();
-
+        _openAndSubmitRoundOne(aggregator);
+        _finalizeCurrentRound(aggregator, "round-one");
         assertEq(gmStorage.getRound(), 2);
         assertEq(gmStorage.getContribution(aggregator), 2);
     }
 
-    function testNonBootstrapPublicationRequiresConfirmedWorkerSubmission() public {
-        publishCurrentRound(aggregator, "round-zero");
+    function testWrongAggregationStatementCannotPublishOrReward() public {
         vm.prank(aggregator);
-        gmStorage.incrementRound();
-        selection.setSelectionRound(1);
+        gmStorage.closeModelSubmissions(0);
 
+        bytes32 wrongModelHash = keccak256("wrong-model");
+        bytes32 bundleHash = keccak256("bundle");
+        bytes memory signature = _statementSignature(
+            aggregator,
+            0,
+            "model",
+            "signature",
+            "keys",
+            keccak256("different-model"),
+            bundleHash
+        );
+        vm.expectRevert(bytes("invalid aggregation statement"));
         vm.prank(aggregator);
-        gmStorage.closeModelSubmissions(1);
-        vm.expectRevert(bytes("No confirmed worker submissions"));
-        vm.prank(aggregator);
-        gmStorage.setGlobalModelAndSignatureAndKeyBundle(
-            "model-round-one", "signature-round-one", "key-bundle-round-one"
+        gmStorage.finalizeRoundWithAggregation(
+            "model", "signature", "keys", wrongModelHash, bundleHash, signature
         );
 
-        assertFalse(gmStorage.globalModelPublished(1));
-    }
-
-    function testIncrementRoundWithoutPublicationReverts() public {
-        vm.expectRevert(bytes("Global model not published for round"));
-        vm.prank(aggregator);
-        gmStorage.incrementRound();
-
         assertEq(gmStorage.getRound(), 0);
         assertEq(gmStorage.getContribution(aggregator), 0);
+        assertFalse(gmStorage.globalModelPublished(0));
     }
 
-    function testCannotIncrementAgainWithoutNextRoundPublication() public {
-        publishCurrentRound(aggregator, "round-zero");
-
+    function testDeauthorizedAggregatorCannotFinalize() public {
         vm.prank(aggregator);
-        gmStorage.incrementRound();
-
-        vm.expectRevert(bytes("Aggregator not selected for current round"));
-        vm.prank(aggregator);
-        gmStorage.incrementRound();
-
-        assertEq(gmStorage.getRound(), 1);
-        assertEq(gmStorage.getContribution(aggregator), 1);
-    }
-
-    function testRepublishingBeforeCompletionUpdatesReferencesWithoutReward() public {
-        publishCurrentRound(aggregator, "first");
-        publishCurrentRound(aggregator, "second");
-
-        assertEq(gmStorage.getGlobalModel(), "model-second");
-        assertEq(gmStorage.getBackupGlobalModel(), "initial-model");
-        assertEq(gmStorage.getBackupGlobalModelSignature(), "initial-signature");
-        assertEq(gmStorage.globalModelPublisher(0), aggregator);
-        assertEq(gmStorage.getContribution(aggregator), 0);
-
-        vm.prank(aggregator);
-        gmStorage.incrementRound();
-
-        assertEq(gmStorage.getContribution(aggregator), 1);
-
-        vm.expectRevert(bytes("Aggregator not selected for current round"));
-        vm.prank(aggregator);
-        gmStorage.incrementRound();
-
-        assertEq(gmStorage.getRound(), 1);
-        assertEq(gmStorage.getContribution(aggregator), 1);
-    }
-
-    function testOnlyPublishingCurrentAggregatorCanCompleteRound() public {
-        publishCurrentRound(aggregator, "round-zero");
-        selection.setAggregator(replacementAggregator);
-
-        vm.expectRevert(bytes("Caller is not the current aggregator"));
-        vm.prank(aggregator);
-        gmStorage.incrementRound();
-
-        vm.expectRevert(bytes("Caller did not publish current round model"));
-        vm.prank(replacementAggregator);
-        gmStorage.incrementRound();
-
-        assertEq(gmStorage.getRound(), 0);
-        assertEq(gmStorage.getContribution(aggregator), 0);
-        assertEq(gmStorage.getContribution(replacementAggregator), 0);
-    }
-
-    function testDeauthorizedAggregatorCannotFinalizePublishedRound() public {
-        publishCurrentRound(aggregator, "round-zero");
+        gmStorage.closeModelSubmissions(0);
+        bytes32 modelHash = keccak256("model");
+        bytes32 bundleHash = keccak256("bundle");
+        bytes memory signature =
+            _statementSignature(aggregator, 0, "model", "signature", "keys", modelHash, bundleHash);
         registry.setAuthorized(aggregator, false);
 
         vm.expectRevert(bytes("participant is not authorized"));
         vm.prank(aggregator);
-        gmStorage.incrementRound();
-
+        gmStorage.finalizeRoundWithAggregation(
+            "model", "signature", "keys", modelHash, bundleHash, signature
+        );
         assertEq(gmStorage.getRound(), 0);
-        assertFalse(gmStorage.roundCompleted(0));
-        assertEq(gmStorage.getContribution(aggregator), 0);
-    }
-
-    function testNonAggregatorCannotReceiveRoundReward() public {
-        address worker = makeAddr("worker");
-        publishCurrentRound(aggregator, "round-zero");
-
-        vm.expectRevert(bytes("Caller is not the current aggregator"));
-        vm.prank(worker);
-        gmStorage.incrementRound();
-
-        assertEq(gmStorage.getRound(), 0);
-        assertEq(gmStorage.getContribution(worker), 0);
     }
 }

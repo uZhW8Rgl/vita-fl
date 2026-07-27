@@ -19,7 +19,7 @@
         <mxCell id="trainingCheck" value="TRAINING&#xa;am I aggregator?&#xa;state[1] == ACCOUNT_ADDRESS" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="350" y="330" width="150" height="110" as="geometry" />
         </mxCell>
-        <mxCell id="trainingAgg" value="Aggregator path&#xa;- spawn `start.exe server CLIENT_LIMIT`&#xa;- keep process in `aggregatorProc`&#xa;- setCurrentState(&quot;AGGREGATING&quot;)&#xa;- continue loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+        <mxCell id="trainingAgg" value="Aggregator path&#xa;- open snapshotted on-chain round policy&#xa;- start authenticated HTTPS receiver&#xa;- wait for required committed inputs&#xa;- close immutable input set&#xa;- setCurrentState(&quot;AGGREGATING&quot;)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
           <mxGeometry x="560" y="260" width="240" height="120" as="geometry" />
         </mxCell>
         <mxCell id="trainingWorker" value="Worker path&#xa;- fetch global model from IPFS&#xa;- store previous GM CID&#xa;- get last aggregator pubkey&#xa;- verify GM signature" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
@@ -43,19 +43,19 @@
         <mxCell id="sendModel" value="Send local model&#xa;- worker sends signed package&#xa;- aggregator verifies identity, signature, and actual bytes&#xa;- aggregator records SHA-256(bytes) and increments that worker's score atomically&#xa;- on error: return" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
           <mxGeometry x="1450" y="610" width="240" height="110" as="geometry" />
         </mxCell>
-        <mxCell id="waitGm" value="Wait for next global model&#xa;- waitForGMUpdate(prevGM, 30s)&#xa;- timeout only warns&#xa;- sleep(2s)&#xa;- continue loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+        <mxCell id="waitGm" value="Wait for next global model&#xa;- poll finalized on-chain bundle&#xa;- respect active policy deadline&#xa;- quorum-protected timeout report&#xa;- sleep(2s)&#xa;- continue loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
           <mxGeometry x="1740" y="620" width="220" height="110" as="geometry" />
         </mxCell>
         <mxCell id="aggCheck" value="AGGREGATING&#xa;am I aggregator?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="340" y="520" width="150" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="aggFlow" value="Aggregation flow&#xa;- waitForModels(CLIENT_LIMIT)&#xa;- stop aggregator server&#xa;- stageAggregation()&#xa;- if count == 0: sleep + continue&#xa;- Python aggregates received `.bin` files&#xa;- setCurrentState(&quot;UPDATING&quot;)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+        <mxCell id="aggFlow" value="Aggregation flow&#xa;- read and close on-chain round policy&#xa;- stop aggregator server&#xa;- stage complete committed input set&#xa;- require exact input count&#xa;- Python computes configured average&#xa;- setCurrentState(&quot;UPDATING&quot;)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
           <mxGeometry x="560" y="560" width="260" height="140" as="geometry" />
         </mxCell>
         <mxCell id="updatingCheck" value="UPDATING&#xa;am I aggregator?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="340" y="740" width="150" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="updateFlow" value="Update flow&#xa;- updateGM() publishes model, signature, and key bundle&#xa;- stageCleaning()&#xa;- incrementRound() finalizes publication and rewards aggregator once&#xa;- triggerAggregatorSelection() after completed round&#xa;- continue loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+        <mxCell id="updateFlow" value="Update flow&#xa;- hash model, encrypted bundle and CID tuple&#xa;- sign policy-bound aggregation statement&#xa;- atomically publish, reward and advance round&#xa;- stageCleaning()&#xa;- triggerAggregatorSelection() after completed round&#xa;- continue loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
           <mxGeometry x="560" y="740" width="250" height="130" as="geometry" />
         </mxCell>
         <mxCell id="defaultState" value="Default / unknown state&#xa;- log unknown state&#xa;- currentState = IDLE&#xa;- sleep(2s)&#xa;- continue loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">

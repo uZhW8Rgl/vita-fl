@@ -64,7 +64,7 @@
         <mxCell id="aTraining" value="TRAINING + I am aggregator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneAggregator" vertex="1">
           <mxGeometry x="644" y="70" width="170" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="aStartServer" value="Start ZeroMQ server&#xa;`start.exe server CLIENT_LIMIT`" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneAggregator" vertex="1">
+        <mxCell id="aStartServer" value="Open on-chain round policy&#xa;and authenticated HTTPS receiver" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneAggregator" vertex="1">
           <mxGeometry x="950" y="65" width="190" height="60" as="geometry" />
         </mxCell>
         <mxCell id="aAggState" value="AGGREGATING?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;" parent="laneAggregator" vertex="1">
@@ -282,7 +282,7 @@
         <mxCell id="m15" value="waitForGMUpdate()" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=8 8;strokeWidth=1.5;endArrow=open;endFill=0;" parent="1" source="wWait" target="bNewGm" edge="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="m16" value="incrementRound()" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=8 8;strokeWidth=1.5;endArrow=open;endFill=0;" parent="1" source="aCleanup" target="bRound" edge="1">
+        <mxCell id="m16" value="atomic finalizeRoundWithAggregation()" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=8 8;strokeWidth=1.5;endArrow=open;endFill=0;" parent="1" source="aCleanup" target="bRound" edge="1">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="m17" value="set TRAINING" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;dashPattern=8 8;strokeWidth=1.5;endArrow=open;endFill=0;" parent="1" source="bRound" target="bTraining" edge="1">

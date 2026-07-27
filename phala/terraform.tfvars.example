@@ -19,6 +19,10 @@
 # max_dynamic_workers = 500
 # initial_dynamic_worker_count = 3
 # anvil_account_count = 500
+# Owner-controlled AggregationPolicy defaults applied by the Control API before
+# worker scaling. These are deliberately absent from Worker Compose.
+# client_limit = "2"
+# model_submission_deadline_ms = "20000"
 # worker_image     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:0ee1c63c221ceb052ad7a0f132cb09a7978ea7f2d1b2f84b9ca332df6c8df937"
 # smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:10430d2b20f5e8a5f0b04b94c6e158944739ea1de90d18f83e1546e9d782ef48"
 # control_api_image = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:05e48039b75445af19622e46e377370a59075ce2cd0bb28e47a885e505301504"

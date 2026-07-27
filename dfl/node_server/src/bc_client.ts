@@ -8,7 +8,11 @@ import {
     signRawDigest,
     type ParticipantActionSigner,
 } from "./action_key.js";
-import { deriveModelSubmissionDigest } from "./protocol_digest.js";
+import {
+    deriveAggregationStatementDigest,
+    deriveModelSubmissionDigest,
+    derivePublicationHash,
+} from "./protocol_digest.js";
 // setup client´
 //const web3 = new Web3("https://eth-sepolia.g.alchemy.com/v2/pFowzUSGYob62Q7i2YVsF0LFUX3WiCT2");
 const web3 = new Web3(process.env.RPC_URL);
@@ -19,6 +23,7 @@ const device_registry_address = process.env.REGISTRY_ADDRESS;
 const medical_signer_registry_address = process.env.MEDICAL_SIGNER_REGISTRY_ADDRESS;
 const bootstrapPrivateKey = process.env.PRIVATE_KEY;
 let participantActionSigner: ParticipantActionSigner | undefined;
+let protocolTransactionQueue: Promise<void> = Promise.resolve();
 
 export const configureParticipantActionSigner = (signer: ParticipantActionSigner) => {
     if (!signer || !/^0x[0-9a-fA-F]{40}$/.test(String(signer.address || ""))) {
@@ -59,6 +64,9 @@ const serializeError = (error) => ({
         }
         : undefined,
 });
+
+const sameAddress = (left, right) =>
+    String(left || "").toLowerCase() === String(right || "").toLowerCase();
 
 const logJson = (label, payload) => {
     console.log(label, JSON.stringify(payload, jsonReplacer));
@@ -160,21 +168,27 @@ const sendProtocolMethod = async (
         errorLabel = "Error sending participant action transaction",
     } = {},
 ) => {
-    const signer = protocolSigner();
-    const gasPrice = await web3.eth.getGasPrice();
-    const gasEstimate = await method.estimateGas({ from: signer.address });
-    const nonce = await web3.eth.getTransactionCount(signer.address, "pending");
-    const gas = gasBuffer ? withGasBuffer(gasEstimate).toString() : gasEstimate;
-    const tx = {
-        from: signer.address,
-        to,
-        gas,
-        gasPrice,
-        nonce,
-        chainId: expectedChainId().toString(),
-        data: method.encodeABI(),
-    };
+    const previousTransaction = protocolTransactionQueue;
+    let releaseTransaction: () => void = () => {};
+    protocolTransactionQueue = new Promise<void>((resolve) => {
+        releaseTransaction = resolve;
+    });
+    await previousTransaction;
     try {
+        const signer = protocolSigner();
+        const gasPrice = await web3.eth.getGasPrice();
+        const gasEstimate = await method.estimateGas({ from: signer.address });
+        const nonce = await web3.eth.getTransactionCount(signer.address, "pending");
+        const gas = gasBuffer ? withGasBuffer(gasEstimate).toString() : gasEstimate;
+        const tx = {
+            from: signer.address,
+            to,
+            gas,
+            gasPrice,
+            nonce,
+            chainId: expectedChainId().toString(),
+            data: method.encodeABI(),
+        };
         const rawTransaction = await signer.signTransaction(tx);
         const receipt = await web3.eth.sendSignedTransaction(rawTransaction);
         logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
@@ -183,6 +197,8 @@ const sendProtocolMethod = async (
     } catch (error) {
         console.error(`${errorLabel}:`, error);
         throw error;
+    } finally {
+        releaseTransaction();
     }
 };
 
@@ -248,6 +264,22 @@ const getGMStorageContract = () => {
     const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
     const address = gm_storage_address;
     return new web3.eth.Contract(abi, address);
+};
+
+const getAggregationPolicyContract = async () => {
+    const address = String(
+        await getGMStorageContract().methods.aggregation_policy_address().call(),
+    );
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address) || /^0x0{40}$/i.test(address)) {
+        throw new Error(`GMStorage returned an invalid aggregation-policy address: ${address}`);
+    }
+    const abi = JSON.parse(
+        fs.readFileSync("./abi/aggregation_policy.json", "utf-8"),
+    );
+    return {
+        address,
+        contract: new web3.eth.Contract(abi, address),
+    };
 };
 
 export const getBlockchainChainId = async () => Number(await web3.eth.getChainId());
@@ -349,62 +381,178 @@ export const getPreviousAggregatorFromGMStorage = async () => {
 };
 
 
-// function to set global model
-export const setGlobalModel = async (newIpfsAddress) => {
-    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
-    const address = gm_storage_address;
-    const contract = new web3.eth.Contract(abi, address);
-    return sendProtocolMethod(
-        contract.methods.setGlobalModel(newIpfsAddress),
-        address,
-    );
-};
-
-export const setGlobalModelSignature = async (newSigIpfsAddress) => {
-    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
-    const address = gm_storage_address;
-    const contract = new web3.eth.Contract(abi, address);
-    return sendProtocolMethod(
-        contract.methods.setGlobalModelSignature(newSigIpfsAddress),
-        address,
-    );
-};
-
-export const setGlobalModelAndSignature = async (newModelIpfsAddress, newSigIpfsAddress) => {
-    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
-    const address = gm_storage_address;
-    const contract = new web3.eth.Contract(abi, address);
-    return sendProtocolMethod(
-        contract.methods.setGlobalModelAndSignature(newModelIpfsAddress, newSigIpfsAddress),
-        address,
-    );
-};
-
-export const setGlobalModelAndSignatureAndKeyBundle = async (
-    newModelIpfsAddress,
-    newSigIpfsAddress,
-    newKeyBundleIpfsAddress,
-) => {
-    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
-    const address = gm_storage_address;
-    const contract = new web3.eth.Contract(abi, address);
-    return sendProtocolMethod(
-        contract.methods.setGlobalModelAndSignatureAndKeyBundle(
-            newModelIpfsAddress,
-            newSigIpfsAddress,
-            newKeyBundleIpfsAddress,
+export const getRoundAggregationPolicy = async (expectedRound) => {
+    const { address, contract } = await getAggregationPolicyContract();
+    const [result, latestBlock] = await Promise.all([
+        contract.methods.getRoundPolicy(expectedRound).call(),
+        web3.eth.getBlock("latest"),
+    ]);
+    return {
+        contractAddress: address,
+        opened: Boolean(result.opened ?? result[0]),
+        closed: Boolean(result.closed ?? result[1]),
+        openedAt: Number(result.openedAt ?? result[2]),
+        deadline: Number(result.deadline ?? result[3]),
+        requiredSubmissions: Number(result.requiredSubmissions ?? result[4]),
+        acceptedSubmissions: Number(result.acceptedSubmissions ?? result[5]),
+        configurationVersion: Number(
+            result.roundConfigurationVersion ?? result[6],
         ),
-        address,
-        { gasBuffer: true },
-    );
+        algorithmHash: String(result.algorithmHash ?? result[7]),
+        policyHash: String(result.policyHash ?? result[8]),
+        inputRoot: String(result.inputRoot ?? result[9]),
+        chainTimestamp: Number(latestBlock.timestamp),
+    };
 };
 
-export const setLastRoundAggregator = async () => {
-    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
-    const address = gm_storage_address;
-    const contract = new web3.eth.Contract(abi, address);
-    return sendProtocolMethod(contract.methods.setLastRoundAggregator(), address);
+export const openModelSubmissions = async (expectedRound) => {
+    const current = await getRoundAggregationPolicy(expectedRound);
+    if (current.opened) {
+        return current;
+    }
+    const contract = getGMStorageContract();
+    await sendProtocolMethod(
+        contract.methods.openModelSubmissions(expectedRound),
+        gm_storage_address,
+        {
+            gasBuffer: true,
+            errorLabel: "Error opening the model-submission policy",
+        },
+    );
+    const opened = await getRoundAggregationPolicy(expectedRound);
+    if (!opened.opened || opened.closed) {
+        throw new Error(
+            `Aggregation policy for round ${expectedRound} was not opened.`,
+        );
+    }
+    return opened;
 };
+
+export const isGlobalModelPublished = async (sourceRound) => {
+    const published = await getGMStorageContract().methods
+        .globalModelPublished(sourceRound)
+        .call();
+    return Boolean(published);
+};
+
+export const createAggregationStatement = async ({
+    sourceRound,
+    modelCid,
+    signatureCid,
+    keyBundleCid,
+    outputModelHash,
+    outputBundleHash,
+}) => {
+    const policy = await getRoundAggregationPolicy(sourceRound);
+    if (!policy.opened || !policy.closed) {
+        throw new Error(
+            `Cannot sign aggregation statement for round ${sourceRound}: inputs are not closed.`,
+        );
+    }
+    if (policy.acceptedSubmissions < policy.requiredSubmissions) {
+        throw new Error(
+            `Aggregation policy for round ${sourceRound} requires ` +
+            `${policy.requiredSubmissions} submissions but records ${policy.acceptedSubmissions}.`,
+        );
+    }
+
+    const state = await getCurrentState();
+    const aggregator = String(state[1]);
+    if (!sameAddress(aggregator, process.env.ACCOUNT_ADDRESS)) {
+        throw new Error(
+            `Current aggregator ${aggregator} does not match logical participant ` +
+            `${process.env.ACCOUNT_ADDRESS}.`,
+        );
+    }
+    const signer = protocolSigner();
+    const registeredActionKey = await getDeviceActionKey(aggregator);
+    if (!sameAddress(registeredActionKey, signer.address)) {
+        throw new Error(
+            `Registered action key ${registeredActionKey} does not match live TEE action key ${signer.address}.`,
+        );
+    }
+
+    const { contract } = await getAggregationPolicyContract();
+    const nonce = String(
+        await contract.methods.aggregationNonces(aggregator).call(),
+    );
+    const publicationHash = derivePublicationHash({
+        modelCid,
+        signatureCid,
+        keyBundleCid,
+    });
+    const localDigest = deriveAggregationStatementDigest({
+        chainId: expectedChainId(),
+        verifyingContract: gm_storage_address,
+        round: sourceRound,
+        aggregator,
+        inputRoot: policy.inputRoot,
+        inputCount: policy.acceptedSubmissions,
+        algorithmHash: policy.algorithmHash,
+        policyHash: policy.policyHash,
+        outputModelHash,
+        outputBundleHash,
+        publicationHash,
+        nonce,
+    });
+    const contractDigest = await contract.methods.aggregationStatementDigest(
+        sourceRound,
+        aggregator,
+        policy.inputRoot,
+        policy.acceptedSubmissions,
+        policy.algorithmHash,
+        policy.policyHash,
+        outputModelHash,
+        outputBundleHash,
+        publicationHash,
+        nonce,
+    ).call();
+    if (String(contractDigest).toLowerCase() !== localDigest.toLowerCase()) {
+        throw new Error(
+            `Local aggregation digest ${localDigest} does not match AggregationPolicy ${contractDigest}.`,
+        );
+    }
+    return {
+        sourceRound: Number(sourceRound),
+        aggregator,
+        policy,
+        publicationHash,
+        outputModelHash,
+        outputBundleHash,
+        nonce,
+        statementDigest: localDigest,
+        statementSignature: await signer.signDigest(localDigest),
+    };
+};
+
+export const finalizeRoundWithAggregation = async ({
+    modelCid,
+    signatureCid,
+    keyBundleCid,
+    outputModelHash,
+    outputBundleHash,
+    statementSignature,
+}) => {
+    const contract = getGMStorageContract();
+    const receipt = await sendProtocolMethod(
+        contract.methods.finalizeRoundWithAggregation(
+            modelCid,
+            signatureCid,
+            keyBundleCid,
+            outputModelHash,
+            outputBundleHash,
+            statementSignature,
+        ),
+        gm_storage_address,
+        {
+            gasBuffer: true,
+            errorLabel: "Error atomically finalizing the aggregation round",
+        },
+    );
+    await logWorkerScore(process.env.ACCOUNT_ADDRESS, "aggregation");
+    return receipt;
+};
+
 const logWorkerScore = async (deviceAddress, reason = "update") => {
     try {
         const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
@@ -419,27 +567,6 @@ const logWorkerScore = async (deviceAddress, reason = "update") => {
     } catch (error) {
         console.error("Error reading worker score:", serializeError(error));
     }
-};
-
-export const penalizeContribution = async (deviceIDs, reason) => {
-    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
-    const address = gm_storage_address;
-    const contract = new web3.eth.Contract(abi, address);
-    const selectionAbi = JSON.parse(fs.readFileSync("./abi/AggregatorSelection.json", "utf-8"));
-    const selectionContract = new web3.eth.Contract(selectionAbi, aggregator_address);
-    const expectedRound = await getRound();
-    const expectedAggregator = await selectionContract.methods.getCurrentAggregator().call();
-    const method = contract.methods.penalizeContribution(
-        expectedRound,
-        expectedAggregator,
-        deviceIDs,
-        reason,
-    );
-    const receipt = await sendProtocolMethod(method, address, { gasBuffer: true });
-    for (const deviceID of deviceIDs || []) {
-        await logWorkerScore(deviceID, reason || "penalty");
-    }
-    return receipt;
 };
 
 export const createModelSubmissionCommitment = async (
@@ -571,16 +698,6 @@ export const getCompletedRoundCount = async () => {
 export const getLastSelectionRound = async () => {
     const contract = getAggregatorSelectionContract();
     return Number(await contract.methods.lastSelectionRound().call());
-};
-export const incrementRound = async () => {
-    const abi = JSON.parse(fs.readFileSync("./abi/gm.json", "utf-8"));
-    const address = gm_storage_address;
-    const contract = new web3.eth.Contract(abi, address);
-    const receipt = await sendProtocolMethod(contract.methods.incrementRound(), address, {
-        gasBuffer: true,
-    });
-    await logWorkerScore(process.env.ACCOUNT_ADDRESS, "aggregation");
-    return receipt;
 };
 // get current state from aggregator
 export const getCurrentState = async () => {

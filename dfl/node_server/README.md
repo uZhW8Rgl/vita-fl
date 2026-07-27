@@ -21,9 +21,10 @@ Each worker process determines whether it is the current aggregator from the sma
 
 - non-aggregator workers fetch the global model, verify its signature, train locally, and send their encrypted local model to the aggregator;
 - the aggregator starts the authenticated HTTPS model receiver, verifies every
-  worker commitment, runs federated averaging through the Python service, signs
-  the new global model, uploads the encrypted model bundle to IPFS, and updates
-  `GMStorage`.
+  worker commitment, opens and closes the snapshotted on-chain aggregation
+  policy, runs federated averaging over exactly that closed input set, signs the
+  new global model, uploads the encrypted model bundle to IPFS, and atomically
+  finalizes the policy-bound publication in `GMStorage`.
 
 ## Participant Identity and TEE Action Authority
 
@@ -69,9 +70,16 @@ derived; the signer refuses value transfers.
 
 The action key also gates the selected aggregator's state transitions, endpoint
 updates, penalties, global-model publication, round finalization and next
-selection. It proves that those calls were authorized by the currently
-registered worker process; it does not prove that the aggregate was computed
-correctly from every accepted input.
+selection. For publication, the measured process signs an EIP-712 aggregation
+statement over the immutable on-chain input root and count, round-policy and
+algorithm hashes, plaintext model hash, encrypted output-bundle hash, CID tuple
+hash, and nonce. `GMStorage` accepts that statement only for the currently
+registered action key and combines publication, reward, and round advancement
+in one transaction. The fixed worker path independently checks that every
+staged file has an accepted on-chain commitment and refuses any count mismatch.
+This provides attestation-based execution integrity under the TDX/dstack and
+key-custody assumptions; it is not an independent mathematical aggregation
+proof or a statistically Byzantine-robust learning rule.
 
 Official worker Terraform resources disable SSH and user-provided pre-launch
 code. Phala's SSH preference is supplied separately from the measured
@@ -118,6 +126,10 @@ npm run start
 - `KUBO_API`
 - `KUBO_GATEWAY`
 - `PYTHON_SERVICE_URL`
+
+The worker does not trust a local `CLIENT_LIMIT` or submission deadline.
+`AggregationPolicy`, reached through the compose-bound `GMStorage`, supplies
+the immutable per-round threshold and absolute deadline.
 - `LOCAL_TDX_MOCK` (local Anvil only; never enable on Phala)
 - the Registry-provisioned worker-image digest and role-policy hash (Phala;
   derived from canonical `app_compose` and enforced on-chain)

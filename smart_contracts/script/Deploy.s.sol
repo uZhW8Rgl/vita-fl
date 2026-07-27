@@ -22,6 +22,7 @@ import {DeviceRegistry} from "../src/core/DeviceRegistry.sol";
 import {AggregatorSelection} from "../src/core/AggregatorSelection.sol";
 import {GMStorage} from "../src/core/GMStorage.sol";
 import {MedicalSignerRegistry} from "../src/core/MedicalSignerRegistry.sol";
+import {AggregationPolicy} from "../src/core/AggregationPolicy.sol";
 
 
 
@@ -73,6 +74,20 @@ contract DeviceRegistryDeploy is Script {
         MedicalSignerRegistry medicalSignerRegistry = new MedicalSignerRegistry();
         console2.log("Deployed MedicalSignerRegistry to", address(medicalSignerRegistry));
         _configureMedicalSigners(medicalSignerRegistry);
+
+        AggregationPolicy aggregationPolicy = new AggregationPolicy(address(gmStorage));
+        console2.log("Deployed AggregationPolicy to", address(aggregationPolicy));
+        gmStorage.setAggregationPolicyAddress(address(aggregationPolicy));
+
+        uint256 requiredSubmissions = vm.envOr("CLIENT_LIMIT", uint256(2));
+        uint256 submissionDeadlineMs = vm.envOr("MODEL_SUBMISSION_DEADLINE_MS", uint256(20_000));
+        uint256 submissionWindowSeconds = (submissionDeadlineMs + 999) / 1000;
+        require(requiredSubmissions <= type(uint32).max, "CLIENT_LIMIT exceeds uint32");
+        require(submissionWindowSeconds <= type(uint64).max, "submission window exceeds uint64");
+        aggregationPolicy.configureDefaultPolicy(
+            uint32(requiredSubmissions),
+            uint64(submissionWindowSeconds)
+        );
 
         vm.stopBroadcast();
     }

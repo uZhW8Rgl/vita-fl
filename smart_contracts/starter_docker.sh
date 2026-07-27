@@ -259,11 +259,12 @@ publish_runtime_contract_manifest() {
     require_address AGGREGATOR_SELECTION_ADDRESS "$AGGREGATOR_SELECTION_ADDRESS"
     require_address GMSTORAGE "$GMSTORAGE"
     require_address MEDICAL_SIGNER_REGISTRY_ADDRESS "$MEDICAL_SIGNER_REGISTRY_ADDRESS"
+    require_address AGGREGATION_POLICY_ADDRESS "$AGGREGATION_POLICY_ADDRESS"
 
     local manifest_file
     manifest_file=$(mktemp)
     cat >"$manifest_file" <<EOF
-{"registry_address":"$DEVICE_REGISTRY_ADDRESS","aggregator_address":"$AGGREGATOR_SELECTION_ADDRESS","gm_storage_address":"$GMSTORAGE","medical_signer_registry_address":"$MEDICAL_SIGNER_REGISTRY_ADDRESS","rpc_url":"$rpc_url","chain_id":"$CHAIN_ID"}
+{"registry_address":"$DEVICE_REGISTRY_ADDRESS","aggregator_address":"$AGGREGATOR_SELECTION_ADDRESS","gm_storage_address":"$GMSTORAGE","medical_signer_registry_address":"$MEDICAL_SIGNER_REGISTRY_ADDRESS","aggregation_policy_address":"$AGGREGATION_POLICY_ADDRESS","rpc_url":"$rpc_url","chain_id":"$CHAIN_ID"}
 EOF
 
     echo "Publishing runtime contract manifest to Kubo MFS: /runtime/contracts.json"
@@ -679,6 +680,9 @@ export GMSTORAGE
 
 MEDICAL_SIGNER_REGISTRY_ADDRESS=$(deployed_contract_address "MedicalSignerRegistry" "$DEPLOY_BROADCAST_FILE")
 export MEDICAL_SIGNER_REGISTRY_ADDRESS
+
+AGGREGATION_POLICY_ADDRESS=$(deployed_contract_address "AggregationPolicy" "$DEPLOY_BROADCAST_FILE")
+export AGGREGATION_POLICY_ADDRESS
 
 ENABLE_DCAP=${ENABLE_DCAP:-1}
 if [ "$ENABLE_DCAP" = "1" ]; then
@@ -1160,6 +1164,8 @@ echo "AGGREGATOR_ADDRESS= $AGGREGATOR_SELECTION_ADDRESS"
 echo "GM_STORAGE_ADDRESS= $GMSTORAGE"
 
 echo "MEDICAL_SIGNER_REGISTRY_ADDRESS= $MEDICAL_SIGNER_REGISTRY_ADDRESS"
+
+echo "AGGREGATION_POLICY_ADDRESS= $AGGREGATION_POLICY_ADDRESS"
 
 #echo "ACCOUNT_ADDRESS= $ADDRESS_1"
 echo "ACCOUNT_ADDRESS= $ADDRESS_0"

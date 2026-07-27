@@ -88,10 +88,8 @@ variable "os_image" {
   default = "dstack-dev-0.5.7"
 }
 
-variable "client_limit" { type = number }
 variable "epoch" { type = number }
 variable "round" { type = number }
-variable "model_submission_deadline_ms" { type = number }
 variable "gm_update_timeout_ms" { type = number }
 variable "gm_update_timeout_loops" { type = number }
 variable "aggregation_update_estimate_ms" { type = number }

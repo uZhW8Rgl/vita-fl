@@ -132,11 +132,23 @@ the submission or increasing its score. The aggregator can therefore neither
 invent another worker's accepted contribution nor replay it for a different
 round, model lineage or package. Exact retries are idempotent.
 
-This authority split gates aggregator state changes and publication behind the
-currently attested process, but it does not prove the numerical correctness of
-federated averaging. An exploited approved aggregator could still omit valid
-inputs or publish an incorrectly computed aggregate; detecting that requires a
-separate robust-aggregation, replication or proof mechanism.
+`AggregationPolicy` additionally snapshots the configured minimum submission
+count, absolute deadline, algorithm identifier, and a domain-separated policy
+hash when a round opens. Every accepted worker commitment extends an ordered
+on-chain input root. Closing a round fixes that root and count and is impossible
+below the snapshotted minimum. Publication then requires the aggregator's
+current TEE action key to sign an EIP-712 statement that binds the closed input
+root and count, policy and algorithm hashes, plaintext model hash, encrypted
+output-bundle hash, CID tuple hash, and nonce. `GMStorage` verifies that
+statement and performs publication, reward, completion accounting, and round
+advancement atomically.
+
+Together with the admitted worker image, this binds publication to the code
+path that verifies and stages the complete accepted set and computes the
+configured average. The guarantee remains conditional on TDX/dstack,
+workload-policy enforcement, and action-key custody; the signature is not an
+independent mathematical proof of aggregation, and arithmetic averaging is not
+a statistically Byzantine-robust learning rule.
 
 For the local Docker flow, `IPFS_PROVIDER` controls the bootstrap mode. With `IPFS_PROVIDER=kubo`, the deployment script signs `data/initial_gm/<dataset>/aggregated.bin`, imports model and signature into the local Kubo node, and writes those resulting CIDs into `GMStorage`. The dataset is selected through `DATASET_NAME` and defaults to `mnist`. With `IPFS_PROVIDER=pinata`, the script does not touch Kubo during initialization and instead expects `INITIAL_GM_CID` and `INITIAL_GM_SIG_CID` to already point to Pinata-hosted content.
 

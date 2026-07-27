@@ -53,6 +53,18 @@ class AggregateParticipantKeyTests(unittest.TestCase):
                 participant_key,
             )
 
+    def test_aggregate_rejects_input_count_different_from_closed_round(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            inputs = Path(directory)
+            write_model_bin(FederatedCNN().double(), inputs / "worker.bin")
+
+            with patch.object(cli, "aggregation_inputs_dir", return_value=inputs):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "aggregate input-count mismatch",
+                ):
+                    cli.aggregate(2)
+
     def test_aggregate_http_request_forwards_participant_key(self) -> None:
         participant_key = "/run/vita-fl/participant-private.pem"
         server = ThreadingHTTPServer(("127.0.0.1", 0), service.Handler)

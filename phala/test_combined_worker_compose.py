@@ -58,6 +58,64 @@ class CombinedWorkerComposeTests(unittest.TestCase):
                 template,
             )
 
+    def test_aggregation_threshold_and_deadline_are_not_worker_security_inputs(self) -> None:
+        manual_template = (ROOT / "dstack-compose.template.yml").read_text(
+            encoding="utf-8"
+        )
+        for template in (
+            self.static_template,
+            self.dynamic_template,
+            manual_template,
+        ):
+            with self.subTest(template=template[:20]):
+                self.assertNotIn("CLIENT_LIMIT:", template)
+                self.assertNotIn("MODEL_SUBMISSION_DEADLINE_MS:", template)
+
+        dynamic_variables = (
+            ROOT / "dynamic-workers/variables.tf"
+        ).read_text(encoding="utf-8")
+        dynamic_module = (
+            ROOT / "dynamic-workers/main.tf"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn('variable "client_limit"', dynamic_variables)
+        self.assertNotIn(
+            'variable "model_submission_deadline_ms"',
+            dynamic_variables,
+        )
+        self.assertNotIn("client_limit", dynamic_module)
+        self.assertNotIn("model_submission_deadline_ms", dynamic_module)
+
+    def test_control_api_keeps_owner_policy_inputs_on_the_internal_runtime(self) -> None:
+        contracts_template = (
+            ROOT / "dstack-compose.contracts.phala.tftpl"
+        ).read_text(encoding="utf-8")
+        control_block = re.search(
+            r"%\{ if enable_control_api ~\}(?P<body>.*?)%\{ endif ~\}",
+            contracts_template,
+            re.DOTALL,
+        )
+
+        self.assertIsNotNone(control_block)
+        body = control_block.group("body")
+        expected_entries = (
+            'ETH_WALLET_PRIVATE_KEY: "$${ETH_WALLET_PRIVATE_KEY}"',
+            "RPC_URL: http://anvil:8545",
+            "KUBO_API_URL: http://ipfs:5001",
+            'CLIENT_LIMIT: "${client_limit}"',
+            'MODEL_SUBMISSION_DEADLINE_MS: "${model_submission_deadline_ms}"',
+        )
+        for entry in expected_entries:
+            with self.subTest(entry=entry):
+                self.assertIn(entry, body)
+
+        self.assertEqual(contracts_template.count('CLIENT_LIMIT: "${client_limit}"'), 2)
+        self.assertEqual(
+            contracts_template.count(
+                'MODEL_SUBMISSION_DEADLINE_MS: "${model_submission_deadline_ms}"'
+            ),
+            2,
+        )
+
     def test_terraform_assigns_inference_role_only_to_worker_zero(self) -> None:
         root_module = (ROOT / "main.tf").read_text(encoding="utf-8")
         dynamic_module = (

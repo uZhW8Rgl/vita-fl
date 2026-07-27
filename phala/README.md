@@ -37,6 +37,7 @@ URLs used by dynamically created worker TEEs. The application bootstrap is
 also deliberately two-phase:
 
 1. the runtime deploys the contracts and publishes
+   `/runtime/contracts.json` (including `aggregation_policy_address`) and
    `/runtime/admission-ready.json`;
 2. workers derive their participant keys and complete DCAP registration;
 3. the runtime reads the live authorized public keys from `DeviceRegistry`,
@@ -71,13 +72,28 @@ complete genesis state, including the standard CREATE2 deployer. The Control
 API receives only the contract-runtime Docker socket for these operations; it
 does not mount or rewrite the measured application Compose file. Worker TEEs
 continue to use the externally exposed restricted RPC proxy. A worker Compose is
-immutable after attested registration. Changing its training configuration
-requires the fresh reset path instead of an in-place app update.
+immutable after attested registration. Changing measured worker configuration
+such as `EPOCH` or `ROUND` requires the fresh reset path instead of an in-place
+app update.
 
 The round count shown in the UI is the number of actual federated client
 training rounds. Contract round 0 is a bootstrap-only model rollover, so the
 worker receives an absolute target round equal to the requested count plus
 one.
+
+Immediately before the Control API scales the selected workers for a training
+start, it reads `aggregation_policy_address` from `/runtime/contracts.json` and
+uses the encrypted Anvil-owner `ETH_WALLET_PRIVATE_KEY` against the internal
+`RPC_URL` to configure the contract's default policy. The required submission
+count is the selected `client_limit`; the submission window is
+`ceil(MODEL_SUBMISSION_DEADLINE_MS / 1000)` seconds. The transaction must be
+mined successfully before any worker is created.
+
+`CLIENT_LIMIT` and `MODEL_SUBMISSION_DEADLINE_MS` are therefore owner-controlled
+contract-runtime/Control-API inputs, not measured Worker-Compose security
+inputs. Workers obtain the immutable per-round threshold and deadline from the
+AggregationPolicy reached through the compose-measured GMStorage contract.
+`EPOCH` and `ROUND` remain measured worker inputs.
 
 The Training Setup view can export the current evaluation and transaction-cost
 data as a ZIP archive of CSV tables. In Phala mode, the Control API merges the
@@ -147,6 +163,9 @@ Notes:
 - The provider's `env` attribute encrypts Ethereum wallet and component
   secrets for the target Phala app. The measured/public Compose contains only
   environment-variable names, never their values.
+- The Control API receives the same encrypted Anvil-owner key as the contract
+  deployer, plus only the internal `http://anvil:8545` write endpoint. Dynamic
+  worker CVMs continue to receive the externally exposed restricted RPC URL.
 - Terraform still records sensitive `env` inputs in state. Local state, state backups, `terraform.tfvars`, and exported `app_code.txt` are ignored; use an encrypted, access-controlled remote backend for non-demo deployments.
 - `public_logs` defaults to `true` for this observable Anvil demo deployment. Do not log secrets when adapting it for production.
 - Worker and smart-contract images contain no private keys. The prototype EVM

@@ -1009,9 +1009,11 @@ def aggregate(
 ) -> dict[str, Any]:
     model_paths = sorted(aggregation_inputs_dir().glob("*.bin"), key=lambda p: p.name)
     if num_files is not None and len(model_paths) != num_files:
-        print(f"Aggregating {len(model_paths)} received model file(s), expected {num_files}.")
-    else:
-        print(f"Aggregating {len(model_paths)} received model file(s).")
+        raise ValueError(
+            "aggregate input-count mismatch: "
+            f"found {len(model_paths)} staged model file(s), expected exactly {num_files}"
+        )
+    print(f"Aggregating {len(model_paths)} received model file(s).")
 
     round_id = _optional_int(round_id)
     source_round = _optional_int(source_round)

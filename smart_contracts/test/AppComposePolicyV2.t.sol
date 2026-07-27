@@ -48,6 +48,13 @@ contract AppComposePolicyV2Test is Test {
         assertEq(minimalPolicy, platformPolicy);
     }
 
+    function testRuntimeRpcEndpointChangesPolicyHash() public view {
+        (, bytes32 trustedPolicy) = policy.identity(_withRpc("https://trusted-runtime.example"));
+        (, bytes32 proxyPolicy) = policy.identity(_withRpc("https://participant-proxy.example"));
+
+        assertTrue(trustedPolicy != proxyPolicy);
+    }
+
     function testRejectsWrongManifestVersionAndRunner() public {
         vm.expectRevert(bytes("manifest_version must equal 2"));
         policy.identity(
@@ -140,6 +147,20 @@ contract AppComposePolicyV2Test is Test {
                 '","manifest_version":2,"name":"',
                 name,
                 '","runner":"docker-compose"}'
+            )
+        );
+    }
+
+    function _withRpc(string memory rpcUrl) private pure returns (bytes memory) {
+        return bytes(
+            string.concat(
+                '{"docker_compose_file":"services:\\n  dfl-worker:\\n    image: ',
+                IMAGE,
+                '\\n    environment:\\n      RPC_URL: \\"',
+                rpcUrl,
+                '\\"\\n      EXPECTED_RUNTIME_RPC_URL: \\"',
+                rpcUrl,
+                '\\"\\n","manifest_version":2,"runner":"docker-compose"}'
             )
         );
     }

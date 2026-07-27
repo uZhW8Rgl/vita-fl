@@ -3,7 +3,7 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, setGlobalModel, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, closeModelSubmissions, hasSubmittedModel, getModelSubmissionHash, penalizeContribution, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
+import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
 import { getCurrentModel, pinFile, getFileFromIPFS, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
 import {
@@ -40,7 +40,6 @@ let activeParticipantKey;
 let activeParticipantActionSigner;
 let localTdxRegistrationDone = false;
 const timingConfig = deriveTimingConfig(process.env);
-const modelSubmissionDeadlineMs = timingConfig.modelSubmissionDeadlineMs;
 const gmUpdateTimeoutMs = timingConfig.gmUpdateTimeoutMs;
 const gmUpdateTimeoutLoops = timingConfig.gmUpdateTimeoutLoops;
 const gmUpdatePollMs = timingConfig.gmUpdatePollMs;
@@ -120,6 +119,28 @@ async function recordMissedAggregatorProgress(expectedRound, expectedAggregator,
         error: error ? (error?.message || String(error)) : undefined,
     });
     if (!next.shouldReportTimeout) {
+        return;
+    }
+
+    try {
+        const policy = await getRoundAggregationPolicy(next.expectedRound);
+        if (
+            policy.opened
+            && !policy.closed
+            && policy.chainTimestamp <= policy.deadline
+        ) {
+            console.warn(
+                `Deferring timeout report: round ${next.expectedRound} remains inside ` +
+                `its immutable on-chain submission window ending at ${policy.deadline}.`,
+            );
+            return;
+        }
+    } catch (policyError) {
+        console.warn(
+            "Could not inspect the aggregation policy before timeout reporting; " +
+            "deferring the report until the on-chain policy is observable:",
+            policyError?.message || String(policyError),
+        );
         return;
     }
 
@@ -1074,16 +1095,8 @@ async function waitForRuntimeBootstrapReady() {
     );
 }
 
-async function expectedWorkerAddresses() {
-    const own = String(process.env.ACCOUNT_ADDRESS || '').toLowerCase();
-    const authorizedDevices = await getAuthorizedDevices();
-    return authorizedDevices
-        .filter(address => address.toLowerCase() !== own);
-}
-
 async function receivedWorkerModelFiles() {
     const currentRound = Number(await getRound());
-    const expected = new Set((await expectedWorkerAddresses()).map(address => address.toLowerCase()));
     const entries = await fs.readdir(srcModelsDir, { withFileTypes: true }).catch(err => {
         if (err && err.code === 'ENOENT') return [];
         throw err;
@@ -1113,30 +1126,22 @@ async function receivedWorkerModelFiles() {
             });
             continue;
         }
-        if (!expected.has(normalizedAddress)) {
-            files.push({ name: entry.name, path: filePath, address: normalizedAddress, authorized: false, reason: "not expected this round" });
-            continue;
-        }
-        const authorizedOnchain = await isAuthorized(normalizedAddress);
-        let authorized = authorizedOnchain;
-        let reason = authorized ? "" : "not TEE authorized";
+        const [submitted, onchainHash, fileHash] = await Promise.all([
+            hasSubmittedModel(currentRound, normalizedAddress),
+            getModelSubmissionHash(currentRound, normalizedAddress),
+            modelFileHash(filePath),
+        ]);
+        let authorized = submitted;
+        let reason = submitted
+            ? ""
+            : `model package not accepted onchain for round ${currentRound}`;
         let actualHash = "";
         let recordedHash = "";
-        if (authorized) {
-            const [submitted, onchainHash, fileHash] = await Promise.all([
-                hasSubmittedModel(currentRound, normalizedAddress),
-                getModelSubmissionHash(currentRound, normalizedAddress),
-                modelFileHash(filePath),
-            ]);
-            actualHash = normalizeHashHex(fileHash, 32, "received model hash");
-            recordedHash = normalizeHashHex(onchainHash, 32, "onchain model submission hash");
-            if (!submitted) {
-                authorized = false;
-                reason = `model package not accepted onchain for round ${currentRound}`;
-            } else if (actualHash !== recordedHash) {
-                authorized = false;
-                reason = `model file hash does not match onchain acceptance for round ${currentRound}`;
-            }
+        actualHash = normalizeHashHex(fileHash, 32, "received model hash");
+        recordedHash = normalizeHashHex(onchainHash, 32, "onchain model submission hash");
+        if (authorized && actualHash !== recordedHash) {
+            authorized = false;
+            reason = `model file hash does not match onchain acceptance for round ${currentRound}`;
         }
         files.push({
             name: entry.name,
@@ -1149,32 +1154,6 @@ async function receivedWorkerModelFiles() {
         });
     }
     return files.sort((a, b) => a.name.localeCompare(b.name));
-}
-
-async function receivedWorkerAddresses() {
-    const files = await receivedWorkerModelFiles();
-    return new Set(
-        files
-            .filter(file => file.authorized && file.address)
-            .map(file => file.address.toLowerCase())
-    );
-}
-
-async function getMissingAuthorizedWorkers() {
-    const expected = await expectedWorkerAddresses();
-    if (expected.length === 0) {
-        console.warn("No onchain authorized workers found; skipping missed-deadline penalties.");
-        return [];
-    }
-    const received = await receivedWorkerAddresses();
-    const missing = [];
-    for (const address of expected) {
-        if (received.has(address.toLowerCase())) continue;
-        if (await isAuthorized(address)) {
-            missing.push(address);
-        }
-    }
-    return missing;
 }
 
 async function hasCurrentDeviceRegistration(
@@ -1492,8 +1471,27 @@ const stateMachine = async () => {
                     await runtimeEvent("state.training.aggregator", { role: "aggregator" });
                     const currentRound = Number(await getRound());
                     console.log("Round %d.", currentRound);
+                    const openedPolicy = await openModelSubmissions(currentRound);
+                    console.log("Round aggregation policy opened.", {
+                        round: currentRound,
+                        requiredSubmissions: openedPolicy.requiredSubmissions,
+                        deadline: openedPolicy.deadline,
+                        configurationVersion: openedPolicy.configurationVersion,
+                        algorithmHash: openedPolicy.algorithmHash,
+                        policyHash: openedPolicy.policyHash,
+                    });
+                    if (openedPolicy.closed) {
+                        console.log(
+                            `Round ${currentRound} input policy is already closed; resuming aggregation.`,
+                        );
+                        await setCurrentState("AGGREGATING");
+                        continue;
+                    }
                     if (currentRound === 0) {
-                        console.log("Round 0 bootstrap phase: skipping worker submission wait and proceeding directly to aggregation.");
+                        console.log(
+                            "Round 0 bootstrap phase: closing the empty input set and proceeding directly to aggregation.",
+                        );
+                        await closeModelSubmissions(currentRound);
                         await setCurrentState("AGGREGATING");
                         continue;
                     }
@@ -1509,37 +1507,58 @@ const stateMachine = async () => {
                             console.log(`Published aggregator model endpoint: ${endpoint}`);
                             aggregatorServerRunning = true;
                         }
-                        const expected = Number(process.env.CLIENT_LIMIT || 1);
-                        console.log(`Waiting for local model submissions before aggregation (${expected} expected).`);
+                        const expected = openedPolicy.requiredSubmissions;
+                        const remainingMs = Math.max(
+                            0,
+                            (openedPolicy.deadline * 1000) - Date.now(),
+                        );
+                        console.log(
+                            `Waiting for ${expected} policy-required model submissions ` +
+                            `until on-chain deadline ${openedPolicy.deadline}.`,
+                        );
                         await runtimeEvent("aggregator.wait_for_models.started", {
                             role: "aggregator",
                             expected_models: expected,
-                            deadline_ms: modelSubmissionDeadlineMs,
+                            deadline_unix_seconds: openedPolicy.deadline,
+                            remaining_ms: remainingMs,
+                            policy_hash: openedPolicy.policyHash,
                         });
                         const present = await runOperation("aggregator.wait_for_models", {
                             role: "aggregator",
                             expected_models: expected,
-                            deadline_ms: modelSubmissionDeadlineMs,
+                            deadline_unix_seconds: openedPolicy.deadline,
+                            remaining_ms: remainingMs,
                         }, () => waitForModels(expected, {
                             dir: srcModelsDir,
                             pollMs: 2000,
-                            timeoutMs: modelSubmissionDeadlineMs,
+                            timeoutMs: remainingMs,
                         }));
+                        const latestPolicy = await getRoundAggregationPolicy(currentRound);
                         await runtimeEvent("aggregator.wait_for_models.finished", {
                             role: "aggregator",
                             expected_models: expected,
                             present_models: present,
+                            accepted_models: latestPolicy.acceptedSubmissions,
                         });
-                        if (present <= 0) {
-                            console.log("No model submissions yet. Keeping aggregator server open and waiting before retry.");
+                        if (latestPolicy.acceptedSubmissions < expected || present < expected) {
+                            console.log(
+                                `Aggregation threshold not reached: local=${present}, ` +
+                                `on-chain=${latestPolicy.acceptedSubmissions}, required=${expected}. ` +
+                                "The aggregator cannot close or publish this round.",
+                            );
                             await sleep(5000);
                             continue;
                         }
+                        await closeModelSubmissions(currentRound);
                         await setCurrentState("AGGREGATING");
                         continue;
                     } catch (e) {
-                        console.error("Error during starting the aggregator server:", e);
-                        return;
+                        console.error(
+                            "Aggregator receive/close step failed; keeping TRAINING for reconciliation:",
+                            e,
+                        );
+                        await sleep(2000);
+                        continue;
                     }
                 } else {
                     console.log("I am not the aggregator");
@@ -1735,14 +1754,29 @@ const stateMachine = async () => {
                     await runtimeEvent("aggregator.aggregation.started", { role: "aggregator" });
                     try {
                         const currentRound = Number(await getRound());
-                        const expected = Number(process.env.CLIENT_LIMIT || 1);
-                        await closeModelSubmissions(currentRound);
-                        const present = await waitForModels(expected, {
-                            dir: srcModelsDir,
-                            pollMs: 2000,
-                            timeoutMs: 1,
-                        });
-                        console.log(`Models present before aggregation: ${present}/${expected}`);
+                        const aggregationPolicy = await getRoundAggregationPolicy(currentRound);
+                        if (!aggregationPolicy.opened || !aggregationPolicy.closed) {
+                            throw new Error(
+                                `Round ${currentRound} aggregation inputs are not immutably closed.`,
+                            );
+                        }
+                        if (
+                            aggregationPolicy.acceptedSubmissions
+                            < aggregationPolicy.requiredSubmissions
+                        ) {
+                            throw new Error(
+                                `Round ${currentRound} has ${aggregationPolicy.acceptedSubmissions} ` +
+                                `accepted submissions but requires ${aggregationPolicy.requiredSubmissions}.`,
+                            );
+                        }
+                        const expected = aggregationPolicy.acceptedSubmissions;
+                        console.log(
+                            `Closed round ${currentRound} commits to ${expected} accepted model(s).`,
+                            {
+                                inputRoot: aggregationPolicy.inputRoot,
+                                policyHash: aggregationPolicy.policyHash,
+                            },
+                        );
 
                         if (aggregatorServerRunning || modelUploadServer) {
                             console.log("Stopping aggregator server before aggregation...");
@@ -1755,42 +1789,32 @@ const stateMachine = async () => {
                             role: "aggregator",
                             model_count: count,
                             expected_models: expected,
+                            input_root: aggregationPolicy.inputRoot,
+                            policy_hash: aggregationPolicy.policyHash,
                         });
-                        if (count <= 0) {
-                            if (currentRound === 0) {
-                                console.log("Round 0 has no worker submissions. Re-publishing the verified bootstrap model for the next encrypted round.");
-                                await runOperation("aggregator.round0.bootstrap_rollover", {
-                                    role: "aggregator",
-                                    round: currentRound,
-                                }, () => prepareRoundZeroBootstrapRollover());
-                                await setCurrentState("UPDATING");
-                                continue;
-                            }
+                        if (currentRound === 0 && count === 0) {
+                            console.log("Round 0 has no worker submissions. Re-publishing the verified bootstrap model for the next encrypted round.");
+                            await runOperation("aggregator.round0.bootstrap_rollover", {
+                                role: "aggregator",
+                                round: currentRound,
+                            }, () => prepareRoundZeroBootstrapRollover());
+                            await setCurrentState("UPDATING");
+                            continue;
+                        }
+                        if (count !== expected) {
                             console.log(
-                                "No valid models remain in the closed submission snapshot. " +
-                                "Keeping AGGREGATING so workers can trigger timeout recovery."
+                                `The local verified input set (${count}) does not exactly match ` +
+                                `the immutable on-chain input count (${expected}). ` +
+                                "Keeping AGGREGATING so timeout recovery can replace this aggregator.",
                             );
                             await sleep(5000);
                             continue;
                         }
-                        const missingWorkers = currentRound === 0 ? [] : await getMissingAuthorizedWorkers();
-                        if (missingWorkers.length > 0) {
-                            console.log("Penalizing missing model submissions:", missingWorkers);
-                            await penalizeContribution(missingWorkers, "missed_model_deadline");
-                            await runtimeEvent("aggregator.penalty.applied", {
-                                role: "aggregator",
-                                reason: "missed_model_deadline",
-                                count: missingWorkers.length,
-                            });
-                        } else if (currentRound === 0) {
-                            console.log("Skipping missed-deadline penalties in round 0.");
-                        }
-                        if (count < expected) {
-                            console.log(`Aggregating with ${count}/${expected} models.`);
-                        }
 
                         const globalModelRound = currentRound + 1;
-                        const participantCount = Number(process.env.WORKER_COUNT || expected + 1);
+                        const participantCount = Number(
+                            process.env.WORKER_COUNT || expected + 1,
+                        );
                         const aggregateResult = await runOperation("aggregator.aggregation", {
                             role: "aggregator",
                             model_count: count,
@@ -1845,6 +1869,32 @@ const stateMachine = async () => {
                     currentState = "UPDATING";
                     console.log("I am the aggregator");
                     console.log("Starting the updating process ...");
+                    const recoveryRound = Number(await getRound());
+                    const selectionGapRecovery = await recoverSelectionGap(
+                        recoveryRound,
+                        String(state[1]),
+                        "UPDATING",
+                    );
+                    if (selectionGapRecovery !== null) {
+                        if (selectionGapRecovery === "training-complete") {
+                            await stageCleaning();
+                            await runtimeEvent("training.completed", {
+                                role: "aggregator",
+                                final_round: recoveryRound,
+                                completed_rounds: Number(await getCompletedRoundCount()),
+                            });
+                            return;
+                        }
+                        if (selectionGapRecovery) {
+                            await stageCleaning();
+                            console.log(
+                                "Recovered aggregator selection from on-chain state; " +
+                                "local finalization artifacts are no longer required.",
+                            );
+                        }
+                        await sleep(2000);
+                        continue;
+                    }
                     const journalPath = path.join(resultsIIDDir, ".updating-finalization.json");
                     const journalTempPath = `${journalPath}.${process.pid}.tmp`;
                     const aggregatedModelPath = path.join(resultsIIDDir, "aggregated.bin");
@@ -1973,44 +2023,18 @@ const stateMachine = async () => {
                             round: finalization.sourceRound,
                         });
                         console.log("Current Global Model:", await getCurrentGM());
-
-                        try {
-                            await incrementRound();
-                        } catch (incrementError) {
-                            try {
-                                observedRound = Number(await getRound());
-                            } catch (reconciliationError) {
-                                console.error(
-                                    "Round increment failed and its on-chain outcome could not be reconciled:",
-                                    incrementError,
-                                    reconciliationError,
-                                );
-                                await sleep(2000);
-                                continue;
-                            }
-                            if (observedRound < finalization.expectedNextRound) {
-                                console.error(
-                                    "Round increment failed without advancing the on-chain round; keeping UPDATING for retry:",
-                                    incrementError,
-                                );
-                                await sleep(2000);
-                                continue;
-                            }
-                            console.warn(
-                                `Round increment receipt was unavailable, but on-chain round ${observedRound} confirms advancement.`
-                            );
-                        }
+                        observedRound = Number(await getRound());
                     } else {
                         console.log(
                             `Recovered UPDATING finalization after round advancement ` +
-                            `${finalization.sourceRound} -> ${observedRound}; skipping duplicate publication and increment.`
+                            `${finalization.sourceRound} -> ${observedRound}; skipping duplicate atomic publication.`
                         );
                     }
 
                     try {
                         observedRound = Number(await getRound());
                     } catch (e) {
-                        console.error("Cannot confirm the on-chain round after increment:", e);
+                        console.error("Cannot confirm the on-chain round after atomic finalization:", e);
                         await sleep(2000);
                         continue;
                     }

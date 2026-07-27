@@ -84,6 +84,8 @@ class WorkerInventoryTests(unittest.TestCase):
             "0x" + "44" * 20,
         )
         self.assertEqual(values["expected_chain_id"], 31337)
+        self.assertNotIn("client_limit", values)
+        self.assertNotIn("model_submission_deadline_ms", values)
 
     def test_inference_receiver_configuration_is_forwarded_without_entering_status(self) -> None:
         config = WorkerDeploymentConfig(
@@ -143,22 +145,42 @@ class WorkerInventoryTests(unittest.TestCase):
 
         self.assertEqual([worker["worker"] for worker in result["workers"]], ["worker0"])
 
-    def test_training_configuration_is_forwarded_to_terraform(self) -> None:
+    def test_only_worker_measured_training_configuration_is_forwarded_to_terraform(self) -> None:
         instance, runner = controller()
 
         instance.scale(2, {"rounds": 7, "epoch": 3, "client_limit": 1})
 
-        self.assertEqual(runner.training_config, {"rounds": 7, "epoch": 3, "client_limit": 1})
+        self.assertEqual(runner.training_config, {"rounds": 7, "epoch": 3})
 
     def test_attested_worker_configuration_cannot_be_mutated(self) -> None:
         instance, runner = controller()
-        initial = {"rounds": 2, "epoch": 1, "client_limit": 1}
+        initial = {"rounds": 2, "epoch": 1}
         instance.scale(2, initial)
 
         with self.assertRaisesRegex(WorkerConfigurationError, "cannot mutate an attested worker compose"):
             instance.scale(2, {"rounds": 3, "epoch": 1, "client_limit": 1})
 
         self.assertEqual(runner.training_config, initial)
+
+    def test_preflight_rejects_attested_compose_mutation_without_apply(self) -> None:
+        instance, runner = controller()
+        initial = {"rounds": 2, "epoch": 1}
+        instance.scale(2, initial)
+        deployments = dict(runner.workers)
+
+        with self.assertRaisesRegex(WorkerConfigurationError, "cannot mutate an attested worker compose"):
+            instance.preflight_scale(2, {"rounds": 3, "epoch": 1})
+
+        self.assertEqual(runner.workers, deployments)
+        self.assertEqual(runner.training_config, initial)
+
+    def test_on_chain_client_limit_does_not_mutate_worker_compose(self) -> None:
+        instance, runner = controller()
+        instance.scale(2, {"rounds": 2, "epoch": 1, "client_limit": 1})
+
+        instance.scale(2, {"rounds": 2, "epoch": 1, "client_limit": 2})
+
+        self.assertEqual(runner.training_config, {"rounds": 2, "epoch": 1})
 
     def test_non_contiguous_inventory_is_rejected(self) -> None:
         payload = json.loads(inventory_json(2))

@@ -8,6 +8,12 @@ const registryAbi = JSON.parse(
 const gmAbi = JSON.parse(
     fs.readFileSync(new URL("../abi/gm.json", import.meta.url), "utf8"),
 );
+const aggregationPolicyAbi = JSON.parse(
+    fs.readFileSync(
+        new URL("../abi/aggregation_policy.json", import.meta.url),
+        "utf8",
+    ),
+);
 
 const functionInputs = (abi, name) => {
     const entries = abi.filter(
@@ -100,6 +106,39 @@ test("model-submission ABIs require the worker action-key commitment", () => {
             { name: "parentModelHash", type: "bytes32" },
             { name: "workerNonce", type: "uint256" },
             { name: "workerSignature", type: "bytes" },
+        ],
+    );
+});
+
+test("aggregation ABIs require atomic policy-bound finalization", () => {
+    assert.deepEqual(
+        functionInputs(gmAbi, "openModelSubmissions"),
+        [{ name: "expectedRound", type: "uint256" }],
+    );
+    assert.deepEqual(
+        functionInputs(gmAbi, "finalizeRoundWithAggregation"),
+        [
+            { name: "newGlobalModel", type: "string" },
+            { name: "newGlobalModelSignature", type: "string" },
+            { name: "newGlobalModelKeyBundle", type: "string" },
+            { name: "outputModelHash", type: "bytes32" },
+            { name: "outputBundleHash", type: "bytes32" },
+            { name: "statementSignature", type: "bytes" },
+        ],
+    );
+    assert.deepEqual(
+        functionInputs(aggregationPolicyAbi, "aggregationStatementDigest"),
+        [
+            { name: "round", type: "uint256" },
+            { name: "aggregator", type: "address" },
+            { name: "inputRoot", type: "bytes32" },
+            { name: "inputCount", type: "uint256" },
+            { name: "algorithmHash", type: "bytes32" },
+            { name: "policyHash", type: "bytes32" },
+            { name: "outputModelHash", type: "bytes32" },
+            { name: "outputBundleHash", type: "bytes32" },
+            { name: "publicationHash", type: "bytes32" },
+            { name: "nonce", type: "uint256" },
         ],
     );
 });

@@ -744,7 +744,7 @@ variable "model_transfer_retry_delay_ms" {
 }
 
 variable "client_limit" {
-  description = "DFL client limit."
+  description = "Owner-controlled AggregationPolicy submission threshold configured by the Control API."
   type        = string
   default     = "2"
 }
@@ -762,7 +762,7 @@ variable "round" {
 }
 
 variable "model_submission_deadline_ms" {
-  description = "Model submission deadline in milliseconds."
+  description = "Owner-controlled AggregationPolicy submission window in milliseconds, rounded up to seconds on-chain."
   type        = string
   default     = "20000"
 }

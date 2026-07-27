@@ -84,6 +84,38 @@
   },
   {
     "type": "function",
+    "name": "aggregationStatementDigest",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "aggregation_policy_address",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "aggregator_selection_address",
     "inputs": [],
     "outputs": [
@@ -230,6 +262,44 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "finalizeRoundWithAggregation",
+    "inputs": [
+      {
+        "name": "newGlobalModel",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "newGlobalModelSignature",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "newGlobalModelKeyBundle",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "outputModelHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "outputBundleHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "statementSignature",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -509,6 +579,25 @@
   },
   {
     "type": "function",
+    "name": "globalModelBundleHash",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "globalModelKeyBundle",
     "inputs": [],
     "outputs": [
@@ -516,6 +605,44 @@
         "name": "",
         "type": "string",
         "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "globalModelPlaintextHash",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "globalModelPublicationHash",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -934,6 +1061,32 @@
   },
   {
     "type": "function",
+    "name": "openModelSubmissions",
+    "inputs": [
+      {
+        "name": "expectedRound",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "penalizeContribution",
     "inputs": [
       {
@@ -1085,6 +1238,19 @@
   },
   {
     "type": "function",
+    "name": "setAggregationPolicyAddress",
+    "inputs": [
+      {
+        "name": "aggregationPolicy",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setGlobalModel",
     "inputs": [
       {
@@ -1175,6 +1341,19 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "AggregationPolicyAddressSet",
+    "inputs": [
+      {
+        "name": "aggregationPolicy",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -1302,6 +1481,30 @@
         "type": "string",
         "indexed": false,
         "internalType": "string"
+      },
+      {
+        "name": "outputModelHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "outputBundleHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "publicationHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "statementDigest",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false

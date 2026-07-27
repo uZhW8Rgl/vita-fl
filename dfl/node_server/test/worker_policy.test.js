@@ -65,6 +65,24 @@ test("known variable environment values do not change the worker policy", () => 
     );
 });
 
+test("runtime RPC endpoint is bound into the worker policy", () => {
+    const trusted = appCompose([
+        "    environment:",
+        '      RPC_URL: "https://trusted-runtime.example"',
+        '      EXPECTED_RUNTIME_RPC_URL: "https://trusted-runtime.example"',
+    ]);
+    const proxy = appCompose([
+        "    environment:",
+        '      RPC_URL: "https://participant-proxy.example"',
+        '      EXPECTED_RUNTIME_RPC_URL: "https://participant-proxy.example"',
+    ]);
+
+    assert.notEqual(
+        deriveWorkerPolicyIdentity(trusted).workerPolicyHash,
+        deriveWorkerPolicyIdentity(proxy).workerPolicyHash,
+    );
+});
+
 test("unknown environment values are hashed into the worker policy", () => {
     const safe = appCompose([
         "    environment:",

@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {AggregatorSelection} from "../src/core/AggregatorSelection.sol";
+import {AggregationPolicy} from "../src/core/AggregationPolicy.sol";
 import {GMStorage} from "../src/core/GMStorage.sol";
 import {ActionKeyTest} from "./helpers/ActionKeyTest.sol";
 
@@ -75,6 +76,7 @@ contract SelectionDeviceRegistryStub {
 contract AggregatorSelectionAccessTest is ActionKeyTest {
     AggregatorSelection private selection;
     GMStorage private gmStorage;
+    AggregationPolicy private aggregationPolicy;
     SelectionDeviceRegistryStub private registry;
 
     address private aggregator;
@@ -99,16 +101,43 @@ contract AggregatorSelectionAccessTest is ActionKeyTest {
         gmStorage =
             new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
         selection.setGMStorageAddress(address(gmStorage));
+        aggregationPolicy = new AggregationPolicy(address(gmStorage));
+        aggregationPolicy.configureDefaultPolicy(1, 3600);
+        gmStorage.setAggregationPolicyAddress(address(aggregationPolicy));
+        vm.prank(aggregator);
+        gmStorage.openModelSubmissions(0);
     }
 
     function publishAndCompleteRound(address publisher, string memory suffix) private {
-        vm.startPrank(publisher);
-        gmStorage.closeModelSubmissions(gmStorage.getRound());
-        gmStorage.setGlobalModelAndSignatureAndKeyBundle(
-            string.concat("model-", suffix), string.concat("signature-", suffix), string.concat("key-bundle-", suffix)
+        uint256 currentRound = gmStorage.getRound();
+        string memory model = string.concat("model-", suffix);
+        string memory signatureCid = string.concat("signature-", suffix);
+        string memory keyBundle = string.concat("key-bundle-", suffix);
+        vm.prank(publisher);
+        gmStorage.closeModelSubmissions(currentRound);
+        (,,,,, uint32 inputCount,, bytes32 algorithmHash, bytes32 policyHash, bytes32 inputRoot) =
+            aggregationPolicy.getRoundPolicy(currentRound);
+        bytes32 outputModelHash = keccak256(bytes(model));
+        bytes32 outputBundleHash = keccak256(abi.encode(model, signatureCid, keyBundle, outputModelHash));
+        bytes32 publicationHash = keccak256(abi.encode(model, signatureCid, keyBundle));
+        bytes32 digest = aggregationPolicy.aggregationStatementDigest(
+            currentRound,
+            publisher,
+            inputRoot,
+            inputCount,
+            algorithmHash,
+            policyHash,
+            outputModelHash,
+            outputBundleHash,
+            publicationHash,
+            aggregationPolicy.aggregationNonces(publisher)
         );
-        gmStorage.incrementRound();
-        vm.stopPrank();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(actionPrivateKeys[publisher], digest);
+
+        vm.prank(publisher);
+        gmStorage.finalizeRoundWithAggregation(
+            model, signatureCid, keyBundle, outputModelHash, outputBundleHash, abi.encodePacked(r, s, v)
+        );
     }
 
     function testCurrentAggregatorCanSelectAfterCompletedRound() public {
@@ -177,6 +206,23 @@ contract AggregatorSelectionAccessTest is ActionKeyTest {
         vm.expectRevert(bytes("timeout already reported"));
         vm.prank(reporterOne);
         selection.reportAggregatorTimeout(0, aggregator);
+    }
+
+    function testTimeoutReportCannotAbortAnActiveSubmissionWindow() public {
+        publishAndCompleteRound(aggregator, "round-zero");
+        vm.prank(aggregator);
+        selection.triggerAggregatorSelection();
+        address selected = selection.getCurrentAggregator();
+        vm.prank(selected);
+        gmStorage.openModelSubmissions(1);
+        address reporter = reporterOne == selected ? reporterTwo : reporterOne;
+
+        vm.expectRevert(bytes("submission window is still active"));
+        vm.prank(reporter);
+        selection.reportAggregatorTimeout(1, selected);
+
+        assertEq(selection.timeoutReportCount(1, selected), 0);
+        assertFalse(selection.roundAborted(1));
     }
 
     function testStaleAggregatorExpectationRevertsWithoutCounting() public {
@@ -374,6 +420,8 @@ contract AggregatorSelectionAccessTest is ActionKeyTest {
         vm.prank(replacement);
         selection.triggerAggregatorSelection();
 
+        vm.prank(replacement);
+        gmStorage.openModelSubmissions(1);
         _recordSignedModelSubmission(gmStorage, replacement, replacement, aggregator, 1, keccak256("worker-round-one"));
         publishAndCompleteRound(replacement, "round-one");
         vm.prank(replacement);

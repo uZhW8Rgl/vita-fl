@@ -75,10 +75,8 @@ class WorkerDeploymentConfig:
     expected_chain_id: int
     region: str = "US-WEST-1"
     os_image: str = "dstack-dev-0.5.7"
-    client_limit: int = 2
     epoch: int = 1
     round: int = 5
-    model_submission_deadline_ms: int = 20_000
     gm_update_timeout_ms: int = 30_000
     gm_update_timeout_loops: int = 2
     aggregation_update_estimate_ms: int = 30_000
@@ -105,6 +103,8 @@ class WorkerDeploymentConfig:
 
 class WorkerTerraformRunner(Protocol):
     def configure(self, training_config: dict[str, int]) -> None: ...
+
+    def current_training_config(self) -> dict[str, int]: ...
 
     def apply(self, workers: dict[str, dict[str, Any]]) -> dict[str, Any]: ...
 
@@ -251,7 +251,6 @@ class SubprocessTerraformRunner:
             self.config,
             round=training_config.get("rounds", self.config.round),
             epoch=training_config.get("epoch", self.config.epoch),
-            client_limit=training_config.get("client_limit", self.config.client_limit),
         )
 
     def current_training_config(self) -> dict[str, int]:
@@ -261,14 +260,12 @@ class SubprocessTerraformRunner:
                 return {
                     "rounds": int(persisted["round"]),
                     "epoch": int(persisted["epoch"]),
-                    "client_limit": int(persisted["client_limit"]),
                 }
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 pass
         return {
             "rounds": self.config.round,
             "epoch": self.config.epoch,
-            "client_limit": self.config.client_limit,
         }
 
     def _run(self, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -340,27 +337,47 @@ class PhalaWorkerController:
     def maximum(self) -> int:
         return len(self.inventory)
 
-    def scale(self, worker_count: int, training_config: dict[str, int] | None = None) -> dict[str, Any]:
+    def _validated_training_request(
+        self,
+        worker_count: int,
+        training_config: dict[str, int] | None,
+    ) -> dict[str, int] | None:
         if isinstance(worker_count, bool) or not isinstance(worker_count, int):
             raise WorkerConfigurationError("worker_count must be an integer")
         if not 0 <= worker_count <= self.maximum:
             raise WorkerConfigurationError(f"worker_count must be between 0 and {self.maximum}")
-        selected = {identity.key: identity.terraform_value() for identity in self.inventory[:worker_count]}
+        if training_config is None:
+            return None
+        configured = self.runner.current_training_config()
+        requested = {
+            "rounds": int(training_config.get("rounds", configured.get("rounds", 1))),
+            "epoch": int(training_config.get("epoch", configured.get("epoch", 1))),
+        }
+        current = self.runner.status()
+        if current and requested != configured:
+            raise WorkerConfigurationError(
+                "training configuration cannot mutate an attested worker compose; "
+                "reset the workers and contract runtime before starting a new configuration"
+            )
+        return requested
+
+    def preflight_scale(
+        self,
+        worker_count: int,
+        training_config: dict[str, int] | None = None,
+    ) -> None:
         with self._lock:
-            current = self.runner.status()
-            if training_config is not None:
-                configured = self.runner.current_training_config()
-                requested = {
-                    "rounds": int(training_config.get("rounds", configured.get("rounds", 1))),
-                    "epoch": int(training_config.get("epoch", configured.get("epoch", 1))),
-                    "client_limit": int(training_config.get("client_limit", configured.get("client_limit", 1))),
-                }
-                if current and requested != configured:
-                    raise WorkerConfigurationError(
-                        "training configuration cannot mutate an attested worker compose; "
-                        "reset the workers and contract runtime before starting a new configuration"
-                    )
-                self.runner.configure(training_config)
+            self._validated_training_request(worker_count, training_config)
+
+    def scale(self, worker_count: int, training_config: dict[str, int] | None = None) -> dict[str, Any]:
+        with self._lock:
+            requested = self._validated_training_request(worker_count, training_config)
+            selected = {
+                identity.key: identity.terraform_value()
+                for identity in self.inventory[:worker_count]
+            }
+            if requested is not None:
+                self.runner.configure(requested)
             deployments = self.runner.apply(selected)
         return self._public_status(worker_count, deployments)
 
@@ -449,10 +466,8 @@ def controller_from_environment() -> PhalaWorkerController:
         expected_chain_id=integer("DYNAMIC_WORKER_EXPECTED_CHAIN_ID", 31337),
         region=os.environ.get("PHALA_REGION", "US-WEST-1"),
         os_image=os.environ.get("PHALA_OS_IMAGE", "dstack-dev-0.5.7"),
-        client_limit=integer("CLIENT_LIMIT", 2),
         epoch=integer("EPOCH", 1),
         round=integer("ROUND", 5),
-        model_submission_deadline_ms=integer("MODEL_SUBMISSION_DEADLINE_MS", 20_000),
         gm_update_timeout_ms=integer("GM_UPDATE_TIMEOUT_MS", 30_000),
         gm_update_timeout_loops=integer("GM_UPDATE_TIMEOUT_LOOPS", 2),
         aggregation_update_estimate_ms=integer("AGGREGATION_UPDATE_ESTIMATE_MS", 30_000),

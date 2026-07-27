@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from control_api import server
 
@@ -39,6 +40,286 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(translated["rounds"], 4)
         self.assertEqual(translated["epoch"], 2)
         self.assertEqual(config["rounds"], 3)
+
+    def test_training_config_requires_an_aggregator_and_at_least_one_client(self) -> None:
+        current = {
+            "rounds": 3,
+            "epoch": 1,
+            "worker_count": 3,
+            "client_limit": 2,
+            "max_worker_count": 500,
+        }
+        with patch.object(server, "read_training_config", return_value=current):
+            normalized = server.normalize_training_config(
+                {"worker_count": 1, "client_limit": 1}
+            )
+
+        self.assertEqual(normalized["worker_count"], 2)
+        self.assertEqual(normalized["client_limit"], 1)
+
+    def test_runtime_manifest_exposes_aggregation_policy_address(self) -> None:
+        policy_address = "0x" + "55" * 20
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "registry_address": "0x" + "11" * 20,
+                "aggregator_address": "0x" + "22" * 20,
+                "gm_storage_address": "0x" + "33" * 20,
+                "aggregation_policy_address": policy_address,
+            }
+        ).encode("utf-8")
+        with (
+            patch.object(server, "phala_runtime_mode", return_value=True),
+            patch.dict(
+                server.os.environ,
+                {
+                    "RPC_URL": "http://anvil:8545",
+                    "DYNAMIC_WORKER_RPC_URL": "https://external-rpc.example",
+                    "KUBO_API_URL": "http://ipfs:5001",
+                    "DYNAMIC_WORKER_KUBO_API_URL": "https://external-kubo.example",
+                },
+                clear=False,
+            ),
+            patch.object(server.urllib.request, "urlopen", return_value=response) as urlopen,
+        ):
+            values = server.runtime_contract_env_values()
+
+        self.assertEqual(values["AGGREGATION_POLICY_ADDRESS"], policy_address)
+        self.assertEqual(values["RPC_URL"], "http://anvil:8545")
+        self.assertIn("http://ipfs:5001/api/v0/files/read", urlopen.call_args.args[0].full_url)
+
+    def test_default_policy_configuration_is_signed_and_uses_ceiling_seconds(self) -> None:
+        policy_address = "0x" + "55" * 20
+        owner_address = "0x" + "66" * 20
+        transaction_hash = "0x" + "77" * 32
+        rpc_calls: list[tuple[str, str, list[object]]] = []
+
+        def ethereum_rpc(rpc_url: str, method: str, params: list[object]):
+            rpc_calls.append((rpc_url, method, params))
+            if method == "eth_call":
+                selector = params[0]["data"]
+                return {
+                    f"0x{server.AGGREGATION_POLICY_OWNER_SELECTOR}":
+                        "0x" + "0" * 24 + owner_address[2:],
+                    f"0x{server.AGGREGATION_POLICY_REQUIRED_SUBMISSIONS_SELECTOR}":
+                        f"0x{3:064x}",
+                    f"0x{server.AGGREGATION_POLICY_SUBMISSION_WINDOW_SELECTOR}":
+                        f"0x{21:064x}",
+                }[selector]
+            return {
+                "eth_chainId": "0x7a69",
+                "eth_getTransactionCount": "0x4",
+                "eth_gasPrice": "0x3b9aca00",
+                "eth_estimateGas": "0xc350",
+                "eth_sendRawTransaction": transaction_hash,
+                "eth_getTransactionReceipt": {
+                    "status": "0x1",
+                    "blockNumber": "0x9",
+                    "gasUsed": "0xa410",
+                },
+            }[method]
+
+        with (
+            patch.object(
+                server,
+                "runtime_contract_env_values",
+                return_value={
+                    "RPC_URL": "https://external-rpc.example",
+                    "AGGREGATION_POLICY_ADDRESS": policy_address,
+                },
+            ),
+            patch.dict(
+                server.os.environ,
+                {
+                    "RPC_URL": "http://anvil:8545",
+                    "ETH_WALLET_PRIVATE_KEY": "0x" + "88" * 32,
+                    "MODEL_SUBMISSION_DEADLINE_MS": "20001",
+                },
+                clear=False,
+            ),
+            patch.object(server, "_ethereum_rpc", side_effect=ethereum_rpc),
+            patch.object(
+                server,
+                "_ethereum_account_address",
+                return_value=owner_address,
+            ),
+            patch.object(
+                server,
+                "_sign_ethereum_transaction",
+                return_value="0xdeadbeef",
+            ) as sign_transaction,
+        ):
+            result = server.configure_default_aggregation_policy(3)
+
+        transaction = sign_transaction.call_args.args[0]
+        expected_arguments = (3).to_bytes(32, "big") + (21).to_bytes(32, "big")
+        self.assertEqual(
+            transaction["data"],
+            f"0x{server.AGGREGATION_POLICY_CONFIGURE_SELECTOR}{expected_arguments.hex()}",
+        )
+        self.assertEqual(transaction["to"], policy_address)
+        self.assertEqual(transaction["chainId"], 31337)
+        self.assertEqual(transaction["nonce"], 4)
+        self.assertEqual(transaction["gas"], 60_000)
+        self.assertEqual(result["submission_window_seconds"], 21)
+        self.assertEqual(result["transaction_hash"], transaction_hash)
+        self.assertTrue(all(call[0] == "http://anvil:8545" for call in rpc_calls))
+
+    def test_eth_account_signer_supports_the_control_api_transaction_shape(self) -> None:
+        private_key = (
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        )
+        address = server._ethereum_account_address(private_key)
+
+        raw_transaction = server._sign_ethereum_transaction(
+            {
+                "chainId": 31337,
+                "nonce": 0,
+                "to": "0x" + "11" * 20,
+                "value": 0,
+                "data": "0x95b40727" + "00" * 64,
+                "gas": 100_000,
+                "gasPrice": 1_000_000_000,
+            },
+            private_key,
+        )
+
+        self.assertEqual(
+            address,
+            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        )
+        self.assertRegex(raw_transaction, r"^0x[a-fA-F0-9]+$")
+
+    async def test_training_start_preflights_then_configures_policy_before_worker_scale(self) -> None:
+        normalized = {
+            "rounds": 3,
+            "epoch": 2,
+            "worker_count": 2,
+            "client_limit": 1,
+        }
+        workers = [
+            {
+                "slot": slot,
+                "worker": f"worker{slot}",
+                "account_address": "0x" + f"{slot + 1:040x}",
+            }
+            for slot in range(2)
+        ]
+        worker_status = {
+            "deployed_worker_count": 2,
+            "workers": workers,
+        }
+        operation_order: list[str] = []
+        controller = Mock()
+
+        def preflight_workers(*_args):
+            operation_order.append("preflight")
+
+        def configure_policy(_client_limit: int):
+            operation_order.append("policy")
+            return {"transaction_hash": "0x" + "22" * 32}
+
+        def scale_workers(*_args):
+            operation_order.append("scale")
+            return worker_status
+
+        def publish_recipients(_addresses):
+            operation_order.append("publish")
+            return {"status": "declared"}
+
+        controller.preflight_scale.side_effect = preflight_workers
+        controller.scale.side_effect = scale_workers
+        with (
+            patch.object(server, "phala_runtime_mode", return_value=True),
+            patch.object(server, "require_control_admin"),
+            patch.object(server, "normalize_training_config", return_value=normalized),
+            patch.object(
+                server,
+                "configure_default_aggregation_policy",
+                side_effect=configure_policy,
+            ),
+            patch.object(server, "phala_worker_controller", return_value=controller),
+            patch.object(
+                server,
+                "publish_bootstrap_recipient_declaration",
+                side_effect=publish_recipients,
+            ),
+            patch.object(server, "write_training_config"),
+            patch.object(
+                server,
+                "read_training_config",
+                return_value={**normalized, "max_worker_count": 500},
+            ),
+            patch.object(server, "reset_runtime_telemetry"),
+            patch.object(
+                server,
+                "phala_runtime_status",
+                new=AsyncMock(return_value={"training_started": True}),
+            ),
+        ):
+            result = await server.start_training(Mock(), normalized)
+
+        self.assertEqual(operation_order, ["preflight", "policy", "scale", "publish"])
+        self.assertEqual(result["aggregation_policy"]["transaction_hash"], "0x" + "22" * 32)
+        controller.preflight_scale.assert_called_once_with(
+            2,
+            {**normalized, "rounds": 4},
+        )
+        controller.scale.assert_called_once_with(
+            2,
+            {**normalized, "rounds": 4},
+        )
+
+    async def test_training_start_does_not_scale_after_policy_failure(self) -> None:
+        normalized = {
+            "rounds": 3,
+            "epoch": 2,
+            "worker_count": 2,
+            "client_limit": 1,
+        }
+        controller = Mock()
+        with (
+            patch.object(server, "phala_runtime_mode", return_value=True),
+            patch.object(server, "require_control_admin"),
+            patch.object(server, "normalize_training_config", return_value=normalized),
+            patch.object(
+                server,
+                "configure_default_aggregation_policy",
+                side_effect=RuntimeError("policy transaction reverted"),
+            ),
+            patch.object(server, "phala_worker_controller", return_value=controller),
+        ):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server.start_training(Mock(), normalized)
+
+        self.assertEqual(raised.exception.status_code, 500)
+        self.assertIn("policy transaction reverted", raised.exception.detail)
+        controller.preflight_scale.assert_called_once()
+        controller.scale.assert_not_called()
+
+    async def test_training_start_does_not_change_policy_after_scale_preflight_failure(self) -> None:
+        normalized = {
+            "rounds": 3,
+            "epoch": 2,
+            "worker_count": 2,
+            "client_limit": 1,
+        }
+        controller = Mock()
+        controller.preflight_scale.side_effect = RuntimeError("attested compose mismatch")
+        with (
+            patch.object(server, "phala_runtime_mode", return_value=True),
+            patch.object(server, "require_control_admin"),
+            patch.object(server, "normalize_training_config", return_value=normalized),
+            patch.object(server, "configure_default_aggregation_policy") as configure_policy,
+            patch.object(server, "phala_worker_controller", return_value=controller),
+        ):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server.start_training(Mock(), normalized)
+
+        self.assertEqual(raised.exception.status_code, 500)
+        self.assertIn("attested compose mismatch", raised.exception.detail)
+        configure_policy.assert_not_called()
+        controller.scale.assert_not_called()
 
     def test_bootstrap_recipient_declaration_uses_admission_generation(self) -> None:
         first = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"

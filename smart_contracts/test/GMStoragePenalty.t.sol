@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
+import {AggregationPolicy} from "../src/core/AggregationPolicy.sol";
 import {GMStorage} from "../src/core/GMStorage.sol";
 import {ActionKeyTest} from "./helpers/ActionKeyTest.sol";
 
@@ -61,6 +62,7 @@ contract PenaltyAggregatorSelectionStub {
 
 contract GMStoragePenaltyTest is ActionKeyTest {
     GMStorage private gmStorage;
+    AggregationPolicy private aggregationPolicy;
     PenaltyDeviceRegistryStub private registry;
     PenaltyAggregatorSelectionStub private selection;
 
@@ -83,6 +85,11 @@ contract GMStoragePenaltyTest is ActionKeyTest {
 
         gmStorage =
             new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
+        aggregationPolicy = new AggregationPolicy(address(gmStorage));
+        aggregationPolicy.configureDefaultPolicy(1, 3600);
+        gmStorage.setAggregationPolicyAddress(address(aggregationPolicy));
+        vm.prank(aggregator);
+        gmStorage.openModelSubmissions(0);
 
         _recordSignedModelSubmission(
             gmStorage, aggregator, aggregator, missingWorker, 0, keccak256("missing-worker-round-zero")
@@ -90,14 +97,13 @@ contract GMStoragePenaltyTest is ActionKeyTest {
         _recordSignedModelSubmission(
             gmStorage, aggregator, aggregator, submittingWorker, 0, keccak256("submitting-worker-round-zero")
         );
-        vm.startPrank(aggregator);
-        gmStorage.closeModelSubmissions(0);
-        gmStorage.setGlobalModelAndSignatureAndKeyBundle(
-            "global-model-round-zero", "global-signature-round-zero", "global-key-bundle-round-zero"
-        );
-        gmStorage.incrementRound();
-        vm.stopPrank();
+        finalizeCurrentRound("global-model-round-zero", "global-signature-round-zero", "global-key-bundle-round-zero");
         selection.setSelectionRound(1);
+        vm.prank(aggregator);
+        gmStorage.openModelSubmissions(1);
+        _recordSignedModelSubmission(
+            gmStorage, aggregator, aggregator, submittingWorker, 1, keccak256("submitting-worker-round-one")
+        );
     }
 
     function singleTarget(address target) private pure returns (address[] memory targets) {
@@ -108,6 +114,37 @@ contract GMStoragePenaltyTest is ActionKeyTest {
     function closeCurrentRound() private {
         vm.prank(aggregator);
         gmStorage.closeModelSubmissions(1);
+    }
+
+    function finalizeCurrentRound(string memory model, string memory signatureCid, string memory keyBundle) private {
+        uint256 currentRound = gmStorage.getRound();
+        if (!gmStorage.modelSubmissionsClosed(currentRound)) {
+            vm.prank(aggregator);
+            gmStorage.closeModelSubmissions(currentRound);
+        }
+        (,,,,, uint32 inputCount,, bytes32 algorithmHash, bytes32 policyHash, bytes32 inputRoot) =
+            aggregationPolicy.getRoundPolicy(currentRound);
+        bytes32 outputModelHash = keccak256(bytes(model));
+        bytes32 outputBundleHash = keccak256(abi.encode(model, signatureCid, keyBundle, outputModelHash));
+        bytes32 publicationHash = keccak256(abi.encode(model, signatureCid, keyBundle));
+        bytes32 digest = aggregationPolicy.aggregationStatementDigest(
+            currentRound,
+            aggregator,
+            inputRoot,
+            inputCount,
+            algorithmHash,
+            policyHash,
+            outputModelHash,
+            outputBundleHash,
+            publicationHash,
+            aggregationPolicy.aggregationNonces(aggregator)
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(actionPrivateKeys[aggregator], digest);
+
+        vm.prank(aggregator);
+        gmStorage.finalizeRoundWithAggregation(
+            model, signatureCid, keyBundle, outputModelHash, outputBundleHash, abi.encodePacked(r, s, v)
+        );
     }
 
     function testAggregatorCanPenalizeAuthorizedMissingWorker() public {
@@ -246,15 +283,11 @@ contract GMStoragePenaltyTest is ActionKeyTest {
         _recordSignedModelSubmission(
             gmStorage, aggregator, aggregator, submittingWorker, 1, keccak256("submitting-worker-round-one")
         );
-        vm.startPrank(aggregator);
-        gmStorage.closeModelSubmissions(1);
-        gmStorage.setGlobalModelAndSignatureAndKeyBundle(
-            "global-model-round-one", "global-signature-round-one", "global-key-bundle-round-one"
-        );
+        finalizeCurrentRound("global-model-round-one", "global-signature-round-one", "global-key-bundle-round-one");
 
-        vm.expectRevert(bytes("Worker penalties closed after publication"));
+        vm.expectRevert(bytes("Penalty round mismatch"));
+        vm.prank(aggregator);
         gmStorage.penalizeContribution(1, aggregator, singleTarget(missingWorker), "missed_model_deadline");
-        vm.stopPrank();
 
         assertEq(gmStorage.getContribution(missingWorker), 1);
         assertFalse(gmStorage.penaltyApplied(1, missingWorker, keccak256(bytes("missed_model_deadline"))));

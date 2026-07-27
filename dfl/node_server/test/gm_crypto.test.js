@@ -6,9 +6,55 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+    OUTPUT_BUNDLE_HASH_DOMAIN,
     buildEncryptedGlobalModelArtifacts,
     decryptEncryptedGlobalModelArtifacts,
+    deriveOutputBundleHash,
 } from '../dist/gm_crypto.js';
+
+test('output bundle hash uses domain-separated length framing for every artifact', () => {
+    assert.equal(
+        OUTPUT_BUNDLE_HASH_DOMAIN,
+        'VITA-FL:global-model-output-bundle:v1',
+    );
+    const artifacts = {
+        encryptedBundleBytes: Buffer.from('bundle|bytes', 'utf8'),
+        encryptedSignatureBytes: Buffer.from([0, 1, 2, 3, 255]),
+        keyBundleBytes: Buffer.from('{"keys":["a","bc"]}', 'utf8'),
+    };
+    const expected = deriveOutputBundleHash(artifacts);
+    assert.equal(
+        expected,
+        '0xa3312df388a9693adcaa1f20d86815ef4633bf82a84cde782d3c82d7c37ff71b',
+    );
+
+    for (const [field, value] of [
+        ['encryptedBundleBytes', Buffer.from('bundle|bytes!', 'utf8')],
+        ['encryptedSignatureBytes', Buffer.from([0, 1, 2, 3, 254])],
+        ['keyBundleBytes', Buffer.from('{"keys":["ab","c"]}', 'utf8')],
+    ]) {
+        assert.notEqual(
+            deriveOutputBundleHash({ ...artifacts, [field]: value }),
+            expected,
+            `${field} was not bound by the output bundle hash`,
+        );
+    }
+});
+
+test('output bundle hash framing prevents concatenation-boundary ambiguity', () => {
+    assert.notEqual(
+        deriveOutputBundleHash({
+            encryptedBundleBytes: Buffer.from('ab'),
+            encryptedSignatureBytes: Buffer.from('c'),
+            keyBundleBytes: Buffer.from('d'),
+        }),
+        deriveOutputBundleHash({
+            encryptedBundleBytes: Buffer.from('a'),
+            encryptedSignatureBytes: Buffer.from('bc'),
+            keyBundleBytes: Buffer.from('d'),
+        }),
+    );
+});
 
 test('gm crypto roundtrip encrypts once and decrypts for the intended recipient', async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gm-crypto-'));
@@ -44,6 +90,14 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
         });
 
         assert.equal(artifacts.recipients, 1);
+        assert.equal(
+            artifacts.outputBundleHash,
+            deriveOutputBundleHash({
+                encryptedBundleBytes: await fs.readFile(encryptedBundlePath),
+                encryptedSignatureBytes: await fs.readFile(encryptedSignaturePath),
+                keyBundleBytes: await fs.readFile(keyBundlePath),
+            }),
+        );
         assert.ok((await fs.readFile(encryptedBundlePath, 'utf8')).includes('"cipher":"aes-256-gcm"'));
         assert.ok((await fs.stat(encryptedSignaturePath)).size > 0);
         assert.equal(

@@ -84,6 +84,14 @@ _telemetry_nonces: dict[str, int] = {}
 TELEMETRY_MAX_RECORDS = 20_000
 TELEMETRY_MAX_AGE_MS = 10 * 60 * 1000
 MAX_DYNAMIC_WORKERS = 500
+DEFAULT_MODEL_SUBMISSION_DEADLINE_MS = 20_000
+MAX_AGGREGATION_SUBMISSION_WINDOW_SECONDS = 7 * 24 * 60 * 60
+AGGREGATION_POLICY_TRANSACTION_TIMEOUT_SECONDS = 60
+# bytes4(keccak256("configureDefaultPolicy(uint32,uint64)"))
+AGGREGATION_POLICY_CONFIGURE_SELECTOR = "95b40727"
+AGGREGATION_POLICY_OWNER_SELECTOR = "8da5cb5b"
+AGGREGATION_POLICY_REQUIRED_SUBMISSIONS_SELECTOR = "ea2e7c87"
+AGGREGATION_POLICY_SUBMISSION_WINDOW_SELECTOR = "0dbc13f0"
 
 
 def phala_runtime_mode() -> bool:
@@ -715,13 +723,13 @@ def read_training_config(
 
     if phala_runtime_mode():
         maximum = max(
-            1,
+            2,
             min(
                 _safe_int(os.environ.get("MAX_DYNAMIC_WORKERS"), MAX_DYNAMIC_WORKERS),
                 MAX_DYNAMIC_WORKERS,
             ),
         )
-        worker_count = max(1, min(_safe_int(os.environ.get("WORKER_COUNT"), 3), maximum))
+        worker_count = max(2, min(_safe_int(os.environ.get("WORKER_COUNT"), 3), maximum))
         client_limit = max(
             1,
             min(_safe_int(os.environ.get("CLIENT_LIMIT"), max(1, worker_count - 1)), max(1, worker_count - 1)),
@@ -737,12 +745,12 @@ def read_training_config(
 
     available_workers = _available_worker_services(compose_file)
     max_worker_count = len(available_workers)
-    worker_count_default = max_worker_count if max_worker_count > 0 else 1
+    worker_count_default = max_worker_count if max_worker_count > 0 else 2
     worker_count = _safe_int(values.get("WORKER_COUNT"), worker_count_default)
     if max_worker_count > 0:
-        worker_count = max(1, min(worker_count, max_worker_count))
+        worker_count = max(2, min(worker_count, max_worker_count))
     else:
-        worker_count = max(1, worker_count)
+        worker_count = max(2, worker_count)
     max_client_limit = max(1, worker_count - 1)
     client_limit = max(1, min(_safe_int(values.get("CLIENT_LIMIT"), max_client_limit), max_client_limit))
 
@@ -758,11 +766,11 @@ def read_training_config(
 
 def normalize_training_config(payload: dict[str, Any]) -> dict[str, int]:
     current = read_training_config()
-    max_worker_count = max(1, int(current["max_worker_count"]) or 1)
+    max_worker_count = max(2, int(current["max_worker_count"]) or 2)
 
     rounds = max(1, _safe_int(payload.get("rounds"), int(current["rounds"])))
     epoch = max(1, _safe_int(payload.get("epoch"), int(current["epoch"])))
-    worker_count = max(1, min(_safe_int(payload.get("worker_count"), int(current["worker_count"])), max_worker_count))
+    worker_count = max(2, min(_safe_int(payload.get("worker_count"), int(current["worker_count"])), max_worker_count))
     max_client_limit = max(1, worker_count - 1)
     client_limit = max(1, min(_safe_int(payload.get("client_limit"), int(current["client_limit"])), max_client_limit))
 
@@ -1069,8 +1077,15 @@ def runtime_contract_env_values() -> dict[str, str]:
     values = read_env_values()
     if not phala_runtime_mode():
         return values
-    rpc_url = os.environ.get("DYNAMIC_WORKER_RPC_URL", "").strip()
-    kubo_api = os.environ.get("DYNAMIC_WORKER_KUBO_API_URL", "").strip().rstrip("/")
+    rpc_url = (
+        os.environ.get("RPC_URL", "").strip()
+        or os.environ.get("DYNAMIC_WORKER_RPC_URL", "").strip()
+    )
+    kubo_api = (
+        os.environ.get("KUBO_API_URL", "").strip()
+        or os.environ.get("KUBO_API", "").strip()
+        or os.environ.get("DYNAMIC_WORKER_KUBO_API_URL", "").strip()
+    ).rstrip("/")
     if rpc_url:
         values["RPC_URL"] = rpc_url
     if kubo_api:
@@ -1084,6 +1099,7 @@ def runtime_contract_env_values() -> dict[str, str]:
                 "registry_address": "REGISTRY_ADDRESS",
                 "aggregator_address": "AGGREGATOR_ADDRESS",
                 "gm_storage_address": "GM_STORAGE_ADDRESS",
+                "aggregation_policy_address": "AGGREGATION_POLICY_ADDRESS",
             }
             for manifest_key, env_key in address_keys.items():
                 address = str(manifest.get(manifest_key, "")).strip()
@@ -1092,6 +1108,250 @@ def runtime_contract_env_values() -> dict[str, str]:
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
             pass
     return values
+
+
+def _ethereum_rpc(rpc_url: str, method: str, params: list[Any]) -> Any:
+    response = _post_json(
+        rpc_url,
+        {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": 1,
+        },
+        timeout=10.0,
+    )
+    if response is None:
+        raise RuntimeError(f"Ethereum RPC {method} did not return a response")
+    if not isinstance(response, dict):
+        raise RuntimeError(f"Ethereum RPC {method} returned an invalid response")
+    error = response.get("error")
+    if error is not None:
+        if isinstance(error, dict):
+            message = str(error.get("message") or "unknown RPC error")
+        else:
+            message = str(error)
+        raise RuntimeError(f"Ethereum RPC {method} failed: {message}")
+    if "result" not in response:
+        raise RuntimeError(f"Ethereum RPC {method} returned no result")
+    return response["result"]
+
+
+def _rpc_quantity(value: Any, name: str) -> int:
+    if isinstance(value, bool):
+        raise RuntimeError(f"Ethereum RPC returned an invalid {name}")
+    try:
+        if isinstance(value, int):
+            result = value
+        else:
+            text = str(value).strip()
+            result = int(text, 16) if text.lower().startswith("0x") else int(text)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Ethereum RPC returned an invalid {name}") from exc
+    if result < 0:
+        raise RuntimeError(f"Ethereum RPC returned an invalid {name}")
+    return result
+
+
+def _rpc_address(value: Any, name: str) -> str:
+    encoded = str(value).strip()
+    if not re.fullmatch(r"0x[a-fA-F0-9]{64}", encoded):
+        raise RuntimeError(f"Ethereum RPC returned an invalid {name}")
+    if encoded[2:26] != "0" * 24:
+        raise RuntimeError(f"Ethereum RPC returned an invalid {name}")
+    return f"0x{encoded[-40:]}"
+
+
+def _ethereum_account_address(private_key: str) -> str:
+    from eth_account import Account
+
+    return str(Account.from_key(private_key).address)
+
+
+def _sign_ethereum_transaction(transaction: dict[str, Any], private_key: str) -> str:
+    from eth_account import Account
+
+    signed = Account.sign_transaction(transaction, private_key)
+    raw_transaction = getattr(signed, "raw_transaction", None)
+    if raw_transaction is None:
+        raw_transaction = getattr(signed, "rawTransaction", None)
+    if raw_transaction is None:
+        raise RuntimeError("eth-account did not return a signed transaction")
+    raw_hex = raw_transaction.hex()
+    return raw_hex if raw_hex.startswith("0x") else f"0x{raw_hex}"
+
+
+def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
+    if (
+        isinstance(client_limit, bool)
+        or not isinstance(client_limit, int)
+        or not 1 <= client_limit <= MAX_DYNAMIC_WORKERS
+    ):
+        raise ValueError(
+            f"client_limit must be an integer between 1 and {MAX_DYNAMIC_WORKERS}"
+        )
+
+    deadline_value = os.environ.get(
+        "MODEL_SUBMISSION_DEADLINE_MS",
+        str(DEFAULT_MODEL_SUBMISSION_DEADLINE_MS),
+    ).strip()
+    try:
+        deadline_ms = int(deadline_value)
+    except ValueError as exc:
+        raise ValueError("MODEL_SUBMISSION_DEADLINE_MS must be an integer") from exc
+    if deadline_ms <= 0:
+        raise ValueError("MODEL_SUBMISSION_DEADLINE_MS must be positive")
+    submission_window_seconds = (deadline_ms + 999) // 1000
+    if submission_window_seconds > MAX_AGGREGATION_SUBMISSION_WINDOW_SECONDS:
+        raise ValueError(
+            "MODEL_SUBMISSION_DEADLINE_MS exceeds the AggregationPolicy maximum"
+        )
+
+    runtime_values = runtime_contract_env_values()
+    policy_address = runtime_values.get("AGGREGATION_POLICY_ADDRESS", "").strip()
+    if (
+        not re.fullmatch(r"0x[a-fA-F0-9]{40}", policy_address)
+        or policy_address.lower() == "0x" + "0" * 40
+    ):
+        raise RuntimeError(
+            "aggregation_policy_address is missing or invalid in /runtime/contracts.json"
+        )
+
+    rpc_url = os.environ.get("RPC_URL", "").strip() or runtime_values.get("RPC_URL", "").strip()
+    if not rpc_url:
+        raise RuntimeError("RPC_URL is not configured for AggregationPolicy")
+    private_key = os.environ.get("ETH_WALLET_PRIVATE_KEY", "").strip()
+    if not re.fullmatch(r"0x[a-fA-F0-9]{64}", private_key):
+        raise RuntimeError("ETH_WALLET_PRIVATE_KEY is missing or invalid")
+
+    owner_address = _ethereum_account_address(private_key)
+    encoded_arguments = (
+        client_limit.to_bytes(32, byteorder="big")
+        + submission_window_seconds.to_bytes(32, byteorder="big")
+    )
+    call_data = f"0x{AGGREGATION_POLICY_CONFIGURE_SELECTOR}{encoded_arguments.hex()}"
+
+    contract_owner = _rpc_address(
+        _ethereum_rpc(
+            rpc_url,
+            "eth_call",
+            [
+                {
+                    "to": policy_address,
+                    "data": f"0x{AGGREGATION_POLICY_OWNER_SELECTOR}",
+                },
+                "latest",
+            ],
+        ),
+        "AggregationPolicy owner",
+    )
+    if contract_owner.lower() != owner_address.lower():
+        raise RuntimeError(
+            "ETH_WALLET_PRIVATE_KEY does not belong to the AggregationPolicy owner"
+        )
+
+    chain_id = _rpc_quantity(_ethereum_rpc(rpc_url, "eth_chainId", []), "chain ID")
+    nonce = _rpc_quantity(
+        _ethereum_rpc(rpc_url, "eth_getTransactionCount", [owner_address, "pending"]),
+        "transaction count",
+    )
+    gas_price = _rpc_quantity(
+        _ethereum_rpc(rpc_url, "eth_gasPrice", []),
+        "gas price",
+    )
+    transaction_call = {
+        "from": owner_address,
+        "to": policy_address,
+        "data": call_data,
+        "value": "0x0",
+    }
+    estimated_gas = _rpc_quantity(
+        _ethereum_rpc(rpc_url, "eth_estimateGas", [transaction_call]),
+        "gas estimate",
+    )
+    transaction = {
+        "chainId": chain_id,
+        "nonce": nonce,
+        "to": policy_address,
+        "value": 0,
+        "data": call_data,
+        "gas": max(21_000, (estimated_gas * 120 + 99) // 100),
+        "gasPrice": gas_price,
+    }
+    raw_transaction = _sign_ethereum_transaction(transaction, private_key)
+    transaction_hash = str(
+        _ethereum_rpc(rpc_url, "eth_sendRawTransaction", [raw_transaction])
+    )
+    if not re.fullmatch(r"0x[a-fA-F0-9]{64}", transaction_hash):
+        raise RuntimeError("Ethereum RPC returned an invalid transaction hash")
+
+    deadline = time.monotonic() + AGGREGATION_POLICY_TRANSACTION_TIMEOUT_SECONDS
+    receipt: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        candidate = _ethereum_rpc(
+            rpc_url,
+            "eth_getTransactionReceipt",
+            [transaction_hash],
+        )
+        if candidate is not None:
+            if not isinstance(candidate, dict):
+                raise RuntimeError("Ethereum RPC returned an invalid transaction receipt")
+            receipt = candidate
+            break
+        time.sleep(0.25)
+    if receipt is None:
+        raise RuntimeError(
+            "timed out waiting for the AggregationPolicy configuration transaction"
+        )
+    if _rpc_quantity(receipt.get("status"), "transaction status") != 1:
+        raise RuntimeError("AggregationPolicy configuration transaction reverted")
+
+    observed_client_limit = _rpc_quantity(
+        _ethereum_rpc(
+            rpc_url,
+            "eth_call",
+            [
+                {
+                    "to": policy_address,
+                    "data": f"0x{AGGREGATION_POLICY_REQUIRED_SUBMISSIONS_SELECTOR}",
+                },
+                "latest",
+            ],
+        ),
+        "AggregationPolicy required submissions",
+    )
+    observed_submission_window = _rpc_quantity(
+        _ethereum_rpc(
+            rpc_url,
+            "eth_call",
+            [
+                {
+                    "to": policy_address,
+                    "data": f"0x{AGGREGATION_POLICY_SUBMISSION_WINDOW_SELECTOR}",
+                },
+                "latest",
+            ],
+        ),
+        "AggregationPolicy submission window",
+    )
+    if (
+        observed_client_limit != client_limit
+        or observed_submission_window != submission_window_seconds
+    ):
+        raise RuntimeError(
+            "AggregationPolicy state does not match the confirmed configuration transaction"
+        )
+
+    return {
+        "address": policy_address,
+        "owner": owner_address,
+        "client_limit": client_limit,
+        "model_submission_deadline_ms": deadline_ms,
+        "submission_window_seconds": submission_window_seconds,
+        "transaction_hash": transaction_hash,
+        "block_number": _rpc_quantity(receipt.get("blockNumber"), "block number"),
+        "gas_used": _rpc_quantity(receipt.get("gasUsed"), "gas used"),
+    }
 
 
 def read_chain_round(env_values: dict[str, str]) -> int | None:
@@ -2184,8 +2444,18 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
             if phala_runtime_mode():
                 require_control_admin(request)
                 worker_config = phala_worker_training_config(normalized)
+                worker_controller = phala_worker_controller()
+                await asyncio.to_thread(
+                    worker_controller.preflight_scale,
+                    normalized["worker_count"],
+                    worker_config,
+                )
+                aggregation_policy = await asyncio.to_thread(
+                    configure_default_aggregation_policy,
+                    normalized["client_limit"],
+                )
                 worker_status = await asyncio.to_thread(
-                    phala_worker_controller().scale,
+                    worker_controller.scale,
                     normalized["worker_count"],
                     worker_config,
                 )
@@ -2205,6 +2475,7 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                     "inactive_workers": [],
                     "status": await phala_runtime_status(),
                     "phala_workers": worker_status,
+                    "aggregation_policy": aggregation_policy,
                     "logs": [],
                 }
             saved_config = write_training_config(normalized)

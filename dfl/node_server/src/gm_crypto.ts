@@ -6,6 +6,53 @@ type RecipientKey = {
     publicKeyDerHex: string;
 };
 
+export const OUTPUT_BUNDLE_HASH_DOMAIN =
+    "VITA-FL:global-model-output-bundle:v1";
+
+const uint64FrameLength = (value: number) => {
+    if (!Number.isSafeInteger(value) || value < 0) {
+        throw new Error("Output-bundle frame length must be a safe unsigned integer.");
+    }
+    const encoded = Buffer.alloc(8);
+    encoded.writeBigUInt64BE(BigInt(value));
+    return encoded;
+};
+
+const requireBytes = (value: Uint8Array, label: string) => {
+    if (!(value instanceof Uint8Array)) {
+        throw new Error(`${label} must be bytes.`);
+    }
+    return Buffer.from(value);
+};
+
+const framedHashField = (label: string, value: Uint8Array) => {
+    const labelBytes = Buffer.from(label, "utf8");
+    const valueBytes = requireBytes(value, label);
+    return Buffer.concat([
+        uint64FrameLength(labelBytes.length),
+        labelBytes,
+        uint64FrameLength(valueBytes.length),
+        valueBytes,
+    ]);
+};
+
+export const deriveOutputBundleHash = ({
+    encryptedBundleBytes,
+    encryptedSignatureBytes,
+    keyBundleBytes,
+}: {
+    encryptedBundleBytes: Uint8Array;
+    encryptedSignatureBytes: Uint8Array;
+    keyBundleBytes: Uint8Array;
+}): `0x${string}` => {
+    const digest = crypto.createHash("sha256");
+    digest.update(framedHashField("domain", Buffer.from(OUTPUT_BUNDLE_HASH_DOMAIN, "utf8")));
+    digest.update(framedHashField("bundle", encryptedBundleBytes));
+    digest.update(framedHashField("signature", encryptedSignatureBytes));
+    digest.update(framedHashField("key-bundle", keyBundleBytes));
+    return `0x${digest.digest("hex")}`;
+};
+
 const normalizeHex = (value: string) => {
     const trimmed = String(value || "").trim();
     return trimmed.startsWith("0x") || trimmed.startsWith("0X") ? trimmed.slice(2) : trimmed;
@@ -101,13 +148,19 @@ export const buildEncryptedGlobalModelArtifacts = async ({
         round,
         wrapped_keys_b64: wrappedKeys,
     };
-    await fs.writeFile(keyBundlePath, JSON.stringify(keyBundleDocument));
+    const keyBundleBytes = Buffer.from(JSON.stringify(keyBundleDocument), "utf8");
+    await fs.writeFile(keyBundlePath, keyBundleBytes);
 
     return {
         recipients: Object.keys(wrappedKeys).length,
         encryptedBundlePath,
         encryptedSignaturePath,
         keyBundlePath,
+        outputBundleHash: deriveOutputBundleHash({
+            encryptedBundleBytes: bundleBytes,
+            encryptedSignatureBytes: signature,
+            keyBundleBytes,
+        }),
     };
 };
 

@@ -828,7 +828,7 @@
                     <div class="training-item-label">Workers</div>
                     <div class="training-stepper">
                       <button class="training-step-btn" data-training-field="worker_count" data-training-delta="-1" type="button">-</button>
-                      <input class="training-step-value" id="training-worker-count" data-training-input="worker_count" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="1">
+                      <input class="training-step-value" id="training-worker-count" data-training-input="worker_count" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="2">
                       <button class="training-step-btn" data-training-field="worker_count" data-training-delta="1" type="button">+</button>
                     </div>
                   </div>
@@ -1018,9 +1018,9 @@
     let trainingConfig = {
       rounds: 5,
       epoch: 1,
-      worker_count: 1,
+      worker_count: 2,
       client_limit: 1,
-      max_worker_count: 1,
+      max_worker_count: 2,
       available_workers: []
     };
     let serverTrainingConfig = { ...trainingConfig };
@@ -1217,8 +1217,8 @@
     function clampTrainingField(field, value, config = trainingConfig) {
       const parsed = positiveInt(value, positiveInt(config[field], 1));
       if (field === "worker_count") {
-        const maxWorkerCount = Math.max(1, positiveInt(config.max_worker_count, 1));
-        return Math.max(1, Math.min(parsed, maxWorkerCount));
+        const maxWorkerCount = Math.max(2, positiveInt(config.max_worker_count, 2));
+        return Math.max(2, Math.min(parsed, maxWorkerCount));
       }
       if (field === "client_limit") {
         const maxClientLimit = Math.max(1, positiveInt(config.worker_count, 1) - 1);
@@ -1228,11 +1228,11 @@
     }
 
     function normalizeTrainingConfig(config, fallback = trainingConfig) {
-      const maxWorkerCount = Math.max(1, positiveInt(config?.max_worker_count, fallback.max_worker_count || 1));
+      const maxWorkerCount = Math.max(2, positiveInt(config?.max_worker_count, fallback.max_worker_count || 2));
       const nextConfig = {
         rounds: positiveInt(config?.rounds, fallback.rounds || 1),
         epoch: positiveInt(config?.epoch, fallback.epoch || 1),
-        worker_count: positiveInt(config?.worker_count, fallback.worker_count || 1),
+        worker_count: positiveInt(config?.worker_count, fallback.worker_count || 2),
         client_limit: positiveInt(config?.client_limit, fallback.client_limit || 1),
         max_worker_count: maxWorkerCount,
         available_workers: Array.isArray(config?.available_workers)
@@ -1265,10 +1265,13 @@
         return;
       }
       if (field === "worker_count") {
-        input.max = String(Math.max(1, positiveInt(trainingConfig.max_worker_count, 1)));
+        input.min = "2";
+        input.max = String(Math.max(2, positiveInt(trainingConfig.max_worker_count, 2)));
       } else if (field === "client_limit") {
+        input.min = "1";
         input.max = String(Math.max(1, positiveInt(trainingConfig.worker_count, 1) - 1));
       } else {
+        input.removeAttribute("min");
         input.removeAttribute("max");
       }
       if (document.activeElement !== input) {

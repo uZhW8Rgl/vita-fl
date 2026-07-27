@@ -1,7 +1,8 @@
 import axios from "axios";
+import crypto from "crypto";
 import fs from "fs";
 import FormData from "form-data";
-import { getActiveModelBundle, getAuthorizedDevices, getDevicePublicKey, getRound, setGlobalModelAndSignatureAndKeyBundle, } from "./bc_client.js";
+import { getActiveModelBundle, getAuthorizedDevices, createAggregationStatement, finalizeRoundWithAggregation, getDevicePublicKey, getRound, isGlobalModelPublished, } from "./bc_client.js";
 import { buildEncryptedGlobalModelArtifacts, decryptEncryptedGlobalModelArtifacts, } from "./gm_crypto.js";
 export const pinFile = async (filePath) => {
     try {
@@ -146,7 +147,18 @@ export const updateGM = async (expectedModelRound, participantPrivateKey) => {
     if (!Number.isSafeInteger(expectedModelRound) || expectedModelRound <= 0) {
         throw new Error(`Invalid expected global-model round: ${expectedModelRound}`);
     }
+    const intendedSourceRound = expectedModelRound - 1;
     const sourceRound = Number(await getRound());
+    if (sourceRound >= expectedModelRound
+        && await isGlobalModelPublished(intendedSourceRound)) {
+        console.log(`Aggregation round ${intendedSourceRound} is already atomically finalized; ` +
+            "skipping duplicate artifact publication.");
+        return {
+            sourceRound: intendedSourceRound,
+            expectedModelRound,
+            reconciled: true,
+        };
+    }
     if (!Number.isSafeInteger(sourceRound) || sourceRound < 0 || sourceRound + 1 !== expectedModelRound) {
         throw new Error(`Global-model round changed before publication: expected source round ${expectedModelRound - 1}, got ${sourceRound}`);
     }
@@ -161,7 +173,7 @@ export const updateGM = async (expectedModelRound, participantPrivateKey) => {
         recipients.push({ address, publicKeyDerHex });
     }
     const { bundlePath, bundleSignaturePath, keyBundlePath } = encryptedBundlePaths();
-    await buildEncryptedGlobalModelArtifacts({
+    const { outputBundleHash } = await buildEncryptedGlobalModelArtifacts({
         modelPath,
         signaturePath: sigPath,
         encryptedBundlePath: bundlePath,
@@ -171,6 +183,7 @@ export const updateGM = async (expectedModelRound, participantPrivateKey) => {
         round,
         signingPrivateKey: participantPrivateKey,
     });
+    const outputModelHash = `0x${crypto.createHash("sha256").update(fs.readFileSync(modelPath)).digest("hex")}`;
     const modelCid = await pinFile(bundlePath);
     if (!modelCid)
         throw new Error("Pinning failed for encrypted model bundle, no CID returned");
@@ -186,8 +199,44 @@ export const updateGM = async (expectedModelRound, participantPrivateKey) => {
     console.log("New encrypted GM bundle CID:", modelCid);
     console.log("New encrypted GM bundle signature CID:", sigCid);
     console.log("New encrypted GM key bundle CID:", keyBundleCid);
-    await setGlobalModelAndSignatureAndKeyBundle(modelCid, sigCid, keyBundleCid);
-    console.log("Encrypted global model bundle + signature + key bundle updated (on-chain)");
+    const aggregationStatement = await createAggregationStatement({
+        sourceRound,
+        modelCid,
+        signatureCid: sigCid,
+        keyBundleCid,
+        outputModelHash,
+        outputBundleHash,
+    });
+    await finalizeRoundWithAggregation({
+        modelCid,
+        signatureCid: sigCid,
+        keyBundleCid,
+        outputModelHash,
+        outputBundleHash,
+        statementSignature: aggregationStatement.statementSignature,
+    });
+    const observedRound = Number(await getRound());
+    if (observedRound !== expectedModelRound
+        || !(await isGlobalModelPublished(sourceRound))) {
+        throw new Error(`Atomic aggregation finalization was not observable: expected round ` +
+            `${expectedModelRound}, got ${observedRound}.`);
+    }
+    console.log("Encrypted global model and TEE-signed aggregation evidence finalized atomically on-chain.", {
+        sourceRound,
+        inputRoot: aggregationStatement.policy.inputRoot,
+        inputCount: aggregationStatement.policy.acceptedSubmissions,
+        policyHash: aggregationStatement.policy.policyHash,
+        outputModelHash,
+        outputBundleHash,
+        publicationHash: aggregationStatement.publicationHash,
+        statementDigest: aggregationStatement.statementDigest,
+    });
+    return {
+        sourceRound,
+        expectedModelRound,
+        reconciled: false,
+        aggregationStatement,
+    };
 };
 export const getCurrentModel = async (participantPrivateKey) => {
     const activeModel = await getActiveModelBundle();

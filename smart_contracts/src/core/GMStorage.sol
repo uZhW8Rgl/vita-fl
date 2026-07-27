@@ -16,6 +16,22 @@ interface IAggregatorSelection {
     function lastSelectionRound() external view returns (uint256);
 }
 
+interface IAggregationPolicy {
+    function gmStorage() external view returns (address);
+    function openRound(uint256 round) external;
+    function recordSubmission(uint256 round, address worker, bytes32 submissionCommitment) external;
+    function closeRound(uint256 round, uint256 reportedSubmissionCount) external;
+    function verifyAndRecordPublication(
+        uint256 round,
+        address aggregator,
+        address actionKey,
+        bytes32 outputModelHash,
+        bytes32 outputBundleHash,
+        bytes32 publicationHash,
+        bytes calldata signature
+    ) external returns (bytes32 statementDigest);
+}
+
 contract GMStorage {
     using StrictECDSA for bytes32;
 
@@ -37,8 +53,10 @@ contract GMStorage {
     uint256 public completedRoundCount;
     address public lastRoundAggregator;
     address public bootstrapAuthority;
+    address public owner;
     address public device_registry_address;
     address public aggregator_selection_address;
+    address public aggregation_policy_address;
     mapping(address => uint256) public contributions;
     mapping(uint256 => mapping(address => bool)) public modelSubmitted;
     mapping(uint256 => mapping(address => bytes32)) public modelSubmissionHash;
@@ -52,6 +70,10 @@ contract GMStorage {
     mapping(uint256 => bool) public globalModelPublished;
     mapping(uint256 => address) public globalModelPublisher;
     mapping(uint256 => bytes) public globalModelPublisherPublicKey;
+    mapping(uint256 => bytes32) public globalModelPlaintextHash;
+    mapping(uint256 => bytes32) public globalModelBundleHash;
+    mapping(uint256 => bytes32) public globalModelPublicationHash;
+    mapping(uint256 => bytes32) public aggregationStatementDigest;
     mapping(uint256 => bool) public roundCompleted;
     mapping(uint256 => bool) public roundAborted;
     bool public hasFinalizedModel;
@@ -74,8 +96,17 @@ contract GMStorage {
     event ContributionIncremented(uint256 indexed round, address indexed device, uint256 score);
     event ContributionDecremented(uint256 indexed round, address indexed device, uint256 score, string reason);
     event GlobalModelPublished(
-        uint256 indexed round, address indexed aggregator, string model, string signature, string keyBundle
+        uint256 indexed round,
+        address indexed aggregator,
+        string model,
+        string signature,
+        string keyBundle,
+        bytes32 outputModelHash,
+        bytes32 outputBundleHash,
+        bytes32 publicationHash,
+        bytes32 statementDigest
     );
+    event AggregationPolicyAddressSet(address indexed aggregationPolicy);
     event EncryptedBootstrapInitialized(
         address indexed authority, string model, string signature, string keyBundle, bytes32 publisherPublicKeyHash
     );
@@ -97,8 +128,22 @@ contract GMStorage {
         device_registry_address = _device_registry_address;
         aggregator_selection_address = _aggregator_selection_address;
         round = 0;
+        owner = msg.sender;
         bootstrapAuthority = msg.sender;
         lastRoundAggregator = _initial_GM_SIGNER_ADDRESS;
+    }
+
+    function setAggregationPolicyAddress(address aggregationPolicy) external {
+        require(msg.sender == owner, "not GMStorage owner");
+        require(aggregation_policy_address == address(0), "aggregation policy already configured");
+        require(aggregationPolicy != address(0), "aggregation policy is zero");
+        require(aggregationPolicy.code.length > 0, "aggregation policy has no code");
+        require(
+            IAggregationPolicy(aggregationPolicy).gmStorage() == address(this),
+            "aggregation policy is bound to another GMStorage"
+        );
+        aggregation_policy_address = aggregationPolicy;
+        emit AggregationPolicyAddressSet(aggregationPolicy);
     }
 
     function initializeEncryptedBootstrap(
@@ -151,30 +196,87 @@ contract GMStorage {
         string memory _newGlobalModelSignature,
         string memory _newGlobalModelKeyBundle
     ) external {
+        _newGlobalModel;
+        _newGlobalModelSignature;
+        _newGlobalModelKeyBundle;
+        revert("Aggregation statement and atomic finalization required");
+    }
+
+    function finalizeRoundWithAggregation(
+        string calldata newGlobalModel,
+        string calldata newGlobalModelSignature,
+        string calldata newGlobalModelKeyBundle,
+        bytes32 outputModelHash,
+        bytes32 outputBundleHash,
+        bytes calldata statementSignature
+    ) external {
         address aggregator = _requireActiveAuthorizedAggregator();
-        require(modelSubmissionsClosed[round], "Model submissions are still open");
-        require(round == 0 || modelSubmissionCount[round] > 0, "No confirmed worker submissions");
-        require(bytes(_newGlobalModel).length > 0, "Model CID is empty");
-        require(bytes(_newGlobalModelSignature).length > 0, "Model signature CID is empty");
-        require(bytes(_newGlobalModelKeyBundle).length > 0, "Model key bundle CID is empty");
-        (bool publisherAuthorized,,, bytes memory publisherPublicKey) =
-            IDeviceRegistry(device_registry_address).getDevice(aggregator);
+        uint256 sourceRound = round;
+        require(aggregation_policy_address != address(0), "aggregation policy is not configured");
+        require(modelSubmissionsClosed[sourceRound], "Model submissions are still open");
+        require(!globalModelPublished[sourceRound], "Global model already published");
+        require(bytes(newGlobalModel).length > 0, "Model CID is empty");
+        require(bytes(newGlobalModelSignature).length > 0, "Model signature CID is empty");
+        require(bytes(newGlobalModelKeyBundle).length > 0, "Model key bundle CID is empty");
+        require(outputModelHash != bytes32(0), "Output model hash is zero");
+        require(outputBundleHash != bytes32(0), "Output bundle hash is zero");
+
+        IDeviceRegistry deviceRegistry = IDeviceRegistry(device_registry_address);
+        (bool publisherAuthorized,,, bytes memory publisherPublicKey) = deviceRegistry.getDevice(aggregator);
         require(publisherAuthorized, "Publisher is not authorized");
         require(publisherPublicKey.length > 0, "Publisher public key is empty");
-        if (!globalModelPublished[round]) {
-            backupGlobalModel = globalModel;
-            backupGlobalModelSignature = globalModelSignature;
-            backupGlobalModelKeyBundle = globalModelKeyBundle;
-        }
-        globalModel = _newGlobalModel;
-        globalModelSignature = _newGlobalModelSignature;
-        globalModelKeyBundle = _newGlobalModelKeyBundle;
-        globalModelPublished[round] = true;
-        globalModelPublisher[round] = aggregator;
-        globalModelPublisherPublicKey[round] = publisherPublicKey;
-        emit GlobalModelPublished(
-            round, aggregator, _newGlobalModel, _newGlobalModelSignature, _newGlobalModelKeyBundle
+        address actionKey = deviceRegistry.actionKeys(aggregator);
+        require(actionKey == msg.sender, "Caller is not current aggregator action key");
+
+        bytes32 publicationHash =
+            keccak256(abi.encode(newGlobalModel, newGlobalModelSignature, newGlobalModelKeyBundle));
+        bytes32 statementDigest = IAggregationPolicy(aggregation_policy_address).verifyAndRecordPublication(
+            sourceRound,
+            aggregator,
+            actionKey,
+            outputModelHash,
+            outputBundleHash,
+            publicationHash,
+            statementSignature
         );
+
+        backupGlobalModel = globalModel;
+        backupGlobalModelSignature = globalModelSignature;
+        backupGlobalModelKeyBundle = globalModelKeyBundle;
+        globalModel = newGlobalModel;
+        globalModelSignature = newGlobalModelSignature;
+        globalModelKeyBundle = newGlobalModelKeyBundle;
+        globalModelPublished[sourceRound] = true;
+        globalModelPublisher[sourceRound] = aggregator;
+        globalModelPublisherPublicKey[sourceRound] = publisherPublicKey;
+        globalModelPlaintextHash[sourceRound] = outputModelHash;
+        globalModelBundleHash[sourceRound] = outputBundleHash;
+        globalModelPublicationHash[sourceRound] = publicationHash;
+        aggregationStatementDigest[sourceRound] = statementDigest;
+
+        roundCompleted[sourceRound] = true;
+        completedRoundCount++;
+        activeModelPublisherPublicKey = publisherPublicKey;
+        lastFinalizedPublisherPublicKey = publisherPublicKey;
+        hasFinalizedModel = true;
+        lastFinalizedModelRound = sourceRound + 1;
+        lastRoundAggregator = aggregator;
+        addContributor(aggregator);
+        contributions[aggregator]++;
+        round = sourceRound + 1;
+
+        emit GlobalModelPublished(
+            sourceRound,
+            aggregator,
+            newGlobalModel,
+            newGlobalModelSignature,
+            newGlobalModelKeyBundle,
+            outputModelHash,
+            outputBundleHash,
+            publicationHash,
+            statementDigest
+        );
+        emit ContributionIncremented(sourceRound, aggregator, contributions[aggregator]);
     }
 
     function penalizeContribution(
@@ -272,6 +374,8 @@ contract GMStorage {
         modelSubmissionCommitment[round][worker] = commitment;
         workerSubmissionNonces[worker] = workerNonce + 1;
         modelSubmissionCount[round]++;
+        require(aggregation_policy_address != address(0), "aggregation policy is not configured");
+        IAggregationPolicy(aggregation_policy_address).recordSubmission(round, worker, commitment);
         contributions[worker]++;
         emit ModelSubmissionRecorded(round, aggregator, worker, modelHash, packageHash, parentModelHash, workerNonce);
         emit ContributionIncremented(round, worker, contributions[worker]);
@@ -284,8 +388,19 @@ contract GMStorage {
         if (modelSubmissionsClosed[round]) {
             return;
         }
+        require(aggregation_policy_address != address(0), "aggregation policy is not configured");
+        IAggregationPolicy(aggregation_policy_address).closeRound(round, modelSubmissionCount[round]);
         modelSubmissionsClosed[round] = true;
         emit ModelSubmissionsClosed(round, aggregator, modelSubmissionCount[round]);
+    }
+
+    function openModelSubmissions(uint256 expectedRound) external {
+        _requireActiveAuthorizedAggregator();
+        require(expectedRound == round, "Submission round mismatch");
+        require(!modelSubmissionsClosed[round], "Model submissions are closed");
+        require(!globalModelPublished[round], "Global model already published");
+        require(aggregation_policy_address != address(0), "aggregation policy is not configured");
+        IAggregationPolicy(aggregation_policy_address).openRound(round);
     }
 
     function domainSeparator() public view returns (bytes32) {
@@ -357,23 +472,7 @@ contract GMStorage {
     }
 
     function incrementRound() external {
-        address aggregator = _requireActiveAuthorizedAggregator();
-        require(globalModelPublished[round], "Global model not published for round");
-        require(globalModelPublisher[round] == aggregator, "Caller did not publish current round model");
-        require(!roundCompleted[round], "Round already completed");
-        roundCompleted[round] = true;
-        completedRoundCount++;
-        bytes memory publisherPublicKey = globalModelPublisherPublicKey[round];
-        require(publisherPublicKey.length > 0, "Publisher public key is empty");
-        activeModelPublisherPublicKey = publisherPublicKey;
-        lastFinalizedPublisherPublicKey = publisherPublicKey;
-        hasFinalizedModel = true;
-        lastFinalizedModelRound = round + 1;
-        addContributor(aggregator);
-        contributions[aggregator]++;
-        emit ContributionIncremented(round, aggregator, contributions[aggregator]);
-        round++;
-        lastRoundAggregator = aggregator;
+        revert("Round advancement requires atomic aggregation finalization");
     }
 
     function abortRound(address failedAggregator) external {

@@ -8,6 +8,8 @@ The current prototype combines:
 
 - decentralized CNN training with multiple worker nodes,
 - smart-contract-based coordination and model metadata,
+- immutable per-round aggregation thresholds and TEE-signed input/output
+  statements with atomic model publication,
 - local IPFS/Kubo storage for global model artifacts,
 - TDX/DCAP quote verification through Solidity contracts,
 - RSA signature verification for global model artifacts,

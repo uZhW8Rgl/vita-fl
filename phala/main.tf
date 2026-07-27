@@ -30,10 +30,8 @@ locals {
     expected_gm_storage_address              = var.expected_gm_storage_address
     expected_medical_signer_registry_address = var.expected_medical_signer_registry_address
     expected_chain_id                        = var.expected_chain_id
-    client_limit                             = var.client_limit
     epoch                                    = var.epoch
     round                                    = var.round
-    model_submission_deadline_ms             = var.model_submission_deadline_ms
     gm_update_timeout_ms                     = var.gm_update_timeout_ms
     gm_update_timeout_loops                  = var.gm_update_timeout_loops
     aggregation_update_estimate_ms           = var.aggregation_update_estimate_ms
@@ -294,10 +292,8 @@ resource "phala_app" "dfl_worker" {
     expected_gm_storage_address              = var.expected_gm_storage_address
     expected_medical_signer_registry_address = var.expected_medical_signer_registry_address
     expected_chain_id                        = var.expected_chain_id
-    client_limit                             = var.client_limit
     epoch                                    = var.epoch
     round                                    = var.round
-    model_submission_deadline_ms             = var.model_submission_deadline_ms
     gm_update_timeout_ms                     = var.gm_update_timeout_ms
     gm_update_timeout_loops                  = var.gm_update_timeout_loops
     aggregation_update_estimate_ms           = var.aggregation_update_estimate_ms
@@ -365,10 +361,8 @@ resource "phala_app" "dfl_worker_additional" {
     expected_gm_storage_address              = var.expected_gm_storage_address
     expected_medical_signer_registry_address = var.expected_medical_signer_registry_address
     expected_chain_id                        = var.expected_chain_id
-    client_limit                             = var.client_limit
     epoch                                    = var.epoch
     round                                    = var.round
-    model_submission_deadline_ms             = var.model_submission_deadline_ms
     gm_update_timeout_ms                     = var.gm_update_timeout_ms
     gm_update_timeout_loops                  = var.gm_update_timeout_loops
     aggregation_update_estimate_ms           = var.aggregation_update_estimate_ms
