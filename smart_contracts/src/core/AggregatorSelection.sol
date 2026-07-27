@@ -5,6 +5,7 @@ interface IDeviceRegistry {
     function isAuthorized(address _address) external view returns (bool);
     function getAuthorizedDevices() external view returns (address[] memory);
     function getDevice(address _address) external view returns (bool, string memory, string memory, bytes memory);
+    function resolveAuthorizedParticipant(address actionKey) external view returns (address participant);
 }
 
 interface IGMStorage {
@@ -75,14 +76,12 @@ contract AggregatorSelection {
     }
 
     modifier onlySelectedCurrentAggregator() {
-        require(msg.sender == current_aggregator, "Caller is not the current aggregator");
         require(gm_storage_address != address(0), "GMStorage not configured");
         IGMStorage gmStorage = IGMStorage(gm_storage_address);
+        address aggregator =
+            IDeviceRegistry(gmStorage.device_registry_address()).resolveAuthorizedParticipant(msg.sender);
+        require(aggregator == current_aggregator, "Caller is not the current aggregator");
         require(lastSelectionRound == gmStorage.getRound(), "Aggregator not selected for current round");
-        require(
-            IDeviceRegistry(gmStorage.device_registry_address()).isAuthorized(msg.sender),
-            "Aggregator is not authorized"
-        );
         _;
     }
 
@@ -149,10 +148,7 @@ contract AggregatorSelection {
         require(gm_storage_address != address(0), "GMStorage not configured");
 
         IGMStorage gm_storage = IGMStorage(gm_storage_address);
-        require(
-            IDeviceRegistry(gm_storage.device_registry_address()).isAuthorized(msg.sender),
-            "Caller is not an authorized participant"
-        );
+        IDeviceRegistry(gm_storage.device_registry_address()).resolveAuthorizedParticipant(msg.sender);
         uint256 round = gm_storage.getRound();
         require(round > lastSelectionRound, "GMStorage round not advanced");
         require(round > 0 && gm_storage.roundCompleted(round - 1), "Previous GMStorage round not completed");
@@ -186,9 +182,9 @@ contract AggregatorSelection {
         require(!roundAborted[round], "round already aborted");
 
         IDeviceRegistry deviceRegistry = IDeviceRegistry(gm_storage.device_registry_address());
-        require(msg.sender != reportedAggregator, "aggregator cannot report itself");
-        require(deviceRegistry.isAuthorized(msg.sender), "reporter not authorized");
-        require(!timeoutReported[round][reportedAggregator][msg.sender], "timeout already reported");
+        address reporter = deviceRegistry.resolveAuthorizedParticipant(msg.sender);
+        require(reporter != reportedAggregator, "aggregator cannot report itself");
+        require(!timeoutReported[round][reportedAggregator][reporter], "timeout already reported");
 
         uint256 eligibleReporters = timeoutEligibleReporterCount[round][reportedAggregator];
         uint256 requiredReports = timeoutRequiredReportCount[round][reportedAggregator];
@@ -199,13 +195,13 @@ contract AggregatorSelection {
             timeoutEligibleReporterCount[round][reportedAggregator] = eligibleReporters;
             timeoutRequiredReportCount[round][reportedAggregator] = requiredReports;
         }
-        require(timeoutReporterEligible[round][reportedAggregator][msg.sender], "reporter not in timeout snapshot");
+        require(timeoutReporterEligible[round][reportedAggregator][reporter], "reporter not in timeout snapshot");
 
-        timeoutReported[round][reportedAggregator][msg.sender] = true;
+        timeoutReported[round][reportedAggregator][reporter] = true;
         timeoutReportCount[round][reportedAggregator]++;
 
         emit AggregatorTimeoutReported(
-            round, msg.sender, reportedAggregator, timeoutReportCount[round][reportedAggregator], requiredReports
+            round, reporter, reportedAggregator, timeoutReportCount[round][reportedAggregator], requiredReports
         );
 
         if (timeoutReportCount[round][reportedAggregator] >= requiredReports) {

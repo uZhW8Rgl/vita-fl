@@ -10,7 +10,10 @@ It contains the minimum Solidity and deployment bundle required by the Docker-ba
   - `src/core/GMStorage.sol`
 - TDX/DCAP quote verification:
   - `src/attestation/AutomataDcapTdxV4Attestation.sol`
+  - `src/attestation/AppComposeImage.sol`
   - `src/attestation/tdx/QuoteV4Auth/*`
+- strict signature recovery:
+  - `src/crypto/StrictECDSA.sol`
 - deployment and utility scripts:
   - `script/Deploy.s.sol`
   - `script/DeployTDXV4Attestation.s.sol`
@@ -59,7 +62,7 @@ For the Phala flow, this image should be published through the GitHub Actions wo
 contract-runtime compose file by immutable digest:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:e40ab86adfd33f8129d3f34b7b5643716538d38714217b2bf52b2711dea85c95
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:10430d2b20f5e8a5f0b04b94c6e158944739ea1de90d18f83e1546e9d782ef48
 ```
 
 Rebuild and republish this image when the contracts or bootstrap code changes.
@@ -93,6 +96,48 @@ optional settling window are controlled by
 exclusively from current `DeviceRegistry` state; it does not accept a
 provisioned initial worker public key.
 
+## Logical Participants and TEE Action Keys
+
+The contracts distinguish a logical participant address `W` from a
+process-scoped TEE action address `A`. Contribution scores, selection and model
+metadata continue to use `W`; participant protocol transactions must come from
+the currently registered `A`.
+
+During registration, `DeviceRegistry` requires all three statements:
+
+1. a valid TDX/DCAP quote whose `REPORTDATA` binds `W`, `A`, the submitted
+   workload and the current registration nonce;
+2. an EIP-712 enrollment authorization from `W` over `W`, `A`, the exact
+   Compose hash and that nonce; and
+3. `msg.sender == A`.
+
+A new fully attested registration atomically replaces `A`. The reverse mapping
+for the previous action address is deleted before the new registration becomes
+usable, so the prior process can no longer call worker or aggregator functions.
+Self-deregistration likewise requires the participant's current action address.
+
+`GMStorage` and `AggregatorSelection` never treat `W` as transaction authority.
+They resolve `msg.sender` through `DeviceRegistry` and retain `W` only as the
+logical protocol identity. Every first local-model submission also needs a
+low-s EIP-712 signature by the worker's current `A` over:
+
+```text
+round, selected aggregator, worker, complete parent-model-bundle hash,
+plaintext model hash, encrypted package hash, worker submission nonce
+```
+
+The selected aggregator verifies the received bytes and submits this
+commitment, while `GMStorage` verifies the worker signature before recording
+the submission or increasing its score. The aggregator can therefore neither
+invent another worker's accepted contribution nor replay it for a different
+round, model lineage or package. Exact retries are idempotent.
+
+This authority split gates aggregator state changes and publication behind the
+currently attested process, but it does not prove the numerical correctness of
+federated averaging. An exploited approved aggregator could still omit valid
+inputs or publish an incorrectly computed aggregate; detecting that requires a
+separate robust-aggregation, replication or proof mechanism.
+
 For the local Docker flow, `IPFS_PROVIDER` controls the bootstrap mode. With `IPFS_PROVIDER=kubo`, the deployment script signs `data/initial_gm/<dataset>/aggregated.bin`, imports model and signature into the local Kubo node, and writes those resulting CIDs into `GMStorage`. The dataset is selected through `DATASET_NAME` and defaults to `mnist`. With `IPFS_PROVIDER=pinata`, the script does not touch Kubo during initialization and instead expects `INITIAL_GM_CID` and `INITIAL_GM_SIG_CID` to already point to Pinata-hosted content.
 
 The tested local entry point is:
@@ -106,7 +151,19 @@ KEEP_ALIVE=0 docker compose -f compose.yml up --build --force-recreate
 
 The live Phala path verifies the quote, certificate chain, QE identity and TCB status. It also fails closed unless the quote's dstack OS/boot tuple (`MRTD` and `RTMR0`--`RTMR2`) matches the owner-pinned tuple extracted during bootstrap from a reference dstack quote. That reference quote identifies the approved base runtime only; its Compose hash and `RTMR3` are not application allowlist inputs for the structured-log selector.
 
-Registration supplies the exact canonical `app_compose` byte preimage reported by dstack, not a caller-supplied compose hash, image digest, or policy claim. `DeviceRegistry` parses `docker_compose_file` on-chain, requires the strict single-service `services.dfl-worker` form, extracts its immutable `@sha256:<digest>` value, and compares that digest with `expectedWorkerImageDigest`. It also derives a domain-separated `workerPolicyHash` over the image and the security-relevant service fields: entrypoint, command, user, mounts and dstack-socket access, capabilities, security options, networking, and environment safety.
+Registration supplies the exact canonical `app_compose` byte preimage reported
+by dstack, not a caller-supplied compose hash, image digest, or policy claim.
+The separately deployed `AppComposePolicy` parser validates the outer manifest
+and its inner `docker_compose_file`. The outer policy requires manifest version
+2, the `docker-compose` runner, the expected platform pre-launch identity and a
+closed set of platform fields. Custom initialization code and unsafe outer
+environment inputs fail closed. The inner parser requires the strict
+single-service `services.dfl-worker` form, extracts its immutable
+`@sha256:<digest>` value, and compares that digest with
+`expectedWorkerImageDigest`. It also derives a domain-separated
+`workerPolicyHash` over the image and the security-relevant service fields:
+entrypoint, command, user, mounts and dstack-socket access, capabilities,
+security options, networking, and environment safety.
 
 Known per-instance environment keys such as the worker address, endpoints, round, shard inputs, and secret placeholders are normalized by key; their values remain bound by the complete Compose hash in `REPORTDATA` and RTMR3. Values of fixed or unknown environment keys are included in the policy hash, so an injected `NODE_OPTIONS` value changes the policy. Duplicate environment keys, unknown service-level fields, YAML aliases/merges, additional services, and top-level host-bind volume options fail closed. The owner provisions the two intended policies---training-only and Worker 0 with inference---before admission opens. This is deliberately narrower than pinning every complete worker Compose hash.
 
@@ -116,12 +173,20 @@ The quote's 64-byte `REPORTDATA` has this format:
 
 ```text
 bytes  0..31  keccak256(domain, deploymentId, chainId, registry,
-                        verifier, device, endpoint hashes, public-key hash,
-                        composeHash, imageDigest, workerPolicyHash, nonce)
+                        verifier, logical participant, action address,
+                        endpoint hashes, RSA public-key hash, composeHash,
+                        imageDigest, workerPolicyHash, nonce)
 bytes 32..63  uint256 registration nonce
 ```
 
-The worker asks `DeviceRegistry.registrationReportData(...)` for these exact bytes before requesting its quote. Successful registration increments the per-device nonce. This binds the quote to the transaction sender, RSA key, endpoints, workload policy, Registry deployment and one registration attempt, while rejecting replay after the nonce changes. Registration is not controlled by an owner-managed address allowlist: any caller that satisfies the complete attestation and workload policy can register. The two legacy registration selectors always revert.
+The worker asks `DeviceRegistry.registrationReportData(...)` for these exact
+bytes before requesting its quote. Successful registration increments the
+per-device nonce. Together with the EIP-712 enrollment authorization, this
+binds the quote to the logical participant, current action address, RSA key,
+endpoints, workload policy, Registry deployment and one registration attempt,
+while rejecting replay after the nonce changes. Admission is open to any
+workload that satisfies the complete attestation and configured workload
+policy. The two legacy registration selectors always revert.
 
 The local Docker flow cannot use one static quote for multiple dynamic worker identities. It therefore deploys `MockTdxV4Attestation` explicitly for Anvil, while exercising the same Registry binding and replay checks. This mock proves no hardware claim and the bootstrap refuses to enable it when `DOCKER=phala`.
 

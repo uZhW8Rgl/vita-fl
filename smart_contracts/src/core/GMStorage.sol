@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
+import {StrictECDSA} from "../crypto/StrictECDSA.sol";
+
 interface IDeviceRegistry {
     function isAuthorized(address _address) external view returns (bool);
     function getAuthorizedDevices() external view returns (address[] memory);
     function getDevice(address _address) external view returns (bool, string memory, string memory, bytes memory);
+    function actionKeys(address participant) external view returns (address);
+    function resolveAuthorizedParticipant(address actionKey) external view returns (address participant);
 }
 
 interface IAggregatorSelection {
@@ -13,6 +17,16 @@ interface IAggregatorSelection {
 }
 
 contract GMStorage {
+    using StrictECDSA for bytes32;
+
+    bytes32 public constant EIP712_DOMAIN_TYPEHASH =
+        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+    bytes32 public constant MODEL_SUBMISSION_TYPEHASH = keccak256(
+        "ModelSubmission(uint256 round,address aggregator,address worker,bytes32 parentModelHash,bytes32 modelHash,bytes32 packageHash,uint256 nonce)"
+    );
+    bytes32 private constant EIP712_NAME_HASH = keccak256("VITA-FL GMStorage");
+    bytes32 private constant EIP712_VERSION_HASH = keccak256("1");
+
     string public globalModel;
     string public backupGlobalModel;
     string public globalModelSignature;
@@ -28,6 +42,11 @@ contract GMStorage {
     mapping(address => uint256) public contributions;
     mapping(uint256 => mapping(address => bool)) public modelSubmitted;
     mapping(uint256 => mapping(address => bytes32)) public modelSubmissionHash;
+    mapping(uint256 => mapping(address => bytes32)) public modelSubmissionPackageHash;
+    mapping(uint256 => mapping(address => bytes32)) public modelSubmissionParentModelHash;
+    mapping(uint256 => mapping(address => uint256)) public modelSubmissionNonce;
+    mapping(uint256 => mapping(address => bytes32)) public modelSubmissionCommitment;
+    mapping(address => uint256) public workerSubmissionNonces;
     mapping(uint256 => uint256) public modelSubmissionCount;
     mapping(uint256 => bool) public modelSubmissionsClosed;
     mapping(uint256 => bool) public globalModelPublished;
@@ -43,7 +62,13 @@ contract GMStorage {
     address[] private contributors;
 
     event ModelSubmissionRecorded(
-        uint256 indexed round, address indexed aggregator, address indexed worker, bytes32 modelHash
+        uint256 indexed round,
+        address indexed aggregator,
+        address indexed worker,
+        bytes32 modelHash,
+        bytes32 packageHash,
+        bytes32 parentModelHash,
+        uint256 workerNonce
     );
     event ModelSubmissionsClosed(uint256 indexed round, address indexed aggregator, uint256 acceptedModels);
     event ContributionIncremented(uint256 indexed round, address indexed device, uint256 score);
@@ -126,14 +151,14 @@ contract GMStorage {
         string memory _newGlobalModelSignature,
         string memory _newGlobalModelKeyBundle
     ) external {
-        _requireActiveAuthorizedAggregator(msg.sender);
+        address aggregator = _requireActiveAuthorizedAggregator();
         require(modelSubmissionsClosed[round], "Model submissions are still open");
         require(round == 0 || modelSubmissionCount[round] > 0, "No confirmed worker submissions");
         require(bytes(_newGlobalModel).length > 0, "Model CID is empty");
         require(bytes(_newGlobalModelSignature).length > 0, "Model signature CID is empty");
         require(bytes(_newGlobalModelKeyBundle).length > 0, "Model key bundle CID is empty");
         (bool publisherAuthorized,,, bytes memory publisherPublicKey) =
-            IDeviceRegistry(device_registry_address).getDevice(msg.sender);
+            IDeviceRegistry(device_registry_address).getDevice(aggregator);
         require(publisherAuthorized, "Publisher is not authorized");
         require(publisherPublicKey.length > 0, "Publisher public key is empty");
         if (!globalModelPublished[round]) {
@@ -145,10 +170,10 @@ contract GMStorage {
         globalModelSignature = _newGlobalModelSignature;
         globalModelKeyBundle = _newGlobalModelKeyBundle;
         globalModelPublished[round] = true;
-        globalModelPublisher[round] = msg.sender;
+        globalModelPublisher[round] = aggregator;
         globalModelPublisherPublicKey[round] = publisherPublicKey;
         emit GlobalModelPublished(
-            round, msg.sender, _newGlobalModel, _newGlobalModelSignature, _newGlobalModelKeyBundle
+            round, aggregator, _newGlobalModel, _newGlobalModelSignature, _newGlobalModelKeyBundle
         );
     }
 
@@ -169,8 +194,8 @@ contract GMStorage {
             require(_addresses[0] == expectedAggregator, "Timeout target is not expected aggregator");
             _applyPenalty(_addresses[0], reason, reasonHash);
         } else {
-            _requireActiveAuthorizedAggregator(msg.sender);
-            require(msg.sender == expectedAggregator, "Caller cannot penalize");
+            address aggregator = _requireActiveAuthorizedAggregator();
+            require(aggregator == expectedAggregator, "Caller cannot penalize");
             require(reasonHash == keccak256(bytes("missed_model_deadline")), "Invalid worker penalty reason");
             require(_addresses.length > 0, "Worker penalty requires targets");
             require(modelSubmissionsClosed[round], "Model submissions are still open");
@@ -189,41 +214,115 @@ contract GMStorage {
         }
     }
 
-    function recordModelSubmission(uint256 expectedRound, address worker, bytes32 modelHash) external {
-        _requireActiveAuthorizedAggregator(msg.sender);
+    function recordModelSubmission(
+        uint256 expectedRound,
+        address worker,
+        bytes32 modelHash,
+        bytes32 packageHash,
+        bytes32 parentModelHash,
+        uint256 workerNonce,
+        bytes calldata workerSignature
+    ) external {
+        address aggregator = _requireActiveAuthorizedAggregator();
         require(expectedRound == round, "Submission round mismatch");
-        require(IDeviceRegistry(device_registry_address).isAuthorized(worker), "Worker is not authorized");
+        IDeviceRegistry deviceRegistry = IDeviceRegistry(device_registry_address);
+        require(deviceRegistry.isAuthorized(worker), "Worker is not authorized");
         require(
             !IAggregatorSelection(aggregator_selection_address).isAggregator(worker),
             "Current aggregator cannot receive worker score"
         );
         require(modelHash != bytes32(0), "Model hash is zero");
+        require(packageHash != bytes32(0), "Package hash is zero");
+        require(parentModelHash != bytes32(0), "Parent model hash is zero");
 
         if (modelSubmitted[round][worker]) {
             require(modelSubmissionHash[round][worker] == modelHash, "Conflicting model submission hash");
+            require(
+                modelSubmissionPackageHash[round][worker] == packageHash, "Conflicting model submission package hash"
+            );
+            require(
+                modelSubmissionParentModelHash[round][worker] == parentModelHash,
+                "Conflicting model submission parent hash"
+            );
+            require(modelSubmissionNonce[round][worker] == workerNonce, "Conflicting model submission nonce");
             return;
         }
 
+        require(parentModelHash == currentParentModelHash(), "Parent model hash mismatch");
+
+        bytes32 digest = modelSubmissionDigest(
+            expectedRound, worker, aggregator, parentModelHash, modelHash, packageHash, workerNonce
+        );
+        require(
+            digest.recover(workerSignature) == deviceRegistry.actionKeys(worker), "Invalid worker submission signature"
+        );
+        bytes32 commitment = keccak256(
+            abi.encode(expectedRound, aggregator, worker, parentModelHash, modelHash, packageHash, workerNonce)
+        );
+
         require(!modelSubmissionsClosed[round], "Model submissions are closed");
         require(!globalModelPublished[round], "Submissions closed after publication");
+        require(workerNonce == workerSubmissionNonces[worker], "Worker submission nonce mismatch");
         addContributor(worker);
         modelSubmitted[round][worker] = true;
         modelSubmissionHash[round][worker] = modelHash;
+        modelSubmissionPackageHash[round][worker] = packageHash;
+        modelSubmissionParentModelHash[round][worker] = parentModelHash;
+        modelSubmissionNonce[round][worker] = workerNonce;
+        modelSubmissionCommitment[round][worker] = commitment;
+        workerSubmissionNonces[worker] = workerNonce + 1;
         modelSubmissionCount[round]++;
         contributions[worker]++;
-        emit ModelSubmissionRecorded(round, msg.sender, worker, modelHash);
+        emit ModelSubmissionRecorded(round, aggregator, worker, modelHash, packageHash, parentModelHash, workerNonce);
         emit ContributionIncremented(round, worker, contributions[worker]);
     }
 
     function closeModelSubmissions(uint256 expectedRound) external {
-        _requireActiveAuthorizedAggregator(msg.sender);
+        address aggregator = _requireActiveAuthorizedAggregator();
         require(expectedRound == round, "Submission round mismatch");
         require(!globalModelPublished[round], "Global model already published");
         if (modelSubmissionsClosed[round]) {
             return;
         }
         modelSubmissionsClosed[round] = true;
-        emit ModelSubmissionsClosed(round, msg.sender, modelSubmissionCount[round]);
+        emit ModelSubmissionsClosed(round, aggregator, modelSubmissionCount[round]);
+    }
+
+    function domainSeparator() public view returns (bytes32) {
+        return keccak256(
+            abi.encode(EIP712_DOMAIN_TYPEHASH, EIP712_NAME_HASH, EIP712_VERSION_HASH, block.chainid, address(this))
+        );
+    }
+
+    function modelSubmissionDigest(
+        uint256 expectedRound,
+        address worker,
+        address aggregator,
+        bytes32 parentModelHash,
+        bytes32 modelHash,
+        bytes32 packageHash,
+        uint256 workerNonce
+    ) public view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(
+                MODEL_SUBMISSION_TYPEHASH,
+                expectedRound,
+                aggregator,
+                worker,
+                parentModelHash,
+                modelHash,
+                packageHash,
+                workerNonce
+            )
+        );
+        return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
+    }
+
+    function currentParentModelHash() public view returns (bytes32) {
+        if (globalModelPublished[round]) {
+            return keccak256(abi.encode(backupGlobalModel, backupGlobalModelSignature, backupGlobalModelKeyBundle));
+        }
+        return keccak256(abi.encode(globalModel, globalModelSignature, globalModelKeyBundle));
     }
 
     function hasSubmittedModel(uint256 _round, address _address) external view returns (bool) {
@@ -258,9 +357,9 @@ contract GMStorage {
     }
 
     function incrementRound() external {
-        _requireActiveAuthorizedAggregator(msg.sender);
+        address aggregator = _requireActiveAuthorizedAggregator();
         require(globalModelPublished[round], "Global model not published for round");
-        require(globalModelPublisher[round] == msg.sender, "Caller did not publish current round model");
+        require(globalModelPublisher[round] == aggregator, "Caller did not publish current round model");
         require(!roundCompleted[round], "Round already completed");
         roundCompleted[round] = true;
         completedRoundCount++;
@@ -270,11 +369,11 @@ contract GMStorage {
         lastFinalizedPublisherPublicKey = publisherPublicKey;
         hasFinalizedModel = true;
         lastFinalizedModelRound = round + 1;
-        addContributor(msg.sender);
-        contributions[msg.sender]++;
-        emit ContributionIncremented(round, msg.sender, contributions[msg.sender]);
+        addContributor(aggregator);
+        contributions[aggregator]++;
+        emit ContributionIncremented(round, aggregator, contributions[aggregator]);
         round++;
-        lastRoundAggregator = msg.sender;
+        lastRoundAggregator = aggregator;
     }
 
     function abortRound(address failedAggregator) external {
@@ -296,21 +395,21 @@ contract GMStorage {
     }
 
     function setLastRoundAggregator() external {
+        address aggregator = IDeviceRegistry(device_registry_address).resolveAuthorizedParticipant(msg.sender);
         require(
-            IAggregatorSelection(aggregator_selection_address).isAggregator(msg.sender), "Caller is not an aggregator"
+            IAggregatorSelection(aggregator_selection_address).isAggregator(aggregator), "Caller is not an aggregator"
         );
-        require(IDeviceRegistry(device_registry_address).isAuthorized(msg.sender), "Aggregator is not authorized");
         require(
-            round > 0 && roundCompleted[round - 1] && globalModelPublisher[round - 1] == msg.sender,
+            round > 0 && roundCompleted[round - 1] && globalModelPublisher[round - 1] == aggregator,
             "Caller did not complete previous round"
         );
-        lastRoundAggregator = msg.sender;
+        lastRoundAggregator = aggregator;
     }
 
-    function _requireActiveAuthorizedAggregator(address aggregator) internal view {
+    function _requireActiveAuthorizedAggregator() internal view returns (address aggregator) {
+        aggregator = IDeviceRegistry(device_registry_address).resolveAuthorizedParticipant(msg.sender);
         IAggregatorSelection aggregatorSelection = IAggregatorSelection(aggregator_selection_address);
         require(aggregatorSelection.isAggregator(aggregator), "Caller is not the current aggregator");
-        require(IDeviceRegistry(device_registry_address).isAuthorized(aggregator), "Aggregator is not authorized");
         require(aggregatorSelection.lastSelectionRound() == round, "Aggregator not selected for current round");
     }
 

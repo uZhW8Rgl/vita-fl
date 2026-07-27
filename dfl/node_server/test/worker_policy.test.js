@@ -36,7 +36,7 @@ test("policy derivation matches the on-chain golden vector", () => {
     });
     assert.equal(
         deriveWorkerPolicyIdentity(canonical).workerPolicyHash,
-        "0xd6f5c4a2c56214addcca217529fc222df7764557d30eb2613445239715401438",
+        "0xafdf5af53b2261b7033b16222437b53335c6fa5ae3e71303e90336f272c3cf36",
     );
 });
 

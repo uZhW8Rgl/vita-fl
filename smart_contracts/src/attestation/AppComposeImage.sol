@@ -5,7 +5,52 @@ pragma solidity ^0.8.20;
 /// @dev This accepts only the narrow digest-pinned DFL worker profiles and intentionally is not
 ///      a general JSON or YAML parser.
 library AppComposeImage {
-    bytes private constant DOCKER_COMPOSE_KEY = '"docker_compose_file":"';
+    bytes private constant DOCKER_COMPOSE_FIELD = "docker_compose_file";
+    bytes private constant MANIFEST_VERSION_FIELD = "manifest_version";
+    bytes private constant RUNNER_FIELD = "runner";
+    bytes private constant NAME_FIELD = "name";
+    bytes private constant PRE_LAUNCH_SCRIPT_FIELD = "pre_launch_script";
+    bytes private constant ALLOWED_ENVS_FIELD = "allowed_envs";
+    bytes private constant FEATURES_FIELD = "features";
+    bytes private constant GATEWAY_ENABLED_FIELD = "gateway_enabled";
+    bytes private constant KMS_ENABLED_FIELD = "kms_enabled";
+    bytes private constant LOCAL_KEY_PROVIDER_ENABLED_FIELD = "local_key_provider_enabled";
+    bytes private constant NO_INSTANCE_ID_FIELD = "no_instance_id";
+    bytes private constant PUBLIC_LOGS_FIELD = "public_logs";
+    bytes private constant PUBLIC_SYSINFO_FIELD = "public_sysinfo";
+    bytes private constant PUBLIC_TCBINFO_FIELD = "public_tcbinfo";
+    bytes private constant SECURE_TIME_FIELD = "secure_time";
+    bytes private constant STORAGE_FS_FIELD = "storage_fs";
+    bytes private constant TPROXY_ENABLED_FIELD = "tproxy_enabled";
+    bytes private constant DOCKER_COMPOSE_RUNNER = "docker-compose";
+    bytes private constant FEATURE_KMS = "kms";
+    bytes private constant FEATURE_TPROXY_NET = "tproxy-net";
+    bytes private constant ENV_PRIVATE_KEY = "PRIVATE_KEY";
+    bytes private constant ENV_SELLO_SERVICE_SIGNING_SEED = "SELLO_SERVICE_SIGNING_SEED";
+    bytes private constant ENV_SELLO_TOKEN_ISSUER_PUBLIC_KEY = "SELLO_TOKEN_ISSUER_PUBLIC_KEY";
+
+    uint8 private constant OUTER_DOCKER_COMPOSE = 1;
+    uint8 private constant OUTER_MANIFEST_VERSION = 2;
+    uint8 private constant OUTER_RUNNER = 3;
+    uint8 private constant OUTER_NAME = 4;
+    uint8 private constant OUTER_PRE_LAUNCH_SCRIPT = 5;
+    uint8 private constant OUTER_ALLOWED_ENVS = 6;
+    uint8 private constant OUTER_FEATURES = 7;
+    uint8 private constant OUTER_GATEWAY_ENABLED = 8;
+    uint8 private constant OUTER_KMS_ENABLED = 9;
+    uint8 private constant OUTER_LOCAL_KEY_PROVIDER_ENABLED = 10;
+    uint8 private constant OUTER_NO_INSTANCE_ID = 11;
+    uint8 private constant OUTER_PUBLIC_LOGS = 12;
+    uint8 private constant OUTER_PUBLIC_SYSINFO = 13;
+    uint8 private constant OUTER_PUBLIC_TCBINFO = 14;
+    uint8 private constant OUTER_SECURE_TIME = 15;
+    uint8 private constant OUTER_STORAGE_FS = 16;
+    uint8 private constant OUTER_TPROXY_ENABLED = 17;
+
+    // SHA-256 of the decoded Phala Cloud platform pre-launch script v0.0.15
+    // exported in phala/app_code.txt. User-supplied pre-launch code is rejected.
+    bytes32 private constant PHALA_PLATFORM_PRE_LAUNCH_V0_0_15 =
+        0xbf12939bc82c9bdd103b6b1226913e6da58ed7cfcfc7c7ae808ac0813715b9a8;
     bytes private constant SERVICES = "services:";
     bytes private constant WORKER_SERVICE = "dfl-worker:";
     bytes private constant PARTICIPANT_KEY_VOLUME = "participant-key-state:";
@@ -53,8 +98,12 @@ library AppComposeImage {
     uint8 private constant POLICY_FIELD_COUNT = 15;
     uint16 private constant MAX_ENVIRONMENT_KEYS = 128;
 
-    bytes32 private constant WORKER_POLICY_DOMAIN =
+    bytes32 private constant DOCKER_WORKER_POLICY_DOMAIN =
         keccak256("MasterThesis.AppCompose.worker-policy.v1");
+    bytes32 private constant WORKER_POLICY_DOMAIN =
+        keccak256("MasterThesis.AppCompose.worker-policy.v2");
+    bytes32 private constant OUTER_MANIFEST_POLICY_DOMAIN =
+        keccak256("MasterThesis.AppCompose.outer-manifest-policy.v2");
     bytes32 private constant ENTRYPOINT_DOMAIN = keccak256("entrypoint");
     bytes32 private constant COMMAND_DOMAIN = keccak256("command");
     bytes32 private constant USER_DOMAIN = keccak256("user");
@@ -93,6 +142,11 @@ library AppComposeImage {
         bool restartSeen;
     }
 
+    struct OuterManifest {
+        uint256 seenFields;
+        bytes dockerCompose;
+    }
+
     function imageDigest(bytes memory canonicalAppCompose) internal pure returns (bytes32) {
         (bytes32 digest,) = identity(canonicalAppCompose);
         return digest;
@@ -109,35 +163,280 @@ library AppComposeImage {
         returns (bytes32 digest, bytes32 policyHash)
     {
         require(canonicalAppCompose.length != 0 && canonicalAppCompose.length <= 65_536, "invalid app compose size");
-        bytes memory dockerCompose = _extractJsonString(canonicalAppCompose, DOCKER_COMPOSE_KEY);
-        return _parseWorkerCompose(dockerCompose);
+        OuterManifest memory manifest = _parseOuterManifest(canonicalAppCompose);
+        bytes32 dockerPolicyHash;
+        (digest, dockerPolicyHash) = _parseWorkerCompose(manifest.dockerCompose);
+        policyHash = keccak256(
+            abi.encode(
+                WORKER_POLICY_DOMAIN,
+                dockerPolicyHash,
+                keccak256(
+                    abi.encode(
+                        OUTER_MANIFEST_POLICY_DOMAIN,
+                        uint256(2),
+                        keccak256(DOCKER_COMPOSE_RUNNER),
+                        PHALA_PLATFORM_PRE_LAUNCH_V0_0_15
+                    )
+                )
+            )
+        );
     }
 
-    function _extractJsonString(bytes memory input, bytes memory key) private pure returns (bytes memory output) {
-        uint256 valueStart = type(uint256).max;
-        uint256 occurrences;
-        for (uint256 i = 0; i + key.length <= input.length; i++) {
-            if (_matches(input, i, key)) {
-                occurrences++;
-                valueStart = i + key.length;
-            }
-        }
-        require(occurrences == 1, "docker compose field missing or ambiguous");
+    function _parseOuterManifest(bytes memory input)
+        private
+        pure
+        returns (OuterManifest memory manifest)
+    {
+        uint256 cursor = _skipJsonWhitespace(input, 0);
+        require(cursor < input.length && input[cursor] == "{", "app compose must be a JSON object");
+        cursor++;
 
-        output = new bytes(input.length - valueStart);
-        uint256 outLength;
-        bool terminated;
-        for (uint256 i = valueStart; i < input.length; i++) {
-            bytes1 current = input[i];
-            if (current == '"') {
-                terminated = true;
+        bool first = true;
+        while (true) {
+            cursor = _skipJsonWhitespace(input, cursor);
+            require(cursor < input.length, "unterminated app compose object");
+            if (input[cursor] == "}") {
+                cursor++;
                 break;
             }
+            if (!first) {
+                require(input[cursor] == ",", "invalid app compose separator");
+                cursor = _skipJsonWhitespace(input, cursor + 1);
+            }
+            first = false;
+
+            bytes memory key;
+            (key, cursor) = _decodeJsonString(input, cursor);
+            uint8 field = _outerField(key);
+            require(field != 0, "unknown outer app compose field");
+            uint256 fieldBit = uint256(1) << (field - 1);
+            require((manifest.seenFields & fieldBit) == 0, "outer app compose field duplicated");
+            manifest.seenFields |= fieldBit;
+
+            cursor = _skipJsonWhitespace(input, cursor);
+            require(cursor < input.length && input[cursor] == ":", "invalid app compose field");
+            cursor = _skipJsonWhitespace(input, cursor + 1);
+            cursor = _consumeOuterField(input, cursor, field, manifest);
+            cursor = _skipJsonWhitespace(input, cursor);
+            require(
+                cursor < input.length && (input[cursor] == "," || input[cursor] == "}"),
+                "invalid outer app compose value"
+            );
+        }
+
+        cursor = _skipJsonWhitespace(input, cursor);
+        require(cursor == input.length, "trailing app compose data");
+        uint256 required = (uint256(1) << (OUTER_DOCKER_COMPOSE - 1))
+            | (uint256(1) << (OUTER_MANIFEST_VERSION - 1))
+            | (uint256(1) << (OUTER_RUNNER - 1));
+        require((manifest.seenFields & required) == required, "required outer app compose field missing");
+    }
+
+    function _consumeOuterField(
+        bytes memory input,
+        uint256 cursor,
+        uint8 field,
+        OuterManifest memory manifest
+    ) private pure returns (uint256 next) {
+        if (field == OUTER_DOCKER_COMPOSE) {
+            (manifest.dockerCompose, next) = _decodeJsonString(input, cursor);
+            require(manifest.dockerCompose.length != 0, "empty docker compose field");
+            return next;
+        }
+        if (field == OUTER_MANIFEST_VERSION) {
+            return _consumeJsonLiteral(input, cursor, "2", "manifest_version must equal 2");
+        }
+        if (field == OUTER_RUNNER) {
+            bytes memory runner;
+            (runner, next) = _decodeJsonString(input, cursor);
+            require(_bytesEqual(runner, DOCKER_COMPOSE_RUNNER), "runner must be docker-compose");
+            return next;
+        }
+        if (field == OUTER_NAME) {
+            bytes memory ignored;
+            (ignored, next) = _decodeJsonString(input, cursor);
+            require(ignored.length <= 256, "app compose name too long");
+            return next;
+        }
+        if (field == OUTER_PRE_LAUNCH_SCRIPT) {
+            bytes memory script;
+            (script, next) = _decodeJsonString(input, cursor);
+            require(
+                script.length == 0 || sha256(script) == PHALA_PLATFORM_PRE_LAUNCH_V0_0_15,
+                "user pre-launch script not allowed"
+            );
+            return next;
+        }
+        if (field == OUTER_ALLOWED_ENVS) {
+            return _consumeAllowedEnvironmentArray(input, cursor);
+        }
+        if (field == OUTER_FEATURES) {
+            return _consumeFeatureArray(input, cursor);
+        }
+        if (field == OUTER_KMS_ENABLED || field == OUTER_TPROXY_ENABLED) {
+            return _consumeJsonLiteral(input, cursor, "true", "required outer feature disabled");
+        }
+        if (field == OUTER_LOCAL_KEY_PROVIDER_ENABLED || field == OUTER_NO_INSTANCE_ID) {
+            return _consumeJsonLiteral(input, cursor, "false", "unsafe outer app compose setting");
+        }
+        if (
+            field == OUTER_GATEWAY_ENABLED || field == OUTER_PUBLIC_LOGS
+                || field == OUTER_PUBLIC_SYSINFO || field == OUTER_PUBLIC_TCBINFO
+                || field == OUTER_SECURE_TIME
+        ) {
+            return _consumeJsonBoolean(input, cursor);
+        }
+        if (field == OUTER_STORAGE_FS) {
+            if (_literalAt(input, cursor, "null")) {
+                return _consumeJsonLiteral(input, cursor, "null", "invalid storage_fs");
+            }
+            bytes memory storageFs;
+            (storageFs, next) = _decodeJsonString(input, cursor);
+            require(
+                _bytesEqual(storageFs, "zfs") || _bytesEqual(storageFs, "ext4"),
+                "unsupported storage_fs"
+            );
+            return next;
+        }
+        revert("unsupported outer app compose field");
+    }
+
+    function _outerField(bytes memory key) private pure returns (uint8) {
+        if (_bytesEqual(key, DOCKER_COMPOSE_FIELD)) return OUTER_DOCKER_COMPOSE;
+        if (_bytesEqual(key, MANIFEST_VERSION_FIELD)) return OUTER_MANIFEST_VERSION;
+        if (_bytesEqual(key, RUNNER_FIELD)) return OUTER_RUNNER;
+        if (_bytesEqual(key, NAME_FIELD)) return OUTER_NAME;
+        if (_bytesEqual(key, PRE_LAUNCH_SCRIPT_FIELD)) return OUTER_PRE_LAUNCH_SCRIPT;
+        if (_bytesEqual(key, ALLOWED_ENVS_FIELD)) return OUTER_ALLOWED_ENVS;
+        if (_bytesEqual(key, FEATURES_FIELD)) return OUTER_FEATURES;
+        if (_bytesEqual(key, GATEWAY_ENABLED_FIELD)) return OUTER_GATEWAY_ENABLED;
+        if (_bytesEqual(key, KMS_ENABLED_FIELD)) return OUTER_KMS_ENABLED;
+        if (_bytesEqual(key, LOCAL_KEY_PROVIDER_ENABLED_FIELD)) return OUTER_LOCAL_KEY_PROVIDER_ENABLED;
+        if (_bytesEqual(key, NO_INSTANCE_ID_FIELD)) return OUTER_NO_INSTANCE_ID;
+        if (_bytesEqual(key, PUBLIC_LOGS_FIELD)) return OUTER_PUBLIC_LOGS;
+        if (_bytesEqual(key, PUBLIC_SYSINFO_FIELD)) return OUTER_PUBLIC_SYSINFO;
+        if (_bytesEqual(key, PUBLIC_TCBINFO_FIELD)) return OUTER_PUBLIC_TCBINFO;
+        if (_bytesEqual(key, SECURE_TIME_FIELD)) return OUTER_SECURE_TIME;
+        if (_bytesEqual(key, STORAGE_FS_FIELD)) return OUTER_STORAGE_FS;
+        if (_bytesEqual(key, TPROXY_ENABLED_FIELD)) return OUTER_TPROXY_ENABLED;
+        return 0;
+    }
+
+    function _consumeAllowedEnvironmentArray(bytes memory input, uint256 cursor)
+        private
+        pure
+        returns (uint256)
+    {
+        require(cursor < input.length && input[cursor] == "[", "allowed_envs must be an array");
+        cursor = _skipJsonWhitespace(input, cursor + 1);
+        uint256 seen;
+        bool first = true;
+        while (cursor < input.length && input[cursor] != "]") {
+            if (!first) {
+                require(input[cursor] == ",", "invalid allowed_envs separator");
+                cursor = _skipJsonWhitespace(input, cursor + 1);
+            }
+            first = false;
+            bytes memory key;
+            (key, cursor) = _decodeJsonString(input, cursor);
+            uint256 bit;
+            if (_bytesEqual(key, ENV_PRIVATE_KEY)) bit = 1;
+            else if (_bytesEqual(key, ENV_SELLO_SERVICE_SIGNING_SEED)) bit = 2;
+            else if (_bytesEqual(key, ENV_SELLO_TOKEN_ISSUER_PUBLIC_KEY)) bit = 4;
+            else revert("unsafe outer environment key");
+            require((seen & bit) == 0, "outer environment key duplicated");
+            seen |= bit;
+            cursor = _skipJsonWhitespace(input, cursor);
+        }
+        require(cursor < input.length && input[cursor] == "]", "unterminated allowed_envs");
+        return cursor + 1;
+    }
+
+    function _consumeFeatureArray(bytes memory input, uint256 cursor)
+        private
+        pure
+        returns (uint256)
+    {
+        require(cursor < input.length && input[cursor] == "[", "features must be an array");
+        cursor = _skipJsonWhitespace(input, cursor + 1);
+        uint256 seen;
+        bool first = true;
+        while (cursor < input.length && input[cursor] != "]") {
+            if (!first) {
+                require(input[cursor] == ",", "invalid features separator");
+                cursor = _skipJsonWhitespace(input, cursor + 1);
+            }
+            first = false;
+            bytes memory feature;
+            (feature, cursor) = _decodeJsonString(input, cursor);
+            uint256 bit;
+            if (_bytesEqual(feature, FEATURE_KMS)) bit = 1;
+            else if (_bytesEqual(feature, FEATURE_TPROXY_NET)) bit = 2;
+            else revert("unsupported outer app feature");
+            require((seen & bit) == 0, "outer app feature duplicated");
+            seen |= bit;
+            cursor = _skipJsonWhitespace(input, cursor);
+        }
+        require(cursor < input.length && input[cursor] == "]", "unterminated features");
+        return cursor + 1;
+    }
+
+    function _consumeJsonBoolean(bytes memory input, uint256 cursor)
+        private
+        pure
+        returns (uint256)
+    {
+        if (_literalAt(input, cursor, "true")) {
+            return _consumeJsonLiteral(input, cursor, "true", "invalid outer boolean");
+        }
+        return _consumeJsonLiteral(input, cursor, "false", "invalid outer boolean");
+    }
+
+    function _consumeJsonLiteral(
+        bytes memory input,
+        uint256 cursor,
+        bytes memory literal,
+        string memory errorMessage
+    ) private pure returns (uint256 next) {
+        require(_literalAt(input, cursor, literal), errorMessage);
+        next = cursor + literal.length;
+        require(
+            next == input.length || input[next] == "," || input[next] == "}"
+                || input[next] == 0x20 || input[next] == 0x09
+                || input[next] == 0x0a || input[next] == 0x0d,
+            errorMessage
+        );
+    }
+
+    function _literalAt(bytes memory input, uint256 cursor, bytes memory literal)
+        private
+        pure
+        returns (bool)
+    {
+        return cursor + literal.length <= input.length && _matches(input, cursor, literal);
+    }
+
+    function _decodeJsonString(bytes memory input, uint256 cursor)
+        private
+        pure
+        returns (bytes memory output, uint256 next)
+    {
+        require(cursor < input.length && input[cursor] == '"', "expected JSON string");
+        output = new bytes(input.length - cursor - 1);
+        uint256 outLength;
+        for (uint256 i = cursor + 1; i < input.length; i++) {
+            bytes1 current = input[i];
+            if (current == '"') {
+                assembly ("memory-safe") {
+                    mstore(output, outLength)
+                }
+                return (output, i + 1);
+            }
+            require(uint8(current) >= 0x20, "invalid JSON string");
             if (current != "\\") {
                 output[outLength++] = current;
                 continue;
             }
-
             require(++i < input.length, "invalid JSON escape");
             bytes1 escaped = input[i];
             if (escaped == '"' || escaped == "\\" || escaped == "/") output[outLength++] = escaped;
@@ -148,10 +447,30 @@ library AppComposeImage {
             else if (escaped == "t") output[outLength++] = 0x09;
             else revert("unsupported JSON escape");
         }
-        require(terminated, "unterminated docker compose field");
-        assembly ("memory-safe") {
-            mstore(output, outLength)
+        revert("unterminated JSON string");
+    }
+
+    function _skipJsonWhitespace(bytes memory input, uint256 cursor)
+        private
+        pure
+        returns (uint256)
+    {
+        while (
+            cursor < input.length
+                && (
+                    input[cursor] == 0x20 || input[cursor] == 0x09
+                        || input[cursor] == 0x0a || input[cursor] == 0x0d
+                )
+        ) cursor++;
+        return cursor;
+    }
+
+    function _bytesEqual(bytes memory left, bytes memory right) private pure returns (bool) {
+        if (left.length != right.length) return false;
+        for (uint256 i = 0; i < left.length; i++) {
+            if (left[i] != right[i]) return false;
         }
+        return true;
     }
 
     function _parseWorkerCompose(bytes memory compose)
@@ -458,7 +777,7 @@ library AppComposeImage {
 
         return keccak256(
             abi.encode(
-                WORKER_POLICY_DOMAIN,
+                DOCKER_WORKER_POLICY_DOMAIN,
                 digest,
                 entrypoint,
                 command,
@@ -583,5 +902,36 @@ library AppComposeImage {
     function _slice(bytes memory input, uint256 start, uint256 end) private pure returns (bytes memory output) {
         output = new bytes(end - start);
         for (uint256 i = 0; i < output.length; i++) output[i] = input[start + i];
+    }
+}
+
+interface IAppComposePolicy {
+    function imageDigest(bytes calldata canonicalAppCompose) external pure returns (bytes32);
+
+    function workerPolicyHash(bytes calldata canonicalAppCompose) external pure returns (bytes32);
+
+    function identity(bytes calldata canonicalAppCompose)
+        external
+        pure
+        returns (bytes32 digest, bytes32 policyHash);
+}
+
+/// @notice Stateless, separately deployed parser that keeps the strict app-compose
+///         policy bytecode out of DeviceRegistry's EIP-170-limited runtime.
+contract AppComposePolicy is IAppComposePolicy {
+    function imageDigest(bytes calldata canonicalAppCompose) external pure returns (bytes32) {
+        return AppComposeImage.imageDigest(canonicalAppCompose);
+    }
+
+    function workerPolicyHash(bytes calldata canonicalAppCompose) external pure returns (bytes32) {
+        return AppComposeImage.workerPolicyHash(canonicalAppCompose);
+    }
+
+    function identity(bytes calldata canonicalAppCompose)
+        external
+        pure
+        returns (bytes32 digest, bytes32 policyHash)
+    {
+        return AppComposeImage.identity(canonicalAppCompose);
     }
 }

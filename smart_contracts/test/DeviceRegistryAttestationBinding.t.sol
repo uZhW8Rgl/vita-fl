@@ -27,7 +27,10 @@ contract DeviceRegistryAttestationBindingTest is Test {
     MockTdxV4Attestation private verifier;
 
     address private worker;
+    uint256 private workerPrivateKey;
+    address private actionKey;
     address private attacker;
+    uint256 private attackerPrivateKey;
     bytes private publicKey;
     bytes32 private imageDigest;
     bytes private appCompose;
@@ -38,8 +41,9 @@ contract DeviceRegistryAttestationBindingTest is Test {
     string private constant BROKER_IP = "tcp://worker.example:5555";
 
     function setUp() public {
-        worker = makeAddr("worker");
-        attacker = makeAddr("attacker");
+        (worker, workerPrivateKey) = makeAddrAndKey("worker");
+        actionKey = makeAddr("worker-action-key");
+        (attacker, attackerPrivateKey) = makeAddrAndKey("attacker");
         publicKey = hex"30820122300d06092a864886f70d010101050003";
         imageDigest = 0x4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553;
         appCompose = _appCompose("worker-0", _digestPinnedImage(IMAGE_HEX), "ROUND: \\\"1\\\"\\n");
@@ -56,8 +60,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertEq(composeHash, sha256(appCompose));
         assertEq(derivedImageDigest, imageDigest);
         assertEq(
-            registry.workerPolicyHash(appCompose),
-            0xd6f5c4a2c56214addcca217529fc222df7764557d30eb2613445239715401438
+            registry.workerPolicyHash(appCompose), 0xafdf5af53b2261b7033b16222437b53335c6fa5ae3e71303e90336f272c3cf36
         );
     }
 
@@ -65,7 +68,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
         assertEq(reportData.length, 64);
 
-        vm.prank(worker);
+        vm.prank(actionKey);
         _register(registry, reportData, appCompose, publicKey);
 
         (bool authorized, string memory publicIp, string memory brokerIp, bytes memory storedKey) =
@@ -78,6 +81,9 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertEq(registry.registeredImageDigests(worker), imageDigest);
         assertEq(registry.registeredWorkerPolicyHashes(worker), registry.workerPolicyHash(appCompose));
         assertEq(registry.registrationNonces(worker), 1);
+        assertEq(registry.actionKeyForParticipant(worker), actionKey);
+        assertEq(registry.participantForActionKey(actionKey), worker);
+        assertEq(registry.resolveAuthorizedParticipant(actionKey), worker);
     }
 
     function testVariableEnvironmentValuesDoNotChangeWorkerPolicy() public view {
@@ -93,10 +99,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
         );
 
         assertTrue(sha256(changedRuntimeValues) != sha256(sameKeysDifferentValues));
-        assertEq(
-            registry.workerPolicyHash(changedRuntimeValues),
-            registry.workerPolicyHash(sameKeysDifferentValues)
-        );
+        assertEq(registry.workerPolicyHash(changedRuntimeValues), registry.workerPolicyHash(sameKeysDifferentValues));
     }
 
     function testUnknownEnvironmentValueChangesPolicyAndIsRejected() public {
@@ -112,21 +115,15 @@ contract DeviceRegistryAttestationBindingTest is Test {
     }
 
     function testRejectsDuplicateEnvironmentKey() public {
-        bytes memory duplicate = _appCompose(
-            "worker-0",
-            _digestPinnedImage(IMAGE_HEX),
-            "ROUND: \\\"1\\\"\\n      ROUND: \\\"2\\\"\\n"
-        );
+        bytes memory duplicate =
+            _appCompose("worker-0", _digestPinnedImage(IMAGE_HEX), "ROUND: \\\"1\\\"\\n      ROUND: \\\"2\\\"\\n");
         vm.expectRevert(bytes("worker environment key duplicated"));
         registry.workerPolicyHash(duplicate);
     }
 
     function testRejectsUnknownWorkerServiceField() public {
-        bytes memory dangerous = _appCompose(
-            "worker-0",
-            _digestPinnedImage(IMAGE_HEX),
-            "ROUND: \\\"1\\\"\\n    pid: host\\n"
-        );
+        bytes memory dangerous =
+            _appCompose("worker-0", _digestPinnedImage(IMAGE_HEX), "ROUND: \\\"1\\\"\\n    pid: host\\n");
         vm.expectRevert(bytes("unknown worker service field"));
         registry.workerPolicyHash(dangerous);
     }
@@ -143,9 +140,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
 
     function testOwnerCanProvisionBothWorkerRolePoliciesBeforeRegistration() public {
         bytes memory inferenceRole = _appCompose(
-            "worker-0",
-            _digestPinnedImage(IMAGE_HEX),
-            "ROUND: \\\"1\\\"\\n      TEE_INFERENCE_ENABLED: \\\"1\\\"\\n"
+            "worker-0", _digestPinnedImage(IMAGE_HEX), "ROUND: \\\"1\\\"\\n      TEE_INFERENCE_ENABLED: \\\"1\\\"\\n"
         );
         bytes32 inferencePolicy = registry.workerPolicyHash(inferenceRole);
         assertTrue(inferencePolicy != registry.workerPolicyHash(appCompose));
@@ -153,7 +148,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertEq(registry.allowedWorkerPolicyHashCount(), 2);
 
         bytes memory reportData = _reportData(registry, inferenceRole, publicKey);
-        vm.prank(worker);
+        vm.prank(actionKey);
         _register(registry, reportData, inferenceRole, publicKey);
         assertTrue(registry.isAuthorized(worker));
         assertEq(registry.registeredWorkerPolicyHashes(worker), inferencePolicy);
@@ -162,7 +157,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
     function testPolicyRemovalImmediatelyRevokesRegisteredWorker() public {
         bytes32 policyHash = registry.workerPolicyHash(appCompose);
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(worker);
+        vm.prank(actionKey);
         _register(registry, reportData, appCompose, publicKey);
         assertTrue(registry.isAuthorized(worker));
 
@@ -182,22 +177,18 @@ contract DeviceRegistryAttestationBindingTest is Test {
 
     function testCurrentRegistrationRequiresExactBoundEndpoints() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(worker);
+        vm.prank(actionKey);
         _register(registry, reportData, appCompose, publicKey);
 
-        assertTrue(
+        assertTrue(registry.isDeviceRegistrationCurrent(worker, actionKey, PUBLIC_IP, BROKER_IP, publicKey, appCompose));
+        assertFalse(
             registry.isDeviceRegistrationCurrent(
-                worker, PUBLIC_IP, BROKER_IP, publicKey, appCompose
+                worker, actionKey, "https://replacement.example", BROKER_IP, publicKey, appCompose
             )
         );
         assertFalse(
             registry.isDeviceRegistrationCurrent(
-                worker, "https://replacement.example", BROKER_IP, publicKey, appCompose
-            )
-        );
-        assertFalse(
-            registry.isDeviceRegistrationCurrent(
-                worker, PUBLIC_IP, "tcp://replacement.example:5555", publicKey, appCompose
+                worker, actionKey, PUBLIC_IP, "tcp://replacement.example:5555", publicKey, appCompose
             )
         );
     }
@@ -207,7 +198,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertTrue(sha256(changedCompose) != sha256(appCompose));
 
         bytes memory reportData = _reportData(registry, changedCompose, publicKey);
-        vm.prank(worker);
+        vm.prank(actionKey);
         _register(registry, reportData, changedCompose, publicKey);
 
         assertTrue(registry.isAuthorized(worker));
@@ -217,16 +208,14 @@ contract DeviceRegistryAttestationBindingTest is Test {
 
     function testRejectsWrongImageDigestDerivedFromAppCompose() public {
         bytes memory wrongCompose = _appCompose(
-            "worker-0",
-            _digestPinnedImage("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
-            ""
+            "worker-0", _digestPinnedImage("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), ""
         );
         vm.expectRevert(bytes("worker image digest mismatch"));
         _reportData(registry, wrongCompose, publicKey);
 
-        vm.expectRevert(bytes("worker image digest mismatch"));
-        vm.prank(worker);
-        _register(registry, new bytes(64), wrongCompose, publicKey);
+        _expectRegisterRevert(
+            bytes("worker image digest mismatch"), registry, new bytes(64), wrongCompose, publicKey, actionKey
+        );
     }
 
     function testRejectsTagOnlyImage() public {
@@ -244,9 +233,9 @@ contract DeviceRegistryAttestationBindingTest is Test {
         vm.expectRevert(bytes("worker image digest mismatch"));
         _reportData(registry, smuggled, publicKey);
 
-        vm.expectRevert(bytes("worker image digest mismatch"));
-        vm.prank(worker);
-        _register(registry, new bytes(64), smuggled, publicKey);
+        _expectRegisterRevert(
+            bytes("worker image digest mismatch"), registry, new bytes(64), smuggled, publicKey, actionKey
+        );
     }
 
     function testRejectsDummyOrSidecarService() public {
@@ -289,26 +278,26 @@ contract DeviceRegistryAttestationBindingTest is Test {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
         bytes memory changedCompose = _appCompose("worker-0", _digestPinnedImage(IMAGE_HEX), "ROUND: \\\"2\\\"\\n");
 
-        vm.expectRevert(bytes("quote report data mismatch"));
-        vm.prank(worker);
-        _register(registry, reportData, changedCompose, publicKey);
+        _expectRegisterRevert(
+            bytes("quote report data mismatch"), registry, reportData, changedCompose, publicKey, actionKey
+        );
     }
 
     function testRejectsThirdPartyRegistrationForWorker() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
-        vm.expectRevert(bytes("sender/address mismatch"));
-        vm.prank(attacker);
-        _register(registry, reportData, appCompose, publicKey);
+        _expectRegisterRevert(
+            bytes("sender/action key mismatch"), registry, reportData, appCompose, publicKey, attacker
+        );
     }
 
     function testRejectsQuoteReplayAfterNonceIncrement() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(worker);
+        vm.prank(actionKey);
         _register(registry, reportData, appCompose, publicKey);
 
-        vm.expectRevert(bytes("quote report data mismatch"));
-        vm.prank(worker);
-        _register(registry, reportData, appCompose, publicKey);
+        _expectRegisterRevert(
+            bytes("quote report data mismatch"), registry, reportData, appCompose, publicKey, actionKey
+        );
     }
 
     function testImagePolicyIsFailClosed() public {
@@ -318,14 +307,14 @@ contract DeviceRegistryAttestationBindingTest is Test {
         vm.expectRevert(bytes("worker image policy not configured"));
         _reportData(unconfigured, appCompose, publicKey);
 
-        vm.expectRevert(bytes("worker image policy not configured"));
-        vm.prank(worker);
-        _register(unconfigured, new bytes(64), appCompose, publicKey);
+        _expectRegisterRevert(
+            bytes("worker image policy not configured"), unconfigured, new bytes(64), appCompose, publicKey, actionKey
+        );
     }
 
     function testImageRotationRevokesExistingRegistration() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(worker);
+        vm.prank(actionKey);
         _register(registry, reportData, appCompose, publicKey);
         assertTrue(registry.isAuthorized(worker));
 
@@ -335,15 +324,15 @@ contract DeviceRegistryAttestationBindingTest is Test {
 
     function testRegisteredDeviceCanDeregisterOnlyItself() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(worker);
+        vm.prank(actionKey);
         _register(registry, reportData, appCompose, publicKey);
 
-        vm.expectRevert(bytes("device not registered"));
+        vm.expectRevert(bytes("action key not registered"));
         vm.prank(attacker);
         registry.deregisterDevice();
         assertTrue(registry.isAuthorized(worker));
 
-        vm.prank(worker);
+        vm.prank(actionKey);
         registry.deregisterDevice();
 
         assertFalse(registry.isAuthorized(worker));
@@ -351,6 +340,8 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertEq(registry.registeredImageDigests(worker), bytes32(0));
         assertEq(registry.registeredWorkerPolicyHashes(worker), bytes32(0));
         assertEq(registry.registrationNonces(worker), 1);
+        assertEq(registry.actionKeyForParticipant(worker), address(0));
+        assertEq(registry.participantForActionKey(actionKey), address(0));
 
         (bool authorized, string memory publicIp, string memory brokerIp, bytes memory storedKey) =
             registry.getDevice(worker);
@@ -363,18 +354,18 @@ contract DeviceRegistryAttestationBindingTest is Test {
 
     function testDeregisteredDeviceCanRegisterAgainWithoutQuoteReplay() public {
         bytes memory firstReportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(worker);
+        vm.prank(actionKey);
         _register(registry, firstReportData, appCompose, publicKey);
 
-        vm.prank(worker);
+        vm.prank(actionKey);
         registry.deregisterDevice();
 
-        vm.expectRevert(bytes("quote report data mismatch"));
-        vm.prank(worker);
-        _register(registry, firstReportData, appCompose, publicKey);
+        _expectRegisterRevert(
+            bytes("quote report data mismatch"), registry, firstReportData, appCompose, publicKey, actionKey
+        );
 
         bytes memory freshReportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(worker);
+        vm.prank(actionKey);
         _register(registry, freshReportData, appCompose, publicKey);
 
         assertTrue(registry.isAuthorized(worker));
@@ -389,9 +380,9 @@ contract DeviceRegistryAttestationBindingTest is Test {
         malformed.setOutput(hex"00");
         registry.setTdxV4Attestation(address(malformed));
 
-        vm.expectRevert(bytes("invalid attestation report data"));
-        vm.prank(worker);
-        _register(registry, hex"00", appCompose, publicKey);
+        _expectRegisterRevert(
+            bytes("invalid attestation report data"), registry, hex"00", appCompose, publicKey, actionKey
+        );
     }
 
     function testRejectsLegacyPackedVerifierOutput() public {
@@ -400,23 +391,116 @@ contract DeviceRegistryAttestationBindingTest is Test {
         malformed.setOutput(abi.encodePacked(bytes1(0), new bytes(48), reportData, bytes6(0)));
         registry.setTdxV4Attestation(address(malformed));
 
-        vm.expectRevert(bytes("invalid attestation report data"));
-        vm.prank(worker);
-        _register(registry, reportData, appCompose, publicKey);
+        _expectRegisterRevert(
+            bytes("invalid attestation report data"), registry, reportData, appCompose, publicKey, actionKey
+        );
     }
 
     function testVerifierRotationInvalidatesPreparedReportData() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
         registry.setTdxV4Attestation(address(new MockTdxV4Attestation()));
 
-        vm.expectRevert(bytes("quote report data mismatch"));
-        vm.prank(worker);
-        _register(registry, reportData, appCompose, publicKey);
+        _expectRegisterRevert(
+            bytes("quote report data mismatch"), registry, reportData, appCompose, publicKey, actionKey
+        );
     }
 
     function testReportDataPreparationRequiresPublicKey() public {
         vm.expectRevert(bytes("public key required"));
         _reportData(registry, appCompose, new bytes(0));
+    }
+
+    function testEnrollmentRequiresLogicalParticipantSignature() public {
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        bytes32 digest = registry.enrollmentDigest(worker, actionKey, appCompose);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attackerPrivateKey, digest);
+        bytes memory attackerAuthorization = abi.encodePacked(r, s, v);
+
+        vm.expectRevert(bytes("invalid participant authorization"));
+        _registerWithAuthorization(registry, reportData, appCompose, publicKey, actionKey, attackerAuthorization);
+        assertFalse(registry.isAuthorized(worker));
+    }
+
+    function testEnrollmentRejectsMalleableHighSSignature() public {
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        bytes memory authorization = _participantAuthorization(registry, appCompose);
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly ("memory-safe") {
+            r := mload(add(authorization, 0x20))
+            s := mload(add(authorization, 0x40))
+            v := byte(0, mload(add(authorization, 0x60)))
+        }
+        uint256 curveOrder = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141;
+        bytes memory malleable = abi.encodePacked(r, bytes32(curveOrder - uint256(s)), v == 27 ? uint8(28) : uint8(27));
+
+        vm.expectRevert(bytes("non-canonical signature s"));
+        _registerWithAuthorization(registry, reportData, appCompose, publicKey, actionKey, malleable);
+    }
+
+    function testPublicParticipantAccountCannotExerciseActionAuthority() public {
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        _register(registry, reportData, appCompose, publicKey);
+
+        vm.expectRevert(bytes("action key not registered"));
+        vm.prank(worker);
+        registry.deregisterDevice();
+        assertTrue(registry.isAuthorized(worker));
+    }
+
+    function testFreshAttestedRegistrationAtomicallyRotatesActionKey() public {
+        bytes memory firstReportData = _reportData(registry, appCompose, publicKey);
+        _register(registry, firstReportData, appCompose, publicKey);
+        address oldActionKey = actionKey;
+
+        actionKey = makeAddr("rotated-worker-action-key");
+        bytes memory rotatedReportData = _reportData(registry, appCompose, publicKey);
+        _register(registry, rotatedReportData, appCompose, publicKey);
+
+        assertEq(registry.actionKeys(worker), actionKey);
+        assertEq(registry.participantForActionKey(oldActionKey), address(0));
+        assertEq(registry.resolveAuthorizedParticipant(actionKey), worker);
+        vm.expectRevert(bytes("action key not registered"));
+        vm.prank(oldActionKey);
+        registry.deregisterDevice();
+    }
+
+    function testActionKeyRotationRejectsStaleParticipantAuthorization() public {
+        address nextActionKey = makeAddr("next-worker-action-key");
+        bytes32 staleDigest = registry.enrollmentDigest(worker, nextActionKey, appCompose);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(workerPrivateKey, staleDigest);
+        bytes memory staleAuthorization = abi.encodePacked(r, s, v);
+
+        bytes memory firstReportData = _reportData(registry, appCompose, publicKey);
+        _register(registry, firstReportData, appCompose, publicKey);
+        address registeredActionKey = actionKey;
+        actionKey = nextActionKey;
+
+        bytes memory freshReportData =
+            registry.registrationReportData(worker, nextActionKey, PUBLIC_IP, BROKER_IP, publicKey, appCompose);
+        vm.expectRevert(bytes("invalid participant authorization"));
+        _registerWithAuthorization(registry, freshReportData, appCompose, publicKey, nextActionKey, staleAuthorization);
+        assertEq(registry.actionKeys(worker), registeredActionKey);
+        assertEq(registry.participantForActionKey(nextActionKey), address(0));
+    }
+
+    function testReportDataRejectsZeroActionKey() public {
+        vm.expectRevert(bytes("invalid action key"));
+        registry.registrationReportData(worker, address(0), PUBLIC_IP, BROKER_IP, publicKey, appCompose);
+    }
+
+    function testReportDataAndEnrollmentDigestBindActionKey() public view {
+        address otherActionKey = address(0xA11CE);
+        bytes memory reportData =
+            registry.registrationReportData(worker, actionKey, PUBLIC_IP, BROKER_IP, publicKey, appCompose);
+        bytes memory otherReportData =
+            registry.registrationReportData(worker, otherActionKey, PUBLIC_IP, BROKER_IP, publicKey, appCompose);
+        assertTrue(keccak256(reportData) != keccak256(otherReportData));
+        assertTrue(
+            registry.enrollmentDigest(worker, actionKey, appCompose)
+                != registry.enrollmentDigest(worker, otherActionKey, appCompose)
+        );
     }
 
     function testLegacySelectorCannotBypassAppComposeEvidence() public {
@@ -431,13 +515,55 @@ contract DeviceRegistryAttestationBindingTest is Test {
         view
         returns (bytes memory)
     {
-        return target.registrationReportData(worker, PUBLIC_IP, BROKER_IP, key, compose);
+        return target.registrationReportData(worker, actionKey, PUBLIC_IP, BROKER_IP, key, compose);
     }
 
     function _register(DeviceRegistry target, bytes memory quote, bytes memory compose, bytes memory key) private {
+        _registerFrom(target, quote, compose, key, actionKey);
+    }
+
+    function _registerFrom(
+        DeviceRegistry target,
+        bytes memory quote,
+        bytes memory compose,
+        bytes memory key,
+        address sender
+    ) private {
+        bytes memory authorization = _participantAuthorization(target, compose);
+        _registerWithAuthorization(target, quote, compose, key, sender, authorization);
+    }
+
+    function _registerWithAuthorization(
+        DeviceRegistry target,
+        bytes memory quote,
+        bytes memory compose,
+        bytes memory key,
+        address sender,
+        bytes memory authorization
+    ) private {
+        vm.prank(sender);
         target.registerDeviceWithAttestedAppCompose(
-            quote, _events(), compose, worker, PUBLIC_IP, BROKER_IP, key
+            quote, _events(), compose, worker, actionKey, PUBLIC_IP, BROKER_IP, key, authorization
         );
+    }
+
+    function _expectRegisterRevert(
+        bytes memory reason,
+        DeviceRegistry target,
+        bytes memory quote,
+        bytes memory compose,
+        bytes memory key,
+        address sender
+    ) private {
+        bytes memory authorization = _participantAuthorization(target, compose);
+        vm.expectRevert(reason);
+        _registerWithAuthorization(target, quote, compose, key, sender, authorization);
+    }
+
+    function _participantAuthorization(DeviceRegistry target, bytes memory compose) private returns (bytes memory) {
+        bytes32 digest = target.enrollmentDigest(worker, actionKey, compose);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(workerPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
     }
 
     function _events() private pure returns (Rtmr3Event[] memory events) {

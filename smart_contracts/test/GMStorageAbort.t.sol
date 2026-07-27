@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {GMStorage} from "../src/core/GMStorage.sol";
+import {ActionKeyTest} from "./helpers/ActionKeyTest.sol";
 
 contract AbortDeviceRegistryStub {
     mapping(address => bool) private authorized;
@@ -25,6 +26,15 @@ contract AbortDeviceRegistryStub {
 
     function getDevice(address device) external view returns (bool, string memory, string memory, bytes memory) {
         return (authorized[device], "", "", bytes("publisher-public-key"));
+    }
+
+    function actionKeys(address participant) external pure returns (address) {
+        return participant;
+    }
+
+    function resolveAuthorizedParticipant(address actionKey) external view returns (address) {
+        require(authorized[actionKey], "participant is not authorized");
+        return actionKey;
     }
 }
 
@@ -49,7 +59,7 @@ contract AbortAggregatorSelectionStub {
     }
 }
 
-contract GMStorageAbortTest is Test {
+contract GMStorageAbortTest is ActionKeyTest {
     GMStorage private gmStorage;
     AbortDeviceRegistryStub private registry;
     AbortAggregatorSelectionStub private selection;
@@ -58,8 +68,8 @@ contract GMStorageAbortTest is Test {
     address private failedAggregator;
 
     function setUp() public {
-        completedAggregator = makeAddr("completed-aggregator");
-        failedAggregator = makeAddr("failed-aggregator");
+        completedAggregator = _makeActionParticipant("completed-aggregator");
+        failedAggregator = _makeActionParticipant("failed-aggregator");
 
         registry = new AbortDeviceRegistryStub();
         registry.setAuthorized(completedAggregator, true);
@@ -110,8 +120,9 @@ contract GMStorageAbortTest is Test {
 
     function testAbortAfterPublicationRestoresLastCompletedArtifacts() public {
         bytes memory activePublisherKeyBeforeAttempt = gmStorage.activeModelPublisherPublicKey();
-        vm.prank(failedAggregator);
-        gmStorage.recordModelSubmission(1, completedAggregator, keccak256("worker-model"));
+        _recordSignedModelSubmission(
+            gmStorage, failedAggregator, failedAggregator, completedAggregator, 1, keccak256("worker-model")
+        );
 
         vm.startPrank(failedAggregator);
         gmStorage.closeModelSubmissions(1);

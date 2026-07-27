@@ -3,10 +3,11 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, recordModelSubmission, closeModelSubmissions, hasSubmittedModel, getModelSubmissionHash, penalizeContribution } from "./bc_client.js";
+import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, closeModelSubmissions, hasSubmittedModel, getModelSubmissionHash, penalizeContribution, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
 import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
 import { loadParticipantKey, materializeParticipantPrivateKey, PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH, } from "./participant_key.js";
+import { loadParticipantActionSigner, } from "./action_key.js";
 import { dstackHttpsEndpoint } from "./runtime_endpoints.js";
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -28,6 +29,7 @@ const maxModelUploadBytes = Number(process.env.MODEL_UPLOAD_MAX_BYTES || 25 * 10
 const participantPrivateKeyRuntimePath = process.env.PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH ||
     PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH;
 let activeParticipantKey;
+let activeParticipantActionSigner;
 let localTdxRegistrationDone = false;
 const timingConfig = deriveTimingConfig(process.env);
 const modelSubmissionDeadlineMs = timingConfig.modelSubmissionDeadlineMs;
@@ -346,6 +348,12 @@ function ownTeeInferenceEndpoint(appId) {
 }
 async function uploadLocalModel(endpoint, deviceId, expectedRound, expectedAggregator, parentModel) {
     const packageBytes = await fs.readFile('./data/lm.bin.enc');
+    const modelHash = normalizeHashHex(await modelFileHash('./data/lm.bin'), 32, 'local plaintext model SHA-256');
+    const packageHash = normalizeHashHex(modelBytesHash(packageBytes), 32, 'encrypted model package SHA-256');
+    const commitment = await createModelSubmissionCommitment(expectedRound, deviceId, modelHash, packageHash);
+    if (!sameAddress(commitment.aggregatorAddress, expectedAggregator)) {
+        throw new Error(`Submission commitment targets aggregator ${commitment.aggregatorAddress}, not ${expectedAggregator}.`);
+    }
     const chainId = await getBlockchainChainId();
     const signingPayload = modelUploadSigningPayload({
         packageBytes,
@@ -377,6 +385,11 @@ async function uploadLocalModel(endpoint, deviceId, expectedRound, expectedAggre
                 parent_key_bundle_cid: parentModel.keyBundleCid,
                 package_base64: packageBytes.toString('base64'),
                 signature_base64: signature,
+                model_sha256: commitment.modelHash,
+                package_sha256: commitment.packageHash,
+                parent_model_hash: commitment.parentModelHash,
+                submission_nonce: commitment.workerNonce,
+                action_signature: commitment.workerSignature,
             }),
             signal: controller.signal,
         });
@@ -473,6 +486,20 @@ async function handleModelUpload(request, response) {
             ? normalizeHashHex(await getModelSubmissionHash(expectedRound, deviceId), 32, "recorded decrypted model SHA-256")
             : null;
         const packageBytes = Buffer.from(String(payload.package_base64 || ''), 'base64');
+        const packageHash = normalizeHashHex(payload.package_sha256, 32, 'worker-committed encrypted package SHA-256');
+        if (packageHash !== normalizeHashHex(modelBytesHash(packageBytes), 32, 'received encrypted package SHA-256')) {
+            return reply(403, { ok: false, error: 'worker commitment package hash mismatch' });
+        }
+        const committedModelHash = normalizeHashHex(payload.model_sha256, 32, 'worker-committed plaintext model SHA-256');
+        const parentModelHash = normalizeHashHex(payload.parent_model_hash, 32, 'worker-committed parent bundle hash');
+        const submissionNonce = String(payload.submission_nonce ?? '');
+        if (!/^(?:0|[1-9][0-9]*)$/.test(submissionNonce)) {
+            return reply(400, { ok: false, error: 'invalid worker submission nonce' });
+        }
+        const actionSignature = String(payload.action_signature || '');
+        if (!/^0x[0-9a-fA-F]{130}$/.test(actionSignature)) {
+            return reply(400, { ok: false, error: 'invalid worker action signature encoding' });
+        }
         const signature = Buffer.from(String(payload.signature_base64 || ''), 'base64');
         const publicKeyDer = Buffer.from(String(await getDevicePublicKey(deviceId)).replace(/^0x/, ''), 'hex');
         const publicKey = crypto.createPublicKey({ key: publicKeyDer, format: 'der', type: 'spki' });
@@ -497,7 +524,19 @@ async function handleModelUpload(request, response) {
             private_key: participantPrivateKeyRuntimePath,
         }, { timeoutMs: modelTransferTimeoutMs });
         const modelHash = normalizeHashHex(acceptedModel.model_sha256, 32, "decrypted model SHA-256");
-        await recordModelSubmission(expectedRound, deviceId, modelHash);
+        if (modelHash !== committedModelHash) {
+            return reply(403, { ok: false, error: 'worker commitment plaintext model hash mismatch' });
+        }
+        await recordModelSubmission({
+            expectedRound,
+            workerAddress: deviceId,
+            aggregatorAddress: expectedAggregator,
+            parentModelHash,
+            modelHash,
+            packageHash,
+            workerNonce: submissionNonce,
+            workerSignature: actionSignature,
+        });
         return reply(200, {
             ok: true,
             round: expectedRound,
@@ -1009,7 +1048,7 @@ async function hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, canon
     const accountAddress = process.env.ACCOUNT_ADDRESS;
     if (!accountAddress || !(await isAuthorized(accountAddress)))
         return false;
-    return isDeviceRegistrationCurrent(accountAddress, publicIp, brokerIp, publicKey, canonicalAppCompose);
+    return isDeviceRegistrationCurrent(accountAddress, activeParticipantActionSigner?.address, publicIp, brokerIp, publicKey, canonicalAppCompose);
 }
 async function registerWithLocalTdxMock() {
     if (localTdxRegistrationDone || process.env.DOCKER === "phala")
@@ -1038,9 +1077,9 @@ async function registerWithLocalTdxMock() {
         console.log('Device already has a bound registration for the current RSA key; reusing it.');
         return;
     }
-    const reportData = await getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey, canonicalAppComposeHex);
+    const reportData = await getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey, canonicalAppComposeHex);
     console.warn('Registering through the LOCAL-ONLY mock TDX verifier; this is not a hardware attestation.');
-    await registerDeviceWithTeeQuoteAndRtmr3Events(reportData, [{ eventType: 0x08000001, eventName: 'compose-hash', eventPayload: `0x${'00'.repeat(32)}` }], canonicalAppComposeHex, process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey);
+    await registerDeviceWithTeeQuoteAndRtmr3Events(reportData, [{ eventType: 0x08000001, eventName: 'compose-hash', eventPayload: `0x${'00'.repeat(32)}` }], canonicalAppComposeHex, process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey);
     console.log('Device registered with bound local mock REPORTDATA.');
 }
 function decodeEventBytes(rawValue) {
@@ -1222,9 +1261,9 @@ const stateMachine = async () => {
         }
         else {
             console.log("Fetching TDX Quote ...");
-            const { quoteHex, rtmr3EventLog, canonicalAppCompose } = await fetchLivePhalaQuote(async (identity) => getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey, identity.canonicalAppCompose));
+            const { quoteHex, rtmr3EventLog, canonicalAppCompose } = await fetchLivePhalaQuote(async (identity) => getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey, identity.canonicalAppCompose));
             console.log(`Registering with live Phala TDX quote, canonical app_compose and ${rtmr3EventLog.length} RTMR3 events ...`);
-            await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventLog, canonicalAppCompose, process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey);
+            await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventLog, canonicalAppCompose, process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey);
             console.log("Device registered with onchain TDX quote and RTMR3 event replay verification.");
         }
         await waitForRuntimeBootstrapReady();
@@ -1924,6 +1963,14 @@ async function waitForRoundAdvance(prevRound, { pollMs = 3000, timeoutMs = 0 } =
 }
 async function runService() {
     try {
+        activeParticipantActionSigner = await loadParticipantActionSigner();
+        configureParticipantActionSigner(activeParticipantActionSigner);
+        console.log("TEE participant action key initialized.", {
+            source: activeParticipantActionSigner.source,
+            actionAddress: activeParticipantActionSigner.address,
+            logicalParticipant: process.env.ACCOUNT_ADDRESS,
+        });
+        await fundParticipantActionKey();
         activeParticipantKey = await loadParticipantKey();
         await materializeParticipantPrivateKey(activeParticipantKey);
         console.log("Participant RSA key initialized inside the application TEE.", {
@@ -1938,6 +1985,22 @@ async function runService() {
     catch (e) {
         console.error('stateMachine error:', e);
         process.exitCode = 1;
+    }
+    finally {
+        try {
+            await stopAggregatorServer();
+        }
+        catch (error) {
+            console.error("Error while closing the model receiver after state-machine exit:", error);
+            process.exitCode = 1;
+        }
+        activeParticipantActionSigner?.destroy();
+        activeParticipantActionSigner = undefined;
+        activeParticipantKey = undefined;
+        await fs.rm(participantPrivateKeyRuntimePath, { force: true }).catch((error) => {
+            console.error("Could not remove the runtime participant private key:", error);
+            process.exitCode = 1;
+        });
     }
 }
 runService();
@@ -1954,6 +2017,12 @@ async function shutdown(signal) {
         console.error("Error while closing the model receiver:", error);
     }
     finally {
+        activeParticipantActionSigner?.destroy();
+        activeParticipantActionSigner = undefined;
+        activeParticipantKey = undefined;
+        await fs.rm(participantPrivateKeyRuntimePath, { force: true }).catch((error) => {
+            console.error("Could not remove the runtime participant private key:", error);
+        });
         process.exit(0);
     }
 }

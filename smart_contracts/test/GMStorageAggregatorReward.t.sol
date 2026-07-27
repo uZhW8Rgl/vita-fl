@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {GMStorage} from "../src/core/GMStorage.sol";
+import {ActionKeyTest} from "./helpers/ActionKeyTest.sol";
 
 contract RewardDeviceRegistryStub {
     mapping(address => bool) private authorized;
@@ -32,6 +33,15 @@ contract RewardDeviceRegistryStub {
     function getDevice(address device) external view returns (bool, string memory, string memory, bytes memory) {
         return (authorized[device], "", "", publicKeys[device]);
     }
+
+    function actionKeys(address participant) external pure returns (address) {
+        return participant;
+    }
+
+    function resolveAuthorizedParticipant(address actionKey) external view returns (address) {
+        require(authorized[actionKey], "participant is not authorized");
+        return actionKey;
+    }
 }
 
 contract AggregatorSelectionStub {
@@ -55,7 +65,7 @@ contract AggregatorSelectionStub {
     }
 }
 
-contract GMStorageAggregatorRewardTest is Test {
+contract GMStorageAggregatorRewardTest is ActionKeyTest {
     GMStorage private gmStorage;
     RewardDeviceRegistryStub private registry;
     AggregatorSelectionStub private selection;
@@ -64,9 +74,9 @@ contract GMStorageAggregatorRewardTest is Test {
     address private worker;
 
     function setUp() public {
-        aggregator = makeAddr("aggregator");
-        replacementAggregator = makeAddr("replacement-aggregator");
-        worker = makeAddr("worker");
+        aggregator = _makeActionParticipant("aggregator");
+        replacementAggregator = _makeActionParticipant("replacement-aggregator");
+        worker = _makeActionParticipant("worker");
         registry = new RewardDeviceRegistryStub();
         registry.setAuthorized(aggregator, true);
         registry.setAuthorized(replacementAggregator, true);
@@ -235,8 +245,9 @@ contract GMStorageAggregatorRewardTest is Test {
 
         selection.setAggregator(replacementAggregator);
         selection.setSelectionRound(1);
-        vm.prank(replacementAggregator);
-        gmStorage.recordModelSubmission(1, worker, keccak256("replacement-worker-model"));
+        _recordSignedModelSubmission(
+            gmStorage, replacementAggregator, replacementAggregator, worker, 1, keccak256("replacement-worker-model")
+        );
         publishCurrentRound(replacementAggregator, "replacement-round");
         vm.prank(replacementAggregator);
         gmStorage.incrementRound();
@@ -278,8 +289,7 @@ contract GMStorageAggregatorRewardTest is Test {
         registry.setAuthorized(aggregator, true);
 
         selection.setSelectionRound(1);
-        vm.prank(aggregator);
-        gmStorage.recordModelSubmission(1, worker, keccak256("worker-round-one"));
+        _recordSignedModelSubmission(gmStorage, aggregator, aggregator, worker, 1, keccak256("worker-round-one"));
         publishCurrentRound(aggregator, "round-one");
 
         vm.expectRevert(bytes("Current round publication is not finalized"));
@@ -296,8 +306,7 @@ contract GMStorageAggregatorRewardTest is Test {
         gmStorage.closeModelSubmissions(1);
 
         selection.setSelectionRound(1);
-        vm.prank(aggregator);
-        gmStorage.recordModelSubmission(1, worker, keccak256("worker-round-one"));
+        _recordSignedModelSubmission(gmStorage, aggregator, aggregator, worker, 1, keccak256("worker-round-one"));
         publishCurrentRound(aggregator, "round-one");
         vm.prank(aggregator);
         gmStorage.incrementRound();
@@ -390,7 +399,7 @@ contract GMStorageAggregatorRewardTest is Test {
         publishCurrentRound(aggregator, "round-zero");
         registry.setAuthorized(aggregator, false);
 
-        vm.expectRevert(bytes("Aggregator is not authorized"));
+        vm.expectRevert(bytes("participant is not authorized"));
         vm.prank(aggregator);
         gmStorage.incrementRound();
 

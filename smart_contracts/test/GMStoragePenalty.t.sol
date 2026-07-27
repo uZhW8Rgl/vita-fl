@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {GMStorage} from "../src/core/GMStorage.sol";
+import {ActionKeyTest} from "./helpers/ActionKeyTest.sol";
 
 contract PenaltyDeviceRegistryStub {
     mapping(address => bool) private authorized;
@@ -25,6 +26,15 @@ contract PenaltyDeviceRegistryStub {
 
     function getDevice(address device) external view returns (bool, string memory, string memory, bytes memory) {
         return (authorized[device], "", "", bytes("publisher-public-key"));
+    }
+
+    function actionKeys(address participant) external pure returns (address) {
+        return participant;
+    }
+
+    function resolveAuthorizedParticipant(address actionKey) external view returns (address) {
+        require(authorized[actionKey], "participant is not authorized");
+        return actionKey;
     }
 }
 
@@ -49,7 +59,7 @@ contract PenaltyAggregatorSelectionStub {
     }
 }
 
-contract GMStoragePenaltyTest is Test {
+contract GMStoragePenaltyTest is ActionKeyTest {
     GMStorage private gmStorage;
     PenaltyDeviceRegistryStub private registry;
     PenaltyAggregatorSelectionStub private selection;
@@ -59,9 +69,9 @@ contract GMStoragePenaltyTest is Test {
     address private submittingWorker;
 
     function setUp() public {
-        aggregator = makeAddr("aggregator");
-        missingWorker = makeAddr("missing-worker");
-        submittingWorker = makeAddr("submitting-worker");
+        aggregator = _makeActionParticipant("aggregator");
+        missingWorker = _makeActionParticipant("missing-worker");
+        submittingWorker = _makeActionParticipant("submitting-worker");
 
         registry = new PenaltyDeviceRegistryStub();
         registry.setAuthorized(aggregator, true);
@@ -74,9 +84,13 @@ contract GMStoragePenaltyTest is Test {
         gmStorage =
             new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
 
+        _recordSignedModelSubmission(
+            gmStorage, aggregator, aggregator, missingWorker, 0, keccak256("missing-worker-round-zero")
+        );
+        _recordSignedModelSubmission(
+            gmStorage, aggregator, aggregator, submittingWorker, 0, keccak256("submitting-worker-round-zero")
+        );
         vm.startPrank(aggregator);
-        gmStorage.recordModelSubmission(0, missingWorker, keccak256("missing-worker-round-zero"));
-        gmStorage.recordModelSubmission(0, submittingWorker, keccak256("submitting-worker-round-zero"));
         gmStorage.closeModelSubmissions(0);
         gmStorage.setGlobalModelAndSignatureAndKeyBundle(
             "global-model-round-zero", "global-signature-round-zero", "global-key-bundle-round-zero"
@@ -158,8 +172,9 @@ contract GMStoragePenaltyTest is Test {
     }
 
     function testAggregatorCannotPenalizeWorkerThatSubmittedCurrentRound() public {
-        vm.prank(aggregator);
-        gmStorage.recordModelSubmission(1, submittingWorker, keccak256("submitting-worker-round-one"));
+        _recordSignedModelSubmission(
+            gmStorage, aggregator, aggregator, submittingWorker, 1, keccak256("submitting-worker-round-one")
+        );
 
         closeCurrentRound();
         vm.expectRevert(bytes("Cannot penalize submitted model"));
@@ -200,7 +215,7 @@ contract GMStoragePenaltyTest is Test {
     }
 
     function testOutsiderCannotPenalize() public {
-        vm.expectRevert(bytes("Caller is not the current aggregator"));
+        vm.expectRevert(bytes("participant is not authorized"));
         vm.prank(makeAddr("outsider"));
         gmStorage.penalizeContribution(1, aggregator, singleTarget(missingWorker), "missed_model_deadline");
     }
@@ -228,8 +243,10 @@ contract GMStoragePenaltyTest is Test {
     }
 
     function testWorkerPenaltyAfterPublicationReverts() public {
+        _recordSignedModelSubmission(
+            gmStorage, aggregator, aggregator, submittingWorker, 1, keccak256("submitting-worker-round-one")
+        );
         vm.startPrank(aggregator);
-        gmStorage.recordModelSubmission(1, submittingWorker, keccak256("submitting-worker-round-one"));
         gmStorage.closeModelSubmissions(1);
         gmStorage.setGlobalModelAndSignatureAndKeyBundle(
             "global-model-round-one", "global-signature-round-one", "global-key-bundle-round-one"

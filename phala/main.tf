@@ -337,8 +337,8 @@ resource "phala_app" "dfl_worker" {
   nonce         = var.nonce
   storage_fs    = var.storage_fs
 
-  ssh_authorized_keys = local.ssh_authorized_keys
-  pre_launch_script   = var.pre_launch_script
+  ssh_authorized_keys = []
+  pre_launch_script   = null
 
   public_logs     = var.public_logs
   public_sysinfo  = var.public_sysinfo
@@ -406,8 +406,8 @@ resource "phala_app" "dfl_worker_additional" {
   nonce         = var.nonce
   storage_fs    = var.storage_fs
 
-  ssh_authorized_keys = local.ssh_authorized_keys
-  pre_launch_script   = var.pre_launch_script
+  ssh_authorized_keys = []
+  pre_launch_script   = null
 
   public_logs     = var.public_logs
   public_sysinfo  = var.public_sysinfo

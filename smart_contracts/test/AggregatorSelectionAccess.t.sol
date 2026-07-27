@@ -4,10 +4,13 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {AggregatorSelection} from "../src/core/AggregatorSelection.sol";
 import {GMStorage} from "../src/core/GMStorage.sol";
+import {ActionKeyTest} from "./helpers/ActionKeyTest.sol";
 
 contract SelectionDeviceRegistryStub {
     mapping(address => bool) private authorized;
     mapping(address => bool) private known;
+    mapping(address => address) private participantActions;
+    mapping(address => address) private actionParticipants;
     address[] private authorizedDevices;
 
     function setAuthorized(address device, bool value) external {
@@ -16,6 +19,10 @@ contract SelectionDeviceRegistryStub {
             authorizedDevices.push(device);
         }
         authorized[device] = value;
+        if (participantActions[device] == address(0)) {
+            participantActions[device] = device;
+            actionParticipants[device] = device;
+        }
     }
 
     function isAuthorized(address device) external view returns (bool) {
@@ -43,9 +50,29 @@ contract SelectionDeviceRegistryStub {
     function getDevice(address device) external view returns (bool, string memory, string memory, bytes memory) {
         return (authorized[device], "", "", bytes("publisher-public-key"));
     }
+
+    function setActionKey(address participant, address actionKey) external {
+        address previousAction = participantActions[participant];
+        if (previousAction != address(0)) {
+            delete actionParticipants[previousAction];
+        }
+        participantActions[participant] = actionKey;
+        actionParticipants[actionKey] = participant;
+    }
+
+    function actionKeys(address participant) external view returns (address) {
+        return participantActions[participant];
+    }
+
+    function resolveAuthorizedParticipant(address actionKey) external view returns (address) {
+        address participant = actionParticipants[actionKey];
+        require(participant != address(0), "action key not registered");
+        require(authorized[participant], "participant is not authorized");
+        return participant;
+    }
 }
 
-contract AggregatorSelectionAccessTest is Test {
+contract AggregatorSelectionAccessTest is ActionKeyTest {
     AggregatorSelection private selection;
     GMStorage private gmStorage;
     SelectionDeviceRegistryStub private registry;
@@ -56,10 +83,10 @@ contract AggregatorSelectionAccessTest is Test {
     address private reporterTwo;
 
     function setUp() public {
-        aggregator = makeAddr("aggregator");
-        alternativeAggregator = makeAddr("alternative-aggregator");
-        reporterOne = makeAddr("reporter-one");
-        reporterTwo = makeAddr("reporter-two");
+        aggregator = _makeActionParticipant("aggregator");
+        alternativeAggregator = _makeActionParticipant("alternative-aggregator");
+        reporterOne = _makeActionParticipant("reporter-one");
+        reporterTwo = _makeActionParticipant("reporter-two");
 
         registry = new SelectionDeviceRegistryStub();
         registry.setAuthorized(aggregator, true);
@@ -116,7 +143,7 @@ contract AggregatorSelectionAccessTest is Test {
         publishAndCompleteRound(aggregator, "round-zero");
         address outsider = makeAddr("outsider");
 
-        vm.expectRevert(bytes("Caller is not an authorized participant"));
+        vm.expectRevert(bytes("action key not registered"));
         vm.prank(outsider);
         selection.triggerAggregatorSelection();
 
@@ -189,6 +216,31 @@ contract AggregatorSelectionAccessTest is Test {
         assertEq(selection.system_state(), "TRAINING");
     }
 
+    function testAggregatorStateMutationUsesActionKeyButKeepsLogicalIdentity() public {
+        address teeAction = makeAddr("aggregator-tee-action");
+        registry.setActionKey(aggregator, teeAction);
+
+        vm.prank(teeAction);
+        selection.setSystemState("AGGREGATING");
+        assertEq(selection.system_state(), "AGGREGATING");
+        assertEq(selection.getCurrentAggregator(), aggregator);
+
+        vm.expectRevert(bytes("action key not registered"));
+        vm.prank(aggregator);
+        selection.setSystemState("TRAINING");
+    }
+
+    function testTimeoutReportFromActionKeyIsAttributedToLogicalReporter() public {
+        address reporterAction = makeAddr("reporter-one-tee-action");
+        registry.setActionKey(reporterOne, reporterAction);
+
+        vm.prank(reporterAction);
+        selection.reportAggregatorTimeout(0, aggregator);
+
+        assertTrue(selection.timeoutReported(0, aggregator, reporterOne));
+        assertFalse(selection.timeoutReported(0, aggregator, reporterAction));
+    }
+
     function testCompletedRoundAggregatorCannotMutateNextRoundBeforeSelection() public {
         publishAndCompleteRound(aggregator, "round-zero");
 
@@ -207,11 +259,11 @@ contract AggregatorSelectionAccessTest is Test {
     function testDeauthorizedSelectedAggregatorCannotMutateStateOrEndpoint() public {
         registry.setAuthorized(aggregator, false);
 
-        vm.expectRevert(bytes("Aggregator is not authorized"));
+        vm.expectRevert(bytes("participant is not authorized"));
         vm.prank(aggregator);
         selection.setSystemState("AGGREGATING");
 
-        vm.expectRevert(bytes("Aggregator is not authorized"));
+        vm.expectRevert(bytes("participant is not authorized"));
         vm.prank(aggregator);
         selection.setBrokerEndpoint("unauthorized-endpoint");
     }
@@ -289,7 +341,7 @@ contract AggregatorSelectionAccessTest is Test {
         selection.reportAggregatorTimeout(0, aggregator);
         registry.setAuthorized(reporterTwo, false);
 
-        vm.expectRevert(bytes("reporter not authorized"));
+        vm.expectRevert(bytes("participant is not authorized"));
         vm.prank(reporterTwo);
         selection.reportAggregatorTimeout(0, aggregator);
 
@@ -322,8 +374,7 @@ contract AggregatorSelectionAccessTest is Test {
         vm.prank(replacement);
         selection.triggerAggregatorSelection();
 
-        vm.prank(replacement);
-        gmStorage.recordModelSubmission(1, aggregator, keccak256("worker-round-one"));
+        _recordSignedModelSubmission(gmStorage, replacement, replacement, aggregator, 1, keccak256("worker-round-one"));
         publishAndCompleteRound(replacement, "round-one");
         vm.prank(replacement);
         selection.triggerAggregatorSelection();

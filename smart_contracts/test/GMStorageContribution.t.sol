@@ -6,6 +6,8 @@ import {GMStorage} from "../src/core/GMStorage.sol";
 
 contract ContributionDeviceRegistryStub {
     mapping(address => bool) private authorized;
+    mapping(address => address) private participantActions;
+    mapping(address => address) private actionParticipants;
     address[] private authorizedDevices;
 
     function setAuthorized(address device, bool value) external {
@@ -25,6 +27,26 @@ contract ContributionDeviceRegistryStub {
 
     function getDevice(address device) external view returns (bool, string memory, string memory, bytes memory) {
         return (authorized[device], "", "", bytes("publisher-public-key"));
+    }
+
+    function setActionKey(address participant, address actionKey) external {
+        address previousAction = participantActions[participant];
+        if (previousAction != address(0)) {
+            delete actionParticipants[previousAction];
+        }
+        participantActions[participant] = actionKey;
+        actionParticipants[actionKey] = participant;
+    }
+
+    function actionKeys(address participant) external view returns (address) {
+        return participantActions[participant];
+    }
+
+    function resolveAuthorizedParticipant(address actionKey) external view returns (address) {
+        address participant = actionParticipants[actionKey];
+        require(participant != address(0), "action key not registered");
+        require(authorized[participant], "participant is not authorized");
+        return participant;
     }
 }
 
@@ -54,15 +76,33 @@ contract GMStorageContributionTest is Test {
     ContributionDeviceRegistryStub private registry;
     ContributionAggregatorSelectionStub private selection;
     address private aggregator;
+    address private aggregatorAction;
     address private worker;
+    address private workerAction;
+    mapping(address => uint256) private privateKeys;
+
+    struct SignedSubmission {
+        bytes32 packageHash;
+        bytes32 parentModelHash;
+        uint256 workerNonce;
+        bytes signature;
+    }
 
     function setUp() public {
+        uint256 aggregatorActionPrivateKey;
+        uint256 workerPrivateKey;
         aggregator = makeAddr("aggregator");
         worker = makeAddr("worker");
+        (aggregatorAction, aggregatorActionPrivateKey) = makeAddrAndKey("aggregator-action");
+        (workerAction, workerPrivateKey) = makeAddrAndKey("worker-action");
+        privateKeys[aggregator] = aggregatorActionPrivateKey;
+        privateKeys[worker] = workerPrivateKey;
 
         registry = new ContributionDeviceRegistryStub();
         registry.setAuthorized(worker, true);
         registry.setAuthorized(aggregator, true);
+        registry.setActionKey(aggregator, aggregatorAction);
+        registry.setActionKey(worker, workerAction);
 
         selection = new ContributionAggregatorSelectionStub();
         selection.setAggregator(aggregator);
@@ -71,13 +111,61 @@ contract GMStorageContributionTest is Test {
             new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
     }
 
+    function prepareSubmission(uint256 expectedRound, address target, bytes32 modelHash)
+        private
+        returns (SignedSubmission memory submission)
+    {
+        bytes32 packageHash = keccak256(abi.encodePacked("package:", modelHash));
+        bytes32 parentModelHash = gmStorage.currentParentModelHash();
+        uint256 workerNonce = gmStorage.hasSubmittedModel(expectedRound, target)
+            ? gmStorage.modelSubmissionNonce(expectedRound, target)
+            : gmStorage.workerSubmissionNonces(target);
+        bytes32 digest = gmStorage.modelSubmissionDigest(
+            expectedRound, target, aggregator, parentModelHash, modelHash, packageHash, workerNonce
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKeys[target], digest);
+        submission = SignedSubmission(packageHash, parentModelHash, workerNonce, abi.encodePacked(r, s, v));
+    }
+
+    function callRecord(
+        address sender,
+        uint256 expectedRound,
+        address target,
+        bytes32 modelHash,
+        SignedSubmission memory submission
+    ) private {
+        vm.prank(sender);
+        gmStorage.recordModelSubmission(
+            expectedRound,
+            target,
+            modelHash,
+            submission.packageHash,
+            submission.parentModelHash,
+            submission.workerNonce,
+            submission.signature
+        );
+    }
+
     function record(uint256 expectedRound, address target, bytes32 modelHash) private {
-        vm.prank(aggregator);
-        gmStorage.recordModelSubmission(expectedRound, target, modelHash);
+        callRecord(
+            aggregatorAction, expectedRound, target, modelHash, prepareSubmission(expectedRound, target, modelHash)
+        );
+    }
+
+    function expectRecordRevert(
+        bytes memory reason,
+        address sender,
+        uint256 expectedRound,
+        address target,
+        bytes32 modelHash
+    ) private {
+        SignedSubmission memory submission = prepareSubmission(expectedRound, target, modelHash);
+        vm.expectRevert(reason);
+        callRecord(sender, expectedRound, target, modelHash, submission);
     }
 
     function completeCurrentRound() private {
-        vm.startPrank(aggregator);
+        vm.startPrank(aggregatorAction);
         gmStorage.closeModelSubmissions(gmStorage.getRound());
         gmStorage.setGlobalModelAndSignatureAndKeyBundle("global-model", "global-signature", "global-key-bundle");
         gmStorage.incrementRound();
@@ -87,7 +175,7 @@ contract GMStorageContributionTest is Test {
 
     function closeCurrentRound() private {
         uint256 currentRound = gmStorage.getRound();
-        vm.prank(aggregator);
+        vm.prank(aggregatorAction);
         gmStorage.closeModelSubmissions(currentRound);
     }
 
@@ -114,20 +202,113 @@ contract GMStorageContributionTest is Test {
         assertEq(gmStorage.getContribution(worker), 1);
     }
 
+    function testExactRetryDoesNotRequireSignatureReverificationOrMutateState() public {
+        bytes32 modelHash = keccak256("round-zero-model");
+        SignedSubmission memory submission = prepareSubmission(0, worker, modelHash);
+        callRecord(aggregatorAction, 0, worker, modelHash, submission);
+
+        submission.signature = hex"00";
+        callRecord(aggregatorAction, 0, worker, modelHash, submission);
+
+        assertEq(gmStorage.modelSubmissionCount(0), 1);
+        assertEq(gmStorage.workerSubmissionNonces(worker), 1);
+        assertEq(gmStorage.getContribution(worker), 1);
+    }
+
+    function testRetryWithChangedPackageHashReverts() public {
+        bytes32 modelHash = keccak256("round-zero-model");
+        SignedSubmission memory submission = prepareSubmission(0, worker, modelHash);
+        callRecord(aggregatorAction, 0, worker, modelHash, submission);
+        submission.packageHash = keccak256("different-package");
+
+        vm.expectRevert(bytes("Conflicting model submission package hash"));
+        callRecord(aggregatorAction, 0, worker, modelHash, submission);
+    }
+
+    function testRetryWithChangedParentHashReverts() public {
+        bytes32 modelHash = keccak256("round-zero-model");
+        SignedSubmission memory submission = prepareSubmission(0, worker, modelHash);
+        callRecord(aggregatorAction, 0, worker, modelHash, submission);
+        submission.parentModelHash = keccak256("different-parent");
+
+        vm.expectRevert(bytes("Conflicting model submission parent hash"));
+        callRecord(aggregatorAction, 0, worker, modelHash, submission);
+    }
+
+    function testFirstSubmissionRejectsWrongActionKeySignature() public {
+        bytes32 modelHash = keccak256("round-zero-model");
+        SignedSubmission memory submission = prepareSubmission(0, worker, modelHash);
+        bytes32 digest = gmStorage.modelSubmissionDigest(
+            0, worker, aggregator, submission.parentModelHash, modelHash, submission.packageHash, submission.workerNonce
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKeys[aggregator], digest);
+        submission.signature = abi.encodePacked(r, s, v);
+
+        vm.expectRevert(bytes("Invalid worker submission signature"));
+        callRecord(aggregatorAction, 0, worker, modelHash, submission);
+        assertEq(gmStorage.workerSubmissionNonces(worker), 0);
+    }
+
+    function testFirstSubmissionRejectsSignatureFromReplacedWorkerActionKey() public {
+        bytes32 modelHash = keccak256("round-zero-model");
+        SignedSubmission memory submission = prepareSubmission(0, worker, modelHash);
+        registry.setActionKey(worker, makeAddr("replacement-worker-action"));
+
+        vm.expectRevert(bytes("Invalid worker submission signature"));
+        callRecord(aggregatorAction, 0, worker, modelHash, submission);
+        assertFalse(gmStorage.hasSubmittedModel(0, worker));
+        assertEq(gmStorage.workerSubmissionNonces(worker), 0);
+    }
+
+    function testFirstSubmissionRejectsWrongNonce() public {
+        bytes32 modelHash = keccak256("round-zero-model");
+        SignedSubmission memory submission = prepareSubmission(0, worker, modelHash);
+        submission.workerNonce = 7;
+        bytes32 digest = gmStorage.modelSubmissionDigest(
+            0, worker, aggregator, submission.parentModelHash, modelHash, submission.packageHash, submission.workerNonce
+        );
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKeys[worker], digest);
+        submission.signature = abi.encodePacked(r, s, v);
+
+        vm.expectRevert(bytes("Worker submission nonce mismatch"));
+        callRecord(aggregatorAction, 0, worker, modelHash, submission);
+    }
+
+    function testRevokedAggregatorActionKeyCannotMutateProtocol() public {
+        address replacementAction = makeAddr("replacement-aggregator-action");
+        registry.setActionKey(aggregator, replacementAction);
+        SignedSubmission memory submission = prepareSubmission(0, worker, keccak256("round-zero-model"));
+
+        vm.expectRevert(bytes("action key not registered"));
+        callRecord(aggregatorAction, 0, worker, keccak256("round-zero-model"), submission);
+    }
+
+    function testParentHashCommitsToModelSignatureAndKeyBundle() public {
+        assertEq(gmStorage.currentParentModelHash(), keccak256(abi.encode("initial-model", "initial-signature", "")));
+
+        vm.startPrank(aggregatorAction);
+        gmStorage.closeModelSubmissions(0);
+        gmStorage.setGlobalModelAndSignatureAndKeyBundle("next-model", "next-signature", "next-key-bundle");
+        vm.stopPrank();
+        assertEq(gmStorage.currentParentModelHash(), keccak256(abi.encode("initial-model", "initial-signature", "")));
+    }
+
     function testDifferentHashForSameWorkerAndRoundReverts() public {
         bytes32 firstHash = keccak256("first-model");
         record(0, worker, firstHash);
 
-        vm.expectRevert(bytes("Conflicting model submission hash"));
-        record(0, worker, keccak256("replacement-model"));
+        expectRecordRevert(
+            bytes("Conflicting model submission hash"), aggregatorAction, 0, worker, keccak256("replacement-model")
+        );
 
         assertEq(gmStorage.modelSubmissionHash(0, worker), firstHash);
         assertEq(gmStorage.getContribution(worker), 1);
     }
 
     function testWrongExpectedRoundReverts() public {
-        vm.expectRevert(bytes("Submission round mismatch"));
-        record(1, worker, keccak256("future-round-model"));
+        expectRecordRevert(
+            bytes("Submission round mismatch"), aggregatorAction, 1, worker, keccak256("future-round-model")
+        );
 
         assertFalse(gmStorage.hasSubmittedModel(0, worker));
         assertEq(gmStorage.getContribution(worker), 0);
@@ -135,47 +316,55 @@ contract GMStorageContributionTest is Test {
 
     function testUnauthorizedWorkerCannotReceivePoint() public {
         address outsider = makeAddr("outsider");
+        uint256 outsiderActionPrivateKey;
+        address outsiderAction;
+        (outsiderAction, outsiderActionPrivateKey) = makeAddrAndKey("outsider-action");
+        privateKeys[outsider] = outsiderActionPrivateKey;
+        registry.setActionKey(outsider, outsiderAction);
 
-        vm.expectRevert(bytes("Worker is not authorized"));
-        record(0, outsider, keccak256("outsider-model"));
+        expectRecordRevert(
+            bytes("Worker is not authorized"), aggregatorAction, 0, outsider, keccak256("outsider-model")
+        );
 
         assertFalse(gmStorage.hasSubmittedModel(0, outsider));
         assertEq(gmStorage.getContribution(outsider), 0);
     }
 
     function testZeroModelHashReverts() public {
-        vm.expectRevert(bytes("Model hash is zero"));
-        record(0, worker, bytes32(0));
+        expectRecordRevert(bytes("Model hash is zero"), aggregatorAction, 0, worker, bytes32(0));
 
         assertFalse(gmStorage.hasSubmittedModel(0, worker));
         assertEq(gmStorage.getContribution(worker), 0);
     }
 
     function testAggregatorCannotAssignWorkerScoreToItself() public {
-        vm.expectRevert(bytes("Current aggregator cannot receive worker score"));
-        record(0, aggregator, keccak256("self-score"));
+        expectRecordRevert(
+            bytes("Current aggregator cannot receive worker score"),
+            aggregatorAction,
+            0,
+            aggregator,
+            keccak256("self-score")
+        );
 
         assertFalse(gmStorage.hasSubmittedModel(0, aggregator));
         assertEq(gmStorage.getContribution(aggregator), 0);
     }
 
     function testWorkerCannotRecordItsOwnSubmission() public {
-        vm.expectRevert(bytes("Caller is not the current aggregator"));
-        vm.prank(worker);
-        gmStorage.recordModelSubmission(0, worker, keccak256("self-submitted-model"));
+        bytes32 modelHash = keccak256("self-submitted-model");
+        expectRecordRevert(bytes("Caller is not the current aggregator"), workerAction, 0, worker, modelHash);
 
         assertFalse(gmStorage.hasSubmittedModel(0, worker));
         assertEq(gmStorage.getContribution(worker), 0);
     }
 
     function testSubmissionAfterGlobalModelPublicationReverts() public {
-        vm.startPrank(aggregator);
+        vm.startPrank(aggregatorAction);
         gmStorage.closeModelSubmissions(0);
         gmStorage.setGlobalModelAndSignatureAndKeyBundle("global-model", "global-signature", "global-key-bundle");
         vm.stopPrank();
 
-        vm.expectRevert(bytes("Model submissions are closed"));
-        record(0, worker, keccak256("late-model"));
+        expectRecordRevert(bytes("Model submissions are closed"), aggregatorAction, 0, worker, keccak256("late-model"));
 
         assertEq(gmStorage.modelSubmissionCount(0), 0);
         assertEq(gmStorage.getContribution(worker), 0);
@@ -189,9 +378,15 @@ contract GMStorageContributionTest is Test {
         record(0, worker, modelHash);
 
         address secondWorker = makeAddr("second-worker");
+        uint256 secondWorkerActionPrivateKey;
+        address secondWorkerAction;
+        (secondWorkerAction, secondWorkerActionPrivateKey) = makeAddrAndKey("second-worker-action");
+        privateKeys[secondWorker] = secondWorkerActionPrivateKey;
         registry.setAuthorized(secondWorker, true);
-        vm.expectRevert(bytes("Model submissions are closed"));
-        record(0, secondWorker, keccak256("late-model"));
+        registry.setActionKey(secondWorker, secondWorkerAction);
+        expectRecordRevert(
+            bytes("Model submissions are closed"), aggregatorAction, 0, secondWorker, keccak256("late-model")
+        );
 
         assertTrue(gmStorage.modelSubmissionsClosed(0));
         assertEq(gmStorage.modelSubmissionCount(0), 1);
@@ -201,12 +396,12 @@ contract GMStorageContributionTest is Test {
 
     function testOnlyActiveAuthorizedAggregatorCanCloseSubmissionWindow() public {
         vm.expectRevert(bytes("Caller is not the current aggregator"));
-        vm.prank(worker);
+        vm.prank(workerAction);
         gmStorage.closeModelSubmissions(0);
 
         registry.setAuthorized(aggregator, false);
-        vm.expectRevert(bytes("Aggregator is not authorized"));
-        vm.prank(aggregator);
+        vm.expectRevert(bytes("participant is not authorized"));
+        vm.prank(aggregatorAction);
         gmStorage.closeModelSubmissions(0);
 
         assertFalse(gmStorage.modelSubmissionsClosed(0));
@@ -215,8 +410,9 @@ contract GMStorageContributionTest is Test {
     function testDeauthorizedAggregatorCannotRecordSubmission() public {
         registry.setAuthorized(aggregator, false);
 
-        vm.expectRevert(bytes("Aggregator is not authorized"));
-        record(0, worker, keccak256("worker-model"));
+        expectRecordRevert(
+            bytes("participant is not authorized"), aggregatorAction, 0, worker, keccak256("worker-model")
+        );
 
         assertEq(gmStorage.modelSubmissionCount(0), 0);
         assertEq(gmStorage.getContribution(worker), 0);

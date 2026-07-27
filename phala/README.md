@@ -152,6 +152,13 @@ Notes:
 - Worker and smart-contract images contain no private keys. The prototype EVM
   keys remain the unchanged public Anvil fixtures and must be replaced for
   production or real funds.
+- The public Anvil account remains the logical worker identity and funds its
+  action address, but it is not accepted as DFL transaction authority. At each
+  worker-process start, the application combines a domain-separated dstack KMS
+  secret with a fresh 32-byte value held only in process memory to derive a
+  process-scoped secp256k1 action key. Its address is included in REPORTDATA
+  and registered on-chain. A restart therefore requires a fresh quote and
+  atomically revokes the previous action address.
 - `worker_image` must stay pinned to a `sha256` digest. Terraform also renders
   training-only and Worker-0-with-inference policy references from
   `dynamic-workers/worker-compose.tftpl`. The contract runtime derives their
@@ -169,9 +176,10 @@ Notes:
   tmpfs. A corrupt or undecryptable state fails closed instead of silently
   rotating the participant identity.
 - The participant public key is included in the worker's REPORTDATA-bound
-  DCAP registration. The same private key signs worker and temporary-aggregator
-  artifacts, and Worker 0's co-located inference process uses it to decrypt
-  the model bundle. The AIR evidence signing key remains a separate,
+  DCAP registration. This RSA key signs and decrypts model artifacts, and
+  Worker 0's co-located inference process uses it to decrypt the model bundle.
+  It is distinct from the secp256k1 action key that authorizes Ethereum
+  transactions. The AIR evidence signing key remains a third,
   domain-separated dstack-derived key.
 - Worker 0 exposes port 8080 from the same `dfl-worker` container and CVM.
   Model retrieval remains tool-triggered: container startup does not fetch or
@@ -179,7 +187,9 @@ Notes:
   REPORTDATA-bound HTTPS endpoint from `DeviceRegistry.public_ip`; an explicit
   `tee_inference_url_override` is only a diagnostic or compatibility escape
   hatch.
-- If you want SSH access, set `ssh_public_key_path`; if you also want the key stored account-wide in Phala Cloud, set `manage_account_ssh_key = true`.
+- `ssh_public_key_path` can still configure the contract runtime and auxiliary
+  apps. Official static and dynamically launched worker resources always pass
+  an empty SSH-key list and no user-defined pre-launch script.
 - Non-secret worker configuration is rendered into Compose; secret values use the provider's encrypted app environment.
 - The default minimal hardware profile is now `tdx.small` with `20 GB` disk.
 - The contract-runtime TEE runs its own local `anvil`; the worker TEE talks to that internal runtime endpoint, not to Sepolia.
@@ -218,7 +228,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:dc32e935b805bdd1a81f14b1941ed066b3e0cea50e9443c3a718373547133150
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:0ee1c63c221ceb052ad7a0f132cb09a7978ea7f2d1b2f84b9ca332df6c8df937
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
@@ -226,7 +236,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:dc32e935b805bdd1a81f14b1941ed06
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:e40ab86adfd33f8129d3f34b7b5643716538d38714217b2bf52b2711dea85c95
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:10430d2b20f5e8a5f0b04b94c6e158944739ea1de90d18f83e1546e9d782ef48
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
@@ -340,14 +350,26 @@ tuple, validates each structured event, computes its SHA-384 digest on-chain,
 requires exactly one matching `compose-hash` payload, replays the extend chain
 from the zero RTMR3 value, and requires the result to equal RTMR3 inside the
 verified quote. Registry-generated `REPORTDATA` binds the complete Compose
-hash, image digest, role-policy hash, device address, endpoints, participant
-public key, verifier, deployment, and nonce. Any caller satisfying this
-attestation and workload policy can register.
+hash, image digest, role-policy hash, logical participant address, current
+action address, endpoints, participant RSA public key, verifier, deployment,
+and nonce. Registration additionally requires an EIP-712 enrollment signature
+from the logical participant and the transaction itself must be sent by that
+action address. Any caller satisfying this attestation and workload policy can
+register.
 
 This means worker-specific `app-id`, `instance-id`, variable environment values,
 and final RTMR3 measurements need not be known in advance. Security-relevant
 Compose changes nevertheless produce a different, non-provisioned role policy,
 while the complete variable Compose remains quote-bound.
+
+The official launcher configuration removes worker SSH keys, but this is a
+deployment control rather than an attestation claim: Phala supplies
+`ssh_authorized_keys` through separate user configuration that is not part of
+the currently verified `app_compose`. Consequently, open admission cannot yet
+cryptographically prove that an independently launched otherwise-identical CVM
+has no SSH key. A production claim that the action key is non-exportable would
+need an attested user-configuration policy, trusted deployment identity, or a
+non-exporting signing interface in addition to the checks above.
 
 ## Next Steps
 
@@ -411,7 +433,7 @@ digest-pinned references in `.env.phala.anvil`:
 
 ```dotenv
 ENABLE_PHALA_AGENT=true
-AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:2d29688287e53ee181151898560c6a80c0ab3ce0fe0ac887eda84083f7adabf2
+AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:c750821699491d541d1a401d4b586e09403330a0b78536869349a1df59b999db
 TRANSPARENCY_LOG_IMAGE=ghcr.io/uzhw8rgl/master-thesis-transparency-log@sha256:4c6789921d5ff89e546c65c435bc19d479acc8248715dff3f5b1536e2c8af723
 ENABLE_OLLAMA=true
 OLLAMA_MODEL=qwen3:1.7b

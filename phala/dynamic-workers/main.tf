@@ -70,13 +70,15 @@ resource "phala_app" "worker" {
   region    = var.region
   image     = var.os_image
 
-  kms             = "phala"
-  listed          = false
-  storage_fs      = "zfs"
-  public_logs     = var.public_logs
-  public_sysinfo  = var.public_sysinfo
-  public_tcbinfo  = var.public_tcbinfo
-  gateway_enabled = true
+  kms                 = "phala"
+  listed              = false
+  storage_fs          = "zfs"
+  ssh_authorized_keys = []
+  pre_launch_script   = null
+  public_logs         = var.public_logs
+  public_sysinfo      = var.public_sysinfo
+  public_tcbinfo      = var.public_tcbinfo
+  gateway_enabled     = true
 
   wait_for_ready       = true
   wait_timeout_seconds = var.wait_timeout_seconds
