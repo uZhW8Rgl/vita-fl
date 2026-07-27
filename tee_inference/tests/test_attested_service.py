@@ -18,6 +18,7 @@ from tee_inference.service.attestation import AirEvidenceEmitter
 from tee_inference.service.model_source import (
     _assert_w0_authorized,
     _contracts_manifest,
+    _private_key_pem_from_environment,
     _verified_contract_trust_root,
     provision_latest_model,
 )
@@ -192,6 +193,31 @@ class ModelAuthorizationTests(unittest.TestCase):
         with patch("tee_inference.service.model_source.read_device_public_key_der", return_value=registered_der):
             with self.assertRaisesRegex(RuntimeError, "does not match"):
                 _assert_w0_authorized("http://rpc", "0x" + "11" * 20, "0x" + "22" * 20, private_pem(supplied))
+
+    def test_private_key_file_takes_precedence_over_inline_environment(self) -> None:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        expected = private_pem(key).encode()
+        with tempfile.TemporaryDirectory() as directory:
+            key_path = Path(directory) / "participant-private.pem"
+            key_path.write_bytes(expected)
+            with patch.dict(
+                "os.environ",
+                {
+                    "RSA_PRIVATE_KEY_FILE": str(key_path),
+                    "RSA_PRIVATE_KEY": "invalid-inline-key",
+                },
+                clear=False,
+            ):
+                self.assertEqual(_private_key_pem_from_environment(), expected)
+
+    def test_private_key_loader_rejects_missing_sources(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"RSA_PRIVATE_KEY_FILE": "", "RSA_PRIVATE_KEY": ""},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "RSA_PRIVATE_KEY_FILE or RSA_PRIVATE_KEY"):
+                _private_key_pem_from_environment()
 
     @unittest.skipUnless(MODEL.exists(), "native model fixture unavailable")
     def test_rejects_failed_aggregator_signature(self) -> None:

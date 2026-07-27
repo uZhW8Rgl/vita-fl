@@ -37,8 +37,17 @@ class _RuntimeHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         if parsed.path == "/api/v0/files/read":
             path = urllib.parse.parse_qs(parsed.query).get("arg", [""])[0]
-            if path == "/runtime/ready.json":
-                self._json({"status": "ready", "chain_id": self.chain_id})
+            if path == "/runtime/admission-ready.json":
+                self._json(
+                    {
+                        "status": "admission-ready",
+                        "chain_id": self.chain_id,
+                        "registry_address": self.manifest.get(
+                            "registry_address",
+                            "",
+                        ),
+                    }
+                )
                 return
             if path == "/runtime/contracts.json":
                 self._json(self.manifest)

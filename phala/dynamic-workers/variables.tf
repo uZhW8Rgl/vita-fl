@@ -9,8 +9,6 @@ variable "workers" {
     app_name        = string
     account_address = string
     private_key     = string
-    rsa_private_key = string
-    rsa_public_key  = string
     device_id       = number
   }))
   sensitive = true
@@ -113,6 +111,28 @@ variable "test_data_src" { type = string }
 variable "python_service_url" { type = string }
 variable "public_ip" { type = string }
 variable "msg_broker_ip" { type = string }
+
+variable "sello_required" {
+  type    = bool
+  default = false
+}
+
+variable "sello_scitt_url" {
+  type    = string
+  default = ""
+}
+
+variable "sello_tee_service_signing_seed" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+variable "sello_token_issuer_public_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
 
 variable "public_logs" {
   type    = bool

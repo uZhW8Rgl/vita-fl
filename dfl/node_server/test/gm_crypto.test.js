@@ -22,10 +22,6 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
 
     const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
     const publicKeyDerHex = publicKey.export({ format: 'der', type: 'spki' }).toString('hex');
-    const privateKeyPem = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
-
-    const originalPrivateKeyEnv = process.env.RSA_PRIVATE_KEY;
-    process.env.RSA_PRIVATE_KEY = privateKeyPem;
 
     const modelBytes = Buffer.from('encrypted-global-model-payload', 'utf8');
     const signatureBytes = Buffer.from('signed-model-bytes', 'utf8');
@@ -44,11 +40,21 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
                 publicKeyDerHex: `0x${publicKeyDerHex}`,
             }],
             round: 7,
+            signingPrivateKey: privateKey,
         });
 
         assert.equal(artifacts.recipients, 1);
         assert.ok((await fs.readFile(encryptedBundlePath, 'utf8')).includes('"cipher":"aes-256-gcm"'));
         assert.ok((await fs.stat(encryptedSignaturePath)).size > 0);
+        assert.equal(
+            crypto.verify(
+                'RSA-SHA256',
+                await fs.readFile(encryptedBundlePath),
+                publicKey,
+                await fs.readFile(encryptedSignaturePath),
+            ),
+            true,
+        );
 
         const result = await decryptEncryptedGlobalModelArtifacts({
             encryptedBundlePath,
@@ -56,17 +62,13 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
             ownAddress: '0x1234567890abcdef1234567890abcdef12345678',
             outModelPath,
             outSignaturePath,
+            decryptionPrivateKey: privateKey,
         });
 
         assert.equal(result.round, 7);
         assert.deepEqual(await fs.readFile(outModelPath), modelBytes);
         assert.deepEqual(await fs.readFile(outSignaturePath), signatureBytes);
     } finally {
-        if (originalPrivateKeyEnv === undefined) {
-            delete process.env.RSA_PRIVATE_KEY;
-        } else {
-            process.env.RSA_PRIVATE_KEY = originalPrivateKeyEnv;
-        }
         await fs.rm(tempDir, { recursive: true, force: true });
     }
 });
@@ -81,10 +83,6 @@ test('gm crypto rejects decryption for participants without a wrapped key', asyn
 
     const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
     const publicKeyDerHex = publicKey.export({ format: 'der', type: 'spki' }).toString('hex');
-    const privateKeyPem = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
-
-    const originalPrivateKeyEnv = process.env.RSA_PRIVATE_KEY;
-    process.env.RSA_PRIVATE_KEY = privateKeyPem;
 
     await fs.writeFile(modelPath, Buffer.from('payload', 'utf8'));
     await fs.writeFile(signaturePath, Buffer.from('signature', 'utf8'));
@@ -101,6 +99,7 @@ test('gm crypto rejects decryption for participants without a wrapped key', asyn
                 publicKeyDerHex: `0x${publicKeyDerHex}`,
             }],
             round: 1,
+            signingPrivateKey: privateKey,
         });
 
         await assert.rejects(
@@ -110,15 +109,11 @@ test('gm crypto rejects decryption for participants without a wrapped key', asyn
                 ownAddress: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
                 outModelPath: path.join(tempDir, 'out.bin'),
                 outSignaturePath: path.join(tempDir, 'out.bin.sig'),
+                decryptionPrivateKey: privateKey,
             }),
             /No wrapped GM round key found/,
         );
     } finally {
-        if (originalPrivateKeyEnv === undefined) {
-            delete process.env.RSA_PRIVATE_KEY;
-        } else {
-            process.env.RSA_PRIVATE_KEY = originalPrivateKeyEnv;
-        }
         await fs.rm(tempDir, { recursive: true, force: true });
     }
 });
@@ -132,10 +127,6 @@ test('gm crypto allows empty recipient sets for bootstrap rounds', async () => {
     const keyBundlePath = path.join(tempDir, 'aggregated.bundle.keys.json');
 
     const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
-    const privateKeyPem = privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
-
-    const originalPrivateKeyEnv = process.env.RSA_PRIVATE_KEY;
-    process.env.RSA_PRIVATE_KEY = privateKeyPem;
 
     await fs.writeFile(modelPath, Buffer.from('bootstrap-payload', 'utf8'));
     await fs.writeFile(signaturePath, Buffer.from('bootstrap-signature', 'utf8'));
@@ -149,17 +140,13 @@ test('gm crypto allows empty recipient sets for bootstrap rounds', async () => {
             keyBundlePath,
             recipients: [],
             round: 0,
+            signingPrivateKey: privateKey,
         });
 
         assert.equal(artifacts.recipients, 0);
         const keyBundle = JSON.parse(await fs.readFile(keyBundlePath, 'utf8'));
         assert.deepEqual(keyBundle.wrapped_keys_b64, {});
     } finally {
-        if (originalPrivateKeyEnv === undefined) {
-            delete process.env.RSA_PRIVATE_KEY;
-        } else {
-            process.env.RSA_PRIVATE_KEY = originalPrivateKeyEnv;
-        }
         await fs.rm(tempDir, { recursive: true, force: true });
     }
 });

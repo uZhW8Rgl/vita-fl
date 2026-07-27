@@ -23,7 +23,7 @@ contract DeviceRegistry {
     uint256 private constant REPORT_DATA_LENGTH = 64;
 
     bytes32 public constant REGISTRATION_REPORT_DATA_DOMAIN =
-        keccak256("MasterThesis.DeviceRegistry.registration.v3");
+        keccak256("MasterThesis.DeviceRegistry.registration.v4");
 
     address public owner;
     bytes32 public immutable deploymentId;
@@ -33,6 +33,9 @@ contract DeviceRegistry {
     mapping(address => uint256) public registrationNonces;
     mapping(address => bytes32) public registeredComposeHashes;
     mapping(address => bytes32) public registeredImageDigests;
+    mapping(address => bytes32) public registeredWorkerPolicyHashes;
+    mapping(bytes32 => bool) public allowedWorkerPolicyHashes;
+    uint256 public allowedWorkerPolicyHashCount;
     mapping(address => bool) private knownDevice;
     address[] private deviceAddresses;
     uint256 public number;
@@ -43,6 +46,8 @@ contract DeviceRegistry {
     event DeviceLeft(address indexed device);
     event DeviceDeregistered(address indexed device, uint256 registrationNonce);
     event ExpectedWorkerImageDigestUpdated(bytes32 expectedWorkerImageDigest);
+    event WorkerPolicyHashPermissionUpdated(bytes32 indexed workerPolicyHash, bool allowed);
+    event DeviceWorkerPolicyRegistered(address indexed device, bytes32 indexed workerPolicyHash);
 
     constructor(bytes32 _deploymentId) {
         require(_deploymentId != bytes32(0), "invalid deployment id");
@@ -63,6 +68,21 @@ contract DeviceRegistry {
     function setExpectedWorkerImageDigest(bytes32 _expectedWorkerImageDigest) public onlyOwner {
         expectedWorkerImageDigest = _expectedWorkerImageDigest;
         emit ExpectedWorkerImageDigestUpdated(_expectedWorkerImageDigest);
+    }
+
+    /// @notice Adds or removes one role-specific worker policy derived from selected
+    ///         security fields. This is not an allowlist of complete Compose hashes:
+    ///         worker-specific environment, endpoints and other runtime values remain
+    ///         free to vary and are bound separately through REPORTDATA and RTMR3.
+    function setWorkerPolicyHashAllowed(bytes32 policyHash, bool allowed) public onlyOwner {
+        require(policyHash != bytes32(0), "invalid worker policy hash");
+        bool current = allowedWorkerPolicyHashes[policyHash];
+        if (current == allowed) return;
+
+        allowedWorkerPolicyHashes[policyHash] = allowed;
+        if (allowed) allowedWorkerPolicyHashCount++;
+        else allowedWorkerPolicyHashCount--;
+        emit WorkerPolicyHashPermissionUpdated(policyHash, allowed);
     }
 
     function authorizeAddress(address _address) public onlyOwner {
@@ -93,17 +113,24 @@ contract DeviceRegistry {
             return false;
         }
         bytes32 imageDigest = registeredImageDigests[_address];
-        return imageDigest == expectedWorkerImageDigest;
+        bytes32 policyHash = registeredWorkerPolicyHashes[_address];
+        return imageDigest == expectedWorkerImageDigest && allowedWorkerPolicyHashes[policyHash];
     }
 
     function isDeviceRegistrationCurrent(
         address _address,
+        string memory _public_ip,
+        string memory _msg_broker_ip,
         bytes memory _public_key,
         bytes memory canonicalAppCompose
     ) external view returns (bool) {
-        (bytes32 composeHash, bytes32 imageDigest) = _workloadIdentity(canonicalAppCompose);
+        (bytes32 composeHash, bytes32 imageDigest, bytes32 policyHash) =
+            _workloadIdentity(canonicalAppCompose);
         return isAuthorized(_address) && registeredComposeHashes[_address] == composeHash
             && registeredImageDigests[_address] == imageDigest
+            && registeredWorkerPolicyHashes[_address] == policyHash
+            && keccak256(bytes(devices[_address].public_ip)) == keccak256(bytes(_public_ip))
+            && keccak256(bytes(devices[_address].msg_broker_ip)) == keccak256(bytes(_msg_broker_ip))
             && keccak256(devices[_address].public_key) == keccak256(_public_key);
     }
 
@@ -178,10 +205,11 @@ contract DeviceRegistry {
     ) public {
         require(_address == msg.sender, "sender/address mismatch");
 
-        // The image identity is parsed from the exact app_compose preimage on-chain. Only after
-        // the image policy passes do we derive the compose hash used to reconstruct RTMR3.
-        (bytes32 composeHash, bytes32 workerImageDigest) = _workloadIdentity(canonicalAppCompose);
-        _requireRegistrationPreparation(_address, _public_key, workerImageDigest);
+        // Image and role policy are derived from the exact app_compose preimage on-chain.
+        // The complete preimage is then hashed independently for REPORTDATA and RTMR3 replay.
+        (bytes32 composeHash, bytes32 workerImageDigest, bytes32 policyHash) =
+            _workloadIdentity(canonicalAppCompose);
+        _requireRegistrationPreparation(_address, _public_key, workerImageDigest, policyHash);
 
         uint256 nonce = registrationNonces[_address];
         bytes32 binding = _registrationBinding(
@@ -191,6 +219,7 @@ contract DeviceRegistry {
             _public_key,
             composeHash,
             workerImageDigest,
+            policyHash,
             nonce
         );
         bytes memory output = tdxV4Attestation.verifyAndAttestOnChainWithRtmr3EventLog(
@@ -201,8 +230,10 @@ contract DeviceRegistry {
         registrationNonces[_address] = nonce + 1;
         registeredComposeHashes[_address] = composeHash;
         registeredImageDigests[_address] = workerImageDigest;
+        registeredWorkerPolicyHashes[_address] = policyHash;
         _registerVerifiedDevice(_address, _public_ip, _msg_broker_ip, _public_key);
         emit DeviceRegistered(_address, nonce, composeHash);
+        emit DeviceWorkerPolicyRegistered(_address, policyHash);
     }
 
     /// @notice Returns the exact 64 bytes that the TEE must place into TDREPORT.REPORTDATA.
@@ -213,8 +244,9 @@ contract DeviceRegistry {
         bytes memory _public_key,
         bytes memory canonicalAppCompose
     ) public view returns (bytes memory) {
-        (bytes32 composeHash, bytes32 workerImageDigest) = _workloadIdentity(canonicalAppCompose);
-        _requireRegistrationPreparation(_address, _public_key, workerImageDigest);
+        (bytes32 composeHash, bytes32 workerImageDigest, bytes32 policyHash) =
+            _workloadIdentity(canonicalAppCompose);
+        _requireRegistrationPreparation(_address, _public_key, workerImageDigest, policyHash);
         uint256 nonce = registrationNonces[_address];
         bytes32 binding = _registrationBinding(
             _address,
@@ -223,6 +255,7 @@ contract DeviceRegistry {
             _public_key,
             composeHash,
             workerImageDigest,
+            policyHash,
             nonce
         );
         return abi.encodePacked(binding, bytes32(nonce));
@@ -233,15 +266,19 @@ contract DeviceRegistry {
         pure
         returns (bytes32 composeHash, bytes32 workerImageDigest)
     {
-        return _workloadIdentity(canonicalAppCompose);
+        (composeHash, workerImageDigest,) = _workloadIdentity(canonicalAppCompose);
+    }
+
+    function workerPolicyHash(bytes memory canonicalAppCompose) external pure returns (bytes32) {
+        return AppComposeImage.workerPolicyHash(canonicalAppCompose);
     }
 
     function _workloadIdentity(bytes memory canonicalAppCompose)
         internal
         pure
-        returns (bytes32 composeHash, bytes32 workerImageDigest)
+        returns (bytes32 composeHash, bytes32 workerImageDigest, bytes32 policyHash)
     {
-        workerImageDigest = AppComposeImage.imageDigest(canonicalAppCompose);
+        (workerImageDigest, policyHash) = AppComposeImage.identity(canonicalAppCompose);
         composeHash = sha256(canonicalAppCompose);
     }
 
@@ -252,6 +289,7 @@ contract DeviceRegistry {
         bytes memory _public_key,
         bytes32 composeHash,
         bytes32 workerImageDigest,
+        bytes32 policyHash,
         uint256 nonce
     ) internal view returns (bytes32) {
         return keccak256(
@@ -267,19 +305,24 @@ contract DeviceRegistry {
                 keccak256(_public_key),
                 composeHash,
                 workerImageDigest,
+                policyHash,
                 nonce
             )
         );
     }
 
-    function _requireRegistrationPreparation(address _address, bytes memory _public_key, bytes32 workerImageDigest)
-        internal
-        view
-    {
+    function _requireRegistrationPreparation(
+        address _address,
+        bytes memory _public_key,
+        bytes32 workerImageDigest,
+        bytes32 policyHash
+    ) internal view {
         require(_address != address(0), "invalid device address");
         require(_public_key.length != 0, "public key required");
         require(expectedWorkerImageDigest != bytes32(0), "worker image policy not configured");
         require(workerImageDigest == expectedWorkerImageDigest, "worker image digest mismatch");
+        require(allowedWorkerPolicyHashCount != 0, "worker policy set not configured");
+        require(allowedWorkerPolicyHashes[policyHash], "worker policy hash not allowed");
         require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
     }
 
@@ -319,6 +362,7 @@ contract DeviceRegistry {
         delete devices[_address];
         delete registeredComposeHashes[_address];
         delete registeredImageDigests[_address];
+        delete registeredWorkerPolicyHashes[_address];
         knownDevice[_address] = false;
         _removeDeviceAddress(_address);
 

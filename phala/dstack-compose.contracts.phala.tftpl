@@ -80,7 +80,6 @@ services:
       # names belong in the measured compose policy.
       ETH_WALLET_PRIVATE_KEY: "$${ETH_WALLET_PRIVATE_KEY}"
       INITIAL_GM_SIGNING_KEY: "$${INITIAL_GM_SIGNING_KEY}"
-      INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY: "$${INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY}"
       DYNAMIC_WORKER_INVENTORY: "$${DYNAMIC_WORKER_INVENTORY}"
 ${dynamic_worker_inventory_environment}
       INITIAL_GM_CID: "${initial_gm_cid}"
@@ -95,7 +94,15 @@ ${dynamic_worker_inventory_environment}
       DEPLOY_TDX_V4_DCAP: "${deploy_tdx_v4_dcap}"
       VERIFY_TDX_QUOTE_ONCHAIN: "${verify_tdx_quote_onchain}"
       AGGREGATOR_TIMEOUT_REPORT_PERCENT: "${aggregator_timeout_report_percent}"
+      BOOTSTRAP_MIN_RECIPIENTS: "${bootstrap_min_recipients}"
+      BOOTSTRAP_REGISTRATION_SETTLE_SECONDS: "${bootstrap_registration_settle_seconds}"
+      BOOTSTRAP_REGISTRATION_TIMEOUT_SECONDS: "${bootstrap_registration_timeout_seconds}"
+      BOOTSTRAP_REGISTRATION_POLL_SECONDS: "${bootstrap_registration_poll_seconds}"
+      BOOTSTRAP_REQUIRE_RECIPIENT_DECLARATION: "${enable_control_api ? 1 : 0}"
+      BOOTSTRAP_DECLARATION_TIMEOUT_SECONDS: "0"
       EXPECTED_WORKER_IMAGE: "${worker_image}"
+      TRAINING_WORKER_POLICY_APP_COMPOSE_B64: "$${TRAINING_WORKER_POLICY_APP_COMPOSE_B64}"
+      INFERENCE_WORKER_POLICY_APP_COMPOSE_B64: "$${INFERENCE_WORKER_POLICY_APP_COMPOSE_B64}"
       MODEL_TRANSFER_TIMEOUT_MS: "${model_transfer_timeout_ms}"
       MODEL_TRANSFER_RETRY_DELAY_MS: "${model_transfer_retry_delay_ms}"
       PCCS_QUOTE_PATH: "${pccs_quote_path}"
@@ -171,6 +178,10 @@ ${dynamic_worker_inventory_environment}
       PYTHON_SERVICE_URL: "${python_service_url}"
       PUBLIC_IP: "${public_ip}"
       MSG_BROKER_IP: "${msg_broker_ip}"
+      DYNAMIC_WORKER_SELLO_REQUIRED: "${sello_required}"
+      DYNAMIC_WORKER_SELLO_SCITT_URL: "${sello_scitt_url}"
+      DYNAMIC_WORKER_SELLO_TEE_SERVICE_SIGNING_SEED: "$${SELLO_TEE_SERVICE_SIGNING_SEED}"
+      DYNAMIC_WORKER_SELLO_TOKEN_ISSUER_PUBLIC_KEY: "$${SELLO_TOKEN_ISSUER_PUBLIC_KEY}"
     volumes:
       - evaluation-data:/workspace/data/evaluation
       - dynamic-worker-state:/run/master-thesis
@@ -222,8 +233,6 @@ ${dynamic_worker_inventory_environment}
       GM_STORAGE_ADDRESS: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
       REGISTRY_ADDRESS: "0x5FbDB2315678afecb367f032d93F642f64180aa3"
       ACCOUNT_ADDRESS: "${w0_account_address}"
-      RSA_PRIVATE_KEY: "$${AGENT_RSA_PRIVATE_KEY}"
-      RSA_PUBLIC_KEY: "$${AGENT_RSA_PUBLIC_KEY}"
       OLLAMA_BASE_URL: "${ollama_base_url}"
       OLLAMA_MODEL: "${ollama_model}"
       OLLAMA_API_TOKEN: "$${OLLAMA_API_TOKEN}"
@@ -233,6 +242,7 @@ ${dynamic_worker_inventory_environment}
       AGENT_PORT: "8089"
       AGENT_DOWNLOAD_DIR: /tmp/agent-downloads
       TEE_INFERENCE_URL: "${tee_inference_url}"
+      TEE_INFERENCE_PARTICIPANT_ADDRESS: "${w0_account_address}"
       ZK_INFERENCE_URL: "${zk_inference_url}"
       TEE_INFERENCE_IMAGE_DIGEST: "${tee_inference_image_digest}"
       EXPECTED_GM_STORAGE_ADDRESS: "${expected_gm_storage_address}"

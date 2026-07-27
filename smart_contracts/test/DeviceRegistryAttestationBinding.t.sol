@@ -48,12 +48,17 @@ contract DeviceRegistryAttestationBindingTest is Test {
         verifier = new MockTdxV4Attestation();
         registry.setTdxV4Attestation(address(verifier));
         registry.setExpectedWorkerImageDigest(imageDigest);
+        registry.setWorkerPolicyHashAllowed(registry.workerPolicyHash(appCompose), true);
     }
 
     function testDerivesImageAndComposeIdentityOnChain() public view {
         (bytes32 composeHash, bytes32 derivedImageDigest) = registry.workloadIdentity(appCompose);
         assertEq(composeHash, sha256(appCompose));
         assertEq(derivedImageDigest, imageDigest);
+        assertEq(
+            registry.workerPolicyHash(appCompose),
+            0xd6f5c4a2c56214addcca217529fc222df7764557d30eb2613445239715401438
+        );
     }
 
     function testRegistersOnlyWithBoundAppComposeEvidence() public {
@@ -71,7 +76,130 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertEq(storedKey, publicKey);
         assertEq(registry.registeredComposeHashes(worker), sha256(appCompose));
         assertEq(registry.registeredImageDigests(worker), imageDigest);
+        assertEq(registry.registeredWorkerPolicyHashes(worker), registry.workerPolicyHash(appCompose));
         assertEq(registry.registrationNonces(worker), 1);
+    }
+
+    function testVariableEnvironmentValuesDoNotChangeWorkerPolicy() public view {
+        bytes memory changedRuntimeValues = _appCompose(
+            "worker-9",
+            _digestPinnedImage(IMAGE_HEX),
+            "ROUND: \\\"9\\\"\\n      ACCOUNT_ADDRESS: \\\"0x1234\\\"\\n      PUBLIC_IP: \\\"https://other.example\\\"\\n"
+        );
+        bytes memory sameKeysDifferentValues = _appCompose(
+            "worker-1",
+            _digestPinnedImage(IMAGE_HEX),
+            "ROUND: \\\"1\\\"\\n      ACCOUNT_ADDRESS: \\\"0xabcd\\\"\\n      PUBLIC_IP: \\\"https://worker.example\\\"\\n"
+        );
+
+        assertTrue(sha256(changedRuntimeValues) != sha256(sameKeysDifferentValues));
+        assertEq(
+            registry.workerPolicyHash(changedRuntimeValues),
+            registry.workerPolicyHash(sameKeysDifferentValues)
+        );
+    }
+
+    function testUnknownEnvironmentValueChangesPolicyAndIsRejected() public {
+        bytes memory dangerous = _appCompose(
+            "worker-0",
+            _digestPinnedImage(IMAGE_HEX),
+            "ROUND: \\\"1\\\"\\n      NODE_OPTIONS: \\\"--import=/tmp/evil.mjs\\\"\\n"
+        );
+        assertTrue(registry.workerPolicyHash(dangerous) != registry.workerPolicyHash(appCompose));
+
+        vm.expectRevert(bytes("worker policy hash not allowed"));
+        _reportData(registry, dangerous, publicKey);
+    }
+
+    function testRejectsDuplicateEnvironmentKey() public {
+        bytes memory duplicate = _appCompose(
+            "worker-0",
+            _digestPinnedImage(IMAGE_HEX),
+            "ROUND: \\\"1\\\"\\n      ROUND: \\\"2\\\"\\n"
+        );
+        vm.expectRevert(bytes("worker environment key duplicated"));
+        registry.workerPolicyHash(duplicate);
+    }
+
+    function testRejectsUnknownWorkerServiceField() public {
+        bytes memory dangerous = _appCompose(
+            "worker-0",
+            _digestPinnedImage(IMAGE_HEX),
+            "ROUND: \\\"1\\\"\\n    pid: host\\n"
+        );
+        vm.expectRevert(bytes("unknown worker service field"));
+        registry.workerPolicyHash(dangerous);
+    }
+
+    function testRejectsTopLevelVolumeBindOptions() public {
+        bytes memory dangerous = _appCompose(
+            "worker-0",
+            _digestPinnedImage(IMAGE_HEX),
+            "ROUND: \\\"1\\\"\\nvolumes:\\n  participant-key-state:\\n    driver_opts:\\n      type: none\\n      o: \\\"bind\\\"\\n      device: \\\"/tmp/attacker-controlled\\\"\\n"
+        );
+        vm.expectRevert(bytes("top-level volume options not allowed"));
+        registry.workerPolicyHash(dangerous);
+    }
+
+    function testOwnerCanProvisionBothWorkerRolePoliciesBeforeRegistration() public {
+        bytes memory inferenceRole = _appCompose(
+            "worker-0",
+            _digestPinnedImage(IMAGE_HEX),
+            "ROUND: \\\"1\\\"\\n      TEE_INFERENCE_ENABLED: \\\"1\\\"\\n"
+        );
+        bytes32 inferencePolicy = registry.workerPolicyHash(inferenceRole);
+        assertTrue(inferencePolicy != registry.workerPolicyHash(appCompose));
+        registry.setWorkerPolicyHashAllowed(inferencePolicy, true);
+        assertEq(registry.allowedWorkerPolicyHashCount(), 2);
+
+        bytes memory reportData = _reportData(registry, inferenceRole, publicKey);
+        vm.prank(worker);
+        _register(registry, reportData, inferenceRole, publicKey);
+        assertTrue(registry.isAuthorized(worker));
+        assertEq(registry.registeredWorkerPolicyHashes(worker), inferencePolicy);
+    }
+
+    function testPolicyRemovalImmediatelyRevokesRegisteredWorker() public {
+        bytes32 policyHash = registry.workerPolicyHash(appCompose);
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        vm.prank(worker);
+        _register(registry, reportData, appCompose, publicKey);
+        assertTrue(registry.isAuthorized(worker));
+
+        registry.setWorkerPolicyHashAllowed(policyHash, false);
+        assertFalse(registry.isAuthorized(worker));
+        assertEq(registry.allowedWorkerPolicyHashCount(), 0);
+    }
+
+    function testWorkerPolicySetIsFailClosed() public {
+        DeviceRegistry unconfigured = new DeviceRegistry(keccak256("policy-less deployment"));
+        unconfigured.setTdxV4Attestation(address(verifier));
+        unconfigured.setExpectedWorkerImageDigest(imageDigest);
+
+        vm.expectRevert(bytes("worker policy set not configured"));
+        _reportData(unconfigured, appCompose, publicKey);
+    }
+
+    function testCurrentRegistrationRequiresExactBoundEndpoints() public {
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        vm.prank(worker);
+        _register(registry, reportData, appCompose, publicKey);
+
+        assertTrue(
+            registry.isDeviceRegistrationCurrent(
+                worker, PUBLIC_IP, BROKER_IP, publicKey, appCompose
+            )
+        );
+        assertFalse(
+            registry.isDeviceRegistrationCurrent(
+                worker, "https://replacement.example", BROKER_IP, publicKey, appCompose
+            )
+        );
+        assertFalse(
+            registry.isDeviceRegistrationCurrent(
+                worker, PUBLIC_IP, "tcp://replacement.example:5555", publicKey, appCompose
+            )
+        );
     }
 
     function testDifferentComposeHashesWithSameImageAreAccepted() public {
@@ -145,6 +273,18 @@ contract DeviceRegistryAttestationBindingTest is Test {
         registry.workloadIdentity(ambiguous);
     }
 
+    function testRejectsDuplicateTopLevelServicesField() public {
+        bytes memory ambiguous = bytes(
+            string.concat(
+                '{"docker_compose_file":"services:\\nservices:\\n  dfl-worker:\\n    image: ',
+                _digestPinnedImage(IMAGE_HEX),
+                '\\n","manifest_version":2,"runner":"docker-compose"}'
+            )
+        );
+        vm.expectRevert(bytes("services field duplicated"));
+        registry.workerPolicyHash(ambiguous);
+    }
+
     function testChangedAppComposeDoesNotMatchQuotedReportData() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
         bytes memory changedCompose = _appCompose("worker-0", _digestPinnedImage(IMAGE_HEX), "ROUND: \\\"2\\\"\\n");
@@ -209,6 +349,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertFalse(registry.isAuthorized(worker));
         assertEq(registry.registeredComposeHashes(worker), bytes32(0));
         assertEq(registry.registeredImageDigests(worker), bytes32(0));
+        assertEq(registry.registeredWorkerPolicyHashes(worker), bytes32(0));
         assertEq(registry.registrationNonces(worker), 1);
 
         (bool authorized, string memory publicIp, string memory brokerIp, bytes memory storedKey) =

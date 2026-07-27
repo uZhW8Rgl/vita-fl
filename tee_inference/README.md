@@ -48,16 +48,22 @@ compatibility. `GET /healthz` reports whether a model is loaded.
 
 Container startup does not access or load a model. `GET /healthz` remains healthy
 with `model_loaded=false`. During `fetch_latest_verified_tee_model_bundle`, the
-agent calls `POST /v1/models/fetch`. That request verifies W0's supplied RSA key against
-W0's authorized DeviceRegistry key, reads the current GMStorage CIDs, downloads
-and decrypts the encrypted IPFS bundle, verifies the aggregator signatures, and
-constructs the canonical manifest from that verified state. A later tool call
-refreshes the model again, so it observes the then-current on-chain model:
+agent calls `POST /v1/models/fetch`. In Phala, the service is co-located with
+Worker 0 and reads the same participant RSA key through its run-scoped tmpfs
+file after the worker registered the corresponding public key through its
+REPORTDATA-bound DCAP transaction. The request checks
+that key against Worker 0's current `DeviceRegistry` record, reads the current
+GMStorage CIDs, downloads and decrypts the encrypted IPFS bundle, verifies the
+aggregator signatures, and constructs the canonical manifest from that
+verified state. A later tool call refreshes the model again, so it observes the
+then-current on-chain model.
+
+For an explicit local-development run, point the service at a fixture key file:
 
 ```sh
 export DATASET_NAME=chestmnist
 export ACCOUNT_ADDRESS=0x...
-export RSA_PRIVATE_KEY='-----BEGIN PRIVATE KEY-----...'
+export RSA_PRIVATE_KEY_FILE=/path/to/local-participant-private.pem
 export RPC_URL=https://...
 export KUBO_API=https://...
 export TEE_MODEL_DIR=/tmp/tee-inference/model
@@ -70,19 +76,26 @@ The HTTP response is the exact canonical `inference-response` object. AIR
 emission will wrap its SHA-256 in the attested Phala service layer without
 changing these response bytes.
 
-### Container publication
+### Phala container publication
 
-The `Publish TEE Inference Image` GitHub Actions workflow tests the protocol,
-builds `tee_inference/Dockerfile` for `linux/amd64`, and publishes:
+TEE inference is built into the combined DFL worker image. The `Publish DFL
+Worker Image` workflow tests both `dfl/**` and `tee_inference/**`, builds
+`dfl/Dockerfile` for `linux/amd64`, and publishes:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-tee-inference:tee
-ghcr.io/uzhw8rgl/master-thesis-tee-inference:<git-commit-sha>
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker:<git-commit-sha>
 ```
 
-It prints the digest-pinned Phala reference in the workflow summary. A manual
-`workflow_dispatch` can override `tee`; pushes to the `tee_inference` branch
-that change the service or its workflow publish automatically. The image runs
-as UID/GID 10001 and contains no model or private key. W0's credentials are
-supplied only through Phala's encrypted app environment; the separate
-inference CVM receives its own dstack socket.
+It prints the digest-pinned Phala reference in the workflow summary. Worker 0
+starts the inference server as a second process in the same measured container
+and CVM; other workers use the same image digest with inference disabled.
+There is no independent TEE-inference Phala app or image policy.
+
+The combined image contains no model or private key. Worker 0 generates a
+random RSA-3072 participant key inside its TEE, seals it with an
+HKDF-SHA-256/AES-256-GCM key rooted in dstack `GetKey`, persists only the
+sealed document, and exposes the plaintext PEM to the two co-located processes
+through `/run/vita-fl` tmpfs. The two processes intentionally share one
+container, image measurement, and secret boundary; the inference process does
+not use a separately provisioned participant or Ethereum identity.

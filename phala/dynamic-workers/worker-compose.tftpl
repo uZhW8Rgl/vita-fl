@@ -5,8 +5,17 @@ services:
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
       - /var/run/tappd.sock:/var/run/tappd.sock
+      - participant-key-state:/var/lib/vita-fl
+    tmpfs:
+      - /run/vita-fl:size=16m,mode=0700
+%{ if inference_enabled ~}
+      - /tmp/tee-inference:size=256m,mode=0700
+%{ endif ~}
     ports:
       - "8001:8001"
+%{ if inference_enabled ~}
+      - "8080:8080"
+%{ endif ~}
     environment:
       DOCKER: phala
       NODE_ENV: production
@@ -19,8 +28,10 @@ services:
       ACCOUNT_ADDRESS: "${account_address}"
       DEVICE_ID: "${device_id}"
       PRIVATE_KEY: "$${PRIVATE_KEY}"
-      RSA_PRIVATE_KEY: "$${RSA_PRIVATE_KEY}"
-      RSA_PUBLIC_KEY: "$${RSA_PUBLIC_KEY}"
+      PARTICIPANT_KEY_PROVIDER: dstack
+      PARTICIPANT_KEY_STATE_PATH: /var/lib/vita-fl/participant-rsa.v1.sealed.json
+      PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH: /run/vita-fl/participant-private.pem
+      PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH: /run/vita-fl/participant-public.pem
       REGISTRY_ADDRESS: ""
       AGGREGATOR_ADDRESS: ""
       GM_STORAGE_ADDRESS: ""
@@ -39,6 +50,7 @@ services:
       GM_UPDATE_TIMEOUT_LOOPS: "${gm_update_timeout_loops}"
       AGGREGATION_UPDATE_ESTIMATE_MS: "${aggregation_update_estimate_ms}"
       GM_UPDATE_POLL_MS: "${gm_update_poll_ms}"
+      WORKER_COUNT: "${worker_count}"
       DATASET_NAME: "${dataset_name}"
       TRAIN_IMAGES_SRC: "${train_images_src}"
       TRAIN_LABELS_SRC: "${train_labels_src}"
@@ -49,7 +61,24 @@ services:
       PYTHON_SERVICE_URL: "${python_service_url}"
       MODEL_UPLOAD_PORT: "8001"
       DFL_TELEMETRY_URL: "${telemetry_url}"
+      TEE_INFERENCE_ENABLED: "${inference_enabled ? 1 : 0}"
+%{ if inference_enabled ~}
+      EXPECTED_RUNTIME_RPC_URL: "${rpc_url}"
+      TEE_MODEL_DIR: /tmp/tee-inference/model
+      TEE_JOB_DIR: /tmp/tee-inference/jobs
+      CHESTMNIST_TEST_DATA: /dfl/config/chestmnist/test_data/test-data.npz
+      SELLO_REQUIRED: "${sello_required ? 1 : 0}"
+      SELLO_SERVICE_SIGNING_SEED: "$${SELLO_SERVICE_SIGNING_SEED}"
+      SELLO_TOKEN_ISSUER_PUBLIC_KEY: "$${SELLO_TOKEN_ISSUER_PUBLIC_KEY}"
+      SCITT_URL: "${sello_scitt_url}"
+      SCITT_DEVELOPMENT: "1"
+      SCITT_SIGNER_DIR: /tmp/tee-inference/scitt-signer
+      SELLO_PUBLICATION_DIR: /tmp/tee-inference/sello-publications
+%{ endif ~}
     command:
       - /bin/bash
       - -lc
       - exec /dfl/start_node_neural_network.sh
+
+volumes:
+  participant-key-state:

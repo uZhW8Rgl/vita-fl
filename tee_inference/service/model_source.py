@@ -1,4 +1,4 @@
-"""Load and authenticate the latest encrypted DFL model as participant W0."""
+"""Load and authenticate the latest encrypted DFL model as a registered participant."""
 
 from __future__ import annotations
 
@@ -147,15 +147,43 @@ def _verified_contract_trust_root(
     return gm_storage, registry, rpc_chain_id
 
 
-def _assert_w0_authorized(rpc_url: str, registry: str, address: str, private_key_pem: str) -> None:
+def _private_key_pem_from_environment() -> bytes:
+    key_file = (os.environ.get("RSA_PRIVATE_KEY_FILE") or "").strip()
+    if key_file:
+        path = Path(key_file)
+        try:
+            value = path.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(f"Could not read RSA_PRIVATE_KEY_FILE {path}: {exc}") from exc
+        if not value.strip():
+            raise RuntimeError("RSA_PRIVATE_KEY_FILE is empty")
+        return value
+
+    inline = (os.environ.get("RSA_PRIVATE_KEY") or "").replace("\\n", "\n").strip()
+    if inline:
+        return inline.encode()
+    raise RuntimeError("RSA_PRIVATE_KEY_FILE or RSA_PRIVATE_KEY is required")
+
+
+def _assert_w0_authorized(
+    rpc_url: str,
+    registry: str,
+    address: str,
+    private_key_pem: str | bytes,
+) -> None:
     registered_der = read_device_public_key_der(rpc_url, registry, address)
-    private_key = serialization.load_pem_private_key(private_key_pem.replace("\\n", "\n").encode(), password=None)
+    encoded_key = (
+        private_key_pem.replace("\\n", "\n").encode()
+        if isinstance(private_key_pem, str)
+        else private_key_pem
+    )
+    private_key = serialization.load_pem_private_key(encoded_key, password=None)
     supplied_der = private_key.public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
     if registered_der != supplied_der:
-        raise RuntimeError("W0 RSA private key does not match the authorized DeviceRegistry public key")
+        raise RuntimeError("participant RSA private key does not match the authorized DeviceRegistry public key")
 
 
 def provision_latest_model(target: Path) -> tuple[Path, bytes, dict[str, str]]:
@@ -164,12 +192,16 @@ def provision_latest_model(target: Path) -> tuple[Path, bytes, dict[str, str]]:
     rpc_url = os.environ["RPC_URL"]
     kubo_api = os.environ["KUBO_API"]
     address = os.environ["ACCOUNT_ADDRESS"].lower()
-    private_key = os.environ["RSA_PRIVATE_KEY"]
     if not re.fullmatch(r"0x[a-f0-9]{40}", address):
         raise RuntimeError("ACCOUNT_ADDRESS must be a lowercase EVM address")
     contracts = _contracts_manifest(kubo_api)
     gm_storage, registry, chain_id = _verified_contract_trust_root(rpc_url, contracts)
-    _assert_w0_authorized(rpc_url, registry, address, private_key)
+    _assert_w0_authorized(
+        rpc_url,
+        registry,
+        address,
+        _private_key_pem_from_environment(),
+    )
 
     bundle = read_current_bundle_from_contract(rpc_url, gm_storage, registry)
     download = fetch_onchain_bundle(bundle, target, kubo_api)

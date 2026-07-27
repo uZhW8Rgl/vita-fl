@@ -66,23 +66,28 @@ output "worker_status" {
 }
 
 output "tee_inference_app_id" {
-  description = "Phala application ID for the TEE inference app, when enabled."
-  value       = try(phala_app.tee_inference[0].app_id, null)
+  description = "Compatibility alias: the combined W0 worker/inference application ID."
+  value       = try(phala_app.dfl_worker[0].app_id, null)
 }
 
 output "tee_inference_primary_cvm_id" {
-  description = "Primary CVM identifier for the TEE inference app, when enabled."
-  value       = try(phala_app.tee_inference[0].primary_cvm_id, null)
+  description = "Compatibility alias: primary CVM for the combined W0 worker/inference app."
+  value       = try(phala_app.dfl_worker[0].primary_cvm_id, null)
 }
 
 output "tee_inference_endpoint" {
-  description = "Public endpoint for the TEE inference app, when enabled."
-  value       = try(phala_app.tee_inference[0].endpoint, null)
+  description = "Port-8080 gateway endpoint for the combined W0 worker/inference app."
+  value = try(
+    can(regex("-[0-9]+\\.", trimsuffix(phala_app.dfl_worker[0].endpoint, "/")))
+    ? replace(trimsuffix(phala_app.dfl_worker[0].endpoint, "/"), "/-[0-9]+\\./", "-8080.")
+    : "${trimsuffix(phala_app.dfl_worker[0].endpoint, "/")}:8080",
+    null,
+  )
 }
 
 output "tee_inference_status" {
-  description = "Deployment status for the TEE inference app, when enabled."
-  value       = try(phala_app.tee_inference[0].status, null)
+  description = "Deployment status for the combined W0 worker/inference app."
+  value       = try(phala_app.dfl_worker[0].status, null)
 }
 
 output "zk_inference_app_id" {

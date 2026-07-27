@@ -740,11 +740,11 @@ class AgentRuntime:
         if "generate_and_verify_zk_inference_proof" in lowered:
             return "generate_and_verify_zk_inference_proof"
         if "fetch_latest_verified_model_bundle" in lowered:
-            return "fetch_latest_verified_model_bundle"
+            return "fetch_latest_verified_zk_model_bundle"
         if "generate_random_chestmnist_image" in lowered:
-            return "generate_random_chestmnist_image"
+            return "generate_random_zk_chestmnist_image"
         if "generate_zk_inference_proof" in lowered:
-            return "generate_zk_inference_proof"
+            return "generate_and_verify_zk_inference_proof"
         if "fetch_latest_verified_tee_model_bundle" in lowered:
             return "fetch_latest_verified_tee_model_bundle"
         if "generate_random_tee_chestmnist_image" in lowered:
@@ -754,9 +754,9 @@ class AgentRuntime:
         if "tee" in lowered and "inference" in lowered:
             return "run_and_verify_tee_inference"
         if "bundle" in lowered and any(token in lowered for token in ("fetch", "latest", "verified")):
-            return "fetch_latest_verified_model_bundle"
+            return "fetch_latest_verified_tee_model_bundle"
         if "chestmnist" in lowered or ("random" in lowered and "image" in lowered):
-            return "generate_random_chestmnist_image"
+            return "generate_random_tee_chestmnist_image"
         if "proof" in lowered or "ezkl" in lowered:
             return "generate_and_verify_zk_inference_proof"
         return None
@@ -807,51 +807,6 @@ class AgentRuntime:
             if not isinstance(job, dict) or not job.get("job_id"):
                 raise RuntimeError("No ZK inference job exists; run the ZK model and image tools first.")
             detail = generate_and_verify_zk_inference_proof(job_id=str(job["job_id"]))
-            return self._assistant_response(
-                self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
-                [{"type": "tool", "label": skill_name, "detail": detail}],
-            )
-
-        if skill_name == "fetch_latest_verified_model_bundle":
-            from mcp_server import fetch_latest_verified_model_bundle
-
-            payload = json.loads(fetch_latest_verified_model_bundle())
-            _remember_verified_bundle_for_state(session_state, payload)
-            detail = format_verified_bundle_summary(payload)
-            return self._assistant_response(
-                f"Tool `{skill_name}` completed.\n\n{detail}",
-                [{"type": "tool", "label": skill_name, "detail": detail}],
-            )
-
-        if skill_name == "generate_random_chestmnist_image":
-            from mcp_server import generate_random_chestmnist_image
-
-            requested_index = resolve_preferred_sample_index(session_state, None)
-            payload = json.loads(
-                generate_random_chestmnist_image(
-                    index=requested_index,
-                    query_dir="zk_inference/single_query",
-                    input_json=str(Path("zk_inference/out") / "input.json"),
-                )
-            )
-            _remember_generated_sample_for_state(session_state, payload)
-            detail = format_selection_summary(payload)
-            return self._assistant_response(
-                f"Tool `{skill_name}` completed.\n\n{detail}",
-                [{"type": "tool", "label": skill_name, "detail": detail}],
-            )
-
-        if skill_name == "generate_zk_inference_proof":
-            from mcp_server import generate_zk_inference_proof
-
-            payload = json.loads(
-                generate_zk_inference_proof(
-                    workdir="zk_inference/out",
-                    model="model_logits.onnx",
-                    data="input.json",
-                )
-            )
-            detail = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
             return self._assistant_response(
                 self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
                 [{"type": "tool", "label": skill_name, "detail": detail}],

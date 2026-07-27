@@ -44,11 +44,6 @@ if [ -n "${INITIAL_GM_SIGNING_KEY:-}" ]; then
     materialize_runtime_key INITIAL_GM_SIGNING_KEY "$INITIAL_GM_SIGNING_KEY_PATH" 600
 fi
 
-if [ -n "${INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY:-}" ]; then
-    export INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY_PATH=/run/dfl-secrets/bootstrap-recipient-public-key.pem
-    materialize_runtime_key INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY "$INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY_PATH" 644
-fi
-
 using_local_runtime_services() {
     [[ "$rpc_url" == "http://anvil:8545" || "$rpc_url" == "http://127.0.0.1:8545" ]] && \
     [[ "$KUBO_API_URL" == "http://ipfs:5001" || "$KUBO_API_URL" == "http://127.0.0.1:5001" ]]
@@ -91,14 +86,72 @@ wait_for_kubo() {
     return 1
 }
 
-clear_runtime_ready_marker() {
+clear_runtime_bootstrap_markers() {
     if [ "$IPFS_PROVIDER" != "kubo" ]; then
         return 0
     fi
 
-    echo "Clearing stale runtime ready marker from Kubo MFS: /runtime/ready.json"
-    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
-        "${KUBO_API_URL}/api/v0/files/rm?arg=/runtime/ready.json&force=true" >/dev/null || true
+    local marker
+    for marker in contracts.json admission-ready.json bootstrap-recipients.json ready.json; do
+        echo "Clearing stale runtime marker from Kubo MFS: /runtime/${marker}"
+        curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+            "${KUBO_API_URL}/api/v0/files/rm?arg=/runtime/${marker}&force=true" >/dev/null || true
+    done
+}
+
+wait_for_bootstrap_recipient_declaration() {
+    local required=${BOOTSTRAP_REQUIRE_RECIPIENT_DECLARATION:-0}
+    case "${required,,}" in
+        1|true|yes) ;;
+        *) return 0 ;;
+    esac
+
+    if [ "$IPFS_PROVIDER" != "kubo" ]; then
+        echo "Bootstrap recipient declarations require IPFS_PROVIDER=kubo."
+        return 1
+    fi
+
+    local declaration_path=${BOOTSTRAP_RECIPIENT_DECLARATION_PATH:-/tmp/bootstrap-recipients.json}
+    local timeout_seconds=${BOOTSTRAP_DECLARATION_TIMEOUT_SECONDS:-0}
+    local poll_seconds=${BOOTSTRAP_REGISTRATION_POLL_SECONDS:-2}
+    local started_at
+    local temporary_path
+    started_at=$(date +%s)
+    temporary_path="${declaration_path}.tmp"
+    mkdir -p "$(dirname "$declaration_path")"
+
+    echo "Waiting for the Control API recipient declaration at /runtime/bootstrap-recipients.json."
+    while true; do
+        if curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+            "${KUBO_API_URL}/api/v0/files/read?arg=/runtime/bootstrap-recipients.json" \
+            -o "$temporary_path" 2>/dev/null &&
+            jq -e --arg chain_id "$CHAIN_ID" '
+                .status == "declared"
+                and (.chain_id | tostring) == $chain_id
+                and (.recipients | type == "array" and length > 0)
+                and all(.recipients[];
+                    type == "string"
+                    and test("^0x[0-9a-fA-F]{40}$")
+                )
+                and (
+                    [.recipients[] | ascii_downcase] as $addresses
+                    | ($addresses | unique | length) == ($addresses | length)
+                )
+            ' "$temporary_path" >/dev/null 2>&1; then
+            mv "$temporary_path" "$declaration_path"
+            export BOOTSTRAP_RECIPIENT_DECLARATION_PATH="$declaration_path"
+            echo "Accepted bootstrap declaration for $(jq '.recipients | length' "$declaration_path") worker(s)."
+            return 0
+        fi
+        rm -f "$temporary_path"
+
+        if [ "$timeout_seconds" -gt 0 ] &&
+            [ $(($(date +%s) - started_at)) -ge "$timeout_seconds" ]; then
+            echo "Timed out waiting for /runtime/bootstrap-recipients.json."
+            return 1
+        fi
+        sleep "$poll_seconds"
+    done
 }
 
 fund_configured_worker_accounts() {
@@ -154,7 +207,7 @@ fund_configured_worker_accounts() {
 
 wait_for_anvil
 wait_for_kubo
-clear_runtime_ready_marker
+clear_runtime_bootstrap_markers
 
 CHAIN_ID=$(cast chain-id --rpc-url $rpc_url)
 ETH_EUR_PRICE=${ETH_EUR_PRICE:-3000}
@@ -242,6 +295,26 @@ EOF
     rm -f "$ready_file"
 }
 
+publish_runtime_admission_ready_marker() {
+    if [ "$IPFS_PROVIDER" != "kubo" ]; then
+        return 0
+    fi
+
+    local admission_file
+    admission_file=$(mktemp)
+    cat >"$admission_file" <<EOF
+{"status":"admission-ready","chain_id":"$CHAIN_ID","rpc_url":"$rpc_url","registry_address":"$DEVICE_REGISTRY_ADDRESS","expected_worker_image_digest":"0x$EXPECTED_WORKER_IMAGE_DIGEST","allowed_worker_policy_hashes":["$TRAINING_WORKER_POLICY_HASH","$INFERENCE_WORKER_POLICY_HASH"],"timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+EOF
+
+    echo "Publishing runtime admission marker to Kubo MFS: /runtime/admission-ready.json"
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        "${KUBO_API_URL}/api/v0/files/mkdir?arg=/runtime&parents=true" >/dev/null || true
+    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
+        -F "file=@${admission_file}" \
+        "${KUBO_API_URL}/api/v0/files/write?arg=/runtime/admission-ready.json&create=true&truncate=true&parents=true" >/dev/null
+    rm -f "$admission_file"
+}
+
 extract_worker_image_digest() {
     local image_ref=${EXPECTED_WORKER_IMAGE:-}
 
@@ -250,6 +323,90 @@ extract_worker_image_digest() {
     fi
 
     printf '%s' "$image_ref" | sed -nE 's/^.+@sha256:([0-9a-fA-F]{64})$/\1/p'
+}
+
+configure_local_mock_worker_policy_references() {
+    if [ "${LOCAL_TDX_MOCK:-0}" != "1" ]; then
+        return 0
+    fi
+    if [ -n "${TRAINING_WORKER_POLICY_APP_COMPOSE_B64:-}" ] \
+        || [ -n "${INFERENCE_WORKER_POLICY_APP_COMPOSE_B64:-}" ]; then
+        if [ -z "${TRAINING_WORKER_POLICY_APP_COMPOSE_B64:-}" ] \
+            || [ -z "${INFERENCE_WORKER_POLICY_APP_COMPOSE_B64:-}" ]; then
+            echo "Both local worker policy references must be supplied together." >&2
+            return 1
+        fi
+        return 0
+    fi
+
+    local training_compose
+    local inference_compose
+    local training_app_compose
+    local inference_app_compose
+    training_compose=$(printf \
+        'services:\n  dfl-worker:\n    image: local/dfl-worker@sha256:%s\n' \
+        "$EXPECTED_WORKER_IMAGE_DIGEST")
+    inference_compose=$(printf \
+        'services:\n  dfl-worker:\n    image: local/dfl-worker@sha256:%s\n    ports:\n      - "8080:8080"\n' \
+        "$EXPECTED_WORKER_IMAGE_DIGEST")
+    training_app_compose=$(jq -cn --arg compose "$training_compose" \
+        '{docker_compose_file:$compose,manifest_version:2,name:"local-training-worker-policy",runner:"docker-compose"}')
+    inference_app_compose=$(jq -cn --arg compose "$inference_compose" \
+        '{docker_compose_file:$compose,manifest_version:2,name:"local-inference-worker-policy",runner:"docker-compose"}')
+    TRAINING_WORKER_POLICY_APP_COMPOSE_B64=$(printf '%s' "$training_app_compose" | base64 | tr -d '\n')
+    INFERENCE_WORKER_POLICY_APP_COMPOSE_B64=$(printf '%s' "$inference_app_compose" | base64 | tr -d '\n')
+    export TRAINING_WORKER_POLICY_APP_COMPOSE_B64 INFERENCE_WORKER_POLICY_APP_COMPOSE_B64
+}
+
+derive_worker_policy_hash() {
+    local role=$1
+    local encoded_app_compose=$2
+    local app_compose_file
+    local app_compose_hex
+    local policy_hash
+
+    if [ -z "$encoded_app_compose" ]; then
+        echo "Missing pre-rendered ${role} worker policy app-compose; refusing trust-on-first-use." >&2
+        return 1
+    fi
+
+    app_compose_file=$(mktemp)
+    if ! printf '%s' "$encoded_app_compose" | base64 --decode >"$app_compose_file"; then
+        rm -f "$app_compose_file"
+        echo "Invalid base64 for ${role} worker policy app-compose." >&2
+        return 1
+    fi
+    app_compose_hex="0x$(od -An -v -tx1 "$app_compose_file" | tr -d ' \n')"
+    rm -f "$app_compose_file"
+
+    policy_hash=$(cast call --rpc-url "$rpc_url" \
+        "$DEVICE_REGISTRY_ADDRESS" "workerPolicyHash(bytes)(bytes32)" "$app_compose_hex") || return 1
+    policy_hash=$(printf '%s' "$policy_hash" | tr -d '[:space:]')
+    if ! printf '%s' "$policy_hash" | grep -Eq '^0x[0-9a-fA-F]{64}$'; then
+        echo "DeviceRegistry returned an invalid ${role} worker policy hash." >&2
+        return 1
+    fi
+    printf '%s\n' "$policy_hash"
+}
+
+provision_worker_policy_hashes() {
+    TRAINING_WORKER_POLICY_HASH=$(derive_worker_policy_hash \
+        "training-only" "${TRAINING_WORKER_POLICY_APP_COMPOSE_B64:-}") || exit 1
+    INFERENCE_WORKER_POLICY_HASH=$(derive_worker_policy_hash \
+        "training-and-inference" "${INFERENCE_WORKER_POLICY_APP_COMPOSE_B64:-}") || exit 1
+
+    if [ "$TRAINING_WORKER_POLICY_HASH" = "$INFERENCE_WORKER_POLICY_HASH" ]; then
+        echo "Training-only and training-and-inference worker policies must be distinct." >&2
+        exit 1
+    fi
+
+    for policy_hash in "$TRAINING_WORKER_POLICY_HASH" "$INFERENCE_WORKER_POLICY_HASH"; do
+        cast send --rpc-url "$rpc_url" --private-key "$ETH_WALLET_PRIVATE_KEY" \
+            "$DEVICE_REGISTRY_ADDRESS" "setWorkerPolicyHashAllowed(bytes32,bool)" \
+            "$policy_hash" true >/dev/null
+    done
+    export TRAINING_WORKER_POLICY_HASH INFERENCE_WORKER_POLICY_HASH
+    echo "Provisioned worker policy hashes before admission: training-only=$TRAINING_WORKER_POLICY_HASH training-and-inference=$INFERENCE_WORKER_POLICY_HASH"
 }
 
 authorize_pccs_reader() {
@@ -433,8 +590,16 @@ prepare_encrypted_initial_gm() {
     local signing_key_path=${INITIAL_GM_SIGNING_KEY_PATH:-../data/initial_gm/private_key.pem}
     local signature_path=${INITIAL_GM_SIGNATURE_PATH:-/tmp/initial-gm.sig}
     local out_dir=/tmp/bootstrap-encrypted-gm
-    local bootstrap_recipient_address=${INITIAL_BOOTSTRAP_RECIPIENT_ADDRESS:-${W0_ACCOUNT_ADDRESS:-}}
-    local bootstrap_recipient_public_key=${INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY_PATH:-../data/rsa_keys/public_key.pem}
+    local minimum_recipients=${BOOTSTRAP_MIN_RECIPIENTS:-1}
+    local registration_settle_seconds=${BOOTSTRAP_REGISTRATION_SETTLE_SECONDS:-0}
+    local registration_timeout_seconds=${BOOTSTRAP_REGISTRATION_TIMEOUT_SECONDS:-900}
+    local registration_poll_seconds=${BOOTSTRAP_REGISTRATION_POLL_SECONDS:-2}
+    local required_recipients_args=()
+    if [ -n "${BOOTSTRAP_RECIPIENT_DECLARATION_PATH:-}" ]; then
+        required_recipients_args=(
+            --required-recipients-file "$BOOTSTRAP_RECIPIENT_DECLARATION_PATH"
+        )
+    fi
 
     if [ ! -f "$model_path" ]; then
         echo "Missing initial GM model file for encrypted bootstrap: $model_path"
@@ -449,7 +614,7 @@ prepare_encrypted_initial_gm() {
         exit 1
     fi
 
-    echo "Generating encrypted initial GM bootstrap bundle"
+    echo "Waiting for live DeviceRegistry recipients and generating encrypted initial GM bootstrap bundle"
     local bootstrap_json
     bootstrap_json=$(node ./bootstrap_encrypted_gm.mjs \
         --model "$model_path" \
@@ -458,8 +623,11 @@ prepare_encrypted_initial_gm() {
         --out-dir "$out_dir" \
         --rpc-url "$rpc_url" \
         --registry-address "$DEVICE_REGISTRY_ADDRESS" \
-        --bootstrap-address "$bootstrap_recipient_address" \
-        --bootstrap-public-key "$bootstrap_recipient_public_key" \
+        --minimum-recipients "$minimum_recipients" \
+        --registration-settle-seconds "$registration_settle_seconds" \
+        --registration-timeout-seconds "$registration_timeout_seconds" \
+        --registration-poll-seconds "$registration_poll_seconds" \
+        "${required_recipients_args[@]}" \
         --round 0)
 
     local bundle_path
@@ -476,7 +644,7 @@ prepare_encrypted_initial_gm() {
             jq -re '.publisherPublicKeyDerHex | select(test("^[0-9a-f]+$") and ((length % 2) == 0))'
     )
 
-    echo "Encrypted bootstrap recipients from registry, preprovisioned inventory, and fallback: $recipient_count"
+    echo "Encrypted bootstrap recipients from live DeviceRegistry state: $recipient_count"
 
     local encrypted_model_cid
     local encrypted_sig_cid
@@ -1046,6 +1214,8 @@ fi
 echo "Expected worker image digest set to sha256:$EXPECTED_WORKER_IMAGE_DIGEST"
 cast send --rpc-url "$rpc_url" --private-key "$ETH_WALLET_PRIVATE_KEY" \
     "$DEVICE_REGISTRY_ADDRESS" "setExpectedWorkerImageDigest(bytes32)" "0x$EXPECTED_WORKER_IMAGE_DIGEST" >/dev/null
+configure_local_mock_worker_policy_references
+provision_worker_policy_hashes
 
 #echo "Authorization Status:"
 #[ "$(cast call --rpc-url $rpc_url $DEVICE_REGISTRY_ADDRESS "isAuthorized(address)" $ADDRESS_1)" = "0x$(printf '%063d1')" ] && echo $ADDRESS_1: yes || echo $ADDRESS_1: no
@@ -1143,10 +1313,12 @@ if [ "$IPFS_PROVIDER" = "kubo" ] && [ -n "${INITIAL_GM_CID:-}" ] && [ -n "${INIT
         "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_SIG_CID}&arg=/start.sig&parents=true"
 fi
 
-prepare_encrypted_initial_gm
-# Publish the runtime contract manifest only once the full bootstrap path
-# completed, so workers don't resolve endpoints before the runtime is ready.
+# Worker admission opens only after the contracts, DCAP verifier and workload
+# image policy above have all been configured.
 publish_runtime_contract_manifest
+publish_runtime_admission_ready_marker
+wait_for_bootstrap_recipient_declaration
+prepare_encrypted_initial_gm
 publish_runtime_ready_marker
 
 KEEP_ALIVE=${KEEP_ALIVE:-0}

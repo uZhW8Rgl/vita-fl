@@ -31,6 +31,19 @@ class AgentSessionTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in sessions], [second["id"], first["id"]])
         self.assertFalse(sessions[0]["busy"])
 
+    def test_legacy_zk_skill_names_route_to_remote_public_tools(self) -> None:
+        aliases = {
+            "fetch_latest_verified_model_bundle": "fetch_latest_verified_zk_model_bundle",
+            "generate_random_chestmnist_image": "generate_random_zk_chestmnist_image",
+            "generate_zk_inference_proof": "generate_and_verify_zk_inference_proof",
+        }
+        for requested, expected in aliases.items():
+            with self.subTest(requested=requested):
+                self.assertEqual(
+                    self.runtime._infer_requested_skill(requested),
+                    expected,
+                )
+
 
 class AgentSessionAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_busy_state_is_cleared_when_chat_is_cancelled(self) -> None:

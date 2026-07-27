@@ -48,12 +48,20 @@ resource "phala_app" "worker" {
     python_service_url                       = var.python_service_url
     public_ip                                = var.public_ip
     msg_broker_ip                            = var.msg_broker_ip
+    worker_count                             = length(var.workers)
+    inference_enabled                        = var.workers[each.key].device_id == 0
+    sello_required                           = var.sello_required
+    sello_scitt_url                          = var.sello_scitt_url
   })
-  env = {
-    PRIVATE_KEY     = var.workers[each.key].private_key
-    RSA_PRIVATE_KEY = var.workers[each.key].rsa_private_key
-    RSA_PUBLIC_KEY  = var.workers[each.key].rsa_public_key
-  }
+  env = merge(
+    {
+      PRIVATE_KEY = var.workers[each.key].private_key
+    },
+    var.workers[each.key].device_id == 0 ? {
+      SELLO_SERVICE_SIGNING_SEED    = var.sello_tee_service_signing_seed
+      SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
+    } : {},
+  )
 
   # Dynamic workers deliberately stay on the smallest requested Phala plan.
   size      = "tdx.small"

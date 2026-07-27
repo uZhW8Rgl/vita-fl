@@ -25,29 +25,26 @@ class BuildWorkerInventoryTests(unittest.TestCase):
                     f"W{slot}_ACCOUNT_ADDRESS": "0x" + f"{slot + 1:040x}",
                     f"W{slot}_PRIVATE_KEY": "0x" + f"{slot + 1:064x}",
                     f"W{slot}_DEVICE_ID": str(slot),
-                    f"W{slot}_RSA_PRIVATE_KEY": f"private-{slot}",
-                    f"W{slot}_RSA_PUBLIC_KEY": f"public-{slot}",
                 }
             )
 
         inventory = build_inventory(values, 2)
 
-        self.assertEqual(inventory[1]["rsa_private_key"], "private-1")
         self.assertEqual(inventory[1]["private_key"], "0x" + f"{2:064x}")
+        self.assertNotIn("rsa_private_key", inventory[1])
+        self.assertNotIn("rsa_public_key", inventory[1])
 
     def test_incomplete_fixed_slot_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "W0_RSA_PUBLIC_KEY"):
+        with self.assertRaisesRegex(ValueError, "W0_PRIVATE_KEY"):
             build_inventory(
                 {
                     "W0_ACCOUNT_ADDRESS": "address",
-                    "W0_PRIVATE_KEY": "key",
                     "W0_DEVICE_ID": "0",
-                    "W0_RSA_PRIVATE_KEY": "rsa-private",
                 },
                 1,
             )
 
-    def test_inline_rsa_newlines_are_decoded(self) -> None:
+    def test_legacy_rsa_values_are_ignored(self) -> None:
         values = {
             "W0_ACCOUNT_ADDRESS": "0x" + "01" * 20,
             "W0_PRIVATE_KEY": "0x" + "02" * 32,
@@ -58,8 +55,8 @@ class BuildWorkerInventoryTests(unittest.TestCase):
 
         inventory = build_inventory(values, 1)
 
-        self.assertEqual(inventory[0]["rsa_private_key"], "explicit-private\nvalue")
-        self.assertEqual(inventory[0]["rsa_public_key"], "explicit-public\nvalue")
+        self.assertNotIn("rsa_private_key", inventory[0])
+        self.assertNotIn("rsa_public_key", inventory[0])
 
     def test_device_id_must_match_slot(self) -> None:
         with self.assertRaisesRegex(ValueError, "expected 0"):
@@ -68,8 +65,6 @@ class BuildWorkerInventoryTests(unittest.TestCase):
                     "W0_ACCOUNT_ADDRESS": "address",
                     "W0_PRIVATE_KEY": "key",
                     "W0_DEVICE_ID": "17",
-                    "W0_RSA_PRIVATE_KEY": "rsa-private",
-                    "W0_RSA_PUBLIC_KEY": "rsa-public",
                 },
                 1,
             )
@@ -82,8 +77,8 @@ class BuildWorkerInventoryTests(unittest.TestCase):
 
         self.assertEqual(len(inventory), 500)
         self.assertEqual(inventory[-1]["slot"], 499)
-        self.assertTrue(str(inventory[-1]["rsa_private_key"]).startswith("-----BEGIN PRIVATE KEY-----"))
-        self.assertTrue(str(inventory[-1]["rsa_public_key"]).startswith("-----BEGIN PUBLIC KEY-----"))
+        self.assertNotIn("rsa_private_key", inventory[-1])
+        self.assertNotIn("rsa_public_key", inventory[-1])
 
     def test_full_inventory_is_split_below_single_environment_entry_limit(self) -> None:
         inventory = build_inventory(

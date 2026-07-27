@@ -20,8 +20,6 @@ def inventory_json(count: int = 3) -> str:
                 "slot": slot,
                 "account_address": "0x" + f"{slot + 1:040x}",
                 "private_key": "0x" + f"{slot + 1:064x}",
-                "rsa_private_key": "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
-                "rsa_public_key": "-----BEGIN PUBLIC KEY-----\nabc\n-----END PUBLIC KEY-----",
             }
             for slot in range(count)
         ]
@@ -86,6 +84,31 @@ class WorkerInventoryTests(unittest.TestCase):
             "0x" + "44" * 20,
         )
         self.assertEqual(values["expected_chain_id"], 31337)
+
+    def test_inference_receiver_configuration_is_forwarded_without_entering_status(self) -> None:
+        config = WorkerDeploymentConfig(
+            phala_cloud_api_key="phak_test",
+            worker_image="ghcr.io/example/worker@sha256:" + "11" * 32,
+            rpc_url="https://rpc.example",
+            kubo_api_url="https://kubo.example",
+            kubo_gateway_url="https://gateway.example",
+            telemetry_url="https://telemetry.example",
+            expected_device_registry_address="0x" + "11" * 20,
+            expected_aggregator_address="0x" + "22" * 20,
+            expected_gm_storage_address="0x" + "33" * 20,
+            expected_medical_signer_registry_address="0x" + "44" * 20,
+            expected_chain_id=31337,
+            sello_required=True,
+            sello_scitt_url="https://scitt.example",
+            sello_tee_service_signing_seed="secret-service-seed",
+            sello_token_issuer_public_key="issuer-public-key",
+        )
+
+        values = config.terraform_values()
+
+        self.assertTrue(values["sello_required"])
+        self.assertEqual(values["sello_scitt_url"], "https://scitt.example")
+        self.assertEqual(values["sello_tee_service_signing_seed"], "secret-service-seed")
 
     def test_terraform_diagnostics_are_redacted(self) -> None:
         private_key = "0x" + "ab" * 32

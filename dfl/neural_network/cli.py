@@ -773,6 +773,8 @@ def train_model(
     epochs: int,
     aggregator_public_key_der_hex: str,
     medical_signer_snapshot: dict[str, Any] | None = None,
+    *,
+    private_key: str | None = None,
 ) -> None:
     gm_path = data_dir() / "gm.bin"
     print(f"Starting local training from on-chain resolved global model: {gm_path}")
@@ -813,7 +815,12 @@ def train_model(
     lm_path = data_dir() / "lm.bin"
     write_model_bin(model, lm_path)
     if aggregator_public_key_der_hex:
-        encrypt_model_package(lm_path, Path(str(lm_path) + ".enc"), aggregator_public_key_der_hex)
+        encrypt_model_package(
+            lm_path,
+            Path(str(lm_path) + ".enc"),
+            aggregator_public_key_der_hex,
+            private_key=private_key,
+        )
     print("Finished training!")
 
 
@@ -864,7 +871,13 @@ def public_der_from_private_key(path: Path) -> bytes:
     )
 
 
-def encrypt_model_package(model_path: Path, out_path: Path, public_key_der_hex: str) -> None:
+def encrypt_model_package(
+    model_path: Path,
+    out_path: Path,
+    public_key_der_hex: str,
+    *,
+    private_key: str | None = None,
+) -> None:
     ensure_crypto()
     plaintext = model_path.read_bytes()
     key = os.urandom(32)
@@ -875,7 +888,7 @@ def encrypt_model_package(model_path: Path, out_path: Path, public_key_der_hex: 
         key + iv,
         padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
     )
-    sender_pub = public_der_from_private_key(private_key_path())
+    sender_pub = public_der_from_private_key(private_key_path(private_key))
     package = (
         struct.pack("<I", len(sender_pub))
         + sender_pub
@@ -992,6 +1005,7 @@ def aggregate(
     source_round: int | None = None,
     expected_models: int | None = None,
     participant_count: int | None = None,
+    private_key: str | None = None,
 ) -> dict[str, Any]:
     model_paths = sorted(aggregation_inputs_dir().glob("*.bin"), key=lambda p: p.name)
     if num_files is not None and len(model_paths) != num_files:
@@ -1016,7 +1030,7 @@ def aggregate(
     avg_model.load_state_dict(avg_state)
     out_path = results_dir() / "aggregated.bin"
     write_model_bin(avg_model, out_path)
-    sign_file(out_path, private_key_path())
+    sign_file(out_path, private_key_path(private_key))
     print("Federated averaging complete")
     metrics = run_test(
         out_path,

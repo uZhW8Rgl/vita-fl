@@ -2,8 +2,9 @@
 
 This folder contains the local agent layer around the DFL and ZK inference pipeline.
 
-The implementation exposes two separate three-step, job-based workflows. TEE
-inference and ZK inference each run in their own Phala TEE:
+The implementation exposes two separate three-step, job-based workflows.
+TEE inference runs inside Worker 0's Phala TEE, while ZK inference runs in its
+own Phala TEE:
 
 1. `fetch_latest_verified_tee_model_bundle()`
 2. `generate_random_tee_chestmnist_image(...)`
@@ -58,9 +59,12 @@ step until the existing on-chain verifier is connected to this tool.
 
 When deployed through Terraform, chat readiness depends only on the separately
 deployed, Bearer-authenticated Ollama service and its configured model. The
-agent can therefore run before either inference service exists. If an inference
-endpoint is unset, only that workflow fails with a configuration error; the
-chat service and the other tools stay available.
+agent can therefore run before Worker 0 or the ZK-inference service is ready.
+For TEE calls, an explicit endpoint is optional: the agent reads Worker 0's
+authorized `DeviceRegistry` record and uses its REPORTDATA-bound HTTPS
+`public_ip`. An explicit `TEE_INFERENCE_URL` remains available for diagnostics.
+If an inference endpoint cannot be resolved, only that workflow fails; the chat
+service and the other tools stay available.
 
 ## Install
 
@@ -290,7 +294,7 @@ corresponding public-key registry.
 `SELLO_SCITT_URL` must use the contract-runtime app's public `-8000s` endpoint.
 The trailing `s` enables TLS passthrough to SCITT-CCF's TLS listener, avoiding
 an intermediate HTTP proxy. Do not use the Compose-only hostname
-`transparency-log` from a separate inference CVM.
+`transparency-log` from Worker 0's CVM or the separate ZK-inference CVM.
 
 Container paths are internal and are not exposed as MCP arguments. Configure
 the inference workflows with `TEE_INFERENCE_URL`, `ZK_INFERENCE_URL`,
@@ -298,7 +302,9 @@ the inference workflows with `TEE_INFERENCE_URL`, `ZK_INFERENCE_URL`,
 `TEE_INFERENCE_EVIDENCE_PATH`, `SCITT_URL`, `SCITT_DEVELOPMENT`,
 `SCITT_SIGNER_DIR`, and `SCITT_TRANSPARENT_STATEMENT_PATH` when the defaults do
 not match the deployment. `SCITT_DEVELOPMENT=1` is only appropriate for the
-Virtual Mode prototype with its self-signed TLS certificate.
+Virtual Mode prototype with its self-signed TLS certificate. In the combined
+deployment, `TEE_INFERENCE_IMAGE_DIGEST` is the digest of `worker_image`, not a
+separate inference-image digest.
 
 ## Debug IPFS Scan
 

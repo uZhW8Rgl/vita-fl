@@ -204,14 +204,34 @@ def decode_finalized_model_bundle(hex_data: str) -> tuple[str, str, str, str, in
     )
 
 
-def decode_device_public_key(hex_data: str) -> bytes:
+def decode_device_record(hex_data: str) -> dict[str, Any]:
     data = bytes.fromhex(hex_data.removeprefix("0x"))
     if len(data) < 128:
         raise RuntimeError(f"Cannot decode device tuple from short result: {hex_data}")
-    authorized = _read_word(data, 0) != 0
+    authorized_word = _read_word(data, 0)
+    if authorized_word not in {0, 1}:
+        raise RuntimeError("Device tuple contains a non-canonical authorization flag.")
+    authorized = authorized_word == 1
     if not authorized:
-        raise RuntimeError("Last aggregator is not authorized in DeviceRegistry.")
-    return _decode_dynamic_bytes(data, 3)
+        raise RuntimeError("Device is not authorized in DeviceRegistry.")
+    try:
+        public_ip = _decode_dynamic_bytes(data, 1, minimum_offset=128).decode("utf-8")
+        message_broker_ip = _decode_dynamic_bytes(data, 2, minimum_offset=128).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("Device tuple contains a non-UTF-8 endpoint.") from exc
+    public_key = _decode_dynamic_bytes(data, 3, minimum_offset=128)
+    if not public_key:
+        raise RuntimeError("Authorized device has no registered public key.")
+    return {
+        "authorized": True,
+        "public_ip": public_ip,
+        "message_broker_ip": message_broker_ip,
+        "public_key_der": public_key,
+    }
+
+
+def decode_device_public_key(hex_data: str) -> bytes:
+    return bytes(decode_device_record(hex_data)["public_key_der"])
 
 
 def encode_address_arg(address: str) -> str:
@@ -239,6 +259,20 @@ def eth_call_address(rpc_url: str, contract_address: str, method_signature: str)
 
 
 def read_device_public_key_der(rpc_url: str, registry_address: str, device_address: str) -> bytes:
+    return bytes(
+        read_device_record(rpc_url, registry_address, device_address)["public_key_der"]
+    )
+
+
+def read_device_record(
+    rpc_url: str,
+    registry_address: str,
+    device_address: str,
+) -> dict[str, Any]:
+    if not re.fullmatch(r"0x[a-fA-F0-9]{40}", registry_address):
+        raise RuntimeError(f"Invalid REGISTRY_ADDRESS: {registry_address!r}")
+    if not re.fullmatch(r"0x[a-fA-F0-9]{40}", device_address):
+        raise RuntimeError(f"Invalid device address: {device_address!r}")
     result = rpc_call(
         rpc_url,
         "eth_call",
@@ -250,7 +284,7 @@ def read_device_public_key_der(rpc_url: str, registry_address: str, device_addre
             "latest",
         ],
     )
-    return decode_device_public_key(result)
+    return decode_device_record(result)
 
 
 def validate_contract_addresses(gm_storage_address: str, registry_address: str | None = None) -> None:

@@ -63,7 +63,8 @@ npm run start
 - `KUBO_GATEWAY`
 - `PYTHON_SERVICE_URL`
 - `LOCAL_TDX_MOCK` (local Anvil only; never enable on Phala)
-- the Registry-provisioned worker-image digest (Phala; derived from canonical `app_compose` and enforced on-chain)
+- the Registry-provisioned worker-image digest and role-policy hash (Phala;
+  derived from canonical `app_compose` and enforced on-chain)
 - `RSA_PRIVATE_KEY`
 - `RSA_PUBLIC_KEY`
 

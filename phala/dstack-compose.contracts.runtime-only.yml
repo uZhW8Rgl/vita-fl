@@ -24,7 +24,7 @@ services:
       retries: 24
 
   rpc-proxy:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d743a41cae4d51160139b1fec60eb425a3c846bf023e2094728c73acc1fcf867
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:e40ab86adfd33f8129d3f34b7b5643716538d38714217b2bf52b2711dea85c95
     restart: unless-stopped
     read_only: true
     cap_drop: ["ALL"]
@@ -59,7 +59,7 @@ services:
       retries: 24
 
   smart-contracts:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d743a41cae4d51160139b1fec60eb425a3c846bf023e2094728c73acc1fcf867
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:e40ab86adfd33f8129d3f34b7b5643716538d38714217b2bf52b2711dea85c95
     restart: "no"
     depends_on:
       anvil:
@@ -75,7 +75,11 @@ services:
       # Supply these through Phala's encrypted environment.
       ETH_WALLET_PRIVATE_KEY: "${ETH_WALLET_PRIVATE_KEY}"
       INITIAL_GM_SIGNING_KEY: "${INITIAL_GM_SIGNING_KEY}"
-      INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY: "${INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY}"
+      BOOTSTRAP_MIN_RECIPIENTS: "1"
+      BOOTSTRAP_REGISTRATION_SETTLE_SECONDS: "30"
+      BOOTSTRAP_REGISTRATION_TIMEOUT_SECONDS: "1800"
+      BOOTSTRAP_REGISTRATION_POLL_SECONDS: "2"
+      BOOTSTRAP_REQUIRE_RECIPIENT_DECLARATION: "0"
       PCCS_FMSPC: "20A06F000000"
       PCCS_FETCH: "1"
       PCCS_TEE: tdx

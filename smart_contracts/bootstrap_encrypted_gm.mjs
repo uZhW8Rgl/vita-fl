@@ -1,14 +1,11 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   canonicalizeRsaPublicKey,
   deriveRsaPublicKeyDer,
-  dynamicWorkerInventoryFromEnvironment,
-  mergeBootstrapRecipients,
   normalizeRecipientAddress,
-  parseDynamicWorkerInventoryRecipients,
+  waitForBootstrapRecipients,
 } from "./bootstrap_recipients.mjs";
 
 const args = process.argv.slice(2);
@@ -27,7 +24,6 @@ const outDir = readArg("--out-dir");
 const round = Number(readArg("--round"));
 const rpcUrl = readArg("--rpc-url");
 const registryAddress = String(readArg("--registry-address")).trim().toLowerCase();
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const optionalArg = (flag) => {
   const index = args.indexOf(flag);
   if (index === -1 || index + 1 >= args.length) {
@@ -35,8 +31,42 @@ const optionalArg = (flag) => {
   }
   return args[index + 1];
 };
-const bootstrapAddress = String(optionalArg("--bootstrap-address") || "").trim().toLowerCase();
-const bootstrapPublicKeyPath = String(optionalArg("--bootstrap-public-key") || "").trim();
+const readIntegerOption = (flag, fallback, minimum) => {
+  const raw = optionalArg(flag);
+  const value = raw === "" ? fallback : Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`${flag} must be an integer greater than or equal to ${minimum}.`);
+  }
+  return value;
+};
+const minimumRecipients = readIntegerOption("--minimum-recipients", 1, 1);
+const registrationSettleSeconds = readIntegerOption("--registration-settle-seconds", 0, 0);
+const registrationTimeoutSeconds = readIntegerOption("--registration-timeout-seconds", 900, 1);
+const registrationPollSeconds = readIntegerOption("--registration-poll-seconds", 2, 1);
+const requiredRecipientsFile = optionalArg("--required-recipients-file");
+
+const loadRequiredRecipientAddresses = () => {
+  if (!requiredRecipientsFile) {
+    return null;
+  }
+
+  let declaration;
+  try {
+    declaration = JSON.parse(fs.readFileSync(requiredRecipientsFile, "utf8"));
+  } catch (error) {
+    throw new Error(`Could not read bootstrap recipient declaration: ${error.message}`);
+  }
+  if (!declaration || declaration.status !== "declared") {
+    throw new Error("Bootstrap recipient declaration must have status=declared.");
+  }
+  if (!Array.isArray(declaration.recipients) || declaration.recipients.length === 0) {
+    throw new Error("Bootstrap recipient declaration must contain a non-empty recipients array.");
+  }
+  return declaration.recipients.map((address, index) => (
+    normalizeRecipientAddress(address, `declared recipient ${index}`)
+  ));
+};
+const requiredRecipientAddresses = loadRequiredRecipientAddresses();
 
 const normalizeHex = (value) => {
   const trimmed = String(value || "").trim();
@@ -159,23 +189,27 @@ const loadRecipientsFromRegistry = async () => {
   return recipients;
 };
 
-const loadBootstrapRecipient = () => {
-  if (!bootstrapAddress && !bootstrapPublicKeyPath) {
-    return null;
-  }
-  if (!bootstrapAddress || !bootstrapPublicKeyPath) {
-    throw new Error(
-      "Fallback bootstrap recipient requires both --bootstrap-address and --bootstrap-public-key."
-    );
-  }
-
-  const keyBytes = fs.readFileSync(bootstrapPublicKeyPath);
-
-  return {
-    address: normalizeRecipientAddress(bootstrapAddress, "fallback bootstrap recipient"),
-    der: canonicalizeRsaPublicKey(keyBytes, "fallback bootstrap recipient"),
-  };
-};
+let lastProgress = "";
+const recipients = await waitForBootstrapRecipients(loadRecipientsFromRegistry, {
+  minimumRecipients: requiredRecipientAddresses?.length ?? minimumRecipients,
+  registrationSettleMs: registrationSettleSeconds * 1000,
+  timeoutMs: registrationTimeoutSeconds * 1000,
+  pollIntervalMs: registrationPollSeconds * 1000,
+  requiredRecipientAddresses,
+  onProgress: ({ recipientCount, minimumRecipients: targetCount, phase, remainingMs }) => {
+    const progress = phase === "waiting" || phase === "waiting-required"
+      ? `Waiting for live DeviceRegistry recipients: ${recipientCount}/${targetCount}.`
+      : `DeviceRegistry threshold reached with ${recipientCount} recipient(s); `
+        + `settling for ${Math.ceil(remainingMs / 1000)} more second(s).`;
+    if (progress !== lastProgress) {
+      console.error(progress);
+      lastProgress = progress;
+    }
+  },
+});
+console.error(
+  `Using ${recipients.length} live DeviceRegistry recipient(s) for encrypted bootstrap.`
+);
 
 const modelBytes = fs.readFileSync(modelPath);
 const signatureBytes = fs.readFileSync(signaturePath);
@@ -206,19 +240,8 @@ const ciphertext = Buffer.concat([cipher.update(payload), cipher.final()]);
 const authTag = cipher.getAuthTag();
 
 const wrappedKeys = {};
-const registryRecipients = await loadRecipientsFromRegistry();
-const inventoryRecipients = parseDynamicWorkerInventoryRecipients(
-  dynamicWorkerInventoryFromEnvironment(process.env)
-);
-const bootstrapRecipient = loadBootstrapRecipient();
-const fallbackRecipients = bootstrapRecipient ? [bootstrapRecipient] : [];
-const recipients = mergeBootstrapRecipients(
-  registryRecipients,
-  inventoryRecipients,
-  fallbackRecipients
-);
 if (recipients.length === 0) {
-  throw new Error("Encrypted bootstrap requires at least one valid RSA recipient.");
+  throw new Error("Encrypted bootstrap requires at least one live DeviceRegistry recipient.");
 }
 for (const recipient of recipients) {
   const publicKey = crypto.createPublicKey({

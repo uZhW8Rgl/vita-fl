@@ -4,7 +4,9 @@ import unittest
 from unittest.mock import patch
 
 from agent.blockchain_source import (
+    decode_device_record,
     decode_finalized_model_bundle,
+    read_device_record,
     read_current_bundle_from_contract,
     verify_download_with_registry,
 )
@@ -47,6 +49,33 @@ def _encoded_finalized_bundle(
         + address_word
         + _word(model_round)
         + _word(offsets[3])
+        + b"".join(dynamic_values)
+    )
+    return "0x" + encoded.hex()
+
+
+def _encoded_device(
+    *,
+    authorized: bool = True,
+    public_ip: str = "https://worker0-8080.example",
+    broker_ip: str = "127.0.0.1",
+    public_key: bytes = b"participant-public-key",
+) -> str:
+    dynamic_values = [
+        _dynamic_string(public_ip),
+        _dynamic_string(broker_ip),
+        _word(len(public_key))
+        + public_key
+        + b"\x00" * ((32 - len(public_key) % 32) % 32),
+    ]
+    next_offset = 4 * 32
+    offsets = []
+    for value in dynamic_values:
+        offsets.append(next_offset)
+        next_offset += len(value)
+    encoded = (
+        _word(1 if authorized else 0)
+        + b"".join(_word(offset) for offset in offsets)
         + b"".join(dynamic_values)
     )
     return "0x" + encoded.hex()
@@ -121,6 +150,47 @@ class FinalizedModelBundleTests(unittest.TestCase):
         verify.assert_called_once()
         self.assertEqual(verify.call_args.args[2], b"publisher-public-key")
         current_registry_read.assert_not_called()
+
+    def test_decodes_registered_device_endpoint_and_public_key(self) -> None:
+        record = decode_device_record(_encoded_device())
+
+        self.assertTrue(record["authorized"])
+        self.assertEqual(record["public_ip"], "https://worker0-8080.example")
+        self.assertEqual(record["message_broker_ip"], "127.0.0.1")
+        self.assertEqual(record["public_key_der"], b"participant-public-key")
+
+    def test_reads_device_record_with_one_atomic_call(self) -> None:
+        registry = "0x" + "22" * 20
+        participant = "0x" + "44" * 20
+        with patch(
+            "agent.blockchain_source.rpc_call",
+            return_value=_encoded_device(),
+        ) as rpc:
+            record = read_device_record("https://rpc.example", registry, participant)
+
+        self.assertEqual(record["public_ip"], "https://worker0-8080.example")
+        rpc.assert_called_once_with(
+            "https://rpc.example",
+            "eth_call",
+            [
+                {
+                    "to": registry,
+                    "data": "0x00d55318" + participant[2:].lower().rjust(64, "0"),
+                },
+                "latest",
+            ],
+        )
+
+    def test_device_record_read_rejects_invalid_contract_or_participant_address(self) -> None:
+        valid = "0x" + "22" * 20
+        with self.assertRaisesRegex(RuntimeError, "Invalid REGISTRY_ADDRESS"):
+            read_device_record("https://rpc.example", "registry", valid)
+        with self.assertRaisesRegex(RuntimeError, "Invalid device address"):
+            read_device_record("https://rpc.example", valid, "worker0")
+
+    def test_rejects_unauthorized_device_endpoint(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "not authorized"):
+            decode_device_record(_encoded_device(authorized=False))
 
 
 if __name__ == "__main__":

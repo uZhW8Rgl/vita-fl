@@ -26,11 +26,6 @@ def read_env_files(paths: list[Path]) -> dict[str, str]:
     return values
 
 
-def _read_worker_pem(values: dict[str, str], *, slot: int, kind: str) -> str:
-    prefix = f"W{slot}_RSA_{kind.upper()}_KEY"
-    return values.get(prefix, "").strip().replace("\\n", "\n")
-
-
 def build_inventory(
     values: dict[str, str],
     maximum: int,
@@ -44,20 +39,6 @@ def build_inventory(
             "device_id": prefix + "DEVICE_ID",
         }
         missing = [name for name in names.values() if not values.get(name, "").strip()]
-        rsa_private_key = _read_worker_pem(
-            values,
-            slot=slot,
-            kind="private",
-        )
-        rsa_public_key = _read_worker_pem(
-            values,
-            slot=slot,
-            kind="public",
-        )
-        if not rsa_private_key:
-            missing.append(prefix + "RSA_PRIVATE_KEY")
-        if not rsa_public_key:
-            missing.append(prefix + "RSA_PUBLIC_KEY")
         if missing:
             raise ValueError(f"worker {slot} is incomplete; missing {', '.join(missing)}")
         try:
@@ -74,8 +55,6 @@ def build_inventory(
                 "account_address": values[names["account_address"]],
                 "private_key": values[names["private_key"]],
                 "device_id": device_id,
-                "rsa_private_key": rsa_private_key,
-                "rsa_public_key": rsa_public_key,
             }
         )
     return inventory
@@ -139,8 +118,7 @@ def main() -> None:
                 "app_name": f"master-thesis-dfl-worker-{record['slot']}",
                 "account_address": record["account_address"],
                 "private_key": record["private_key"],
-                "rsa_private_key": record["rsa_private_key"],
-                "rsa_public_key": record["rsa_public_key"],
+                "device_id": record["device_id"],
             }
             for record in inventory[1:]
         }

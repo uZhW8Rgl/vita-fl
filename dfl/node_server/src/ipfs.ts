@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { KeyObject } from "crypto";
 import fs from "fs";
 import FormData from "form-data";
 
@@ -175,7 +176,10 @@ export const pinFile = async (filePath: string) => {
     keyBundlePath: "./data/results_iid/aggregated.bundle.keys.json",
   });
   
-  export const updateGM = async (expectedModelRound: number) => {
+  export const updateGM = async (
+    expectedModelRound: number,
+    participantPrivateKey: KeyObject,
+  ) => {
     const modelPath = "./data/results_iid/aggregated.bin";
     const sigPath = "./data/results_iid/aggregated.bin.sig";
     if (!Number.isSafeInteger(expectedModelRound) || expectedModelRound <= 0) {
@@ -207,6 +211,7 @@ export const pinFile = async (filePath: string) => {
       keyBundlePath,
       recipients,
       round,
+      signingPrivateKey: participantPrivateKey,
     });
 
     const modelCid = await pinFile(bundlePath);
@@ -229,7 +234,7 @@ export const pinFile = async (filePath: string) => {
     console.log("Encrypted global model bundle + signature + key bundle updated (on-chain)");
   }
   
-  export const getCurrentModel = async () => {
+  export const getCurrentModel = async (participantPrivateKey: KeyObject) => {
     const activeModel = await getActiveModelBundle();
     const modelCid = String(activeModel.modelCid || "");
     const sigCid = String(activeModel.sigCid || "");
@@ -260,6 +265,7 @@ export const pinFile = async (filePath: string) => {
       ownAddress: String(process.env.ACCOUNT_ADDRESS || ""),
       outModelPath: "./data/gm.bin",
       outSignaturePath: "./data/gm.bin.sig",
+      decryptionPrivateKey: participantPrivateKey,
     });
     console.log("Encrypted global model bundle fetched + decrypted");
     return {

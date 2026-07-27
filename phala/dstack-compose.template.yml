@@ -8,22 +8,33 @@ services:
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
       - /var/run/tappd.sock:/var/run/tappd.sock
+      - participant-key-state:/var/lib/vita-fl
+    tmpfs:
+      - /run/vita-fl:size=16m,mode=0700
+      - /tmp/tee-inference:size=256m,mode=0700
+    ports:
+      - "8001:8001"
+      - "8080:8080"
     environment:
       DOCKER: phala
       NODE_ENV: production
       IPFS_PROVIDER: kubo
       KUBO_API: "REPLACE_WITH_KUBO_API_URL"
       KUBO_GATEWAY: "REPLACE_WITH_KUBO_GATEWAY_URL"
+      DSTACK_GATEWAY_DOMAIN: "${DSTACK_GATEWAY_DOMAIN}"
       PUBLIC_IP: ""
       MSG_BROKER_IP: ""
 
       # Runtime configuration for the DFL prototype.
       ACCOUNT_ADDRESS: "REPLACE_WITH_WORKER_ADDRESS"
-      # Supply these values through Phala's encrypted environment, never by
-      # replacing them in this measured/public compose document.
+      DEVICE_ID: "0"
+      # Supply only the Ethereum key through Phala's encrypted environment.
+      # The participant RSA key is generated and sealed inside this TEE.
       PRIVATE_KEY: "${PRIVATE_KEY}"
-      RSA_PRIVATE_KEY: "${RSA_PRIVATE_KEY}"
-      RSA_PUBLIC_KEY: "${RSA_PUBLIC_KEY}"
+      PARTICIPANT_KEY_PROVIDER: dstack
+      PARTICIPANT_KEY_STATE_PATH: /var/lib/vita-fl/participant-rsa.v1.sealed.json
+      PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH: /run/vita-fl/participant-private.pem
+      PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH: /run/vita-fl/participant-public.pem
       # Auto-resolved from the contract-runtime TEE's Kubo manifest at
       # /runtime/contracts.json when the worker boots.
       REGISTRY_ADDRESS: ""
@@ -47,12 +58,32 @@ services:
       GM_UPDATE_TIMEOUT_LOOPS: "2"
       AGGREGATION_UPDATE_ESTIMATE_MS: "30000"
       GM_UPDATE_POLL_MS: "5000"
+      WORKER_COUNT: "1"
 
       TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-0.idx3-ubyte
       TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-0.idx1-ubyte
 
       PYTHON_SERVICE_URL: http://127.0.0.1:8000
+      MODEL_UPLOAD_PORT: "8001"
+
+      # Worker 0 also serves TEE inference from this measured image and CVM.
+      # Other worker instances set this value to "0" and omit port 8080.
+      TEE_INFERENCE_ENABLED: "1"
+      EXPECTED_RUNTIME_RPC_URL: "REPLACE_WITH_RPC_URL"
+      TEE_MODEL_DIR: /tmp/tee-inference/model
+      TEE_JOB_DIR: /tmp/tee-inference/jobs
+      CHESTMNIST_TEST_DATA: /dfl/config/chestmnist/test_data/test-data.npz
+      SELLO_REQUIRED: "1"
+      SELLO_SERVICE_SIGNING_SEED: "${SELLO_SERVICE_SIGNING_SEED}"
+      SELLO_TOKEN_ISSUER_PUBLIC_KEY: "${SELLO_TOKEN_ISSUER_PUBLIC_KEY}"
+      SCITT_URL: "REPLACE_WITH_SCITT_TLS_URL"
+      SCITT_DEVELOPMENT: "1"
+      SCITT_SIGNER_DIR: /tmp/tee-inference/scitt-signer
+      SELLO_PUBLICATION_DIR: /tmp/tee-inference/sello-publications
     command:
       - /bin/bash
       - -lc
       - exec /dfl/start_node_neural_network.sh
+
+volumes:
+  participant-key-state:

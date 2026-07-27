@@ -17,28 +17,21 @@ variable "worker_app_name" {
   default     = "master-thesis-dfl-worker-0"
 }
 
-variable "enable_tee_inference" {
-  description = "Deploy the separate attested TEE inference Phala app using W0's authorized participant credentials."
-  type        = bool
-  default     = false
-}
-
 variable "enable_zk_inference" {
-  description = "Deploy the separate ZK inference Phala app using W0 participant credentials."
+  description = "Legacy switch for the separate ZK inference app. It must stay disabled with dstack-derived participant keys until an attested key-delegation protocol exists."
   type        = bool
   default     = false
+
+  validation {
+    condition     = !var.enable_zk_inference
+    error_message = "enable_zk_inference is incompatible with dstack-derived participant keys; keep it false until the separate ZK TEE has an attested delegation protocol."
+  }
 }
 
 variable "zk_inference_app_name" {
   description = "Name of the separate Phala app that generates and verifies EZKL proofs."
   type        = string
   default     = "master-thesis-zk-inference"
-}
-
-variable "tee_inference_app_name" {
-  description = "Name of the Phala Cloud app that runs attested ChestMNIST inference."
-  type        = string
-  default     = "master-thesis-tee-inference"
 }
 
 variable "expected_gm_storage_address" {
@@ -285,8 +278,6 @@ variable "additional_workers" {
     app_name        = string
     account_address = string
     private_key     = string
-    rsa_private_key = string
-    rsa_public_key  = string
   }))
   sensitive = true
   default   = {}
@@ -445,12 +436,6 @@ variable "worker_size" {
   default     = "tdx.small"
 }
 
-variable "tee_inference_size" {
-  description = "Phala CVM size slug for the TEE inference app."
-  type        = string
-  default     = "tdx.small"
-}
-
 variable "zk_inference_size" {
   description = "Phala CVM size slug for the separate ZK inference app."
   type        = string
@@ -483,12 +468,6 @@ variable "contracts_disk_size" {
 
 variable "worker_disk_size" {
   description = "Disk size in GB for the worker TEE."
-  type        = number
-  default     = 20
-}
-
-variable "tee_inference_disk_size" {
-  description = "Disk size in GB for the TEE inference app."
   type        = number
   default     = 20
 }
@@ -589,12 +568,6 @@ variable "worker_gateway_enabled" {
   default     = true
 }
 
-variable "tee_inference_gateway_enabled" {
-  description = "Enable the public gateway endpoint for the TEE inference app."
-  type        = bool
-  default     = true
-}
-
 variable "ollama_gateway_enabled" {
   description = "Enable the public gateway endpoint for the separate Ollama app."
   type        = bool
@@ -663,18 +636,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d743a41cae4d51160139b1fec60eb425a3c846bf023e2094728c73acc1fcf867"
-}
-
-variable "tee_inference_image" {
-  description = "Digest-pinned TEE inference container image."
-  type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:78ac15494f71b6edd1df7d06b83cc7138c6157f01d87b968a6906aa62b8a5c9b"
-
-  validation {
-    condition     = can(regex("^ghcr\\.io/.+@sha256:[0-9a-f]{64}$", var.tee_inference_image))
-    error_message = "tee_inference_image must be a digest-pinned ghcr.io reference."
-  }
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:e40ab86adfd33f8129d3f34b7b5643716538d38714217b2bf52b2711dea85c95"
 }
 
 variable "zk_inference_image" {
@@ -830,13 +792,13 @@ variable "gm_update_poll_ms" {
 }
 
 variable "rsa_private_key" {
-  description = "Worker RSA private key supplied from the selected Phala environment file and encrypted by the provider."
+  description = "Legacy RSA private key retained only for disabled compatibility paths; workers derive their participant key inside dstack."
   type        = string
   sensitive   = true
 }
 
 variable "rsa_public_key" {
-  description = "Worker RSA public key supplied from the selected Phala environment file."
+  description = "Legacy RSA public key retained only for disabled compatibility paths; workers derive their participant key inside dstack."
   type        = string
   sensitive   = true
 }
@@ -941,6 +903,50 @@ variable "aggregator_timeout_report_percent" {
   description = "Threshold percentage for aggregator timeout reporting."
   type        = string
   default     = "50"
+}
+
+variable "bootstrap_min_recipients" {
+  description = "Minimum number of live DCAP-registered worker keys required before the initial encrypted model is published."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.bootstrap_min_recipients >= 1 && var.bootstrap_min_recipients <= 500 && floor(var.bootstrap_min_recipients) == var.bootstrap_min_recipients
+    error_message = "bootstrap_min_recipients must be an integer between 1 and 500."
+  }
+}
+
+variable "bootstrap_registration_settle_seconds" {
+  description = "Quiet period after the last DeviceRegistry membership change before the live bootstrap recipient set is finalized."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.bootstrap_registration_settle_seconds >= 0 && floor(var.bootstrap_registration_settle_seconds) == var.bootstrap_registration_settle_seconds
+    error_message = "bootstrap_registration_settle_seconds must be a non-negative integer."
+  }
+}
+
+variable "bootstrap_registration_timeout_seconds" {
+  description = "Maximum time the contract runtime waits for live DCAP-registered bootstrap recipients."
+  type        = number
+  default     = 1800
+
+  validation {
+    condition     = var.bootstrap_registration_timeout_seconds >= 60 && floor(var.bootstrap_registration_timeout_seconds) == var.bootstrap_registration_timeout_seconds
+    error_message = "bootstrap_registration_timeout_seconds must be an integer of at least 60 seconds."
+  }
+}
+
+variable "bootstrap_registration_poll_seconds" {
+  description = "Polling interval while the contract runtime waits for live DeviceRegistry recipients."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.bootstrap_registration_poll_seconds >= 1 && floor(var.bootstrap_registration_poll_seconds) == var.bootstrap_registration_poll_seconds
+    error_message = "bootstrap_registration_poll_seconds must be a positive integer."
+  }
 }
 
 variable "keep_alive" {

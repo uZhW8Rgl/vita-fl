@@ -1,7 +1,9 @@
 # Phala/dstack Worker Image Attestation
 
-This directory contains deployment templates for the contract runtime, DFL
-workers, and the separately attested TEE inference service.
+This directory contains deployment templates for the contract runtime and the
+DFL worker TEEs. Worker 0 additionally serves TEE inference from the same
+digest-pinned `dfl-worker` image and the same CVM; there is no separate
+TEE-inference Phala app.
 
 ## Terraform Deployment
 
@@ -9,15 +11,17 @@ This directory also contains a Terraform scaffold for deploying the DFL prototyp
 
 Files:
 
-- `main.tf`: provider, one `phala_app` for the contract runtime TEE, one `phala_app` for the worker TEE, optional `phala_ssh_key`, optional `phala_cvm_power`
+- `main.tf`: provider, one `phala_app` for the contract runtime TEE, worker apps, optional `phala_ssh_key`, and optional `phala_cvm_power`
 - `variables.tf`: Phala and worker runtime configuration
 - `outputs.tf`: deployed app metadata
 - `terraform.tfvars.example`: values you can copy into `terraform.tfvars`
 - `dstack-compose.contracts.phala.tftpl`: Terraform-rendered compose policy for the contract-runtime TEE
-- `dstack-compose.worker.phala.tftpl`: Terraform-rendered compose policy for the worker TEE
-- `dstack-compose.tee-inference.phala.tftpl`: Terraform-rendered compose policy for the TEE inference app
+- `dstack-compose.worker.phala.tftpl`: Terraform-rendered compose policy for a
+  worker TEE; its Worker 0 rendering also enables the co-located inference
+  process
 - `dstack-compose.contracts.template.yml`: manual compose policy for the contract-runtime TEE
-- `dstack-compose.template.yml`: manual compose policy for the worker TEE
+- `dstack-compose.template.yml`: manual Worker 0 compose policy, including the
+  co-located inference process
 
 Copy the complete example, replace every placeholder (including the Phala API
 key and UI login), and start the complete deployment with one command:
@@ -27,10 +31,21 @@ cp .env.phala.anvil.example .env.phala.anvil
 bash phala/start.sh
 ```
 
-On a fresh account the script performs the required two-phase bootstrap: it
-first creates the contract-runtime endpoint, then reapplies the runtime with
-the derived RPC, Kubo API, and Kubo gateway URLs used by dynamically created
-worker TEEs. Existing deployments need only the final apply.
+On a fresh account the launcher first creates the contract-runtime endpoint,
+then reapplies the runtime with the derived RPC, Kubo API, and Kubo gateway
+URLs used by dynamically created worker TEEs. The application bootstrap is
+also deliberately two-phase:
+
+1. the runtime deploys the contracts and publishes
+   `/runtime/admission-ready.json`;
+2. workers derive their participant keys and complete DCAP registration;
+3. the runtime reads the live authorized public keys from `DeviceRegistry`,
+   creates the encrypted initial model for those recipients, and publishes
+   `/runtime/ready.json`.
+
+Workers do not begin training until the final marker and active encrypted model
+bundle exist. This ordering avoids provisioning a worker RSA key before its
+attested workload has registered it.
 
 Dynamic worker TEEs send operational training events to the Control API over
 its Phala `8091` endpoint. Each event is signed by the worker's configured
@@ -88,10 +103,15 @@ The wrapper reads these values from the selected env file:
 
 - `PHALA_CLOUD_API_KEY`
 - `UI_BASIC_AUTH_USERNAME` and `UI_BASIC_AUTH_PASSWORD` when the UI is enabled
-- mandatory `Wn_ACCOUNT_ADDRESS`, `Wn_PRIVATE_KEY`, `Wn_DEVICE_ID`,
-  `Wn_RSA_PRIVATE_KEY`, and `Wn_RSA_PUBLIC_KEY` values for every configured
-  slot from W0 through W499
-- optional `ENABLE_TEE_INFERENCE` and `TEE_INFERENCE_IMAGE`
+- mandatory `Wn_ACCOUNT_ADDRESS`, `Wn_PRIVATE_KEY`, and `Wn_DEVICE_ID` values
+  for every configured slot from W0 through W499
+
+The Ethereum accounts and device identifiers are unchanged. Per-worker
+`Wn_RSA_PRIVATE_KEY` and `Wn_RSA_PUBLIC_KEY` values are not deployment inputs:
+each worker creates its participant RSA key inside its TEE. The existing W0
+RSA fixture may still be used by prototype components such as initial-model
+signing or the agent, but it is not the worker/aggregator key registered by
+`DeviceRegistry`.
 
 It also forwards the current Anvil/DFL profile settings into Terraform, including:
 
@@ -108,15 +128,15 @@ It also forwards the current Anvil/DFL profile settings into Terraform, includin
 The wrapper validates the complete fixed inventory, splits it into numbered
 JSON-array chunks below 60,000 bytes each, and supplies those chunks through a
 temporary mode-0600 Terraform variable file. This avoids the Linux size limit
-for a single environment entry. The Control API and contract bootstrap
-reassemble the chunks in numeric order and reject incomplete, ambiguous, or
-malformed input. The temporary file is removed when Terraform exits.
+for a single environment entry. The Control API reassembles the chunks in
+numeric order and rejects incomplete, ambiguous, or malformed input. The
+temporary file is removed when Terraform exits.
 
 The selectable pool contains W0 through W499, while the default initial UI
 selection remains three workers. Starting hundreds of simultaneous Phala CVMs
-is still subject to the account quota and cost. The encrypted inventory is
-about 1.2 MiB in total, so a target platform with a stricter aggregate
-environment/request limit may require an external encrypted inventory store.
+is still subject to the account quota and cost. A target platform with a
+stricter aggregate environment/request limit may require an external encrypted
+inventory store.
 
 The wrapper is the supported deployment entry point because it validates and
 transports the complete credential inventory. Do not maintain a second copy of
@@ -124,27 +144,41 @@ worker identities in `terraform.tfvars`.
 
 Notes:
 
-- The provider's `env` attribute encrypts wallet and RSA key material for the target Phala app. The measured/public Compose contains only environment-variable names, never their values.
+- The provider's `env` attribute encrypts Ethereum wallet and component
+  secrets for the target Phala app. The measured/public Compose contains only
+  environment-variable names, never their values.
 - Terraform still records sensitive `env` inputs in state. Local state, state backups, `terraform.tfvars`, and exported `app_code.txt` are ignored; use an encrypted, access-controlled remote backend for non-demo deployments.
 - `public_logs` defaults to `true` for this observable Anvil demo deployment. Do not log secrets when adapting it for production.
-- Worker and smart-contract images contain no private keys. Phala credentials
-  come only from the selected Phala environment file. The separate local
-  Compose profile may mount locally generated, ignored development keys.
-- The fixed wallet and RSA credentials are intentionally public test material.
-  They must be replaced for production, real funds, or confidential data.
-- `worker_image` must stay pinned to a `sha256` digest. Its digest is the shared on-chain workload-policy identity; the worker-specific Compose hash is not an allowlist key.
+- Worker and smart-contract images contain no private keys. The prototype EVM
+  keys remain the unchanged public Anvil fixtures and must be replaced for
+  production or real funds.
+- `worker_image` must stay pinned to a `sha256` digest. Terraform also renders
+  training-only and Worker-0-with-inference policy references from
+  `dynamic-workers/worker-compose.tftpl`. The contract runtime derives their
+  `workerPolicyHash` values through `DeviceRegistry` and owner-provisions both
+  before publishing `/runtime/admission-ready.json`.
 - `smart_contracts_image` should also be pinned to a `sha256` digest when you want the contract-runtime TEE to be reproducible.
-- The Terraform scaffold now separates `smart-contracts` and `dfl-worker` into different Phala apps / TEEs.
-- The optional third `tee_inference` app runs in a separate CVM. Phala injects
-  W0's RSA credentials through that app's encrypted environment. The W0
-  Ethereum private key is deliberately not provisioned because all required
-  DeviceRegistry and GMStorage operations are read-only.
-  The service checks the RSA key against W0's authorized DeviceRegistry entry,
-  fetches the current encrypted GMStorage/IPFS bundle, decrypts it inside the
-  inference TEE, and verifies the authorized aggregator signatures before
-  loading the native model.
-- The inference app reads W0's registration but never registers W0 again, so it
-  cannot overwrite Worker 0's DeviceRegistry record.
+- The Terraform scaffold separates `smart-contracts` and each `dfl-worker`
+  into different Phala apps / TEEs. It does not deploy a separate
+  `tee-inference` app.
+- Every worker generates a random RSA-3072 key with public exponent 65537
+  inside its TEE. A domain-separated dstack `GetKey` result is expanded with
+  HKDF-SHA-256 and used as an AES-256-GCM wrapping key. Only the sealed PKCS#8
+  document is stored in the `participant-key-state` named volume; the
+  plaintext private and public PEM files exist only below `/run/vita-fl` on
+  tmpfs. A corrupt or undecryptable state fails closed instead of silently
+  rotating the participant identity.
+- The participant public key is included in the worker's REPORTDATA-bound
+  DCAP registration. The same private key signs worker and temporary-aggregator
+  artifacts, and Worker 0's co-located inference process uses it to decrypt
+  the model bundle. The AIR evidence signing key remains a separate,
+  domain-separated dstack-derived key.
+- Worker 0 exposes port 8080 from the same `dfl-worker` container and CVM.
+  Model retrieval remains tool-triggered: container startup does not fetch or
+  load the current model. The agent normally reads Worker 0's authorized,
+  REPORTDATA-bound HTTPS endpoint from `DeviceRegistry.public_ip`; an explicit
+  `tee_inference_url_override` is only a diagnostic or compatibility escape
+  hatch.
 - If you want SSH access, set `ssh_public_key_path`; if you also want the key stored account-wide in Phala Cloud, set `manage_account_ssh_key = true`.
 - Non-secret worker configuration is rendered into Compose; secret values use the provider's encrypted app environment.
 - The default minimal hardware profile is now `tdx.small` with `20 GB` disk.
@@ -154,9 +188,11 @@ Notes:
   configured static worker addresses through `WORKER_ACCOUNT_ADDRESSES` so the
   bootstrap can fund non-default static identities before registration.
 - The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
-- The worker now treats `/runtime/contracts.json` as the effective runtime-ready signal. The runtime publishes that manifest only after `smart-contracts` finished its bootstrap path, which avoids startup races even when `/runtime/ready.json` is missing on Phala.
+- The worker uses `/runtime/admission-ready.json` plus
+  `/runtime/contracts.json` to begin DCAP registration, then waits for
+  `/runtime/ready.json` and an active encrypted model bundle before training.
 - The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/dstack.sock` and keeps `/var/run/tappd.sock` only for compatibility.
-- At runtime the worker requires `app_compose` from Phala `info()` and checks its SDK-compatible canonicalization against the live `compose-hash` event as a local consistency preflight. The authoritative policy decision is on-chain: the Registry parses the image digest from the submitted byte preimage before deriving its compose hash.
+- At runtime the worker requires `app_compose` from Phala `info()` and checks its SDK-compatible canonicalization against the live `compose-hash` event as a local consistency preflight. The authoritative decision is on-chain: the Registry derives both the image digest and role policy from the submitted byte preimage before calculating its complete Compose hash.
 - The legacy `tappd.sock` path is not accepted unless it also exposes `app_compose`; otherwise the worker aborts instead of trusting a mock or env-only digest.
 - After changing the worker attestation code, publish a fresh `ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala` image before redeploying the Phala workers, otherwise the running CVMs still use the old logic baked into the last image.
 
@@ -175,8 +211,10 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 
 ## Flow
 
-1. Publish the DFL worker image through the GitHub Actions workflow `Publish DFL Worker Image`.
-   On branches `phala` and `tee_inference`, pushes that touch `dfl/**` trigger the workflow automatically and keep the default `phala` tag.
+1. Publish the combined DFL worker image through the GitHub Actions workflow
+   `Publish DFL Worker Image`. On branches `phala`, `tee_inference`, and
+   `phala_app_key`, changes to either the worker or embedded inference code
+   trigger this workflow and keep the default `phala` tag.
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
@@ -188,7 +226,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:dc32e935b805bdd1a81f14b1941ed06
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d743a41cae4d51160139b1fec60eb425a3c846bf023e2094728c73acc1fcf867
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:e40ab86adfd33f8129d3f34b7b5643716538d38714217b2bf52b2711dea85c95
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
@@ -208,14 +246,30 @@ docker compose down --volumes --remove-orphans
 KEEP_ALIVE=0 docker compose up --build --force-recreate
 ```
 
-During deployment, `starter_docker.sh` requires the digest-pinned `EXPECTED_WORKER_IMAGE` input and configures its SHA-256 value as the single expected worker-image policy. It no longer derives policy from a local Compose file. During registration the worker submits the exact SDK-canonical `app_compose` byte preimage; `DeviceRegistry` first parses `docker_compose_file` and derives the single `services.dfl-worker.image` digest on-chain instead of trusting a worker-supplied digest.
+During deployment, `starter_docker.sh` requires the digest-pinned
+`EXPECTED_WORKER_IMAGE` and two Terraform-rendered policy-reference
+app-composes. It derives their hashes with the Registry's canonical pure
+function, requires distinct training-only and inference-role hashes, and
+owner-provisions them before opening admission. Missing references abort Phala
+startup rather than learning policy from the first worker. The local mock path
+uses two deterministic, source-defined reference profiles instead.
 
 For Phala/dstack, the measured `compose-hash` is not just the SHA-256 of `dstack-compose.template.yml`. In practice there are two related hashes:
 
 - the RTMR3 `compose-hash` event: SHA-256 of the normalized/canonical `app_compose` byte preimage; `phala/app_code.txt` may contain an exported copy for offline inspection
 - the raw compose-file hash: SHA-256 of the `docker_compose_file` text, which can match your local `dstack-compose.template.yml`
 
-Compose hashes may differ between workers. Only after the derived image digest matches the configured policy does the contract calculate `SHA-256` over the submitted `app_compose` bytes. The worker submits ordered structured event fields `(eventType, eventName, eventPayload)`, not trusted precomputed digests. The verifier hashes those fields on-chain with dstack's SHA-384 event serialization, requires the derived hash in the unique `compose-hash` event, replays RTMR3, and compares it with the hardware-signed quote. No compose-hash allowlist is used.
+Compose hashes may differ between workers. The Registry first requires the
+derived image digest and one owner-provisioned role policy. The policy covers
+entrypoint, command, user, mounts and dstack-socket access, capabilities,
+security options, networking, and environment safety. Known per-worker values
+are normalized by environment-key name; fixed and unknown values are hashed.
+Unknown service fields, duplicate environment keys, extra services, and
+top-level bind-volume options fail closed. The contract then calculates
+`SHA-256` over the complete submitted `app_compose` bytes. The verifier hashes
+the structured event fields on-chain, requires that hash in the unique
+`compose-hash` event, replays RTMR3, and compares it with the hardware-signed
+quote.
 
 Independently, bootstrap extracts `MRTD` and `RTMR0`--`RTMR2` from the owner-reviewed dstack reference quote and pins that OS/boot tuple in the verifier. The structured-log selector is fail-closed until this tuple is configured and requires every live worker quote to match it. The reference quote does not pin the worker-specific Compose hash or `RTMR3`; those remain live-derived and may differ between workers.
 
@@ -278,16 +332,31 @@ If only `PHALA_RUNTIME_ENDPOINT_OVERRIDE` is set and it already contains an embe
 
 The on-chain path receives the quote, the exact canonical `app_compose` bytes, and the ordered RTMR3 event fields. It does not accept a worker-provided image identity, compose hash, or precomputed event digest as policy truth.
 
-`DeviceRegistry` strictly derives the Docker image digest first and compares it with `expectedWorkerImageDigest`. Its narrow parser also rejects a second service declaration and YAML flow- or merge-style service declarations. It then computes `SHA-256(app_compose)`. The attestation contract requires the owner-pinned dstack `MRTD`/`RTMR0`--`RTMR2` base-runtime tuple, validates each structured event type, name and payload, computes its SHA-384 digest on-chain, requires exactly one matching `compose-hash` payload, replays the extend chain from the zero RTMR3 value, and requires the result to equal RTMR3 inside the verified quote. The Registry-generated `REPORTDATA` additionally binds the derived image/compose identity to the device address, endpoint metadata, RSA public key, deployment and per-device nonce. No owner-managed address allowlist gates registration; any caller satisfying the attestation and workload policy can register.
+`DeviceRegistry` derives the Docker image digest and `workerPolicyHash`, then
+requires both the configured image and one of the two pre-provisioned role
+policies. It independently computes `SHA-256(app_compose)`. The attestation
+contract requires the owner-pinned dstack `MRTD`/`RTMR0`--`RTMR2` base-runtime
+tuple, validates each structured event, computes its SHA-384 digest on-chain,
+requires exactly one matching `compose-hash` payload, replays the extend chain
+from the zero RTMR3 value, and requires the result to equal RTMR3 inside the
+verified quote. Registry-generated `REPORTDATA` binds the complete Compose
+hash, image digest, role-policy hash, device address, endpoints, participant
+public key, verifier, deployment, and nonce. Any caller satisfying this
+attestation and workload policy can register.
 
-This means worker-specific `app-id`, `instance-id`, and compose measurements may still produce different final RTMR3 values, but those final RTMR3 values no longer need to be known in advance. The shared policy anchor is the digest-pinned worker image reference measured inside each worker's Phala app-compose preimage.
+This means worker-specific `app-id`, `instance-id`, variable environment values,
+and final RTMR3 measurements need not be known in advance. Security-relevant
+Compose changes nevertheless produce a different, non-provisioned role policy,
+while the complete variable Compose remains quote-bound.
 
 ## Next Steps
 
-For the planned Phala layout with one contract-runtime TEE and three worker TEEs, the next practical sequence is:
+For the Phala layout with one contract-runtime TEE and a configurable number of
+worker TEEs, the sequence is:
 
 1. Deploy the contract-runtime TEE with `anvil`, `ipfs`, and `smart-contracts`.
-2. Deploy the three worker TEEs, all using the digest-pinned worker image.
+2. Deploy the selected worker TEEs, all using the same digest-pinned combined
+   worker image. Worker 0 also exposes TEE inference.
 3. Optional: from a worker deployment, export measured artifacts for local consistency checks:
    - the TDX quote into `data/phala_tdx_quote`
    - the RTMR3 event log into `phala/rtmr3_event_log.txt`
@@ -302,7 +371,10 @@ python scripts/verify_phala_rtmr3.py \
   --app-code phala/app_code.txt
 ```
 
-5. After changing the worker image, update `worker_image` and redeploy the contract-runtime so it installs the new expected image digest. Ordinary per-worker Compose differences require no allowlist update.
+5. After changing the worker image or a security-relevant worker template field,
+   update `worker_image` and redeploy the contract runtime so it installs the
+   new image digest and both freshly derived role policies. Normalized
+   per-worker values require no policy change.
 
 Important:
 
@@ -319,17 +391,10 @@ Current Terraform defaults in this scaffold match that target layout:
 - `worker_size = "tdx.small"`
 - `zk_inference_size = "tdx.medium"` (4 GB RAM; the ZK prover does not complete on the 2 GB `tdx.small` profile)
 - `os_image = "dstack-dev-0.5.7"`
-- `tee_inference_image = "ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:78ac15494f71b6edd1df7d06b83cc7138c6157f01d87b968a6906aa62b8a5c9b"`
-- `enable_tee_inference = false` until the updated image has been published
 
-To enable the separate third app:
-
-```bash
-export ENABLE_TEE_INFERENCE=true
-export TEE_INFERENCE_IMAGE=ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:78ac15494f71b6edd1df7d06b83cc7138c6157f01d87b968a6906aa62b8a5c9b
-bash phala/tf-env.sh plan -input=false
-bash phala/tf-env.sh apply -input=false -auto-approve
-```
+TEE inference has no independent image, enable flag, size, disk, or Phala app
+setting. Publishing and selecting `worker_image` updates both Worker 0's DFL
+process and its co-located inference process.
 
 ## Agent, Ollama, and SCITT
 
@@ -354,11 +419,11 @@ OLLAMA_SIZE=tdx.medium
 OLLAMA_API_TOKEN=replace-with-at-least-24-url-safe-characters
 ```
 
-The agent itself does not depend on the TEE-inference app. Chat becomes ready
-as soon as Ollama has loaded the model. Configure `TEE_INFERENCE_URL_OVERRIDE`
-only when the separate inference app is available; until then, only the
-`run_verified_tee_inference` MCP tool reports that its endpoint is not
-configured.
+The agent itself does not wait for inference readiness: chat becomes ready as
+soon as Ollama has loaded the model. For TEE tool calls it reads Worker 0's
+current record from `DeviceRegistry` and uses the registered HTTPS endpoint.
+Set `TEE_INFERENCE_URL_OVERRIDE` only to deliberately bypass that discovery for
+diagnostics.
 
 For receiver-attested confidential receipts on all six public MCP tools,
 generate the Sello key material once and add its output to `.env.phala.anvil`:
@@ -367,8 +432,9 @@ generate the Sello key material once and add its output to `.env.phala.anvil`:
 python phala/generate_sello_env.py --scitt-url https://CONTRACT_APP_ID-8000s.dstack-REGION.phala.network
 ```
 
-The trailing `s` selects dstack-gateway TLS passthrough, so the inference CVMs
-connect directly to SCITT-CCF's own TLS listener without an HTTP proxy.
+The trailing `s` selects dstack-gateway TLS passthrough, so Worker 0 and the
+separate ZK-inference CVM connect directly to SCITT-CCF's own TLS listener
+without an HTTP proxy.
 
 With `ENABLE_SELLO_RECEIPTS=true`, Terraform gives each inference receiver only
 its own signing seed and the token-issuer public key. The agent receives the
@@ -376,4 +442,4 @@ owner token/HPKE private material and a public registry for both receivers. Each
 receiver registers its signed, owner-encrypted receipt directly with SCITT and
 releases the tool response only after verifying the inclusion receipt. Set
 `SELLO_SCITT_URL` to the contract-runtime app's public `-8000s` TLS-passthrough
-URL so the separate inference CVMs can reach SCITT-CCF directly.
+URL so both inference receivers can reach SCITT-CCF directly.

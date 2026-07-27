@@ -18,6 +18,7 @@ from agent.tee_inference_client import (
     _prepare_model,
     fetch_latest_verified_tee_model_bundle,
     generate_random_tee_chestmnist_image,
+    resolve_tee_inference_url,
     run_and_verify_tee_inference,
     verify_tee_inference_bundle,
 )
@@ -63,6 +64,54 @@ class _CborResponse(_JsonResponse):
     def __init__(self, body: bytes) -> None:
         self._body = body
         self.headers = _Headers()
+
+
+class TeeInferenceEndpointTests(unittest.TestCase):
+    def test_explicit_https_endpoint_wins(self) -> None:
+        self.assertEqual(
+            resolve_tee_inference_url("https://worker0-8080.example/"),
+            "https://worker0-8080.example",
+        )
+
+    def test_endpoint_is_discovered_from_registered_w0_identity(self) -> None:
+        environment = {
+            "TEE_INFERENCE_URL": "",
+            "EXPECTED_RUNTIME_RPC_URL": "https://runtime-8545.example",
+            "EXPECTED_DEVICE_REGISTRY_ADDRESS": DEVICE_REGISTRY_ADDRESS,
+            "ACCOUNT_ADDRESS": "0x" + "44" * 20,
+        }
+        with (
+            patch.dict("os.environ", environment, clear=False),
+            patch(
+                "agent.blockchain_source.read_device_record",
+                return_value={"public_ip": "https://worker0-8080.example"},
+            ) as read_device,
+        ):
+            endpoint = resolve_tee_inference_url()
+
+        self.assertEqual(endpoint, "https://worker0-8080.example")
+        read_device.assert_called_once_with(
+            "https://runtime-8545.example",
+            DEVICE_REGISTRY_ADDRESS,
+            "0x" + "44" * 20,
+        )
+
+    def test_non_https_registered_endpoint_is_rejected(self) -> None:
+        environment = {
+            "TEE_INFERENCE_URL": "",
+            "EXPECTED_RUNTIME_RPC_URL": "https://runtime-8545.example",
+            "EXPECTED_DEVICE_REGISTRY_ADDRESS": DEVICE_REGISTRY_ADDRESS,
+            "ACCOUNT_ADDRESS": "0x" + "44" * 20,
+        }
+        with (
+            patch.dict("os.environ", environment, clear=False),
+            patch(
+                "agent.blockchain_source.read_device_record",
+                return_value={"public_ip": "http://worker0.example"},
+            ),
+            self.assertRaisesRegex(TeeInferenceVerificationError, "HTTPS"),
+        ):
+            resolve_tee_inference_url()
 
 
 def _extend(events: list[dict[str, object]]) -> bytes:

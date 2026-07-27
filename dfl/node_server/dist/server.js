@@ -6,8 +6,10 @@ import { fileURLToPath } from 'url';
 import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, incrementRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, recordModelSubmission, closeModelSubmissions, hasSubmittedModel, getModelSubmissionHash, penalizeContribution } from "./bc_client.js";
 import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
+import { loadParticipantKey, materializeParticipantPrivateKey, PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH, } from "./participant_key.js";
+import { dstackHttpsEndpoint } from "./runtime_endpoints.js";
 import fs from 'fs/promises';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import { DstackClient, TappdClient, getComposeHash } from '@phala/dstack-sdk';
 import crypto from 'crypto';
 import http from 'http';
@@ -23,27 +25,9 @@ const activeModelUploadHandlers = new Set();
 const pythonServiceUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
 const modelUploadPort = Number(process.env.MODEL_UPLOAD_PORT || 8001);
 const maxModelUploadBytes = Number(process.env.MODEL_UPLOAD_MAX_BYTES || 25 * 1024 * 1024);
-function loadPemFromEnvOrFile(envName, fileEnvName, fallbackFileName) {
-    const inline = process.env[envName];
-    if (inline && inline.trim()) {
-        return inline.replace(/\\n/g, '\n');
-    }
-    const candidates = [
-        process.env[fileEnvName],
-        path.resolve(__dirname, "..", fallbackFileName),
-    ].filter(Boolean);
-    for (const candidate of candidates) {
-        try {
-            return readFileSync(candidate, 'utf8');
-        }
-        catch {
-            // Try the next configured location.
-        }
-    }
-    return "";
-}
-const rsaPublicKey = loadPemFromEnvOrFile('RSA_PUBLIC_KEY', 'RSA_PUBLIC_KEY_FILE', 'public_key.pem');
-const rsaPrivateKey = loadPemFromEnvOrFile('RSA_PRIVATE_KEY', 'RSA_PRIVATE_KEY_FILE', 'private_key.pem');
+const participantPrivateKeyRuntimePath = process.env.PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH ||
+    PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH;
+let activeParticipantKey;
 let localTdxRegistrationDone = false;
 const timingConfig = deriveTimingConfig(process.env);
 const modelSubmissionDeadlineMs = timingConfig.modelSubmissionDeadlineMs;
@@ -291,12 +275,10 @@ function normalizeHexBytes(input) {
     return `0x${hex}`;
 }
 function rsaPublicKeyDerHex() {
-    if (!rsaPublicKey.trim()) {
-        throw new Error('RSA_PUBLIC_KEY or RSA_PUBLIC_KEY_FILE is required for device registration.');
+    if (!activeParticipantKey) {
+        throw new Error('Participant key has not been initialized.');
     }
-    const key = crypto.createPublicKey(rsaPublicKey);
-    const der = key.export({ format: 'der', type: 'spki' });
-    return `0x${Buffer.from(der).toString('hex')}`;
+    return activeParticipantKey.publicKeyDerHex;
 }
 function modelBytesHash(data) {
     return `0x${crypto.createHash('sha256').update(data).digest('hex')}`;
@@ -346,10 +328,21 @@ function gatewayDomainFromEnvironment() {
     return kuboHost.slice(firstDot + 1);
 }
 function ownModelUploadEndpoint(appId) {
-    const id = String(appId || '').replace(/^app_/, '');
-    if (!/^[0-9a-f]{40}$/i.test(id))
-        throw new Error(`Invalid dstack app_id: ${appId}`);
-    return `https://${id}-${modelUploadPort}.${gatewayDomainFromEnvironment()}`;
+    return dstackHttpsEndpoint({
+        appId,
+        port: modelUploadPort,
+        gatewayDomain: gatewayDomainFromEnvironment(),
+    });
+}
+function teeInferenceEnabled() {
+    return /^(?:1|true|yes)$/i.test(String(process.env.TEE_INFERENCE_ENABLED || '').trim());
+}
+function ownTeeInferenceEndpoint(appId) {
+    return dstackHttpsEndpoint({
+        appId,
+        port: 8080,
+        gatewayDomain: gatewayDomainFromEnvironment(),
+    });
 }
 async function uploadLocalModel(endpoint, deviceId, expectedRound, expectedAggregator, parentModel) {
     const packageBytes = await fs.readFile('./data/lm.bin.enc');
@@ -365,7 +358,10 @@ async function uploadLocalModel(endpoint, deviceId, expectedRound, expectedAggre
         parentSignatureCid: parentModel.sigCid,
         parentKeyBundleCid: parentModel.keyBundleCid,
     });
-    const signature = crypto.sign('sha256', signingPayload, rsaPrivateKey).toString('base64');
+    if (!activeParticipantKey) {
+        throw new Error('Participant key has not been initialized.');
+    }
+    const signature = crypto.sign('sha256', signingPayload, activeParticipantKey.privateKey).toString('base64');
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), modelTransferTimeoutMs);
     try {
@@ -498,6 +494,7 @@ async function handleModelUpload(request, response) {
             device_id: deviceId,
             package_base64: packageBytes.toString('base64'),
             expected_model_sha256: recordedModelHash,
+            private_key: participantPrivateKeyRuntimePath,
         }, { timeoutMs: modelTransferTimeoutMs });
         const modelHash = normalizeHashHex(acceptedModel.model_sha256, 32, "decrypted model SHA-256");
         await recordModelSubmission(expectedRound, deviceId, modelHash);
@@ -834,6 +831,79 @@ async function currentPhalaIdentity() {
     }
     throw new Error('No dstack attestation socket is available');
 }
+function positiveRuntimeDuration(name, fallback, minimum) {
+    const parsed = Number(process.env[name]);
+    if (!Number.isFinite(parsed) || parsed < minimum)
+        return fallback;
+    return Math.floor(parsed);
+}
+async function readRuntimeReadyMarker(timeoutMs) {
+    const kuboApi = String(process.env.KUBO_API || '').trim().replace(/\/+$/, '');
+    if (!kuboApi)
+        throw new Error('KUBO_API is required while waiting for runtime bootstrap');
+    const url = new URL(`${kuboApi}/api/v0/files/read`);
+    url.searchParams.set('arg', '/runtime/ready.json');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            signal: controller.signal,
+        });
+        if (!response.ok) {
+            throw new Error(`Kubo MFS ready marker returned HTTP ${response.status}`);
+        }
+        const value = await response.json();
+        if (!value || value.status !== 'ready') {
+            throw new Error('runtime ready marker does not contain status=ready');
+        }
+        return value;
+    }
+    finally {
+        clearTimeout(timeout);
+    }
+}
+function activeModelBundleIsReady(bundle) {
+    return Boolean(String(bundle?.modelCid || '').trim() &&
+        String(bundle?.sigCid || '').trim() &&
+        String(bundle?.keyBundleCid || '').trim() &&
+        /^0x[0-9a-fA-F]{40}$/.test(String(bundle?.publisher || '')) &&
+        /^0x[0-9a-fA-F]+$/.test(String(bundle?.publisherPublicKeyDerHex || '')) &&
+        String(bundle?.publisherPublicKeyDerHex || '') !== '0x');
+}
+async function waitForRuntimeBootstrapReady() {
+    const timeoutMs = positiveRuntimeDuration('RUNTIME_BOOTSTRAP_TIMEOUT_MS', 10 * 60 * 1000, 1_000);
+    const pollMs = positiveRuntimeDuration('RUNTIME_BOOTSTRAP_POLL_MS', 2_000, 100);
+    const deadline = Date.now() + timeoutMs;
+    let attempt = 0;
+    let lastError;
+    while (Date.now() < deadline) {
+        attempt++;
+        try {
+            const remaining = Math.max(1, deadline - Date.now());
+            await readRuntimeReadyMarker(Math.min(5_000, remaining));
+            const bundle = await getActiveModelBundle();
+            if (!activeModelBundleIsReady(bundle)) {
+                throw new Error('on-chain active model bundle is incomplete');
+            }
+            console.log('Runtime bootstrap is ready and the active model bundle is pollable.', {
+                modelCid: bundle.modelCid,
+                keyBundleCid: bundle.keyBundleCid,
+                publisher: bundle.publisher,
+            });
+            return bundle;
+        }
+        catch (error) {
+            lastError = error;
+            if (attempt === 1 || attempt % 15 === 0) {
+                console.log(`Waiting for the post-admission runtime bootstrap (attempt ${attempt}):`, error?.message || String(error));
+            }
+        }
+        await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+    }
+    throw new Error(`Timed out after ${timeoutMs}ms waiting for the post-admission runtime bootstrap: ` +
+        `${lastError?.message || String(lastError || 'not ready')}`);
+}
 async function expectedWorkerAddresses() {
     const own = String(process.env.ACCOUNT_ADDRESS || '').toLowerCase();
     const authorizedDevices = await getAuthorizedDevices();
@@ -935,11 +1005,11 @@ async function getMissingAuthorizedWorkers() {
     }
     return missing;
 }
-async function hasCurrentDeviceRegistration(publicKey, canonicalAppCompose) {
+async function hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, canonicalAppCompose) {
     const accountAddress = process.env.ACCOUNT_ADDRESS;
     if (!accountAddress || !(await isAuthorized(accountAddress)))
         return false;
-    return isDeviceRegistrationCurrent(accountAddress, publicKey, canonicalAppCompose);
+    return isDeviceRegistrationCurrent(accountAddress, publicIp, brokerIp, publicKey, canonicalAppCompose);
 }
 async function registerWithLocalTdxMock() {
     if (localTdxRegistrationDone || process.env.DOCKER === "phala")
@@ -962,12 +1032,12 @@ async function registerWithLocalTdxMock() {
     }), 'utf8');
     const canonicalAppComposeHex = `0x${canonicalAppCompose.toString('hex')}`;
     const publicKey = rsaPublicKeyDerHex();
-    if (await hasCurrentDeviceRegistration(publicKey, canonicalAppComposeHex)) {
+    const publicIp = process.env.PUBLIC_IP || '';
+    const brokerIp = process.env.MSG_BROKER_IP || '';
+    if (await hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, canonicalAppComposeHex)) {
         console.log('Device already has a bound registration for the current RSA key; reusing it.');
         return;
     }
-    const publicIp = process.env.PUBLIC_IP || '';
-    const brokerIp = process.env.MSG_BROKER_IP || '';
     const reportData = await getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey, canonicalAppComposeHex);
     console.warn('Registering through the LOCAL-ONLY mock TDX verifier; this is not a hardware attestation.');
     await registerDeviceWithTeeQuoteAndRtmr3Events(reportData, [{ eventType: 0x08000001, eventName: 'compose-hash', eventPayload: `0x${'00'.repeat(32)}` }], canonicalAppComposeHex, process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey);
@@ -1111,20 +1181,20 @@ function isMissingRoundKeyError(error) {
     const message = error?.message || String(error || "");
     return message.includes("No wrapped GM round key found");
 }
-async function signFileWithLocalRsaKey(inputPath, outputSignaturePath) {
-    if (!rsaPrivateKey.trim()) {
-        throw new Error("RSA_PRIVATE_KEY is required to sign the round-0 bootstrap rollover model.");
+async function signFileWithParticipantKey(inputPath, outputSignaturePath) {
+    if (!activeParticipantKey) {
+        throw new Error("Participant key has not been initialized.");
     }
     const inputBytes = await fs.readFile(inputPath);
     const signatureBytes = crypto.sign('RSA-SHA256', inputBytes, {
-        key: rsaPrivateKey,
+        key: activeParticipantKey.privateKey,
         padding: crypto.constants.RSA_PKCS1_PADDING,
     });
     await fs.writeFile(outputSignaturePath, signatureBytes);
 }
 async function prepareRoundZeroBootstrapRollover() {
     console.log("Round 0 bootstrap rollover: fetching current encrypted GM bundle.");
-    const fetchedGlobalModel = await getCurrentModel();
+    const fetchedGlobalModel = await getCurrentModel(activeParticipantKey.privateKey);
     const activeGlobalModel = await assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel);
     const sigOk = await verifyDownloadedGlobalModelSignature({
         publicKeyDerHex: activeGlobalModel.publisherPublicKeyDerHex,
@@ -1136,25 +1206,28 @@ async function prepareRoundZeroBootstrapRollover() {
     }
     await fs.mkdir(resultsIIDDir, { recursive: true });
     await fs.copyFile("./data/gm.bin", path.join(resultsIIDDir, "aggregated.bin"));
-    await signFileWithLocalRsaKey(path.join(resultsIIDDir, "aggregated.bin"), path.join(resultsIIDDir, "aggregated.bin.sig"));
+    await signFileWithParticipantKey(path.join(resultsIIDDir, "aggregated.bin"), path.join(resultsIIDDir, "aggregated.bin.sig"));
     console.log("Round 0 bootstrap rollover prepared aggregated.bin + aggregated.bin.sig for encrypted republish.");
 }
 const stateMachine = async () => {
     if (process.env.DOCKER === "phala") {
         const publicKey = rsaPublicKeyDerHex();
         const liveIdentity = await currentPhalaIdentity();
-        if (await hasCurrentDeviceRegistration(publicKey, liveIdentity.canonicalAppCompose)) {
+        const publicIp = teeInferenceEnabled()
+            ? ownTeeInferenceEndpoint(liveIdentity.appId)
+            : process.env.PUBLIC_IP || "";
+        const brokerIp = process.env.MSG_BROKER_IP || "";
+        if (await hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, liveIdentity.canonicalAppCompose)) {
             console.log('Device already has a bound registration for the current RSA key; reusing it.');
         }
         else {
             console.log("Fetching TDX Quote ...");
-            const publicIp = process.env.PUBLIC_IP || "";
-            const brokerIp = process.env.MSG_BROKER_IP || "";
             const { quoteHex, rtmr3EventLog, canonicalAppCompose } = await fetchLivePhalaQuote(async (identity) => getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey, identity.canonicalAppCompose));
             console.log(`Registering with live Phala TDX quote, canonical app_compose and ${rtmr3EventLog.length} RTMR3 events ...`);
             await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventLog, canonicalAppCompose, process.env.ACCOUNT_ADDRESS, publicIp, brokerIp, publicKey);
             console.log("Device registered with onchain TDX quote and RTMR3 event replay verification.");
         }
+        await waitForRuntimeBootstrapReady();
     }
     else {
         await registerWithLocalTdxMock();
@@ -1247,7 +1320,7 @@ const stateMachine = async () => {
                     await runtimeEvent("worker.fetch_global_model.started", { role: "worker" });
                     let fetchedGlobalModel;
                     try {
-                        fetchedGlobalModel = await runOperation("worker.fetch_global_model", { role: "worker" }, () => getCurrentModel());
+                        fetchedGlobalModel = await runOperation("worker.fetch_global_model", { role: "worker" }, () => getCurrentModel(activeParticipantKey.privateKey));
                     }
                     catch (error) {
                         if (!isMissingRoundKeyError(error)) {
@@ -1296,6 +1369,7 @@ const stateMachine = async () => {
                             epochs: Number(process.env.EPOCH),
                             aggregator_public_key_der_hex: await getDevicePublicKey(trainingAggregator),
                             medical_signer_snapshot: medicalSignerSnapshot,
+                            private_key: participantPrivateKeyRuntimePath,
                         }));
                     }
                     catch (e) {
@@ -1440,6 +1514,7 @@ const stateMachine = async () => {
                             source_round: currentRound,
                             expected_models: expected,
                             participant_count: participantCount,
+                            private_key: participantPrivateKeyRuntimePath,
                         }, { timeoutMs: 3 * 60 * 1000 }));
                         const metrics = aggregateResult?.metrics;
                         if (metrics && typeof metrics === "object") {
@@ -1577,7 +1652,7 @@ const stateMachine = async () => {
                             round: finalization.sourceRound,
                         });
                         try {
-                            await runOperation("aggregator.update_global_model", { role: "aggregator", round: finalization.sourceRound }, () => updateGM(finalization.expectedNextRound));
+                            await runOperation("aggregator.update_global_model", { role: "aggregator", round: finalization.sourceRound }, () => updateGM(finalization.expectedNextRound, activeParticipantKey.privateKey));
                         }
                         catch (e) {
                             console.error("Error during updating the global model; keeping UPDATING for retry:", e);
@@ -1849,10 +1924,20 @@ async function waitForRoundAdvance(prevRound, { pollMs = 3000, timeoutMs = 0 } =
 }
 async function runService() {
     try {
+        activeParticipantKey = await loadParticipantKey();
+        await materializeParticipantPrivateKey(activeParticipantKey);
+        console.log("Participant RSA key initialized inside the application TEE.", {
+            source: activeParticipantKey.source,
+            publicKeySha256: crypto
+                .createHash("sha256")
+                .update(activeParticipantKey.publicKeyDer)
+                .digest("hex"),
+        });
         await stateMachine();
     }
     catch (e) {
         console.error('stateMachine error:', e);
+        process.exitCode = 1;
     }
 }
 runService();

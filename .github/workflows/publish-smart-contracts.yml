@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - tee_inference
+      - phala_app_key
     paths:
       - ".dockerignore"
       - "smart_contracts/**"
@@ -41,9 +42,20 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.3.1
+
       - name: Test smart-contract bootstrap helpers
         working-directory: smart_contracts
         run: node --test test/*.test.mjs
+
+      - name: Build and test smart contracts
+        working-directory: smart_contracts
+        run: |
+          forge build
+          forge test -vvv
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

@@ -45,6 +45,13 @@ def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return json.loads(handler.rfile.read(length).decode("utf-8"))
 
 
+def _required_private_key(payload: dict[str, Any]) -> str:
+    value = payload.get("private_key")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("private_key must identify the materialized participant key")
+    return value
+
+
 def _receive_model(payload: dict[str, Any]) -> dict[str, Any]:
     with model_receive_lock:
         device_id = str(payload["device_id"]).lower()
@@ -52,7 +59,10 @@ def _receive_model(payload: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("invalid Ethereum device address")
         int(device_id[2:], 16)
         package = base64.b64decode(str(payload["package_base64"]), validate=True)
-        plain = decrypt_model_package(package, private_key_path(payload.get("private_key")))
+        plain = decrypt_model_package(
+            package,
+            private_key_path(_required_private_key(payload)),
+        )
         model_from_bytes(plain, f"worker model from {device_id}")
         model_sha256 = hashlib.sha256(plain).hexdigest()
         expected_model_sha256 = payload.get("expected_model_sha256")
@@ -156,6 +166,7 @@ class Handler(BaseHTTPRequestHandler):
                     int(payload["epochs"]),
                     str(payload.get("aggregator_public_key_der_hex", "")),
                     payload.get("medical_signer_snapshot"),
+                    private_key=_required_private_key(payload),
                 )
                 _json_response(self, 200, {"ok": True})
                 return
@@ -177,6 +188,7 @@ class Handler(BaseHTTPRequestHandler):
                     source_round=payload.get("source_round"),
                     expected_models=payload.get("expected_models"),
                     participant_count=payload.get("participant_count"),
+                    private_key=_required_private_key(payload),
                 )
                 _json_response(self, 200, {"ok": True, **result})
                 return

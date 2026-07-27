@@ -1,7 +1,5 @@
 import crypto from "crypto";
 import fs from "fs/promises";
-import { readFileSync } from "fs";
-const normalizePem = (value) => value.replace(/\\n/g, "\n").trim();
 const normalizeHex = (value) => {
     const trimmed = String(value || "").trim();
     return trimmed.startsWith("0x") || trimmed.startsWith("0X") ? trimmed.slice(2) : trimmed;
@@ -15,27 +13,11 @@ const toBufferFromBase64 = (value, label) => {
         throw new Error(`Invalid base64 for ${label}: ${message}`);
     }
 };
-const loadPrivateKey = () => {
-    let pem = normalizePem(process.env.RSA_PRIVATE_KEY || "");
-    if (!pem) {
-        const keyFile = process.env.RSA_PRIVATE_KEY_FILE || "/dfl/node_server/private_key.pem";
-        try {
-            pem = normalizePem(readFileSync(keyFile, "utf8"));
-        }
-        catch {
-            pem = "";
-        }
-    }
-    if (!pem) {
-        throw new Error("RSA_PRIVATE_KEY or RSA_PRIVATE_KEY_FILE is required for global model decryption/signing.");
-    }
-    return crypto.createPrivateKey(pem);
-};
 const loadPublicKeyFromDerHex = (publicKeyDerHex) => {
     const der = Buffer.from(normalizeHex(publicKeyDerHex), "hex");
     return crypto.createPublicKey({ key: der, format: "der", type: "spki" });
 };
-export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signaturePath, encryptedBundlePath, encryptedSignaturePath, keyBundlePath, recipients, round, }) => {
+export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signaturePath, encryptedBundlePath, encryptedSignaturePath, keyBundlePath, recipients, round, signingPrivateKey, }) => {
     if (!Array.isArray(recipients)) {
         throw new Error("Recipients for GM encryption must be provided as an array.");
     }
@@ -77,7 +59,7 @@ export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signatureP
     await fs.writeFile(encryptedBundlePath, JSON.stringify(bundleDocument));
     const bundleBytes = await fs.readFile(encryptedBundlePath);
     const signature = crypto.sign("RSA-SHA256", bundleBytes, {
-        key: loadPrivateKey(),
+        key: signingPrivateKey,
         padding: crypto.constants.RSA_PKCS1_PADDING,
     });
     await fs.writeFile(encryptedSignaturePath, signature);
@@ -95,7 +77,7 @@ export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signatureP
         keyBundlePath,
     };
 };
-export const decryptEncryptedGlobalModelArtifacts = async ({ encryptedBundlePath, keyBundlePath, ownAddress, outModelPath, outSignaturePath, }) => {
+export const decryptEncryptedGlobalModelArtifacts = async ({ encryptedBundlePath, keyBundlePath, ownAddress, outModelPath, outSignaturePath, decryptionPrivateKey, }) => {
     const bundleDocument = JSON.parse(await fs.readFile(encryptedBundlePath, "utf8"));
     const keyBundleDocument = JSON.parse(await fs.readFile(keyBundlePath, "utf8"));
     const normalizedAddress = String(ownAddress || "").toLowerCase();
@@ -103,9 +85,8 @@ export const decryptEncryptedGlobalModelArtifacts = async ({ encryptedBundlePath
     if (!wrapped) {
         throw new Error(`No wrapped GM round key found for participant ${ownAddress}.`);
     }
-    const privateKey = loadPrivateKey();
     const keyIv = crypto.privateDecrypt({
-        key: privateKey,
+        key: decryptionPrivateKey,
         padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
         oaepHash: "sha256",
     }, toBufferFromBase64(wrapped, "wrapped GM round key"));

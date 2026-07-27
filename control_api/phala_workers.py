@@ -42,8 +42,6 @@ class WorkerIdentity:
     slot: int
     account_address: str
     private_key: str
-    rsa_private_key: str
-    rsa_public_key: str
 
     @property
     def key(self) -> str:
@@ -58,8 +56,6 @@ class WorkerIdentity:
             "app_name": self.app_name,
             "account_address": self.account_address,
             "private_key": self.private_key,
-            "rsa_private_key": self.rsa_private_key,
-            "rsa_public_key": self.rsa_public_key,
             "device_id": self.slot,
         }
 
@@ -97,6 +93,10 @@ class WorkerDeploymentConfig:
     python_service_url: str = "http://127.0.0.1:8000"
     public_ip: str = "127.0.0.1"
     msg_broker_ip: str = "127.0.0.1"
+    sello_required: bool = False
+    sello_scitt_url: str = ""
+    sello_tee_service_signing_seed: str = ""
+    sello_token_issuer_public_key: str = ""
 
     def terraform_values(self) -> dict[str, Any]:
         values = asdict(self)
@@ -109,13 +109,6 @@ class WorkerTerraformRunner(Protocol):
     def apply(self, workers: dict[str, dict[str, Any]]) -> dict[str, Any]: ...
 
     def status(self) -> dict[str, Any]: ...
-
-
-def _pem(value: Any, name: str) -> str:
-    text = str(value or "").replace("\\n", "\n").strip()
-    if not text.startswith("-----BEGIN ") or not text.endswith("-----"):
-        raise WorkerConfigurationError(f"{name} is not a PEM value")
-    return text
 
 
 def dynamic_worker_inventory_json_from_environment(
@@ -215,8 +208,6 @@ def load_worker_inventory(raw: str, *, maximum: int = MAX_WORKERS) -> tuple[Work
                 slot=slot,
                 account_address=address,
                 private_key=private_key,
-                rsa_private_key=_pem(record.get("rsa_private_key"), f"worker{slot} RSA private key"),
-                rsa_public_key=_pem(record.get("rsa_public_key"), f"worker{slot} RSA public key"),
             )
         )
 
@@ -476,6 +467,17 @@ def controller_from_environment() -> PhalaWorkerController:
         python_service_url=os.environ.get("PYTHON_SERVICE_URL", "http://127.0.0.1:8000"),
         public_ip=os.environ.get("PUBLIC_IP", "127.0.0.1"),
         msg_broker_ip=os.environ.get("MSG_BROKER_IP", "127.0.0.1"),
+        sello_required=os.environ.get("DYNAMIC_WORKER_SELLO_REQUIRED", "0").lower()
+        in {"1", "true", "yes"},
+        sello_scitt_url=os.environ.get("DYNAMIC_WORKER_SELLO_SCITT_URL", ""),
+        sello_tee_service_signing_seed=os.environ.get(
+            "DYNAMIC_WORKER_SELLO_TEE_SERVICE_SIGNING_SEED",
+            "",
+        ),
+        sello_token_issuer_public_key=os.environ.get(
+            "DYNAMIC_WORKER_SELLO_TOKEN_ISSUER_PUBLIC_KEY",
+            "",
+        ),
     )
     repository_root = Path(__file__).resolve().parents[1]
     module_dir = Path(os.environ.get("DYNAMIC_WORKER_TERRAFORM_MODULE", repository_root / "phala/dynamic-workers"))

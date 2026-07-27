@@ -7,6 +7,24 @@ import test from "node:test";
 
 
 const script = readFileSync(new URL("../starter_docker.sh", import.meta.url), "utf8");
+const encryptedBootstrapScript = readFileSync(
+  new URL("../bootstrap_encrypted_gm.mjs", import.meta.url),
+  "utf8",
+);
+const phalaMain = readFileSync(new URL("../../phala/main.tf", import.meta.url), "utf8");
+const contractsComposeTemplate = readFileSync(
+  new URL("../../phala/dstack-compose.contracts.phala.tftpl", import.meta.url),
+  "utf8",
+);
+const localCompose = readFileSync(new URL("../../compose.yml", import.meta.url), "utf8");
+const staticWorkerTemplate = readFileSync(
+  new URL("../../phala/dstack-compose.worker.phala.tftpl", import.meta.url),
+  "utf8",
+);
+const dynamicWorkerTemplate = readFileSync(
+  new URL("../../phala/dynamic-workers/worker-compose.tftpl", import.meta.url),
+  "utf8",
+);
 
 function shellFunction(name) {
   const start = script.indexOf(`${name}() {`);
@@ -95,4 +113,139 @@ test("address validation rejects a multi-line value", () => {
 
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, /Invalid MEDICAL_SIGNER_REGISTRY_ADDRESS address/);
+});
+
+test("runtime publishes admission metadata before bootstrap and readiness afterward", () => {
+  const imagePolicy = script.lastIndexOf("setExpectedWorkerImageDigest(bytes32)");
+  const rolePolicies = script.lastIndexOf("\nprovision_worker_policy_hashes\n");
+  const contracts = script.lastIndexOf("\npublish_runtime_contract_manifest\n");
+  const admission = script.lastIndexOf("\npublish_runtime_admission_ready_marker\n");
+  const declaration = script.lastIndexOf("\nwait_for_bootstrap_recipient_declaration\n");
+  const bootstrap = script.lastIndexOf("\nprepare_encrypted_initial_gm\n");
+  const ready = script.lastIndexOf("\npublish_runtime_ready_marker\n");
+
+  assert.notEqual(imagePolicy, -1);
+  assert.notEqual(rolePolicies, -1);
+  assert.notEqual(contracts, -1);
+  assert.notEqual(admission, -1);
+  assert.notEqual(declaration, -1);
+  assert.notEqual(bootstrap, -1);
+  assert.notEqual(ready, -1);
+  assert.ok(imagePolicy < contracts, "worker image policy must precede admission");
+  assert.ok(imagePolicy < rolePolicies, "image policy must precede role-policy provisioning");
+  assert.ok(rolePolicies < contracts, "role-policy provisioning must precede admission");
+  assert.ok(contracts < admission, "contract manifest must precede admission marker");
+  assert.ok(admission < declaration, "admission marker must precede recipient declaration");
+  assert.ok(declaration < bootstrap, "recipient declaration must precede encrypted bootstrap");
+  assert.ok(bootstrap < ready, "ready marker must follow encrypted bootstrap");
+});
+
+test("worker policies are pre-rendered from the dynamic worker template", () => {
+  assert.match(
+    phalaMain,
+    /dynamic-workers\/worker-compose\.tftpl[\s\S]*inference_enabled = false/,
+  );
+  assert.match(
+    phalaMain,
+    /dynamic-workers\/worker-compose\.tftpl[\s\S]*inference_enabled = true/,
+  );
+  assert.match(phalaMain, /TRAINING_WORKER_POLICY_APP_COMPOSE_B64\s*=\s*base64encode/);
+  assert.match(phalaMain, /INFERENCE_WORKER_POLICY_APP_COMPOSE_B64\s*=\s*base64encode/);
+  assert.match(
+    contractsComposeTemplate,
+    /TRAINING_WORKER_POLICY_APP_COMPOSE_B64: "\$\$\{TRAINING_WORKER_POLICY_APP_COMPOSE_B64\}"/,
+  );
+  assert.match(
+    contractsComposeTemplate,
+    /INFERENCE_WORKER_POLICY_APP_COMPOSE_B64: "\$\$\{INFERENCE_WORKER_POLICY_APP_COMPOSE_B64\}"/,
+  );
+});
+
+test("static and dynamic worker templates cannot drift outside variable telemetry", () => {
+  const normalize = (template) => template
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#") && line.trim() !== "")
+    .map((line) => line.startsWith("      DFL_TELEMETRY_URL:")
+      ? "      DFL_TELEMETRY_URL: <variable>"
+      : line)
+    .join("\n");
+  assert.equal(normalize(staticWorkerTemplate), normalize(dynamicWorkerTemplate));
+});
+
+test("worker policy derivation rejects missing pre-provisioned input", () => {
+  const result = runFunction(
+    "derive_worker_policy_hash",
+    'derive_worker_policy_hash "training-only" ""',
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /refusing trust-on-first-use/);
+});
+
+test("local mock derives deterministic policy references without weakening Phala", () => {
+  const digest = "78".repeat(32);
+  const result = runFunction(
+    "configure_local_mock_worker_policy_references",
+    [
+      "LOCAL_TDX_MOCK=1",
+      `EXPECTED_WORKER_IMAGE_DIGEST=${digest}`,
+      "configure_local_mock_worker_policy_references",
+      "printf '%s\\n%s\\n' \"$TRAINING_WORKER_POLICY_APP_COMPOSE_B64\" \"$INFERENCE_WORKER_POLICY_APP_COMPOSE_B64\"",
+    ].join("\n"),
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const [training, inference] = result.stdout.trim().split("\n");
+  assert.ok(training);
+  assert.ok(inference);
+  assert.notEqual(training, inference);
+  const decodedTraining = JSON.parse(Buffer.from(training, "base64").toString("utf8"));
+  assert.match(
+    decodedTraining.docker_compose_file,
+    new RegExp(`local/dfl-worker@sha256:${digest}`),
+  );
+  assert.doesNotMatch(decodedTraining.docker_compose_file, /ports:/);
+  assert.match(
+    JSON.parse(Buffer.from(inference, "base64").toString("utf8")).docker_compose_file,
+    /ports:\n\s+- "8080:8080"/,
+  );
+  assert.match(localCompose, /TRAINING_WORKER_POLICY_APP_COMPOSE_B64:/);
+  assert.match(localCompose, /INFERENCE_WORKER_POLICY_APP_COMPOSE_B64:/);
+});
+
+test("stale bootstrap markers are all cleared before deployment", () => {
+  const result = runFunction(
+    "clear_runtime_bootstrap_markers",
+    [
+      "IPFS_PROVIDER=kubo",
+      "KUBO_API_URL=http://kubo:5001",
+      "curl() { printf '%s\\n' \"$*\" >&2; }",
+      "clear_runtime_bootstrap_markers",
+    ].join("\n"),
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stderr.includes("arg=/runtime/contracts.json"));
+  assert.ok(result.stderr.includes("arg=/runtime/admission-ready.json"));
+  assert.ok(result.stderr.includes("arg=/runtime/bootstrap-recipients.json"));
+  assert.ok(result.stderr.includes("arg=/runtime/ready.json"));
+});
+
+test("encrypted bootstrap uses only live DeviceRegistry recipients", () => {
+  assert.doesNotMatch(encryptedBootstrapScript, /DYNAMIC_WORKER_INVENTORY/);
+  assert.doesNotMatch(encryptedBootstrapScript, /--bootstrap-address/);
+  assert.doesNotMatch(encryptedBootstrapScript, /--bootstrap-public-key/);
+  assert.doesNotMatch(script, /INITIAL_BOOTSTRAP_RECIPIENT/);
+  assert.match(encryptedBootstrapScript, /waitForBootstrapRecipients/);
+  assert.match(encryptedBootstrapScript, /loadRecipientsFromRegistry/);
+  assert.match(encryptedBootstrapScript, /--required-recipients-file/);
+});
+
+test("bootstrap wait settings are forwarded with safe defaults", () => {
+  const bootstrapFunction = shellFunction("prepare_encrypted_initial_gm");
+
+  assert.match(bootstrapFunction, /BOOTSTRAP_MIN_RECIPIENTS:-1/);
+  assert.match(bootstrapFunction, /BOOTSTRAP_REGISTRATION_SETTLE_SECONDS:-0/);
+  assert.match(bootstrapFunction, /BOOTSTRAP_REGISTRATION_TIMEOUT_SECONDS:-900/);
+  assert.match(bootstrapFunction, /BOOTSTRAP_REGISTRATION_POLL_SECONDS:-2/);
+  assert.match(bootstrapFunction, /--minimum-recipients/);
+  assert.match(bootstrapFunction, /--registration-settle-seconds/);
 });

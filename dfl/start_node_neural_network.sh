@@ -1,12 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PYTHON_PID=""
+TEE_INFERENCE_PID=""
+NODE_PID=""
+RUNTIME_ENV_FILE=""
+
 cleanup() {
-    if [ -n "${PYTHON_PID:-}" ]; then
-        kill "$PYTHON_PID" 2>/dev/null || true
+    local status=$?
+    trap - INT TERM EXIT
+    local pid
+    for pid in "${NODE_PID}" "${TEE_INFERENCE_PID}" "${PYTHON_PID}"; do
+        if [ -n "${pid}" ]; then
+            kill "${pid}" 2>/dev/null || true
+        fi
+    done
+    for pid in "${NODE_PID}" "${TEE_INFERENCE_PID}" "${PYTHON_PID}"; do
+        if [ -n "${pid}" ]; then
+            wait "${pid}" 2>/dev/null || true
+        fi
+    done
+    if [ -n "${RUNTIME_ENV_FILE}" ]; then
+        rm -f "${RUNTIME_ENV_FILE}"
     fi
+    exit "${status}"
 }
-trap cleanup INT TERM EXIT
+
+terminate() {
+    exit 143
+}
+
+trap terminate INT TERM
+trap cleanup EXIT
+
+inference_enabled() {
+    case "${TEE_INFERENCE_ENABLED:-0}" in
+        1|true|TRUE|yes|YES) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH=${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH:-/run/vita-fl/participant-private.pem}
+PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH=${PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH:-/run/vita-fl/participant-public.pem}
+if [ "${DOCKER:-}" != "phala" ] && [ "${PARTICIPANT_KEY_PROVIDER:-}" = "file" ]; then
+    export PARTICIPANT_RSA_PRIVATE_KEY_FILE=${PARTICIPANT_RSA_PRIVATE_KEY_FILE:-${RSA_PRIVATE_KEY_FILE:-}}
+fi
+rm -f "${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH}" "${PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH}"
 
 DATASET_NAME=${DATASET_NAME:-mnist}
 BOOTSTRAP_MODEL_SRC=${BOOTSTRAP_MODEL_SRC:-/dfl/initial_gm/${DATASET_NAME}/aggregated.bin}
@@ -44,39 +83,6 @@ case "$DATASET_NAME" in
 esac
 
 cp "${BOOTSTRAP_MODEL_SRC}" /dfl/node_server/data/random_start.bin
-if { [ -n "${RSA_PRIVATE_KEY:-}" ] && [ -z "${RSA_PUBLIC_KEY:-}" ]; } || \
-   { [ -z "${RSA_PRIVATE_KEY:-}" ] && [ -n "${RSA_PUBLIC_KEY:-}" ]; }; then
-    echo "RSA_PRIVATE_KEY and RSA_PUBLIC_KEY must be supplied together." >&2
-    exit 1
-fi
-
-if [ -n "${RSA_PRIVATE_KEY:-}" ]; then
-    "${PYTHON_BIN}" - <<'PY'
-import os
-from pathlib import Path
-
-for env_name, out_path, mode in (
-    ("RSA_PRIVATE_KEY", "/dfl/node_server/private_key.pem", 0o600),
-    ("RSA_PUBLIC_KEY", "/dfl/node_server/public_key.pem", 0o644),
-):
-    value = os.environ.get(env_name)
-    if value:
-        path = Path(out_path)
-        path.write_text(value.replace("\\n", "\n"), encoding="utf-8")
-        path.chmod(mode)
-PY
-else
-    : "${RSA_PRIVATE_KEY_FILE:?Set RSA_PRIVATE_KEY/RSA_PUBLIC_KEY or RSA_PRIVATE_KEY_FILE/RSA_PUBLIC_KEY_FILE}"
-    : "${RSA_PUBLIC_KEY_FILE:?Set RSA_PRIVATE_KEY/RSA_PUBLIC_KEY or RSA_PRIVATE_KEY_FILE/RSA_PUBLIC_KEY_FILE}"
-    if [ ! -f "${RSA_PRIVATE_KEY_FILE}" ] || [ ! -f "${RSA_PUBLIC_KEY_FILE}" ]; then
-        echo "Configured RSA key files are missing; generate or mount the local development keys first." >&2
-        exit 1
-    fi
-    cp "${RSA_PRIVATE_KEY_FILE}" /dfl/node_server/private_key.pem
-    cp "${RSA_PUBLIC_KEY_FILE}" /dfl/node_server/public_key.pem
-    chmod 600 /dfl/node_server/private_key.pem
-    chmod 644 /dfl/node_server/public_key.pem
-fi
 
 "${PYTHON_BIN}" /dfl/neural_network/start_service.py 2> >(grep -v "Could not initialize NNPACK" >&2) &
 PYTHON_PID=$!
@@ -97,7 +103,6 @@ PY
 
 RUNTIME_ENV_FILE=$(mktemp)
 export RUNTIME_ENV_FILE
-trap 'rm -f "${RUNTIME_ENV_FILE}"' EXIT
 
 "${PYTHON_BIN}" - <<'PY'
 import json
@@ -136,7 +141,7 @@ if any(missing(value) for value in expected_contracts.values()) or missing(expec
     )
 
 kubo_api = (os.environ.get("KUBO_API") or "").rstrip("/")
-runtime_ready = None
+admission_ready = None
 manifest = None
 if kubo_api:
     manifest_deadline = time.time() + 600
@@ -155,10 +160,10 @@ if kubo_api:
             time.sleep(2)
         raise SystemExit(f"Timed out waiting for valid runtime data via {url}")
 
-    print("Waiting for contract runtime ready marker ...", flush=True)
-    runtime_ready = read_mfs_json(
-        "/runtime/ready.json",
-        lambda value: value.get("status") == "ready",
+    print("Waiting for contract runtime admission marker ...", flush=True)
+    admission_ready = read_mfs_json(
+        "/runtime/admission-ready.json",
+        lambda value: value.get("status") == "admission-ready",
     )
     manifest = read_mfs_json(
         "/runtime/contracts.json",
@@ -246,7 +251,7 @@ if live_chain_id != expected_chain_id:
         f"RPC chain ID {live_chain_id} does not match measured policy {expected_chain_id}"
     )
 for source, value in (
-    ("runtime ready marker", runtime_ready),
+    ("runtime admission marker", admission_ready),
     ("runtime contract manifest", manifest),
 ):
     if value is None:
@@ -303,6 +308,111 @@ PY
 # validated values into the shell environment inherited by Node.
 source "${RUNTIME_ENV_FILE}"
 rm -f "${RUNTIME_ENV_FILE}"
-trap - EXIT
+RUNTIME_ENV_FILE=""
 
-exec node /dfl/node_server/dist/server.js
+# The Node process is the single owner of participant-key initialization. On
+# Phala it derives the wrapping key through dstack.sock, unseals or creates the
+# RSA key, and materializes only run-scoped PEM files for the co-located
+# services. Local development follows the same runtime-file boundary after
+# loading its explicitly configured fixture key.
+export RSA_PRIVATE_KEY_FILE="${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH}"
+export RSA_PUBLIC_KEY_FILE="${PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH}"
+
+node /dfl/node_server/dist/server.js &
+NODE_PID=$!
+
+if inference_enabled; then
+    key_deadline=$((SECONDS + 60))
+    while [ ! -s "${RSA_PRIVATE_KEY_FILE}" ] || [ ! -s "${RSA_PUBLIC_KEY_FILE}" ]; do
+        if ! kill -0 "${NODE_PID}" 2>/dev/null; then
+            set +e
+            wait "${NODE_PID}"
+            node_status=$?
+            set -e
+            NODE_PID=""
+            echo "DFL worker exited before materializing its participant key." >&2
+            [ "${node_status}" -ne 0 ] || node_status=1
+            exit "${node_status}"
+        fi
+        if [ "${SECONDS}" -ge "${key_deadline}" ]; then
+            echo "Timed out waiting for the DFL worker to materialize its participant key." >&2
+            exit 1
+        fi
+        sleep 0.2
+    done
+
+    mkdir -p "${TEE_MODEL_DIR:-/tmp/tee-inference/model}" "${TEE_JOB_DIR:-/tmp/tee-inference/jobs}"
+    "${PYTHON_BIN}" -m tee_inference.service &
+    TEE_INFERENCE_PID=$!
+
+    "${PYTHON_BIN}" - <<'PY'
+import time
+import urllib.request
+
+deadline = time.time() + 60
+while time.time() < deadline:
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8080/healthz", timeout=2) as response:
+            if response.status == 200:
+                raise SystemExit(0)
+    except Exception:
+        time.sleep(1)
+raise SystemExit("TEE inference service did not become healthy")
+PY
+    echo "TEE inference service listening on http://0.0.0.0:8080 (model loading remains tool-triggered)."
+fi
+
+if inference_enabled; then
+    set +e
+    wait -n "${NODE_PID}" "${PYTHON_PID}" "${TEE_INFERENCE_PID}"
+    first_status=$?
+    set -e
+
+    if ! kill -0 "${PYTHON_PID}" 2>/dev/null; then
+        PYTHON_PID=""
+        echo "Python ML service exited while the combined worker was running." >&2
+        [ "${first_status}" -ne 0 ] || first_status=1
+        exit "${first_status}"
+    fi
+    if ! kill -0 "${TEE_INFERENCE_PID}" 2>/dev/null; then
+        TEE_INFERENCE_PID=""
+        echo "TEE inference service exited while the combined worker was running." >&2
+        [ "${first_status}" -ne 0 ] || first_status=1
+        exit "${first_status}"
+    fi
+    if kill -0 "${NODE_PID}" 2>/dev/null; then
+        echo "Combined worker supervisor lost an unknown child process." >&2
+        exit 1
+    fi
+
+    NODE_PID=""
+    if [ "${first_status}" -ne 0 ]; then
+        echo "DFL worker process exited with status ${first_status}." >&2
+        exit "${first_status}"
+    fi
+
+    echo "DFL training process completed; stopping the training-only Python service."
+    kill "${PYTHON_PID}" 2>/dev/null || true
+    wait "${PYTHON_PID}" 2>/dev/null || true
+    PYTHON_PID=""
+    echo "Keeping only the TEE inference receiver available."
+    set +e
+    wait "${TEE_INFERENCE_PID}"
+    inference_status=$?
+    set -e
+    TEE_INFERENCE_PID=""
+    exit "${inference_status}"
+fi
+
+set +e
+wait -n "${NODE_PID}" "${PYTHON_PID}"
+first_status=$?
+set -e
+if ! kill -0 "${PYTHON_PID}" 2>/dev/null; then
+    PYTHON_PID=""
+    echo "Python ML service exited while the DFL worker was running." >&2
+    [ "${first_status}" -ne 0 ] || first_status=1
+    exit "${first_status}"
+fi
+NODE_PID=""
+exit "${first_status}"

@@ -70,6 +70,62 @@ class TeeInferenceVerificationError(RuntimeError):
     """The remote result or its evidence failed a mandatory verification."""
 
 
+def resolve_tee_inference_url(endpoint: str | None = None) -> str:
+    configured = (endpoint or os.environ.get("TEE_INFERENCE_URL") or "").strip()
+    if not configured:
+        try:
+            from .blockchain_source import read_device_record
+        except ImportError:
+            from blockchain_source import read_device_record
+
+        rpc_url = (
+            os.environ.get("EXPECTED_RUNTIME_RPC_URL")
+            or os.environ.get("RPC_URL")
+            or ""
+        ).strip()
+        registry_address = (
+            os.environ.get("EXPECTED_DEVICE_REGISTRY_ADDRESS")
+            or os.environ.get("REGISTRY_ADDRESS")
+            or ""
+        ).strip()
+        participant_address = (
+            os.environ.get("TEE_INFERENCE_PARTICIPANT_ADDRESS")
+            or os.environ.get("ACCOUNT_ADDRESS")
+            or ""
+        ).strip()
+        if not rpc_url or not registry_address or not participant_address:
+            raise TeeInferenceVerificationError(
+                "TEE inference endpoint is not configured and its registered participant identity cannot be resolved"
+            )
+        try:
+            configured = str(
+                read_device_record(
+                    rpc_url,
+                    registry_address,
+                    participant_address,
+                )["public_ip"]
+            ).strip()
+        except (KeyError, RuntimeError, ValueError) as exc:
+            raise TeeInferenceVerificationError(
+                f"registered TEE inference endpoint resolution failed: {exc}"
+            ) from exc
+
+    parts = urllib.parse.urlsplit(configured)
+    if (
+        parts.scheme != "https"
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+        or parts.path not in {"", "/"}
+    ):
+        raise TeeInferenceVerificationError(
+            "TEE inference endpoint must be an origin-only HTTPS URL"
+        )
+    return configured.rstrip("/")
+
+
 def _read_limited(response: Any, limit: int, name: str) -> bytes:
     raw = response.read(limit + 1)
     if len(raw) > limit:
@@ -154,9 +210,7 @@ def fetch_latest_verified_tee_model_bundle(
 ) -> dict[str, Any]:
     """Make the TEE fetch, decrypt, and verify the current on-chain model bundle."""
 
-    base_url = (endpoint or DEFAULT_TEE_INFERENCE_URL).rstrip("/")
-    if not base_url:
-        raise TeeInferenceVerificationError("TEE_INFERENCE_URL is not configured")
+    base_url = resolve_tee_inference_url(endpoint)
     prepared = _json_request(
         base_url,
         "/v1/models/fetch",
@@ -177,9 +231,7 @@ def generate_random_tee_chestmnist_image(
 ) -> dict[str, Any]:
     """Create a model-bound ChestMNIST job inside the TEE container."""
 
-    base_url = (endpoint or DEFAULT_TEE_INFERENCE_URL).rstrip("/")
-    if not base_url:
-        raise TeeInferenceVerificationError("TEE_INFERENCE_URL is not configured")
+    base_url = resolve_tee_inference_url(endpoint)
     job = _json_request(
         base_url,
         "/v1/jobs",
@@ -621,9 +673,7 @@ def run_and_verify_tee_inference(
 ) -> dict[str, Any]:
     """Run one prepared TEE job, verify all evidence, and register it with SCITT."""
 
-    base_url = (endpoint or DEFAULT_TEE_INFERENCE_URL).rstrip("/")
-    if not base_url:
-        raise TeeInferenceVerificationError("TEE_INFERENCE_URL is not configured")
+    base_url = resolve_tee_inference_url(endpoint)
     if not re.fullmatch(r"[0-9a-f]{32}", str(job_id)):
         raise TeeInferenceVerificationError("job_id must contain exactly 32 lowercase hexadecimal characters")
 

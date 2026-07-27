@@ -162,6 +162,21 @@ def _available_worker_services(compose_file: Path = TRAINING_COMPOSE_FILE) -> li
     return [name for _, name in services]
 
 
+def local_worker_addresses(worker_services: list[str]) -> list[str]:
+    values = read_env_values()
+    addresses: list[str] = []
+    for service_name in worker_services:
+        match = re.fullmatch(r"VM-(\d+)", service_name)
+        if match is None:
+            raise RuntimeError(f"invalid worker service name: {service_name}")
+        env_name = f"W{int(match.group(1))}_ACCOUNT_ADDRESS"
+        address = values.get(env_name, "").strip()
+        if not re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
+            raise RuntimeError(f"{env_name} is missing or invalid")
+        addresses.append(address)
+    return addresses
+
+
 def read_env_values(env_file: Path = TRAINING_ENV_FILE) -> dict[str, str]:
     values: dict[str, str] = {}
     if env_file.exists():
@@ -1268,6 +1283,215 @@ async def wait_for_docker_container_exit_success(
     raise RuntimeError(f"Timed out waiting for {service_name} to exit successfully. Last state: {last_state}")
 
 
+def read_runtime_mfs_marker(path: str) -> dict[str, Any]:
+    if not path.startswith("/runtime/"):
+        raise ValueError("runtime marker path must stay below /runtime")
+    kubo_api = os.environ.get(
+        "CONTROL_RUNTIME_KUBO_API_URL",
+        "http://ipfs:5001",
+    ).strip().rstrip("/")
+    if not kubo_api:
+        raise RuntimeError("CONTROL_RUNTIME_KUBO_API_URL is empty")
+    marker_url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote(path, safe="")
+    request = urllib.request.Request(marker_url, data=b"", method="POST")
+    with urllib.request.urlopen(request, timeout=5.0) as response:
+        value = json.loads(response.read().decode("utf-8"))
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{path} is not a JSON object")
+    return value
+
+
+def write_runtime_mfs_marker(path: str, value: dict[str, Any]) -> dict[str, Any]:
+    if not path.startswith("/runtime/"):
+        raise ValueError("runtime marker path must stay below /runtime")
+    if not isinstance(value, dict):
+        raise ValueError("runtime marker value must be a JSON object")
+
+    kubo_api = os.environ.get(
+        "CONTROL_RUNTIME_KUBO_API_URL",
+        "http://ipfs:5001",
+    ).strip().rstrip("/")
+    if not kubo_api:
+        raise RuntimeError("CONTROL_RUNTIME_KUBO_API_URL is empty")
+
+    mkdir_url = kubo_api + "/api/v0/files/mkdir?" + urllib.parse.urlencode(
+        {"arg": "/runtime", "parents": "true"}
+    )
+    mkdir_request = urllib.request.Request(mkdir_url, data=b"", method="POST")
+    try:
+        with urllib.request.urlopen(mkdir_request, timeout=10.0):
+            pass
+    except urllib.error.HTTPError as exc:
+        if exc.code != 500:
+            raise
+
+    boundary = "----master-thesis-" + secrets.token_hex(16)
+    document = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="marker.json"\r\n'
+        "Content-Type: application/json\r\n\r\n"
+    ).encode("ascii") + document + f"\r\n--{boundary}--\r\n".encode("ascii")
+    write_url = kubo_api + "/api/v0/files/write?" + urllib.parse.urlencode(
+        {
+            "arg": path,
+            "create": "true",
+            "truncate": "true",
+            "parents": "true",
+        }
+    )
+    request = urllib.request.Request(
+        write_url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(request, timeout=15.0):
+        pass
+    return value
+
+
+def publish_bootstrap_recipient_declaration(addresses: list[str]) -> dict[str, Any]:
+    if not addresses:
+        raise ValueError("at least one bootstrap recipient address is required")
+
+    normalized = []
+    for index, address in enumerate(addresses):
+        candidate = str(address).strip().lower()
+        if not re.fullmatch(r"0x[a-f0-9]{40}", candidate):
+            raise ValueError(f"bootstrap recipient {index} has an invalid address")
+        normalized.append(candidate)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("bootstrap recipient addresses must be unique")
+
+    admission_marker = read_runtime_mfs_marker("/runtime/admission-ready.json")
+    if admission_marker.get("status") != "admission-ready":
+        raise RuntimeError("runtime is not ready to admit the declared workers")
+    chain_id = str(admission_marker.get("chain_id", "")).strip()
+    if not chain_id.isdigit():
+        raise RuntimeError("runtime admission marker has an invalid chain_id")
+
+    declaration = {
+        "status": "declared",
+        "chain_id": chain_id,
+        "registry_address": admission_marker.get("registry_address"),
+        "expected_worker_image_digest": admission_marker.get(
+            "expected_worker_image_digest"
+        ),
+        "recipients": normalized,
+        "worker_count": len(normalized),
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    return write_runtime_mfs_marker(
+        "/runtime/bootstrap-recipients.json",
+        declaration,
+    )
+
+
+async def wait_for_runtime_admission_ready(
+    container_id: str,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_error: Exception | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        state = await inspect_docker_container(container_id, "smart-contracts")
+        if not state["running"]:
+            raise RuntimeError(
+                "smart-contracts stopped before publishing the worker-admission marker: "
+                f"{state}"
+            )
+        try:
+            marker = await asyncio.to_thread(
+                read_runtime_mfs_marker,
+                "/runtime/admission-ready.json",
+            )
+            if marker.get("status") == "admission-ready":
+                return {
+                    **state,
+                    "phase": "admission-ready",
+                    "admission_marker": marker,
+                }
+            last_error = RuntimeError(
+                "runtime admission marker does not contain status=admission-ready"
+            )
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            json.JSONDecodeError,
+            OSError,
+            RuntimeError,
+        ) as exc:
+            last_error = exc
+        await asyncio.sleep(2)
+    raise RuntimeError(
+        "Timed out waiting for smart-contract worker admission readiness. "
+        f"Last error: {last_error}"
+    )
+
+
+async def wait_for_local_runtime_admission_ready(
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_error: Exception | None = None
+    while asyncio.get_running_loop().time() < deadline:
+        state = await inspect_service("smart-contracts")
+        if not state["running"]:
+            raise RuntimeError(
+                "smart-contracts stopped before publishing the worker-admission marker: "
+                f"{state}"
+            )
+        try:
+            marker = await asyncio.to_thread(
+                read_runtime_mfs_marker,
+                "/runtime/admission-ready.json",
+            )
+            if marker.get("status") == "admission-ready":
+                return {
+                    **state,
+                    "phase": "admission-ready",
+                    "admission_marker": marker,
+                }
+            last_error = RuntimeError(
+                "runtime admission marker does not contain status=admission-ready"
+            )
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            json.JSONDecodeError,
+            OSError,
+            RuntimeError,
+        ) as exc:
+            last_error = exc
+        await asyncio.sleep(2)
+    raise RuntimeError(
+        "Timed out waiting for local smart-contract worker admission readiness. "
+        f"Last error: {last_error}"
+    )
+
+
+def runtime_admission_is_ready() -> bool:
+    try:
+        return (
+            read_runtime_mfs_marker("/runtime/admission-ready.json").get("status")
+            == "admission-ready"
+        )
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+        OSError,
+        RuntimeError,
+    ):
+        return False
+
+
 async def wait_for_docker_container_ready(container_id: str, service_name: str, timeout_seconds: int) -> dict[str, Any]:
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     last_state: dict[str, Any] | None = None
@@ -1350,8 +1574,13 @@ async def collect_runtime_status() -> dict[str, Any]:
 
     contract_completed_successfully = contract_state["status"] == "exited" and contract_state["exit_code"] == 0
     contract_failed = contract_state["status"] == "exited" and contract_state["exit_code"] not in {None, 0}
-    contract_initialized = contract_completed_successfully
     contract_running = contract_state["running"]
+    contract_admission_ready = (
+        contract_running
+        and chain_contracts_ready
+        and runtime_admission_is_ready()
+    )
+    contract_initialized = contract_completed_successfully or contract_admission_ready
     training_started = contract_initialized and bool(
         running_workers or agent_state["running"] or zk_inference_state["running"]
     )
@@ -1359,6 +1588,7 @@ async def collect_runtime_status() -> dict[str, Any]:
     return {
         "contract_initialized": contract_initialized,
         "contract_running": contract_running,
+        "contract_admission_ready": contract_admission_ready,
         "training_started": training_started,
         "agent_running": agent_state["running"],
         "base_runtime_ready": (anvil_state["running"] or anvil_ready) and (ipfs_state["running"] or ipfs_ready),
@@ -1511,8 +1741,9 @@ async def initialize_contract_stack() -> dict[str, Any]:
         restart_prometheus_result = await restart_phala_container("prometheus", "http://prometheus:9090/-/ready")
 
         start_result = await run_subprocess([docker_bin, "start", container_id], cwd=Path("/app"), check=True)
-        contract_state = await wait_for_docker_container_exit_success(
-            container_id, "smart-contracts", CONTRACT_TIMEOUT_SECONDS
+        contract_state = await wait_for_runtime_admission_ready(
+            container_id,
+            CONTRACT_TIMEOUT_SECONDS,
         )
         return {
             "contract_state": contract_state,
@@ -1540,7 +1771,7 @@ async def initialize_contract_stack() -> dict[str, Any]:
             check=True,
         )
     )
-    contract_state = await wait_for_service_exit_success("smart-contracts", CONTRACT_TIMEOUT_SECONDS)
+    contract_state = await wait_for_local_runtime_admission_ready(CONTRACT_TIMEOUT_SECONDS)
     return {
         "contract_state": contract_state,
         "status": await collect_runtime_status(),
@@ -1599,6 +1830,10 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
             cwd=WORKSPACE_ROOT,
             check=True,
         )
+    )
+    await asyncio.to_thread(
+        publish_bootstrap_recipient_declaration,
+        local_worker_addresses(selected_workers),
     )
     logs.append(
         await run_subprocess(
@@ -1811,7 +2046,13 @@ async def scale_phala_workers(request: Request, payload: dict[str, Any]) -> dict
         raise HTTPException(status_code=400, detail="worker_count must be an integer") from exc
     async with operation_lock:
         try:
-            return await asyncio.to_thread(phala_worker_controller().scale, worker_count)
+            status = await asyncio.to_thread(phala_worker_controller().scale, worker_count)
+            if worker_count > 0:
+                await asyncio.to_thread(
+                    publish_bootstrap_recipient_declaration,
+                    [worker["account_address"] for worker in status["workers"]],
+                )
+            return status
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
@@ -1947,6 +2188,13 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                     phala_worker_controller().scale,
                     normalized["worker_count"],
                     worker_config,
+                )
+                await asyncio.to_thread(
+                    publish_bootstrap_recipient_declaration,
+                    [
+                        worker["account_address"]
+                        for worker in worker_status["workers"]
+                    ],
                 )
                 write_training_config(normalized)
                 reset_runtime_telemetry()

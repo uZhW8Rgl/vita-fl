@@ -140,7 +140,7 @@ const encryptedBundlePaths = () => ({
     bundleSignaturePath: "./data/results_iid/aggregated.bundle.enc.sig",
     keyBundlePath: "./data/results_iid/aggregated.bundle.keys.json",
 });
-export const updateGM = async (expectedModelRound) => {
+export const updateGM = async (expectedModelRound, participantPrivateKey) => {
     const modelPath = "./data/results_iid/aggregated.bin";
     const sigPath = "./data/results_iid/aggregated.bin.sig";
     if (!Number.isSafeInteger(expectedModelRound) || expectedModelRound <= 0) {
@@ -169,6 +169,7 @@ export const updateGM = async (expectedModelRound) => {
         keyBundlePath,
         recipients,
         round,
+        signingPrivateKey: participantPrivateKey,
     });
     const modelCid = await pinFile(bundlePath);
     if (!modelCid)
@@ -188,7 +189,7 @@ export const updateGM = async (expectedModelRound) => {
     await setGlobalModelAndSignatureAndKeyBundle(modelCid, sigCid, keyBundleCid);
     console.log("Encrypted global model bundle + signature + key bundle updated (on-chain)");
 };
-export const getCurrentModel = async () => {
+export const getCurrentModel = async (participantPrivateKey) => {
     const activeModel = await getActiveModelBundle();
     const modelCid = String(activeModel.modelCid || "");
     const sigCid = String(activeModel.sigCid || "");
@@ -218,6 +219,7 @@ export const getCurrentModel = async () => {
         ownAddress: String(process.env.ACCOUNT_ADDRESS || ""),
         outModelPath: "./data/gm.bin",
         outSignaturePath: "./data/gm.bin.sig",
+        decryptionPrivateKey: participantPrivateKey,
     });
     console.log("Encrypted global model bundle fetched + decrypted");
     return {

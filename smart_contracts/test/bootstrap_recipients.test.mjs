@@ -5,9 +5,8 @@ import test from "node:test";
 import {
   canonicalizeRsaPublicKey,
   deriveRsaPublicKeyDer,
-  dynamicWorkerInventoryFromEnvironment,
-  mergeBootstrapRecipients,
-  parseDynamicWorkerInventoryRecipients,
+  normalizeRecipientAddress,
+  waitForBootstrapRecipients,
 } from "../bootstrap_recipients.mjs";
 
 const firstKeyPair = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -17,22 +16,16 @@ const secondPublicPem = secondKeyPair.publicKey.export({ format: "pem", type: "s
 const firstAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const secondAddress = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
-test("inventory parser selects only normalized public recipient material", () => {
-  const escapedPem = firstPublicPem.replace(/\n/g, "\\n");
-  const recipients = parseDynamicWorkerInventoryRecipients(JSON.stringify([{
-    account_address: firstAddress,
-    private_key: "must-not-be-used",
-    rsa_private_key: "must-not-be-used",
-    rsa_public_key: escapedPem,
-  }]));
-
-  assert.equal(recipients.length, 1);
-  assert.equal(recipients[0].address, firstAddress.toLowerCase());
+test("live registry recipients normalize addresses and public keys", () => {
+  assert.equal(normalizeRecipientAddress(firstAddress), firstAddress.toLowerCase());
   assert.deepEqual(
-    recipients[0].der,
-    canonicalizeRsaPublicKey(firstPublicPem)
+    canonicalizeRsaPublicKey(Buffer.from(firstPublicPem)),
+    firstKeyPair.publicKey.export({ format: "der", type: "spki" }),
   );
-  assert.deepEqual(Object.keys(recipients[0]).sort(), ["address", "der"]);
+  assert.deepEqual(
+    canonicalizeRsaPublicKey(secondPublicPem),
+    secondKeyPair.publicKey.export({ format: "der", type: "spki" }),
+  );
 });
 
 test("bootstrap publisher key is derived from the actual RSA signing key as DER/SPKI", () => {
@@ -63,106 +56,169 @@ test("bootstrap publisher derivation rejects non-RSA and undersized signing keys
   );
 });
 
-test("inventory parser retains all 500 preprovisioned public recipients", () => {
-  const inventory = Array.from({ length: 500 }, (_, index) => ({
-    account_address: `0x${(index + 1).toString(16).padStart(40, "0")}`,
-    private_key: `unused-private-key-${index}`,
-    rsa_private_key: `unused-rsa-private-key-${index}`,
-    rsa_public_key: firstPublicPem,
-  }));
-  const recipients = parseDynamicWorkerInventoryRecipients(JSON.stringify(inventory));
-
-  assert.equal(recipients.length, 500);
-  assert.equal(recipients[0].address, "0x0000000000000000000000000000000000000001");
-  assert.equal(recipients[499].address, "0x00000000000000000000000000000000000001f4");
-});
-
-test("chunked inventory is reconstructed in numeric order", () => {
-  const first = [{ account_address: firstAddress, rsa_public_key: firstPublicPem }];
-  const second = [{ account_address: secondAddress, rsa_public_key: secondPublicPem }];
-  const raw = dynamicWorkerInventoryFromEnvironment({
-    DYNAMIC_WORKER_INVENTORY: "",
-    DYNAMIC_WORKER_INVENTORY_001: JSON.stringify(second),
-    DYNAMIC_WORKER_INVENTORY_000: JSON.stringify(first),
-  });
-
-  const recipients = parseDynamicWorkerInventoryRecipients(raw);
-  assert.deepEqual(
-    recipients.map((recipient) => recipient.address),
-    [firstAddress.toLowerCase(), secondAddress.toLowerCase()]
-  );
-});
-
-test("chunked inventory fails closed for ambiguous or incomplete input", () => {
+test("live registry recipient normalization fails closed for malformed data", () => {
   assert.throws(
-    () => dynamicWorkerInventoryFromEnvironment({
-      DYNAMIC_WORKER_INVENTORY: "[]",
-      DYNAMIC_WORKER_INVENTORY_000: "[]",
-    }),
-    /either DYNAMIC_WORKER_INVENTORY/
-  );
-  assert.throws(
-    () => dynamicWorkerInventoryFromEnvironment({
-      DYNAMIC_WORKER_INVENTORY_001: "[]",
-    }),
-    /contiguous/
-  );
-  assert.throws(
-    () => dynamicWorkerInventoryFromEnvironment({
-      DYNAMIC_WORKER_INVENTORY_000: "{}",
-    }),
-    /JSON array/
-  );
-});
-
-test("recipient merge deduplicates the same address and key across sources", () => {
-  const der = canonicalizeRsaPublicKey(firstPublicPem);
-  const recipients = mergeBootstrapRecipients(
-    [{ address: firstAddress, der }],
-    [{ address: firstAddress.toLowerCase(), der }],
-    [{ address: secondAddress, der: canonicalizeRsaPublicKey(secondPublicPem) }]
-  );
-
-  assert.deepEqual(
-    recipients.map((recipient) => recipient.address),
-    [firstAddress.toLowerCase(), secondAddress.toLowerCase()]
-  );
-});
-
-test("recipient merge rejects conflicting keys for one address", () => {
-  assert.throws(
-    () => mergeBootstrapRecipients(
-      [{ address: firstAddress, der: canonicalizeRsaPublicKey(firstPublicPem) }],
-      [{ address: firstAddress, der: canonicalizeRsaPublicKey(secondPublicPem) }]
-    ),
-    /Conflicting RSA public keys/
-  );
-});
-
-test("inventory parser fails closed for malformed recipient data", () => {
-  assert.throws(
-    () => parseDynamicWorkerInventoryRecipients("{"),
-    /not valid JSON/
-  );
-  assert.throws(
-    () => parseDynamicWorkerInventoryRecipients(JSON.stringify({
-      account_address: firstAddress,
-      rsa_public_key: firstPublicPem,
-    })),
-    /must be a JSON array/
-  );
-  assert.throws(
-    () => parseDynamicWorkerInventoryRecipients(JSON.stringify([{
-      account_address: "not-an-address",
-      rsa_public_key: firstPublicPem,
-    }])),
+    () => normalizeRecipientAddress("not-an-address"),
     /invalid account_address/
   );
   assert.throws(
-    () => parseDynamicWorkerInventoryRecipients(JSON.stringify([{
-      account_address: firstAddress,
-      rsa_public_key: firstKeyPair.privateKey.export({ format: "pem", type: "pkcs8" }),
-    }])),
+    () => canonicalizeRsaPublicKey(
+      firstKeyPair.privateKey.export({ format: "pem", type: "pkcs8" }),
+    ),
     /invalid rsa_public_key/
+  );
+});
+
+const fakeClock = () => {
+  let current = 0;
+  return {
+    now: () => current,
+    sleep: async (milliseconds) => {
+      current += milliseconds;
+    },
+  };
+};
+
+test("bootstrap waits until the configured number of live recipients exists", async () => {
+  const clock = fakeClock();
+  const observedCounts = [0, 1, 2];
+  let calls = 0;
+
+  const recipients = await waitForBootstrapRecipients(
+    async () => Array.from({ length: observedCounts[calls++] }),
+    {
+      minimumRecipients: 2,
+      pollIntervalMs: 10,
+      timeoutMs: 100,
+      now: clock.now,
+      sleep: clock.sleep,
+    },
+  );
+
+  assert.equal(recipients.length, 2);
+  assert.equal(calls, 3);
+  assert.equal(clock.now(), 20);
+});
+
+test("bootstrap waits for the exact recipient set declared by the Control API", async () => {
+  const clock = fakeClock();
+  const first = {
+    address: firstAddress.toLowerCase(),
+    der: firstKeyPair.publicKey.export({ format: "der", type: "spki" }),
+  };
+  const second = {
+    address: secondAddress.toLowerCase(),
+    der: secondKeyPair.publicKey.export({ format: "der", type: "spki" }),
+  };
+  const observations = [[first], [first], [first, second]];
+  let calls = 0;
+
+  const recipients = await waitForBootstrapRecipients(
+    async () => observations[calls++],
+    {
+      requiredRecipientAddresses: [secondAddress, firstAddress],
+      pollIntervalMs: 10,
+      timeoutMs: 100,
+      now: clock.now,
+      sleep: clock.sleep,
+    },
+  );
+
+  assert.deepEqual(
+    recipients.map((recipient) => recipient.address),
+    [secondAddress.toLowerCase(), firstAddress.toLowerCase()],
+  );
+  assert.equal(calls, 3);
+});
+
+test("declared bootstrap recipient sets reject duplicates", async () => {
+  await assert.rejects(
+    waitForBootstrapRecipients(async () => [], {
+      requiredRecipientAddresses: [firstAddress, firstAddress.toLowerCase()],
+    }),
+    /must not contain duplicates/,
+  );
+});
+
+test("bootstrap requires the recipient threshold throughout the settle interval", async () => {
+  const clock = fakeClock();
+  const observedCounts = [2, 1, 2, 3, 3, 3];
+  let calls = 0;
+
+  const recipients = await waitForBootstrapRecipients(
+    async () => Array.from({ length: observedCounts[calls++] }),
+    {
+      minimumRecipients: 2,
+      registrationSettleMs: 20,
+      pollIntervalMs: 10,
+      timeoutMs: 100,
+      now: clock.now,
+      sleep: clock.sleep,
+    },
+  );
+
+  assert.equal(recipients.length, 3);
+  assert.equal(calls, 6);
+  assert.equal(clock.now(), 50);
+});
+
+test("bootstrap restarts its quiet period when a recipient key changes", async () => {
+  const clock = fakeClock();
+  const first = [{ address: firstAddress, der: Buffer.from("first") }];
+  const changed = [{ address: firstAddress, der: Buffer.from("changed") }];
+  const observations = [first, changed, changed, changed];
+  let calls = 0;
+
+  const recipients = await waitForBootstrapRecipients(
+    async () => observations[calls++],
+    {
+      minimumRecipients: 1,
+      registrationSettleMs: 20,
+      pollIntervalMs: 10,
+      timeoutMs: 100,
+      now: clock.now,
+      sleep: clock.sleep,
+    },
+  );
+
+  assert.deepEqual(recipients, changed);
+  assert.equal(calls, 4);
+  assert.equal(clock.now(), 30);
+});
+
+test("bootstrap recipient wait fails closed on timeout", async () => {
+  const clock = fakeClock();
+
+  await assert.rejects(
+    waitForBootstrapRecipients(
+      async () => [firstAddress],
+      {
+        minimumRecipients: 2,
+        pollIntervalMs: 10,
+        timeoutMs: 25,
+        now: clock.now,
+        sleep: clock.sleep,
+      },
+    ),
+    /Timed out waiting for 2 live DeviceRegistry recipient.*last observed 1/,
+  );
+  assert.equal(clock.now(), 25);
+});
+
+test("bootstrap recipient wait validates its timing and loader inputs", async () => {
+  await assert.rejects(
+    waitForBootstrapRecipients(async () => [], { minimumRecipients: 0 }),
+    /minimumRecipients/,
+  );
+  await assert.rejects(
+    waitForBootstrapRecipients(async () => [], {
+      registrationSettleMs: 11,
+      timeoutMs: 10,
+    }),
+    /must not exceed/,
+  );
+  await assert.rejects(
+    waitForBootstrapRecipients(async () => null),
+    /must return an array/,
   );
 });

@@ -19,6 +19,63 @@ locals {
     format("      %s: \"$${%s}\"", name, name)
   ])
 
+  worker_policy_reference_inputs = {
+    worker_image                             = var.worker_image
+    account_address                          = var.account_address
+    rpc_url                                  = "http://runtime-policy-reference.invalid"
+    kubo_api_url                             = "http://kubo-policy-reference.invalid"
+    kubo_gateway_url                         = "http://gateway-policy-reference.invalid"
+    expected_device_registry_address         = var.expected_device_registry_address
+    expected_aggregator_address              = var.expected_aggregator_address
+    expected_gm_storage_address              = var.expected_gm_storage_address
+    expected_medical_signer_registry_address = var.expected_medical_signer_registry_address
+    expected_chain_id                        = var.expected_chain_id
+    client_limit                             = var.client_limit
+    epoch                                    = var.epoch
+    round                                    = var.round
+    model_submission_deadline_ms             = var.model_submission_deadline_ms
+    gm_update_timeout_ms                     = var.gm_update_timeout_ms
+    gm_update_timeout_loops                  = var.gm_update_timeout_loops
+    aggregation_update_estimate_ms           = var.aggregation_update_estimate_ms
+    gm_update_poll_ms                        = var.gm_update_poll_ms
+    dataset_name                             = var.dataset_name
+    train_images_src                         = var.train_images_src
+    train_labels_src                         = var.train_labels_src
+    test_images_src                          = var.test_images_src
+    test_labels_src                          = var.test_labels_src
+    train_data_src                           = var.train_data_src
+    test_data_src                            = var.test_data_src
+    python_service_url                       = var.python_service_url
+    public_ip                                = var.public_ip
+    msg_broker_ip                            = var.msg_broker_ip
+    device_id                                = 0
+    worker_count                             = var.max_dynamic_workers
+    telemetry_url                            = "http://telemetry-policy-reference.invalid"
+    sello_required                           = var.enable_sello_receipts
+    sello_scitt_url                          = var.sello_scitt_url
+  }
+
+  training_worker_policy_compose = templatefile(
+    "${path.module}/dynamic-workers/worker-compose.tftpl",
+    merge(local.worker_policy_reference_inputs, { inference_enabled = false }),
+  )
+  inference_worker_policy_compose = templatefile(
+    "${path.module}/dynamic-workers/worker-compose.tftpl",
+    merge(local.worker_policy_reference_inputs, { inference_enabled = true }),
+  )
+  training_worker_policy_app_compose = jsonencode({
+    docker_compose_file = local.training_worker_policy_compose
+    manifest_version    = 2
+    name                = "training-worker-policy-reference"
+    runner              = "docker-compose"
+  })
+  inference_worker_policy_app_compose = jsonencode({
+    docker_compose_file = local.inference_worker_policy_compose
+    manifest_version    = 2
+    name                = "inference-worker-policy-reference"
+    runner              = "docker-compose"
+  })
+
   worker_account_addresses = distinct(concat(
     [var.account_address],
     [for worker_key in keys(nonsensitive(var.additional_workers)) : var.additional_workers[worker_key].account_address],
@@ -66,6 +123,10 @@ locals {
     deploy_tdx_v4_dcap                       = var.deploy_tdx_v4_dcap
     verify_tdx_quote_onchain                 = var.verify_tdx_quote_onchain
     aggregator_timeout_report_percent        = var.aggregator_timeout_report_percent
+    bootstrap_min_recipients                 = var.bootstrap_min_recipients
+    bootstrap_registration_settle_seconds    = var.bootstrap_registration_settle_seconds
+    bootstrap_registration_timeout_seconds   = var.bootstrap_registration_timeout_seconds
+    bootstrap_registration_poll_seconds      = var.bootstrap_registration_poll_seconds
     worker_image                             = var.worker_image
     keep_alive                               = var.keep_alive
     pccs_quote_path                          = var.pccs_quote_path
@@ -81,7 +142,7 @@ locals {
     ollama_base_url                          = local.agent_ollama_base_url
     ollama_model                             = var.ollama_model
     tee_inference_url                        = local.agent_tee_inference_url
-    tee_inference_image_digest               = replace(var.tee_inference_image, "/^.*@/", "")
+    tee_inference_image_digest               = replace(var.worker_image, "/^.*@/", "")
     expected_gm_storage_address              = var.expected_gm_storage_address
     expected_device_registry_address         = var.expected_device_registry_address
     expected_chain_id                        = var.expected_chain_id
@@ -172,19 +233,20 @@ resource "phala_app" "contract_runtime" {
   name           = var.contracts_app_name
   docker_compose = local.contracts_compose_content
   env = merge({
-    ETH_WALLET_PRIVATE_KEY                 = var.eth_wallet_private_key != "" ? var.eth_wallet_private_key : var.private_key
-    INITIAL_GM_SIGNING_KEY                 = var.initial_gm_signing_key
-    INITIAL_BOOTSTRAP_RECIPIENT_PUBLIC_KEY = var.rsa_public_key
-    DYNAMIC_WORKER_INVENTORY               = var.dynamic_worker_inventory
+    ETH_WALLET_PRIVATE_KEY                  = var.eth_wallet_private_key != "" ? var.eth_wallet_private_key : var.private_key
+    INITIAL_GM_SIGNING_KEY                  = var.initial_gm_signing_key
+    DYNAMIC_WORKER_INVENTORY                = var.dynamic_worker_inventory
+    TRAINING_WORKER_POLICY_APP_COMPOSE_B64  = base64encode(local.training_worker_policy_app_compose)
+    INFERENCE_WORKER_POLICY_APP_COMPOSE_B64 = base64encode(local.inference_worker_policy_app_compose)
     }, var.dynamic_worker_inventory_chunks, var.enable_phala_control_api ? {
-    PHALA_CLOUD_API_KEY = var.phala_cloud_api_key
-    CONTROL_ADMIN_TOKEN = var.control_admin_token
+    PHALA_CLOUD_API_KEY            = var.phala_cloud_api_key
+    CONTROL_ADMIN_TOKEN            = var.control_admin_token
+    SELLO_TEE_SERVICE_SIGNING_SEED = var.sello_tee_service_signing_seed
+    SELLO_TOKEN_ISSUER_PUBLIC_KEY  = var.sello_token_issuer_public_key
     } : {}, var.enable_phala_ui ? {
     UI_BASIC_AUTH_USERNAME = var.ui_basic_auth_username
     UI_BASIC_AUTH_PASSWORD = var.ui_basic_auth_password
     } : {}, var.enable_phala_agent ? {
-    AGENT_RSA_PRIVATE_KEY           = var.rsa_private_key
-    AGENT_RSA_PUBLIC_KEY            = var.rsa_public_key
     OLLAMA_API_TOKEN                = var.ollama_api_token
     SELLO_TOKEN_ISSUER_SIGNING_SEED = var.sello_token_issuer_signing_seed
     SELLO_OWNER_HPKE_PRIVATE_KEY    = var.sello_owner_hpke_private_key
@@ -250,11 +312,16 @@ resource "phala_app" "dfl_worker" {
     python_service_url                       = var.python_service_url
     public_ip                                = var.public_ip
     msg_broker_ip                            = var.msg_broker_ip
+    device_id                                = 0
+    worker_count                             = 1 + length(var.additional_workers)
+    inference_enabled                        = true
+    sello_required                           = var.enable_sello_receipts
+    sello_scitt_url                          = var.sello_scitt_url
   })
   env = {
-    PRIVATE_KEY     = var.private_key
-    RSA_PRIVATE_KEY = var.rsa_private_key
-    RSA_PUBLIC_KEY  = var.rsa_public_key
+    PRIVATE_KEY                   = var.private_key
+    SELLO_SERVICE_SIGNING_SEED    = var.sello_tee_service_signing_seed
+    SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
   }
   size = var.worker_size
 
@@ -316,11 +383,14 @@ resource "phala_app" "dfl_worker_additional" {
     python_service_url                       = var.python_service_url
     public_ip                                = var.public_ip
     msg_broker_ip                            = var.msg_broker_ip
+    device_id                                = local.additional_worker_indices[each.key]
+    worker_count                             = 1 + length(var.additional_workers)
+    inference_enabled                        = false
+    sello_required                           = false
+    sello_scitt_url                          = ""
   })
   env = {
-    PRIVATE_KEY     = var.additional_workers[each.key].private_key
-    RSA_PRIVATE_KEY = var.additional_workers[each.key].rsa_private_key
-    RSA_PUBLIC_KEY  = var.additional_workers[each.key].rsa_public_key
+    PRIVATE_KEY = var.additional_workers[each.key].private_key
   }
   size = var.worker_size
 
@@ -343,55 +413,6 @@ resource "phala_app" "dfl_worker_additional" {
   public_sysinfo  = var.public_sysinfo
   public_tcbinfo  = var.public_tcbinfo
   gateway_enabled = var.worker_gateway_enabled
-  secure_time     = var.secure_time
-
-  wait_for_ready       = var.wait_for_ready
-  wait_timeout_seconds = var.wait_timeout_seconds
-}
-
-resource "phala_app" "tee_inference" {
-  count = var.enable_tee_inference ? 1 : 0
-
-  name = var.tee_inference_app_name
-  docker_compose = templatefile("${path.module}/dstack-compose.tee-inference.phala.tftpl", {
-    tee_inference_image              = var.tee_inference_image
-    account_address                  = var.account_address
-    rpc_url                          = local.inference_runtime_rpc_url
-    kubo_api_url                     = local.inference_runtime_kubo_api_url
-    kubo_gateway_url                 = local.inference_runtime_kubo_gateway_url
-    expected_gm_storage_address      = var.expected_gm_storage_address
-    expected_device_registry_address = var.expected_device_registry_address
-    expected_chain_id                = var.expected_chain_id
-    sello_required                   = var.enable_sello_receipts ? "1" : "0"
-    sello_scitt_url                  = var.sello_scitt_url
-  })
-  env = {
-    RSA_PRIVATE_KEY               = var.rsa_private_key
-    RSA_PUBLIC_KEY                = var.rsa_public_key
-    SELLO_SERVICE_SIGNING_SEED    = var.sello_tee_service_signing_seed
-    SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
-  }
-  size = var.tee_inference_size
-
-  region    = var.region
-  image     = var.os_image
-  disk_size = var.tee_inference_disk_size
-  replicas  = 1
-
-  kms           = var.kms
-  listed        = var.listed
-  node_id       = var.node_id
-  custom_app_id = var.custom_app_id
-  nonce         = var.nonce
-  storage_fs    = var.storage_fs
-
-  ssh_authorized_keys = local.ssh_authorized_keys
-  pre_launch_script   = var.pre_launch_script
-
-  public_logs     = var.public_logs
-  public_sysinfo  = var.public_sysinfo
-  public_tcbinfo  = var.public_tcbinfo
-  gateway_enabled = var.tee_inference_gateway_enabled
   secure_time     = var.secure_time
 
   wait_for_ready       = var.wait_for_ready
@@ -506,16 +527,6 @@ resource "phala_cvm_power" "dfl_worker_additional" {
   for_each = var.manage_power_state ? toset(keys(nonsensitive(var.additional_workers))) : toset([])
 
   cvm_id = phala_app.dfl_worker_additional[each.key].primary_cvm_id
-  state  = var.desired_power_state
-
-  wait_for_state       = true
-  wait_timeout_seconds = var.wait_timeout_seconds
-}
-
-resource "phala_cvm_power" "tee_inference" {
-  count = var.enable_tee_inference && var.manage_power_state ? 1 : 0
-
-  cvm_id = phala_app.tee_inference[0].primary_cvm_id
   state  = var.desired_power_state
 
   wait_for_state       = true

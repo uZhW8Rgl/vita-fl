@@ -3,53 +3,6 @@ import crypto from "node:crypto";
 const ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
 const PUBLIC_KEY_PEM_PATTERN = /-----BEGIN (?:RSA )?PUBLIC KEY-----/;
 const PRIVATE_KEY_PEM_PATTERN = /-----BEGIN (?:ENCRYPTED |RSA )?PRIVATE KEY-----/;
-const INVENTORY_CHUNK_PREFIX = "DYNAMIC_WORKER_INVENTORY_";
-const INVENTORY_CHUNK_PATTERN = /^DYNAMIC_WORKER_INVENTORY_([0-9]{3})$/;
-
-export const dynamicWorkerInventoryFromEnvironment = (environment = process.env) => {
-  const legacy = String(environment.DYNAMIC_WORKER_INVENTORY ?? "").trim();
-  const malformedName = Object.keys(environment)
-    .filter((name) => name.startsWith(INVENTORY_CHUNK_PREFIX))
-    .find((name) => !INVENTORY_CHUNK_PATTERN.test(name));
-  if (malformedName) {
-    throw new Error(`Invalid dynamic worker inventory chunk name: ${malformedName}.`);
-  }
-
-  const chunks = Object.entries(environment)
-    .map(([name, value]) => {
-      const match = INVENTORY_CHUNK_PATTERN.exec(name);
-      return match ? { index: Number(match[1]), name, value: String(value) } : null;
-    })
-    .filter((entry) => entry !== null)
-    .sort((left, right) => left.index - right.index);
-
-  if (legacy && chunks.length > 0) {
-    throw new Error(
-      "Configure either DYNAMIC_WORKER_INVENTORY or chunked inventory entries, not both."
-    );
-  }
-  if (chunks.length === 0) {
-    return legacy;
-  }
-  if (chunks.some((chunk, index) => chunk.index !== index)) {
-    throw new Error("Dynamic worker inventory chunk indices must be contiguous from 000.");
-  }
-
-  const inventory = [];
-  for (const chunk of chunks) {
-    let entries;
-    try {
-      entries = JSON.parse(chunk.value);
-    } catch (error) {
-      throw new Error(`${chunk.name} is not valid JSON: ${error.message}`);
-    }
-    if (!Array.isArray(entries)) {
-      throw new Error(`${chunk.name} must contain a JSON array.`);
-    }
-    inventory.push(...entries);
-  }
-  return JSON.stringify(inventory);
-};
 
 export const normalizeRecipientAddress = (value, context = "recipient") => {
   if (typeof value !== "string") {
@@ -133,54 +86,165 @@ export const deriveRsaPublicKeyDer = (value, context = "signing key") => {
   });
 };
 
-export const parseDynamicWorkerInventoryRecipients = (rawInventory) => {
-  if (rawInventory === undefined || rawInventory === null || String(rawInventory).trim() === "") {
-    return [];
+const assertInteger = (name, value, minimum) => {
+  if (!Number.isSafeInteger(value) || value < minimum) {
+    throw new Error(`${name} must be an integer greater than or equal to ${minimum}.`);
   }
-
-  let inventory;
-  try {
-    inventory = JSON.parse(String(rawInventory));
-  } catch (error) {
-    throw new Error(`DYNAMIC_WORKER_INVENTORY is not valid JSON: ${error.message}`);
-  }
-  if (!Array.isArray(inventory)) {
-    throw new Error("DYNAMIC_WORKER_INVENTORY must be a JSON array.");
-  }
-
-  return inventory.map((entry, index) => {
-    const context = `DYNAMIC_WORKER_INVENTORY[${index}]`;
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(`${context} must be an object.`);
-    }
-    if (!Object.hasOwn(entry, "account_address") || !Object.hasOwn(entry, "rsa_public_key")) {
-      throw new Error(`${context} must define account_address and rsa_public_key.`);
-    }
-
-    return {
-      address: normalizeRecipientAddress(entry.account_address, context),
-      der: canonicalizeRsaPublicKey(entry.rsa_public_key, context),
-    };
-  });
 };
 
-export const mergeBootstrapRecipients = (...recipientGroups) => {
-  const recipientsByAddress = new Map();
-
-  for (const group of recipientGroups) {
-    for (const recipient of group) {
-      const address = normalizeRecipientAddress(recipient.address);
-      const der = canonicalizeRsaPublicKey(recipient.der, address);
-      const existing = recipientsByAddress.get(address);
-      if (existing) {
-        if (!existing.der.equals(der)) {
-          throw new Error(`Conflicting RSA public keys configured for recipient ${address}.`);
-        }
-        continue;
-      }
-      recipientsByAddress.set(address, { address, der });
-    }
+const normalizeRequiredRecipientAddresses = (values) => {
+  if (values === undefined || values === null) {
+    return null;
+  }
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error("requiredRecipientAddresses must be a non-empty array.");
   }
 
-  return [...recipientsByAddress.values()];
+  const normalized = values.map((value, index) => (
+    normalizeRecipientAddress(value, `required recipient ${index}`)
+  ));
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error("requiredRecipientAddresses must not contain duplicates.");
+  }
+  return normalized;
+};
+
+const defaultSleep = (milliseconds) => new Promise((resolve) => {
+  setTimeout(resolve, milliseconds);
+});
+
+const recipientSetFingerprint = (recipients) => JSON.stringify(
+  recipients.map((recipient) => {
+    if (!recipient || typeof recipient !== "object") {
+      return recipient ?? null;
+    }
+    const address = typeof recipient.address === "string"
+      ? recipient.address.toLowerCase()
+      : "";
+    const key = recipient.der instanceof Uint8Array
+      ? Buffer.from(recipient.der).toString("hex")
+      : "";
+    return [address, key];
+  }).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+);
+
+export const waitForBootstrapRecipients = async (
+  loadRecipients,
+  {
+    minimumRecipients = 1,
+    registrationSettleMs = 0,
+    timeoutMs = 15 * 60 * 1000,
+    pollIntervalMs = 2 * 1000,
+    requiredRecipientAddresses = null,
+    sleep = defaultSleep,
+    now = Date.now,
+    onProgress = () => {},
+  } = {},
+) => {
+  if (typeof loadRecipients !== "function") {
+    throw new Error("loadRecipients must be a function.");
+  }
+  if (typeof sleep !== "function" || typeof now !== "function" || typeof onProgress !== "function") {
+    throw new Error("sleep, now and onProgress must be functions.");
+  }
+  assertInteger("minimumRecipients", minimumRecipients, 1);
+  assertInteger("registrationSettleMs", registrationSettleMs, 0);
+  assertInteger("timeoutMs", timeoutMs, 1);
+  assertInteger("pollIntervalMs", pollIntervalMs, 1);
+  if (registrationSettleMs > timeoutMs) {
+    throw new Error("registrationSettleMs must not exceed timeoutMs.");
+  }
+  const requiredAddresses = normalizeRequiredRecipientAddresses(
+    requiredRecipientAddresses
+  );
+  const requiredAddressSet = requiredAddresses === null
+    ? null
+    : new Set(requiredAddresses);
+
+  const startedAt = now();
+  let thresholdReachedAt = null;
+  let settledRecipientSet = null;
+
+  while (true) {
+    const recipients = await loadRecipients();
+    if (!Array.isArray(recipients)) {
+      throw new Error("DeviceRegistry recipient loader must return an array.");
+    }
+
+    const observedAt = now();
+    const recipientsByAddress = new Map();
+    for (const recipient of recipients) {
+      if (!recipient || typeof recipient !== "object") {
+        continue;
+      }
+      const normalizedAddress = normalizeRecipientAddress(
+        recipient.address,
+        "DeviceRegistry recipient"
+      );
+      if (recipientsByAddress.has(normalizedAddress)) {
+        throw new Error(
+          `DeviceRegistry recipient loader returned duplicate address ${normalizedAddress}.`
+        );
+      }
+      recipientsByAddress.set(normalizedAddress, recipient);
+    }
+
+    if (requiredAddressSet !== null) {
+      const missing = requiredAddresses.filter(
+        (address) => !recipientsByAddress.has(address)
+      );
+      if (missing.length === 0) {
+        return requiredAddresses.map((address) => recipientsByAddress.get(address));
+      }
+      onProgress({
+        recipientCount: requiredAddresses.length - missing.length,
+        minimumRecipients: requiredAddresses.length,
+        phase: "waiting-required",
+        missingAddresses: missing,
+        remainingMs: null,
+      });
+    } else if (recipients.length >= minimumRecipients) {
+      const fingerprint = recipientSetFingerprint(recipients);
+      if (thresholdReachedAt === null || fingerprint !== settledRecipientSet) {
+        thresholdReachedAt = observedAt;
+        settledRecipientSet = fingerprint;
+      }
+      const settledForMs = observedAt - thresholdReachedAt;
+      if (settledForMs >= registrationSettleMs) {
+        return recipients;
+      }
+      onProgress({
+        recipientCount: recipients.length,
+        minimumRecipients,
+        phase: "settling",
+        remainingMs: registrationSettleMs - settledForMs,
+      });
+    } else {
+      thresholdReachedAt = null;
+      settledRecipientSet = null;
+      onProgress({
+        recipientCount: recipients.length,
+        minimumRecipients,
+        phase: "waiting",
+        remainingMs: null,
+      });
+    }
+
+    const elapsedMs = observedAt - startedAt;
+    if (elapsedMs >= timeoutMs) {
+      throw new Error(
+        requiredAddressSet === null
+          ? `Timed out waiting for ${minimumRecipients} live DeviceRegistry recipient(s); `
+            + `last observed ${recipients.length}.`
+          : `Timed out waiting for the declared DeviceRegistry recipient set; `
+            + `last observed ${recipientsByAddress.size} of ${requiredAddresses.length}.`
+      );
+    }
+
+    const timeoutRemainingMs = timeoutMs - elapsedMs;
+    const settleRemainingMs = thresholdReachedAt === null
+      ? pollIntervalMs
+      : Math.max(1, registrationSettleMs - (observedAt - thresholdReachedAt));
+    await sleep(Math.min(pollIntervalMs, settleRemainingMs, timeoutRemainingMs));
+  }
 };

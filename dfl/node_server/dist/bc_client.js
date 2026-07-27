@@ -763,11 +763,11 @@ export const getDevicePublicKey = async (address) => {
     const publicKey = (result && (result.public_key ?? result[3])) ?? "0x";
     return publicKey;
 };
-export const isDeviceRegistrationCurrent = async (address, publicKeyBytesHex, canonicalAppCompose) => {
+export const isDeviceRegistrationCurrent = async (address, publicIp, brokerIp, publicKeyBytesHex, canonicalAppCompose) => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
     return Boolean(await contract.methods
-        .isDeviceRegistrationCurrent(address, publicKeyBytesHex, canonicalAppCompose)
+        .isDeviceRegistrationCurrent(address, publicIp, brokerIp, publicKeyBytesHex, canonicalAppCompose)
         .call());
 };
 export const getDeviceRegistrationReportData = async (address, publicIp, brokerIp, publicKeyBytesHex, canonicalAppCompose) => {
