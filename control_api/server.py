@@ -1153,13 +1153,25 @@ def _rpc_quantity(value: Any, name: str) -> int:
     return result
 
 
+def _checksum_ethereum_address(value: Any, name: str) -> str:
+    from eth_utils import to_checksum_address
+
+    encoded = str(value).strip()
+    if not re.fullmatch(r"0x[a-fA-F0-9]{40}", encoded):
+        raise RuntimeError(f"{name} is not a valid Ethereum address")
+    try:
+        return str(to_checksum_address(encoded))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{name} is not a valid Ethereum address") from exc
+
+
 def _rpc_address(value: Any, name: str) -> str:
     encoded = str(value).strip()
     if not re.fullmatch(r"0x[a-fA-F0-9]{64}", encoded):
         raise RuntimeError(f"Ethereum RPC returned an invalid {name}")
     if encoded[2:26] != "0" * 24:
         raise RuntimeError(f"Ethereum RPC returned an invalid {name}")
-    return f"0x{encoded[-40:]}"
+    return _checksum_ethereum_address(f"0x{encoded[-40:]}", f"Ethereum RPC {name}")
 
 
 def _ethereum_account_address(private_key: str) -> str:
@@ -1208,11 +1220,17 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
         )
 
     runtime_values = runtime_contract_env_values()
-    policy_address = runtime_values.get("AGGREGATION_POLICY_ADDRESS", "").strip()
-    if (
-        not re.fullmatch(r"0x[a-fA-F0-9]{40}", policy_address)
-        or policy_address.lower() == "0x" + "0" * 40
-    ):
+    raw_policy_address = runtime_values.get("AGGREGATION_POLICY_ADDRESS", "").strip()
+    try:
+        policy_address = _checksum_ethereum_address(
+            raw_policy_address,
+            "aggregation_policy_address",
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "aggregation_policy_address is missing or invalid in /runtime/contracts.json"
+        ) from exc
+    if policy_address.lower() == "0x" + "0" * 40:
         raise RuntimeError(
             "aggregation_policy_address is missing or invalid in /runtime/contracts.json"
         )

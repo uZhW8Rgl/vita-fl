@@ -143,6 +143,40 @@ class CombinedWorkerComposeTests(unittest.TestCase):
             r"\{\s*SELLO_SERVICE_SIGNING_SEED",
         )
 
+    def test_policy_reference_and_live_workers_share_exact_runtime_rpc_url(self) -> None:
+        root_module = (ROOT / "main.tf").read_text(encoding="utf-8")
+
+        self.assertNotIn("runtime-policy-reference.invalid", root_module)
+        self.assertRegex(
+            root_module,
+            r"worker_policy_runtime_rpc_url\s*=\s*coalesce\(\s*"
+            r"var\.runtime_rpc_url_override,\s*"
+            r'"http://runtime-endpoint-not-configured\.invalid",\s*\)',
+        )
+        self.assertRegex(
+            root_module,
+            r"worker_policy_reference_inputs\s*=\s*\{[\s\S]*?"
+            r"rpc_url\s*=\s*local\.worker_policy_runtime_rpc_url",
+        )
+        self.assertRegex(
+            root_module,
+            r"contracts_rpc_url\s*=\s*coalesce\(\s*"
+            r"var\.runtime_rpc_url_override,",
+        )
+        self.assertIn(
+            "dynamic_worker_rpc_url               = "
+            'coalesce(var.runtime_rpc_url_override, "")',
+            root_module,
+        )
+
+        for template in (self.static_template, self.dynamic_template):
+            with self.subTest(template=template[:20]):
+                self.assertIn('RPC_URL: "${rpc_url}"', template)
+                self.assertIn(
+                    'EXPECTED_RUNTIME_RPC_URL: "${rpc_url}"',
+                    template,
+                )
+
     def test_no_separate_tee_inference_terraform_resource_remains(self) -> None:
         terraform_sources = "\n".join(
             path.read_text(encoding="utf-8")

@@ -89,7 +89,8 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("http://ipfs:5001/api/v0/files/read", urlopen.call_args.args[0].full_url)
 
     def test_default_policy_configuration_is_signed_and_uses_ceiling_seconds(self) -> None:
-        policy_address = "0x" + "55" * 20
+        policy_address = "0x610178da211fef7d417bc0e6fed39f05609ad788"
+        checksummed_policy_address = "0x610178dA211FEF7D417bC0e6FeD39F05609AD788"
         owner_address = "0x" + "66" * 20
         transaction_hash = "0x" + "77" * 32
         rpc_calls: list[tuple[str, str, list[object]]] = []
@@ -157,13 +158,27 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             transaction["data"],
             f"0x{server.AGGREGATION_POLICY_CONFIGURE_SELECTOR}{expected_arguments.hex()}",
         )
-        self.assertEqual(transaction["to"], policy_address)
+        self.assertEqual(transaction["to"], checksummed_policy_address)
         self.assertEqual(transaction["chainId"], 31337)
         self.assertEqual(transaction["nonce"], 4)
         self.assertEqual(transaction["gas"], 60_000)
+        self.assertEqual(result["address"], checksummed_policy_address)
         self.assertEqual(result["submission_window_seconds"], 21)
         self.assertEqual(result["transaction_hash"], transaction_hash)
         self.assertTrue(all(call[0] == "http://anvil:8545" for call in rpc_calls))
+        contract_calls = [
+            params[0]
+            for _rpc_url, method, params in rpc_calls
+            if method in {"eth_call", "eth_estimateGas"}
+        ]
+        self.assertTrue(contract_calls)
+        self.assertTrue(
+            all(call["to"] == checksummed_policy_address for call in contract_calls)
+        )
+
+    def test_checksum_ethereum_address_rejects_invalid_values(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "not a valid Ethereum address"):
+            server._checksum_ethereum_address("0x1234", "policy")
 
     def test_eth_account_signer_supports_the_control_api_transaction_shape(self) -> None:
         private_key = (
@@ -175,7 +190,10 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             {
                 "chainId": 31337,
                 "nonce": 0,
-                "to": "0x" + "11" * 20,
+                "to": server._checksum_ethereum_address(
+                    "0x610178da211fef7d417bc0e6fed39f05609ad788",
+                    "policy",
+                ),
                 "value": 0,
                 "data": "0x95b40727" + "00" * 64,
                 "gas": 100_000,

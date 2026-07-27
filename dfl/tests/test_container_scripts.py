@@ -10,6 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 START_SCRIPT = ROOT / "dfl" / "start_node_neural_network.sh"
 HEALTHCHECK = ROOT / "dfl" / "container_healthcheck.sh"
+NODE_SERVER_SOURCE = ROOT / "dfl" / "node_server" / "src" / "server.ts"
+NODE_SERVER_DIST = ROOT / "dfl" / "node_server" / "dist" / "server.js"
 
 
 class CombinedWorkerScriptTests(unittest.TestCase):
@@ -38,6 +40,38 @@ class CombinedWorkerScriptTests(unittest.TestCase):
         inference_wait = script.index('wait "${TEE_INFERENCE_PID}"', completion)
         self.assertIn('kill "${PYTHON_PID}"', script[completion:inference_wait])
         self.assertIn('PYTHON_PID=""', script[completion:inference_wait])
+
+    def test_combined_receiver_keeps_key_until_container_cleanup(self) -> None:
+        start_script = START_SCRIPT.read_text(encoding="utf-8")
+        cleanup = start_script[start_script.index("cleanup() {"):start_script.index("terminate() {")]
+        self.assertIn(
+            "${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH:-/run/vita-fl/participant-private.pem}",
+            cleanup,
+        )
+        self.assertIn(
+            "${PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH:-/run/vita-fl/participant-public.pem}",
+            cleanup,
+        )
+
+        for server_path in (NODE_SERVER_SOURCE, NODE_SERVER_DIST):
+            with self.subTest(server=server_path):
+                server = server_path.read_text(encoding="utf-8")
+                self.assertIn(
+                    "const retainParticipantPrivateKeyForInference = teeInferenceEnabled();",
+                    server,
+                )
+                self.assertIn(
+                    "if (retainParticipantPrivateKeyForInference)",
+                    server,
+                )
+                self.assertIn(
+                    "Retaining the runtime participant private key for the co-located TEE inference receiver.",
+                    server,
+                )
+                self.assertIn(
+                    "Leaving runtime participant-key cleanup to the combined-service supervisor.",
+                    server,
+                )
 
     def _healthcheck_url(self, enabled: str, *, participant_key_ready: bool = False) -> str:
         with tempfile.TemporaryDirectory() as directory:

@@ -1958,6 +1958,7 @@ async function waitForRoundAdvance(prevRound, { pollMs = 3000, timeoutMs = 0 } =
     }
 }
 async function runService() {
+    const retainParticipantPrivateKeyForInference = teeInferenceEnabled();
     try {
         activeParticipantActionSigner = await loadParticipantActionSigner();
         configureParticipantActionSigner(activeParticipantActionSigner);
@@ -1993,10 +1994,15 @@ async function runService() {
         activeParticipantActionSigner?.destroy();
         activeParticipantActionSigner = undefined;
         activeParticipantKey = undefined;
-        await fs.rm(participantPrivateKeyRuntimePath, { force: true }).catch((error) => {
-            console.error("Could not remove the runtime participant private key:", error);
-            process.exitCode = 1;
-        });
+        if (retainParticipantPrivateKeyForInference) {
+            console.log("Retaining the runtime participant private key for the co-located TEE inference receiver.");
+        }
+        else {
+            await fs.rm(participantPrivateKeyRuntimePath, { force: true }).catch((error) => {
+                console.error("Could not remove the runtime participant private key:", error);
+                process.exitCode = 1;
+            });
+        }
     }
 }
 runService();
@@ -2016,9 +2022,14 @@ async function shutdown(signal) {
         activeParticipantActionSigner?.destroy();
         activeParticipantActionSigner = undefined;
         activeParticipantKey = undefined;
-        await fs.rm(participantPrivateKeyRuntimePath, { force: true }).catch((error) => {
-            console.error("Could not remove the runtime participant private key:", error);
-        });
+        if (teeInferenceEnabled()) {
+            console.log("Leaving runtime participant-key cleanup to the combined-service supervisor.");
+        }
+        else {
+            await fs.rm(participantPrivateKeyRuntimePath, { force: true }).catch((error) => {
+                console.error("Could not remove the runtime participant private key:", error);
+            });
+        }
         process.exit(0);
     }
 }

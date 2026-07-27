@@ -19,10 +19,21 @@ locals {
     format("      %s: \"$${%s}\"", name, name)
   ])
 
+  # The runtime RPC endpoint is a fixed worker-policy field. Policy references
+  # and live worker app-composes must therefore receive the exact same value.
+  # Deriving it from phala_app.contract_runtime.endpoint here would introduce a
+  # dependency cycle because the references are injected into that app. The
+  # two-pass launcher supplies the explicit override after creating the runtime
+  # endpoint and before any dynamic worker is started.
+  worker_policy_runtime_rpc_url = coalesce(
+    var.runtime_rpc_url_override,
+    "http://runtime-endpoint-not-configured.invalid",
+  )
+
   worker_policy_reference_inputs = {
     worker_image                             = var.worker_image
     account_address                          = var.account_address
-    rpc_url                                  = "http://runtime-policy-reference.invalid"
+    rpc_url                                  = local.worker_policy_runtime_rpc_url
     kubo_api_url                             = "http://kubo-policy-reference.invalid"
     kubo_gateway_url                         = "http://gateway-policy-reference.invalid"
     expected_device_registry_address         = var.expected_device_registry_address
@@ -146,10 +157,7 @@ locals {
     expected_chain_id                        = var.expected_chain_id
     expected_aggregator_address              = var.expected_aggregator_address
     expected_medical_signer_registry_address = var.expected_medical_signer_registry_address
-    expected_runtime_rpc_url = coalesce(
-      var.runtime_rpc_url_override,
-      "http://runtime-endpoint-not-configured.invalid",
-    )
+    expected_runtime_rpc_url                 = local.worker_policy_runtime_rpc_url
     zk_inference_url = var.zk_inference_url_override != null ? trimsuffix(
       var.zk_inference_url_override,
       "/",
@@ -202,10 +210,7 @@ locals {
     var.tee_inference_url_override,
     "/",
   ) : ""
-  inference_runtime_rpc_url = coalesce(
-    var.runtime_rpc_url_override,
-    "http://runtime-endpoint-not-configured.invalid",
-  )
+  inference_runtime_rpc_url = local.worker_policy_runtime_rpc_url
   inference_runtime_kubo_api_url = coalesce(
     var.runtime_kubo_api_url_override,
     "http://runtime-endpoint-not-configured.invalid",

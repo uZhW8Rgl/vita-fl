@@ -23,6 +23,9 @@ cleanup() {
     if [ -n "${RUNTIME_ENV_FILE}" ]; then
         rm -f "${RUNTIME_ENV_FILE}"
     fi
+    rm -f \
+        "${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH:-/run/vita-fl/participant-private.pem}" \
+        "${PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH:-/run/vita-fl/participant-public.pem}"
     exit "${status}"
 }
 
