@@ -23,9 +23,9 @@
 # worker scaling. These are deliberately absent from Worker Compose.
 # client_limit = "2"
 # model_submission_deadline_ms = "20000"
-# worker_image     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:bf3dd4ef557d116c5de67b285263724d12adf13c87e5dd3ff5cd3dc9a47f6fa5"
-# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:5fde50df293aeaad756e8380f5eb2f1df094ae45410a2d5df12a87f82be28246"
-# control_api_image = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:059fc5221f960d0bd29b4e4d98965a8720ad2207ed2419f545a609fed7cb0814"
+# worker_image     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:37a70872cfb940babcab0a438364008e3e563230c195bd1aa65a3b7619d12c0d"
+# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:719db30629d25e680776706aa4b70174bc15d27641a6607fe7e250d9df4f3bad"
+# control_api_image = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:30d45e5f58caa6a58b3b7a0a64f13d682b13b17d7cde698bc66dd49760dc0f47"
 # ui_image = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:cfa6bf74771b4b16e3bf928ff9f3d7066e924ec728875dbc05cda9e312389a22"
 # ui_basic_auth_username = "operator"
 # ui_basic_auth_password = "replace-with-at-least-16-characters"

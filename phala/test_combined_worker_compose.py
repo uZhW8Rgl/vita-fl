@@ -33,6 +33,19 @@ class CombinedWorkerComposeTests(unittest.TestCase):
                 with self.subTest(template=template[:20], entry=entry):
                     self.assertIn(entry, template)
 
+    def test_restart_policy_distinguishes_training_from_inference_lifetime(self) -> None:
+        for template in (self.static_template, self.dynamic_template):
+            with self.subTest(template=template[:20]):
+                self.assertIn(
+                    'restart: ${inference_enabled ? "unless-stopped" : "on-failure"}',
+                    template,
+                )
+
+        compatibility_compose = (ROOT / "dstack-compose.template.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("restart: unless-stopped", compatibility_compose)
+
     def test_only_inference_worker_exposes_receiver_state_and_port(self) -> None:
         conditional_receiver = re.compile(
             r"%\{ if inference_enabled ~\}"
