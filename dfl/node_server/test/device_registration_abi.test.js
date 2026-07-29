@@ -26,6 +26,29 @@ const functionInputs = (abi, name) => {
     }));
 };
 
+const functionOutputs = (abi, name) => {
+    const entries = abi.filter(
+        (entry) => entry.type === "function" && entry.name === name,
+    );
+    assert.equal(entries.length, 1);
+    return entries[0].outputs.map(({ name: outputName, type }) => ({
+        name: outputName,
+        type,
+    }));
+};
+
+const eventInputs = (abi, name) => {
+    const entries = abi.filter(
+        (entry) => entry.type === "event" && entry.name === name,
+    );
+    assert.equal(entries.length, 1);
+    return entries[0].inputs.map(({ name: inputName, type, indexed }) => ({
+        name: inputName,
+        type,
+        indexed,
+    }));
+};
+
 test("registration ABIs bind the logical participant to its TEE action key", () => {
     const identityInputs = [
         { name: "_address", type: "address" },
@@ -139,6 +162,79 @@ test("aggregation ABIs require atomic policy-bound finalization", () => {
             { name: "outputBundleHash", type: "bytes32" },
             { name: "publicationHash", type: "bytes32" },
             { name: "nonce", type: "uint256" },
+        ],
+    );
+    assert.deepEqual(
+        functionOutputs(aggregationPolicyAbi, "getRoundPolicy"),
+        [
+            { name: "opened", type: "bool" },
+            { name: "closed", type: "bool" },
+            { name: "openedAt", type: "uint64" },
+            { name: "deadline", type: "uint64" },
+            { name: "requiredSubmissions", type: "uint32" },
+            { name: "acceptedSubmissions", type: "uint32" },
+            { name: "roundConfigurationVersion", type: "uint64" },
+            { name: "algorithmHash", type: "bytes32" },
+            { name: "validationDataHash", type: "bytes32" },
+            { name: "maxLossIncreaseBps", type: "uint16" },
+            { name: "policyHash", type: "bytes32" },
+            { name: "inputRoot", type: "bytes32" },
+        ],
+    );
+    assert.deepEqual(
+        functionOutputs(aggregationPolicyAbi, "HYBRID_R_V1_HASH"),
+        [{ name: "", type: "bytes32" }],
+    );
+    assert.deepEqual(
+        functionOutputs(
+            aggregationPolicyAbi,
+            "HYBRID_R_VALIDATION_DATA_V1_HASH",
+        ),
+        [{ name: "", type: "bytes32" }],
+    );
+    assert.deepEqual(
+        functionOutputs(
+            aggregationPolicyAbi,
+            "HYBRID_R_MAX_LOSS_INCREASE_BPS",
+        ),
+        [{ name: "", type: "uint16" }],
+    );
+    assert.equal(
+        aggregationPolicyAbi.some(
+            (entry) =>
+                entry.type === "function" &&
+                entry.name === "FEDERATED_AVERAGING_V1_HASH",
+        ),
+        false,
+    );
+    assert.deepEqual(
+        eventInputs(aggregationPolicyAbi, "DefaultAggregationPolicyConfigured"),
+        [
+            { name: "configurationVersion", type: "uint64", indexed: true },
+            { name: "requiredSubmissions", type: "uint32", indexed: false },
+            {
+                name: "submissionWindowSeconds",
+                type: "uint64",
+                indexed: false,
+            },
+            { name: "algorithmHash", type: "bytes32", indexed: false },
+            { name: "validationDataHash", type: "bytes32", indexed: false },
+            { name: "maxLossIncreaseBps", type: "uint16", indexed: false },
+        ],
+    );
+    assert.deepEqual(
+        eventInputs(aggregationPolicyAbi, "RoundAggregationPolicyOpened"),
+        [
+            { name: "round", type: "uint256", indexed: true },
+            { name: "configurationVersion", type: "uint64", indexed: true },
+            { name: "requiredSubmissions", type: "uint32", indexed: false },
+            { name: "openedAt", type: "uint64", indexed: false },
+            { name: "deadline", type: "uint64", indexed: false },
+            { name: "algorithmHash", type: "bytes32", indexed: false },
+            { name: "validationDataHash", type: "bytes32", indexed: false },
+            { name: "maxLossIncreaseBps", type: "uint16", indexed: false },
+            { name: "policyHash", type: "bytes32", indexed: false },
+            { name: "inputRoot", type: "bytes32", indexed: false },
         ],
     );
 });

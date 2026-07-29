@@ -33,6 +33,10 @@ DEFAULT_ENV_FILE = REPO_ROOT / ".env"
 DEFAULT_RPC_URL = os.environ.get("RPC_URL") or "http://127.0.0.1:8545"
 DEFAULT_GM_STORAGE_ADDRESS = os.environ.get("GM_STORAGE_ADDRESS", "")
 DEFAULT_REGISTRY_ADDRESS = os.environ.get("REGISTRY_ADDRESS", "")
+HYBRID_R_V1_HASH = "0xfee8d99e620214799109487915a0c3a4f37f5a6fb66cb08dfed75fb5b6573610"
+HYBRID_R_VALIDATION_DATA_V1_HASH = (
+    "0xe4457c09ceeb203858e9b74232a4aa5b8852c623d85a63742a8751405d189d63"
+)
 
 
 def load_env_file(path: Path = DEFAULT_ENV_FILE) -> dict[str, str]:
@@ -402,6 +406,61 @@ def _decrypt_encrypted_bundle(
     payload = json.loads(plaintext.decode("utf-8"))
     plain_model_path.write_bytes(base64.b64decode(payload["model_b64"]))
     plain_signature_path.write_bytes(base64.b64decode(payload["signature_b64"]))
+    evidence_path: Path | None = None
+    evidence_hash: str | None = None
+    encrypted_evidence_b64 = payload.get("aggregation_evidence_b64")
+    public_evidence_b64 = key_bundle_doc.get("aggregation_evidence_b64")
+    if encrypted_evidence_b64 is not None:
+        if not isinstance(encrypted_evidence_b64, str) or not encrypted_evidence_b64:
+            raise RuntimeError("Encrypted Hybrid-R aggregation evidence is malformed.")
+        if encrypted_evidence_b64 != public_evidence_b64:
+            raise RuntimeError(
+                "Public key-bundle Hybrid-R evidence does not match the encrypted model payload."
+            )
+        evidence_bytes = base64.b64decode(encrypted_evidence_b64, validate=True)
+        evidence_hash = hashlib.sha256(evidence_bytes).hexdigest()
+        if (
+            str(payload.get("aggregation_evidence_sha256") or "").lower() != evidence_hash
+            or str(key_bundle_doc.get("aggregation_evidence_sha256") or "").lower() != evidence_hash
+        ):
+            raise RuntimeError("Hybrid-R aggregation evidence hash mismatch.")
+        evidence = json.loads(evidence_bytes.decode("utf-8"))
+        if not isinstance(evidence, dict):
+            raise RuntimeError("Hybrid-R aggregation evidence root must be an object.")
+        if str(evidence.get("algorithm_hash") or "").lower() != HYBRID_R_V1_HASH:
+            raise RuntimeError("Hybrid-R aggregation evidence uses an unexpected algorithm hash.")
+        if (
+            str(evidence.get("validation_data_hash") or "").lower()
+            != HYBRID_R_VALIDATION_DATA_V1_HASH
+        ):
+            raise RuntimeError("Hybrid-R aggregation evidence uses an unexpected validation-data hash.")
+        output_model_hash = f"0x{hashlib.sha256(plain_model_path.read_bytes()).hexdigest()}"
+        if str(evidence.get("output_model_sha256") or "").lower() != output_model_hash:
+            raise RuntimeError("Hybrid-R aggregation evidence does not identify the decrypted model.")
+        if evidence.get("source_round") != key_bundle_round - 1:
+            raise RuntimeError("Hybrid-R aggregation evidence round does not match the key bundle.")
+        if evidence.get("max_loss_increase_bps") != 500:
+            raise RuntimeError("Hybrid-R aggregation evidence uses an unexpected safety gate.")
+        gate_passed = evidence.get("gate_passed")
+        output_kind = evidence.get("output_kind")
+        if (
+            not isinstance(gate_passed, bool)
+            or output_kind
+            != ("candidate" if gate_passed else "parent_fallback")
+        ):
+            raise RuntimeError("Hybrid-R aggregation evidence has an inconsistent gate result.")
+        evidence_path = plain_model_path.with_name(
+            f"{plain_model_path.stem}.hybrid-r.json"
+        )
+        evidence_path.write_bytes(evidence_bytes)
+    elif public_evidence_b64 is not None:
+        raise RuntimeError(
+            "Public key-bundle Hybrid-R evidence is missing from the encrypted model payload."
+        )
+    elif key_bundle_round > 1:
+        raise RuntimeError(
+            f"Encrypted global model round {key_bundle_round} lacks Hybrid-R aggregation evidence."
+        )
     return {
         "encrypted": True,
         "round": key_bundle_round,
@@ -409,6 +468,8 @@ def _decrypt_encrypted_bundle(
         "private_key_source": private_key_source,
         "plain_model_path": str(plain_model_path),
         "plain_signature_path": str(plain_signature_path),
+        "aggregation_evidence_path": str(evidence_path) if evidence_path else None,
+        "aggregation_evidence_sha256": f"0x{evidence_hash}" if evidence_hash else None,
     }
 
 

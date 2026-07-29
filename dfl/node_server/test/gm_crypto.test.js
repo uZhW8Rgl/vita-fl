@@ -15,7 +15,7 @@ import {
 test('output bundle hash uses domain-separated length framing for every artifact', () => {
     assert.equal(
         OUTPUT_BUNDLE_HASH_DOMAIN,
-        'VITA-FL:global-model-output-bundle:v1',
+        'VITA-FL:global-model-output-bundle:v2',
     );
     const artifacts = {
         encryptedBundleBytes: Buffer.from('bundle|bytes', 'utf8'),
@@ -25,7 +25,7 @@ test('output bundle hash uses domain-separated length framing for every artifact
     const expected = deriveOutputBundleHash(artifacts);
     assert.equal(
         expected,
-        '0xa3312df388a9693adcaa1f20d86815ef4633bf82a84cde782d3c82d7c37ff71b',
+        '0x02ba6ba26ef79cfb37bb33433a89d8709766657fd3f990900f9777f75c470162',
     );
 
     for (const [field, value] of [
@@ -60,24 +60,32 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gm-crypto-'));
     const modelPath = path.join(tempDir, 'aggregated.bin');
     const signaturePath = path.join(tempDir, 'aggregated.bin.sig');
+    const aggregationEvidencePath = path.join(tempDir, 'aggregated.hybrid-r.json');
     const encryptedBundlePath = path.join(tempDir, 'aggregated.bundle.enc');
     const encryptedSignaturePath = path.join(tempDir, 'aggregated.bundle.enc.sig');
     const keyBundlePath = path.join(tempDir, 'aggregated.bundle.keys.json');
     const outModelPath = path.join(tempDir, 'gm.bin');
     const outSignaturePath = path.join(tempDir, 'gm.bin.sig');
+    const outAggregationEvidencePath = path.join(tempDir, 'gm.hybrid-r.json');
 
     const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
     const publicKeyDerHex = publicKey.export({ format: 'der', type: 'spki' }).toString('hex');
 
     const modelBytes = Buffer.from('encrypted-global-model-payload', 'utf8');
     const signatureBytes = Buffer.from('signed-model-bytes', 'utf8');
+    const aggregationEvidenceBytes = Buffer.from(
+        '{"algorithm":"hybrid-r-v1","gate_passed":true,"selected_candidate":"coordinate_median"}',
+        'utf8',
+    );
     await fs.writeFile(modelPath, modelBytes);
     await fs.writeFile(signaturePath, signatureBytes);
+    await fs.writeFile(aggregationEvidencePath, aggregationEvidenceBytes);
 
     try {
         const artifacts = await buildEncryptedGlobalModelArtifacts({
             modelPath,
             signaturePath,
+            aggregationEvidencePath,
             encryptedBundlePath,
             encryptedSignaturePath,
             keyBundlePath,
@@ -91,12 +99,30 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
 
         assert.equal(artifacts.recipients, 1);
         assert.equal(
+            artifacts.aggregationEvidenceHash,
+            `0x${crypto.createHash('sha256').update(aggregationEvidenceBytes).digest('hex')}`,
+        );
+        assert.equal(
             artifacts.outputBundleHash,
             deriveOutputBundleHash({
                 encryptedBundleBytes: await fs.readFile(encryptedBundlePath),
                 encryptedSignatureBytes: await fs.readFile(encryptedSignaturePath),
                 keyBundleBytes: await fs.readFile(keyBundlePath),
             }),
+        );
+        const publicKeyBundle = JSON.parse(
+            await fs.readFile(keyBundlePath, 'utf8'),
+        );
+        assert.equal(
+            Buffer.from(
+                publicKeyBundle.aggregation_evidence_b64,
+                'base64',
+            ).toString('utf8'),
+            aggregationEvidenceBytes.toString('utf8'),
+        );
+        assert.equal(
+            publicKeyBundle.aggregation_evidence_sha256,
+            artifacts.aggregationEvidenceHash.slice(2),
         );
         assert.ok((await fs.readFile(encryptedBundlePath, 'utf8')).includes('"cipher":"aes-256-gcm"'));
         assert.ok((await fs.stat(encryptedSignaturePath)).size > 0);
@@ -116,12 +142,49 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
             ownAddress: '0x1234567890abcdef1234567890abcdef12345678',
             outModelPath,
             outSignaturePath,
+            outAggregationEvidencePath,
             decryptionPrivateKey: privateKey,
         });
 
         assert.equal(result.round, 7);
         assert.deepEqual(await fs.readFile(outModelPath), modelBytes);
         assert.deepEqual(await fs.readFile(outSignaturePath), signatureBytes);
+        assert.deepEqual(
+            await fs.readFile(outAggregationEvidencePath),
+            aggregationEvidenceBytes,
+        );
+        assert.equal(result.aggregationEvidence.algorithm, 'hybrid-r-v1');
+        assert.equal(result.aggregationEvidence.gate_passed, true);
+    } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('gm crypto rejects non-JSON Hybrid-R evidence before publication', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gm-crypto-evidence-'));
+    const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const paths = {
+        modelPath: path.join(tempDir, 'aggregated.bin'),
+        signaturePath: path.join(tempDir, 'aggregated.bin.sig'),
+        aggregationEvidencePath: path.join(tempDir, 'aggregated.hybrid-r.json'),
+        encryptedBundlePath: path.join(tempDir, 'aggregated.bundle.enc'),
+        encryptedSignaturePath: path.join(tempDir, 'aggregated.bundle.enc.sig'),
+        keyBundlePath: path.join(tempDir, 'aggregated.bundle.keys.json'),
+    };
+    await fs.writeFile(paths.modelPath, 'model');
+    await fs.writeFile(paths.signaturePath, 'signature');
+    await fs.writeFile(paths.aggregationEvidencePath, 'not-json');
+
+    try {
+        await assert.rejects(
+            buildEncryptedGlobalModelArtifacts({
+                ...paths,
+                recipients: [],
+                round: 1,
+                signingPrivateKey: privateKey,
+            }),
+            /Invalid Hybrid-R aggregation evidence/,
+        );
     } finally {
         await fs.rm(tempDir, { recursive: true, force: true });
     }

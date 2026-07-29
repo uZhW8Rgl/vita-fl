@@ -8,6 +8,7 @@ import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
 import { loadParticipantKey, materializeParticipantPrivateKey, PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH, } from "./participant_key.js";
 import { loadParticipantActionSigner, } from "./action_key.js";
+import { HYBRID_R_V1_HASH } from "./protocol_digest.js";
 import { dstackHttpsEndpoint } from "./runtime_endpoints.js";
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
@@ -43,6 +44,83 @@ for (const warning of validateTimingConfig(timingConfig)) {
 let aggregatorTimeoutTracker = { contextKey: "", missedLoops: 0 };
 function sameAddress(left, right) {
     return String(left || '').toLowerCase() === String(right || '').toLowerCase();
+}
+const ZERO_BYTES32 = `0x${"00".repeat(32)}`;
+const HYBRID_R_EVIDENCE_PATH = "./data/results_iid/aggregated.hybrid-r.json";
+function sameHex(left, right) {
+    return String(left || '').toLowerCase() === String(right || '').toLowerCase();
+}
+function canonicalJson(value) {
+    if (Array.isArray(value)) {
+        return `[${value.map(canonicalJson).join(",")}]`;
+    }
+    if (value && typeof value === "object") {
+        return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+    }
+    return JSON.stringify(value);
+}
+async function validateHybridAggregationEvidence({ aggregateResult, aggregationPolicy, medicalSignerSnapshot, sourceRound, inputCount, }) {
+    const evidence = aggregateResult?.aggregation_evidence;
+    if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
+        throw new Error("Hybrid-R aggregation did not return structured evidence.");
+    }
+    if (aggregateResult?.aggregation_evidence_path
+        && aggregateResult.aggregation_evidence_path !== HYBRID_R_EVIDENCE_PATH
+        && !String(aggregateResult.aggregation_evidence_path).endsWith("/data/results_iid/aggregated.hybrid-r.json")) {
+        throw new Error(`Hybrid-R returned an unexpected evidence path: ` +
+            `${aggregateResult.aggregation_evidence_path}`);
+    }
+    const onDisk = JSON.parse(await fs.readFile(HYBRID_R_EVIDENCE_PATH, "utf8"));
+    if (canonicalJson(onDisk) !== canonicalJson(evidence)) {
+        throw new Error("Hybrid-R response evidence does not match the evidence prepared for publication.");
+    }
+    if (!sameHex(evidence.algorithm_hash, aggregationPolicy.algorithmHash)) {
+        throw new Error(`Hybrid-R algorithm hash mismatch: policy=${aggregationPolicy.algorithmHash}, ` +
+            `evidence=${evidence.algorithm_hash}`);
+    }
+    if (!aggregationPolicy.validationDataHash
+        || sameHex(aggregationPolicy.validationDataHash, ZERO_BYTES32)
+        || !sameHex(evidence.validation_data_hash, aggregationPolicy.validationDataHash)) {
+        throw new Error(`Hybrid-R validation-data hash mismatch: policy=` +
+            `${aggregationPolicy.validationDataHash}, evidence=${evidence.validation_data_hash}`);
+    }
+    if (Number(evidence.source_round) !== sourceRound) {
+        throw new Error(`Hybrid-R evidence source round ${evidence.source_round} does not match ${sourceRound}.`);
+    }
+    if (Number(evidence.input_count) !== inputCount) {
+        throw new Error(`Hybrid-R evidence input count ${evidence.input_count} does not match ${inputCount}.`);
+    }
+    const outputModelHash = await modelFileHash("./data/results_iid/aggregated.bin");
+    if (!sameHex(evidence.output_model_sha256, outputModelHash)) {
+        throw new Error(`Hybrid-R evidence output-model hash mismatch: file=${outputModelHash}, ` +
+            `evidence=${evidence.output_model_sha256}.`);
+    }
+    if (Number(evidence.max_loss_increase_bps)
+        !== Number(aggregationPolicy.maxLossIncreaseBps)) {
+        throw new Error(`Hybrid-R safety-gate mismatch: policy=${aggregationPolicy.maxLossIncreaseBps}, ` +
+            `evidence=${evidence.max_loss_increase_bps}.`);
+    }
+    if (!Array.isArray(evidence.candidate_scores)
+        || evidence.candidate_scores.length === 0) {
+        throw new Error("Hybrid-R evidence contains no candidate scores.");
+    }
+    const gatePassed = evidence.gate_passed === true;
+    if ((gatePassed && evidence.output_kind !== "candidate")
+        || (!gatePassed && evidence.output_kind !== "parent_fallback")) {
+        throw new Error("Hybrid-R gate result and selected output kind are inconsistent.");
+    }
+    const snapshotEvidence = evidence.medical_signer_snapshot;
+    for (const [field, expected] of Object.entries({
+        registry_address: medicalSignerSnapshot.registry_address,
+        block_number: medicalSignerSnapshot.block_number,
+        block_hash: medicalSignerSnapshot.block_hash,
+        key_set_version: medicalSignerSnapshot.key_set_version,
+    })) {
+        if (String(snapshotEvidence?.[field]) !== String(expected)) {
+            throw new Error(`Hybrid-R medical-signer snapshot mismatch for ${field}.`);
+        }
+    }
+    return evidence;
 }
 function targetRound() {
     return Number(process.env.ROUND || 0);
@@ -1535,6 +1613,24 @@ const stateMachine = async () => {
                             await sleep(5000);
                             continue;
                         }
+                        if ((process.env.DATASET_NAME || "mnist").toLowerCase()
+                            !== "chestmnist") {
+                            throw new Error("Hybrid-R aggregation requires the separately signed " +
+                                "ChestMNIST validation split.");
+                        }
+                        if (!sameHex(aggregationPolicy.algorithmHash, HYBRID_R_V1_HASH)) {
+                            throw new Error(`Unsupported aggregation policy ${aggregationPolicy.algorithmHash}; ` +
+                                `this worker implements ${HYBRID_R_V1_HASH}.`);
+                        }
+                        const medicalSignerSnapshot = await runOperation("aggregator.fetch_medical_signers", { role: "aggregator", round: currentRound }, () => getMedicalSignerSnapshot());
+                        await runtimeEvent("aggregator.medical_signers.fetched", {
+                            role: "aggregator",
+                            round: currentRound,
+                            block_number: medicalSignerSnapshot.block_number,
+                            block_hash: medicalSignerSnapshot.block_hash,
+                            key_set_version: medicalSignerSnapshot.key_set_version,
+                            signer_count: medicalSignerSnapshot.signers.length,
+                        });
                         const globalModelRound = currentRound + 1;
                         const participantCount = Number(process.env.WORKER_COUNT || expected + 1);
                         const aggregateResult = await runOperation("aggregator.aggregation", {
@@ -1547,8 +1643,38 @@ const stateMachine = async () => {
                             source_round: currentRound,
                             expected_models: expected,
                             participant_count: participantCount,
+                            medical_signer_snapshot: medicalSignerSnapshot,
+                            expected_algorithm_hash: aggregationPolicy.algorithmHash,
+                            expected_validation_data_hash: aggregationPolicy.validationDataHash,
+                            max_loss_increase_bps: aggregationPolicy.maxLossIncreaseBps,
                             private_key: participantPrivateKeyRuntimePath,
                         }, { timeoutMs: 3 * 60 * 1000 }));
+                        const aggregationEvidence = await validateHybridAggregationEvidence({
+                            aggregateResult,
+                            aggregationPolicy,
+                            medicalSignerSnapshot,
+                            sourceRound: currentRound,
+                            inputCount: expected,
+                        });
+                        console.log("Hybrid-R selection evidence:", {
+                            selectedCandidate: aggregationEvidence.selected_candidate,
+                            outputKind: aggregationEvidence.output_kind,
+                            gatePassed: aggregationEvidence.gate_passed,
+                            parentLoss: aggregationEvidence.parent_loss,
+                            selectedLoss: aggregationEvidence.selected_loss,
+                            validationDataHash: aggregationEvidence.validation_data_hash,
+                        });
+                        await runtimeEvent("aggregator.hybrid_r.selected", {
+                            role: "aggregator",
+                            source_round: currentRound,
+                            model_count: expected,
+                            selected_candidate: String(aggregationEvidence.selected_candidate),
+                            output_kind: String(aggregationEvidence.output_kind),
+                            gate_passed: Boolean(aggregationEvidence.gate_passed),
+                            parent_loss: Number(aggregationEvidence.parent_loss),
+                            selected_loss: Number(aggregationEvidence.selected_loss),
+                            max_loss_increase_bps: Number(aggregationEvidence.max_loss_increase_bps),
+                        });
                         const metrics = aggregateResult?.metrics;
                         if (metrics && typeof metrics === "object") {
                             console.log("Global model evaluation metrics:", metrics);

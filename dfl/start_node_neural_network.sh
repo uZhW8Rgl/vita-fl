@@ -77,6 +77,8 @@ case "$DATASET_NAME" in
     ;;
   chestmnist)
     cp "${TRAIN_DATA_SRC}" /dfl/node_server/data/train-data.npz
+    VALIDATION_DATA_SRC=${VALIDATION_DATA_SRC:-${CHESTMNIST_VALIDATION_DATA:-/dfl/config/chestmnist/validation_data/validation-data.npz}}
+    cp "${VALIDATION_DATA_SRC}" /dfl/node_server/data/validation-data.npz
     cp "${TEST_DATA_SRC}" /dfl/node_server/data/test-data.npz
     ;;
   *)

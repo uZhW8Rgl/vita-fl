@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - tee_inference
+      - phala_app_key
     paths:
       - "zk_inference/**"
       - "agent_receipts/**"

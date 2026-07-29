@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from agent.blockchain_source import (
+    _decrypt_encrypted_bundle,
     decode_device_record,
     decode_finalized_model_bundle,
     read_device_record,
@@ -191,6 +201,144 @@ class FinalizedModelBundleTests(unittest.TestCase):
     def test_rejects_unauthorized_device_endpoint(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "not authorized"):
             decode_device_record(_encoded_device(authorized=False))
+
+
+class HybridRAggregationEvidenceTests(unittest.TestCase):
+    @staticmethod
+    def _encrypted_fixture(root: Path) -> tuple[dict[str, str], dict[str, Path], str]:
+        address = "0x" + "12" * 20
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        private_key_path = root / "participant.pem"
+        private_key_path.write_bytes(
+            private_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        evidence = (
+            "{"
+            '"algorithm_hash":"0xfee8d99e620214799109487915a0c3a4f37f5a6fb66cb08dfed75fb5b6573610",'
+            '"gate_passed":true,'
+            '"max_loss_increase_bps":500,'
+            '"output_kind":"candidate",'
+            f'"output_model_sha256":"0x{hashlib.sha256(b"model").hexdigest()}",'
+            '"source_round":2,'
+            '"validation_data_hash":"0xe4457c09ceeb203858e9b74232a4aa5b8852c623d85a63742a8751405d189d63"'
+            "}\n"
+        ).encode()
+        evidence_hash = hashlib.sha256(evidence).hexdigest()
+        payload = json.dumps(
+            {
+                "version": 2,
+                "model_b64": base64.b64encode(b"model").decode(),
+                "signature_b64": base64.b64encode(b"signature").decode(),
+                "aggregation_evidence_b64": base64.b64encode(evidence).decode(),
+                "aggregation_evidence_sha256": evidence_hash,
+            },
+            separators=(",", ":"),
+        ).encode()
+        key = bytes(range(32))
+        iv = bytes(range(12))
+        encrypted = AESGCM(key).encrypt(iv, payload, None)
+        wrapped = private_key.public_key().encrypt(
+            key + iv,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+        encrypted_model_path = root / "model.enc"
+        key_bundle_path = root / "keys.json"
+        encrypted_model_path.write_text(
+            json.dumps(
+                {
+                    "ciphertext_b64": base64.b64encode(encrypted[:-16]).decode(),
+                    "auth_tag_b64": base64.b64encode(encrypted[-16:]).decode(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        key_bundle_path.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "round": 3,
+                    "wrapped_keys_b64": {
+                        address: base64.b64encode(wrapped).decode(),
+                    },
+                    "aggregation_evidence_b64": base64.b64encode(evidence).decode(),
+                    "aggregation_evidence_sha256": evidence_hash,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return (
+            {"model_cid": "bafy-model"},
+            {
+                "private_key": private_key_path,
+                "encrypted_model": encrypted_model_path,
+                "key_bundle": key_bundle_path,
+                "plain_model": root / "model.bin",
+                "plain_signature": root / "model.bin.sig",
+            },
+            address,
+        )
+
+    def test_decrypts_and_exports_publicly_bound_hybrid_r_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle, paths, address = self._encrypted_fixture(Path(directory))
+            with patch.dict(
+                "os.environ",
+                {
+                    "ACCOUNT_ADDRESS": address,
+                    "RSA_PRIVATE_KEY_FILE": str(paths["private_key"]),
+                },
+                clear=False,
+            ):
+                result = _decrypt_encrypted_bundle(
+                    bundle,
+                    paths["encrypted_model"],
+                    paths["key_bundle"],
+                    paths["plain_model"],
+                    paths["plain_signature"],
+                )
+
+            self.assertEqual(paths["plain_model"].read_bytes(), b"model")
+            self.assertEqual(paths["plain_signature"].read_bytes(), b"signature")
+            evidence_path = Path(result["aggregation_evidence_path"])
+            self.assertTrue(evidence_path.is_file())
+            self.assertEqual(
+                result["aggregation_evidence_sha256"],
+                f"0x{hashlib.sha256(evidence_path.read_bytes()).hexdigest()}",
+            )
+
+    def test_rejects_public_evidence_that_differs_from_encrypted_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle, paths, address = self._encrypted_fixture(Path(directory))
+            key_bundle = json.loads(paths["key_bundle"].read_text(encoding="utf-8"))
+            key_bundle["aggregation_evidence_b64"] = base64.b64encode(b"other").decode()
+            paths["key_bundle"].write_text(json.dumps(key_bundle), encoding="utf-8")
+
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "ACCOUNT_ADDRESS": address,
+                        "RSA_PRIVATE_KEY_FILE": str(paths["private_key"]),
+                    },
+                    clear=False,
+                ),
+                self.assertRaisesRegex(RuntimeError, "does not match"),
+            ):
+                _decrypt_encrypted_bundle(
+                    bundle,
+                    paths["encrypted_model"],
+                    paths["key_bundle"],
+                    paths["plain_model"],
+                    paths["plain_signature"],
+                )
 
 
 if __name__ == "__main__":

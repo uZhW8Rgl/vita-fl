@@ -13,6 +13,19 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 PROVENANCE_VERSION = "DICOM-ALIGNED-CHESTMNIST-V1"
 DATASET_VERSION = "CHESTMNIST-1"
+VALIDATION_SPLIT_ID = "CHESTMNIST-VAL-V1"
+VALIDATION_SEMANTIC_HASH_DOMAIN = b"VITA-FL:CHESTMNIST:VALIDATION:SEMANTIC:V1\x00"
+VALIDATION_SEMANTIC_FIELDS = (
+    "dataset_split",
+    "images",
+    "labels",
+    "sample_indices",
+    "device_signer_ids",
+    "device_signatures",
+    "radiologist_signer_ids",
+    "radiologist_signatures",
+    "provenance_version",
+)
 DEVICE_ROLE = "XRAY_DEVICE"
 RADIOLOGIST_ROLE = "RADIOLOGIST"
 IMAGE_SIGNATURE_PROFILE = "DICOM-CREATOR-RSA-SHA256"
@@ -31,6 +44,50 @@ class SampleIdentity:
     image_sop_instance_uid: str
     image_signature_uid: str
     label_sop_instance_uid: str
+
+
+def _semantic_array_frame(name: str, value: Any) -> bytes:
+    array = np.asarray(value)
+    if array.dtype.hasobject:
+        raise ValueError(f"semantic validation hash does not support object dtype for {name}")
+    contiguous = np.ascontiguousarray(array)
+    name_bytes = name.encode("ascii")
+    dtype_bytes = contiguous.dtype.str.encode("ascii")
+    shape = tuple(int(dimension) for dimension in contiguous.shape)
+    raw = contiguous.tobytes(order="C")
+    return b"".join(
+        (
+            struct.pack("<H", len(name_bytes)),
+            name_bytes,
+            struct.pack("<H", len(dtype_bytes)),
+            dtype_bytes,
+            struct.pack("<H", len(shape)),
+            b"".join(struct.pack("<Q", dimension) for dimension in shape),
+            struct.pack("<Q", len(raw)),
+            raw,
+        )
+    )
+
+
+def _validation_semantic_sha256_values(values: Any) -> str:
+    missing = [name for name in VALIDATION_SEMANTIC_FIELDS if name not in values]
+    if missing:
+        raise ValueError(f"validation semantic hash lacks fields: {', '.join(missing)}")
+    digest = hashlib.sha256(VALIDATION_SEMANTIC_HASH_DOMAIN)
+    for name in VALIDATION_SEMANTIC_FIELDS:
+        digest.update(_semantic_array_frame(name, values[name]))
+    return digest.hexdigest()
+
+
+def validation_semantic_sha256(
+    source: Path | str | dict[str, Any] | np.lib.npyio.NpzFile,
+) -> str:
+    """Return the canonical semantic digest, without a ``0x`` prefix."""
+
+    if isinstance(source, (str, Path)):
+        with np.load(Path(source), allow_pickle=False) as bundle:
+            return _validation_semantic_sha256_values(bundle)
+    return _validation_semantic_sha256_values(source)
 
 
 def _uid(domain: str, *values: object) -> str:
@@ -78,18 +135,28 @@ def _validate_image_and_labels(image: np.ndarray, labels: np.ndarray) -> tuple[n
     return np.ascontiguousarray(image_array), np.ascontiguousarray(label_array)
 
 
-def image_mac_bytes(image: np.ndarray, sample_index: int, device_id: str) -> tuple[bytes, SampleIdentity]:
+def image_mac_bytes(
+    image: np.ndarray,
+    sample_index: int,
+    device_id: str,
+    dataset_split: str | None = None,
+) -> tuple[bytes, SampleIdentity]:
     image_array, _ = _validate_image_and_labels(image, np.zeros(CHESTMNIST_LABEL_COUNT, dtype=np.uint8))
-    study_uid = _uid("study", DATASET_VERSION)
-    series_uid = _uid("series", DATASET_VERSION, device_id)
-    image_sop_uid = _uid("image-sop", DATASET_VERSION, sample_index)
+    if dataset_split is not None:
+        dataset_split = dataset_split.strip()
+        if not dataset_split or len(dataset_split.encode("ascii")) > 64:
+            raise ValueError("dataset split must be non-empty ASCII with at most 64 bytes")
+    split_identity = () if dataset_split is None else (dataset_split,)
+    study_uid = _uid("study", DATASET_VERSION, *split_identity)
+    series_uid = _uid("series", DATASET_VERSION, *split_identity, device_id)
+    image_sop_uid = _uid("image-sop", DATASET_VERSION, *split_identity, sample_index)
     acquisition_date = "20250101"
     acquisition_seconds = sample_index % 86400
     acquisition_time = (
         f"{acquisition_seconds // 3600:02d}{(acquisition_seconds % 3600) // 60:02d}{acquisition_seconds % 60:02d}"
     )
 
-    elements = (
+    elements = [
         (0x0008, 0x0012, "DA", _text("DA", acquisition_date)),
         (0x0008, 0x0013, "TM", _text("TM", acquisition_time)),
         (0x0008, 0x0016, "UI", _text("UI", SECONDARY_CAPTURE_IMAGE_STORAGE_UID)),
@@ -113,7 +180,9 @@ def image_mac_bytes(image: np.ndarray, sample_index: int, device_id: str) -> tup
         (0x0028, 0x0102, "US", struct.pack("<H", 7)),
         (0x0028, 0x0103, "US", struct.pack("<H", 0)),
         (0x7FE0, 0x0010, "OB", _even(image_array.tobytes(order="C"), b"\x00")),
-    )
+    ]
+    if dataset_split is not None:
+        elements.append((0x0011, 0x1003, "LO", _text("LO", dataset_split)))
     mac_bytes = _encode_elements(elements)
     image_signature_uid = _uid("image-signature", image_sop_uid, hashlib.sha256(mac_bytes).hexdigest())
     identity = SampleIdentity(
@@ -121,7 +190,7 @@ def image_mac_bytes(image: np.ndarray, sample_index: int, device_id: str) -> tup
         series_instance_uid=series_uid,
         image_sop_instance_uid=image_sop_uid,
         image_signature_uid=image_signature_uid,
-        label_sop_instance_uid=_uid("label-sop", DATASET_VERSION, sample_index),
+        label_sop_instance_uid=_uid("label-sop", DATASET_VERSION, *split_identity, sample_index),
     )
     return mac_bytes, identity
 
@@ -131,14 +200,16 @@ def label_mac_bytes(
     sample_index: int,
     radiologist_id: str,
     identity: SampleIdentity,
+    dataset_split: str | None = None,
 ) -> bytes:
     _, label_array = _validate_image_and_labels(np.zeros((28, 28), dtype=np.uint8), labels)
+    split_identity = () if dataset_split is None else (dataset_split,)
     observation_date = "20250102"
     observation_seconds = sample_index % 86400
     observation_time = (
         f"{observation_seconds // 3600:02d}{(observation_seconds % 3600) // 60:02d}{observation_seconds % 60:02d}"
     )
-    elements = (
+    elements = [
         (0x0008, 0x0012, "DA", _text("DA", observation_date)),
         (0x0008, 0x0013, "TM", _text("TM", observation_time)),
         (0x0008, 0x0016, "UI", _text("UI", BASIC_TEXT_SR_STORAGE_UID)),
@@ -151,7 +222,7 @@ def label_mac_bytes(
         (0x0011, 0x1013, "LO", _text("LO", "99MTHESIS-CHESTMNIST-LABELS-V1")),
         (0x0011, 0x1014, "OB", _even(label_array.tobytes(order="C"), b"\x00")),
         (0x0020, 0x000D, "UI", _text("UI", identity.study_instance_uid)),
-        (0x0020, 0x000E, "UI", _text("UI", _uid("label-series", DATASET_VERSION))),
+        (0x0020, 0x000E, "UI", _text("UI", _uid("label-series", DATASET_VERSION, *split_identity))),
         (0x0040, 0xA073, "SQ", b""),
         (0x0040, 0xA491, "CS", _text("CS", "COMPLETE")),
         (0x0040, 0xA493, "CS", _text("CS", "VERIFIED")),
@@ -159,7 +230,9 @@ def label_mac_bytes(
         (0x0040, 0xDB73, "UL", struct.pack("<I", 1)),
         (0x0041, 0x0010, "LO", _text("LO", "MASTERTHESIS")),
         (0x0041, 0x1001, "LO", _text("LO", radiologist_id)),
-    )
+    ]
+    if dataset_split is not None:
+        elements.append((0x0011, 0x1015, "LO", _text("LO", dataset_split)))
     return _encode_elements(elements)
 
 
@@ -171,9 +244,10 @@ def sign_sample(
     device_private_key: rsa.RSAPrivateKey,
     radiologist_id: str,
     radiologist_private_key: rsa.RSAPrivateKey,
+    dataset_split: str | None = None,
 ) -> tuple[bytes, bytes]:
-    image_bytes, identity = image_mac_bytes(image, sample_index, device_id)
-    label_bytes = label_mac_bytes(labels, sample_index, radiologist_id, identity)
+    image_bytes, identity = image_mac_bytes(image, sample_index, device_id, dataset_split)
+    label_bytes = label_mac_bytes(labels, sample_index, radiologist_id, identity, dataset_split)
     image_signature = device_private_key.sign(image_bytes, padding.PKCS1v15(), hashes.SHA256())
     label_signature = radiologist_private_key.sign(label_bytes, padding.PKCS1v15(), hashes.SHA256())
     return image_signature, label_signature
@@ -261,6 +335,7 @@ def verify_training_provenance(path: Path, signer_snapshot: dict[str, Any]) -> d
         radiologist_ids = bundle["radiologist_signer_ids"]
         radiologist_signatures = bundle["radiologist_signatures"]
         provenance_version = _decode_fixed_text(bundle["provenance_version"].item())
+        dataset_split = _decode_fixed_text(bundle["dataset_split"].item()) if "dataset_split" in bundle.files else None
 
     if provenance_version != PROVENANCE_VERSION:
         raise ValueError(f"unsupported provenance version: {provenance_version}")
@@ -280,8 +355,8 @@ def verify_training_provenance(path: Path, signer_snapshot: dict[str, Any]) -> d
         if radiologist_entry is None or radiologist_entry[0] != RADIOLOGIST_ROLE:
             raise ValueError(f"sample {sample_index} uses an unapproved radiologist: {radiologist_id}")
 
-        image_bytes, identity = image_mac_bytes(images[index], sample_index, device_id)
-        label_bytes = label_mac_bytes(labels[index], sample_index, radiologist_id, identity)
+        image_bytes, identity = image_mac_bytes(images[index], sample_index, device_id, dataset_split)
+        label_bytes = label_mac_bytes(labels[index], sample_index, radiologist_id, identity, dataset_split)
         try:
             device_entry[1].verify(
                 bytes(np.asarray(device_signatures[index], dtype=np.uint8)),
@@ -298,10 +373,13 @@ def verify_training_provenance(path: Path, signer_snapshot: dict[str, Any]) -> d
         except Exception as exc:
             raise ValueError(f"DICOM provenance verification failed for sample {sample_index}") from exc
 
-    return {
+    result: dict[str, int | str] = {
         "verified_samples": count,
         "active_device_keys": device_count,
         "active_radiologist_keys": radiologist_count,
         "key_set_version": str(signer_snapshot.get("key_set_version", "")),
         "block_number": str(signer_snapshot.get("block_number", "")),
     }
+    if dataset_split is not None:
+        result["dataset_split"] = dataset_split
+    return result

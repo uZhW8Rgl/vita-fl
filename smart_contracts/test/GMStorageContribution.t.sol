@@ -190,7 +190,7 @@ contract GMStorageContributionTest is Test {
             vm.prank(aggregatorAction);
             gmStorage.closeModelSubmissions(currentRound);
         }
-        (,,,,, uint32 inputCount,, bytes32 algorithmHash, bytes32 policyHash, bytes32 inputRoot) =
+        (,,,,, uint32 inputCount,, bytes32 algorithmHash,,, bytes32 policyHash, bytes32 inputRoot) =
             aggregationPolicy.getRoundPolicy(currentRound);
         bytes32 outputModelHash = keccak256(bytes(model));
         bytes32 outputBundleHash = keccak256(abi.encode(model, signatureCid, keyBundle, outputModelHash));

@@ -51,7 +51,33 @@
   },
   {
     "type": "function",
-    "name": "FEDERATED_AVERAGING_V1_HASH",
+    "name": "HYBRID_R_MAX_LOSS_INCREASE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "HYBRID_R_V1_HASH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "HYBRID_R_VALIDATION_DATA_V1_HASH",
     "inputs": [],
     "outputs": [
       {
@@ -416,6 +442,16 @@
         "internalType": "bytes32"
       },
       {
+        "name": "validationDataHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "maxLossIncreaseBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
         "name": "policyHash",
         "type": "bytes32",
         "internalType": "bytes32"
@@ -639,6 +675,18 @@
         "type": "bytes32",
         "indexed": false,
         "internalType": "bytes32"
+      },
+      {
+        "name": "validationDataHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "maxLossIncreaseBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
@@ -744,6 +792,18 @@
         "type": "bytes32",
         "indexed": false,
         "internalType": "bytes32"
+      },
+      {
+        "name": "validationDataHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "maxLossIncreaseBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       },
       {
         "name": "policyHash",

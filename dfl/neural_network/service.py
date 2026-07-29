@@ -188,6 +188,10 @@ class Handler(BaseHTTPRequestHandler):
                     source_round=payload.get("source_round"),
                     expected_models=payload.get("expected_models"),
                     participant_count=payload.get("participant_count"),
+                    medical_signer_snapshot=payload.get("medical_signer_snapshot"),
+                    expected_algorithm_hash=payload.get("expected_algorithm_hash"),
+                    expected_validation_data_hash=payload.get("expected_validation_data_hash"),
+                    max_loss_increase_bps=payload.get("max_loss_increase_bps"),
                     private_key=_required_private_key(payload),
                 )
                 _json_response(self, 200, {"ok": True, **result})

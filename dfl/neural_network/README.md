@@ -8,7 +8,7 @@ It provides:
 - binary model serialization for convolutional and linear layer weights,
 - local training,
 - encrypted model transfer helpers,
-- federated averaging,
+- deterministic adaptive robust aggregation,
 - global model signing,
 - and an HTTP service used by `node_server`.
 
@@ -65,6 +65,38 @@ Create worker shards from the official `chestmnist.npz` bundle with:
 ```bash
 .venv/bin/python scripts/generate_chestmnist_training_splits.py
 ```
+
+The generator also creates a signed `CHESTMNIST-VAL-V1` reference artifact
+from the official validation split. Images that duplicate a training image or
+an earlier validation image are removed before signing. This artifact is
+distinct from `test-data.npz`: it is an input to aggregation policy, whereas
+the test split is used only for reporting.
+
+## Adaptive Robust Aggregation
+
+For every non-bootstrap ChestMNIST round, the aggregator sorts the closed
+worker set by address and converts each client model into an update relative to
+the parent model. It deterministically constructs equal-weight FedAvg,
+coordinate-median, all admissible symmetric trimmed-mean, and, for at least five
+updates, Multi-Krum candidates. All candidates are evaluated with binary
+cross-entropy on the separately signed validation artifact. Exact score ties
+keep the earlier policy candidate.
+
+The selected candidate is published only if its validation loss is at most 5%
+above the parent-model loss. Otherwise the unchanged parent model is emitted as
+a no-op fallback. Aggregation uses single-threaded `float64` CPU operations and
+fails closed if the configured algorithm hash, validation semantic hash,
+medical-signer snapshot, model layout, or finite-value checks disagree.
+
+The service writes canonical selection evidence to
+`data/results_iid/aggregated.hybrid-r.json`. This records the closed inputs,
+candidate scores, selected candidate or parent fallback, validation identity,
+signer snapshot, and output-model hash. The mechanism is inspired by adaptive
+hybrid defenses evaluated by
+[Yue et al.](https://arxiv.org/abs/2409.06474); it provides an empirically
+testable mitigation, not universal Byzantine robustness. In particular, its
+assurance depends on a representative honest validation reference and a
+sufficient honest contribution majority.
 
 ## HTTP Service
 

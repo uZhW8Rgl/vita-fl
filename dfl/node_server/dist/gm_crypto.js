@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import fs from "fs/promises";
-export const OUTPUT_BUNDLE_HASH_DOMAIN = "VITA-FL:global-model-output-bundle:v1";
+export const OUTPUT_BUNDLE_HASH_DOMAIN = "VITA-FL:global-model-output-bundle:v2";
 const uint64FrameLength = (value) => {
     if (!Number.isSafeInteger(value) || value < 0) {
         throw new Error("Output-bundle frame length must be a safe unsigned integer.");
@@ -50,18 +50,42 @@ const loadPublicKeyFromDerHex = (publicKeyDerHex) => {
     const der = Buffer.from(normalizeHex(publicKeyDerHex), "hex");
     return crypto.createPublicKey({ key: der, format: "der", type: "spki" });
 };
-export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signaturePath, encryptedBundlePath, encryptedSignaturePath, keyBundlePath, recipients, round, signingPrivateKey, }) => {
+export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signaturePath, aggregationEvidencePath, encryptedBundlePath, encryptedSignaturePath, keyBundlePath, recipients, round, signingPrivateKey, }) => {
     if (!Array.isArray(recipients)) {
         throw new Error("Recipients for GM encryption must be provided as an array.");
     }
     const modelBytes = await fs.readFile(modelPath);
     const signatureBytes = await fs.readFile(signaturePath);
+    let aggregationEvidenceBytes = null;
+    let aggregationEvidenceHash = null;
+    if (aggregationEvidencePath) {
+        aggregationEvidenceBytes = await fs.readFile(aggregationEvidencePath);
+        if (aggregationEvidenceBytes.length === 0) {
+            throw new Error("Hybrid-R aggregation evidence must not be empty.");
+        }
+        try {
+            const parsed = JSON.parse(aggregationEvidenceBytes.toString("utf8"));
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                throw new Error("the JSON root must be an object");
+            }
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(`Invalid Hybrid-R aggregation evidence: ${message}`);
+        }
+        aggregationEvidenceHash = crypto
+            .createHash("sha256")
+            .update(aggregationEvidenceBytes)
+            .digest("hex");
+    }
     const payload = Buffer.from(JSON.stringify({
-        version: 1,
+        version: 2,
         round,
         generated_at: new Date().toISOString(),
         model_b64: modelBytes.toString("base64"),
         signature_b64: signatureBytes.toString("base64"),
+        aggregation_evidence_b64: aggregationEvidenceBytes?.toString("base64") ?? null,
+        aggregation_evidence_sha256: aggregationEvidenceHash,
     }), "utf8");
     const aesKey = crypto.randomBytes(32);
     const iv = crypto.randomBytes(12);
@@ -97,10 +121,12 @@ export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signatureP
     });
     await fs.writeFile(encryptedSignaturePath, signature);
     const keyBundleDocument = {
-        version: 1,
+        version: 2,
         type: "global-model-key-bundle",
         round,
         wrapped_keys_b64: wrappedKeys,
+        aggregation_evidence_b64: aggregationEvidenceBytes?.toString("base64") ?? null,
+        aggregation_evidence_sha256: aggregationEvidenceHash,
     };
     const keyBundleBytes = Buffer.from(JSON.stringify(keyBundleDocument), "utf8");
     await fs.writeFile(keyBundlePath, keyBundleBytes);
@@ -109,6 +135,9 @@ export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signatureP
         encryptedBundlePath,
         encryptedSignaturePath,
         keyBundlePath,
+        aggregationEvidenceHash: aggregationEvidenceHash
+            ? `0x${aggregationEvidenceHash}`
+            : null,
         outputBundleHash: deriveOutputBundleHash({
             encryptedBundleBytes: bundleBytes,
             encryptedSignatureBytes: signature,
@@ -116,7 +145,7 @@ export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signatureP
         }),
     };
 };
-export const decryptEncryptedGlobalModelArtifacts = async ({ encryptedBundlePath, keyBundlePath, ownAddress, outModelPath, outSignaturePath, decryptionPrivateKey, }) => {
+export const decryptEncryptedGlobalModelArtifacts = async ({ encryptedBundlePath, keyBundlePath, ownAddress, outModelPath, outSignaturePath, outAggregationEvidencePath, decryptionPrivateKey, }) => {
     const bundleDocument = JSON.parse(await fs.readFile(encryptedBundlePath, "utf8"));
     const keyBundleDocument = JSON.parse(await fs.readFile(keyBundlePath, "utf8"));
     const normalizedAddress = String(ownAddress || "").toLowerCase();
@@ -145,9 +174,45 @@ export const decryptEncryptedGlobalModelArtifacts = async ({ encryptedBundlePath
     const signatureBytes = toBufferFromBase64(payload.signature_b64, "plaintext signature");
     await fs.writeFile(outModelPath, modelBytes);
     await fs.writeFile(outSignaturePath, signatureBytes);
+    let aggregationEvidence = null;
+    let aggregationEvidenceHash = null;
+    if (outAggregationEvidencePath) {
+        await fs.rm(outAggregationEvidencePath, { force: true });
+    }
+    if (payload.aggregation_evidence_b64 !== null && payload.aggregation_evidence_b64 !== undefined) {
+        const evidenceBytes = toBufferFromBase64(payload.aggregation_evidence_b64, "Hybrid-R aggregation evidence");
+        const actualHash = crypto.createHash("sha256").update(evidenceBytes).digest("hex");
+        if (typeof payload.aggregation_evidence_sha256 !== "string"
+            || payload.aggregation_evidence_sha256.toLowerCase() !== actualHash) {
+            throw new Error("Hybrid-R aggregation evidence hash mismatch.");
+        }
+        if (keyBundleDocument.aggregation_evidence_b64
+            !== payload.aggregation_evidence_b64
+            || String(keyBundleDocument.aggregation_evidence_sha256 || "").toLowerCase() !== actualHash) {
+            throw new Error("Public key-bundle Hybrid-R evidence does not match the encrypted payload.");
+        }
+        const parsed = JSON.parse(evidenceBytes.toString("utf8"));
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("Hybrid-R aggregation evidence JSON root must be an object.");
+        }
+        aggregationEvidence = parsed;
+        aggregationEvidenceHash = `0x${actualHash}`;
+        if (outAggregationEvidencePath) {
+            await fs.writeFile(outAggregationEvidencePath, evidenceBytes);
+        }
+    }
+    else if (keyBundleDocument.aggregation_evidence_b64 !== null
+        && keyBundleDocument.aggregation_evidence_b64 !== undefined) {
+        throw new Error("Public key-bundle Hybrid-R evidence is missing from the encrypted payload.");
+    }
     return {
         outModelPath,
         outSignaturePath,
+        outAggregationEvidencePath: aggregationEvidence && outAggregationEvidencePath
+            ? outAggregationEvidencePath
+            : null,
+        aggregationEvidence,
+        aggregationEvidenceHash,
         round: Number(keyBundleDocument?.round ?? 0),
     };
 };

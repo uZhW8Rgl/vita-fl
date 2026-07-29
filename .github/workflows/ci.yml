@@ -91,9 +91,12 @@ jobs:
             zk_inference/run_ezkl.py \
             zk_inference/server.py \
             zk_inference/service_tools.py \
+            dfl/neural_network/dicom_provenance.py \
+            dfl/neural_network/hybrid_r.py \
             dfl/neural_network/cli.py \
             dfl/neural_network/service.py \
             dfl/neural_network/start_service.py \
+            scripts/generate_chestmnist_training_splits.py \
             transparency_log/bootstrap.py \
             transparency_log/test_bootstrap.py
 
@@ -112,8 +115,11 @@ jobs:
       - name: Run Phala configuration unit tests
         run: PYTHONPATH=. python -m unittest discover -s phala -p 'test_*.py' -v
 
-      - name: Run DICOM-aligned training provenance tests
+      - name: Run DFL neural-network and provenance tests
         run: PYTHONPATH=. python -m unittest discover -s dfl/neural_network/tests -v
+
+      - name: Run DFL container integration tests
+        run: PYTHONPATH=. python -m unittest discover -s dfl/tests -v
 
   node-server:
     name: Node Server

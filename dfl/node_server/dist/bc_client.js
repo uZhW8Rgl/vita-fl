@@ -5,7 +5,7 @@ import 'dotenv/config';
 import { emitTelemetryEvent } from "./telemetry.js";
 import { normalizePublisherPublicKeyDerHex } from "./model_publisher.js";
 import { signRawDigest, } from "./action_key.js";
-import { deriveAggregationStatementDigest, deriveModelSubmissionDigest, derivePublicationHash, } from "./protocol_digest.js";
+import { deriveAggregationStatementDigest, deriveModelSubmissionDigest, derivePublicationHash, deriveRoundAggregationPolicyHash, } from "./protocol_digest.js";
 // setup client´
 //const web3 = new Web3("https://eth-sepolia.g.alchemy.com/v2/pFowzUSGYob62Q7i2YVsF0LFUX3WiCT2");
 const web3 = new Web3(process.env.RPC_URL);
@@ -333,7 +333,7 @@ export const getRoundAggregationPolicy = async (expectedRound) => {
         contract.methods.getRoundPolicy(expectedRound).call(),
         web3.eth.getBlock("latest"),
     ]);
-    return {
+    const policy = {
         contractAddress: address,
         opened: Boolean(result.opened ?? result[0]),
         closed: Boolean(result.closed ?? result[1]),
@@ -343,10 +343,30 @@ export const getRoundAggregationPolicy = async (expectedRound) => {
         acceptedSubmissions: Number(result.acceptedSubmissions ?? result[5]),
         configurationVersion: Number(result.roundConfigurationVersion ?? result[6]),
         algorithmHash: String(result.algorithmHash ?? result[7]),
-        policyHash: String(result.policyHash ?? result[8]),
-        inputRoot: String(result.inputRoot ?? result[9]),
+        validationDataHash: String(result.validationDataHash
+            ?? result[8]
+            ?? `0x${"00".repeat(32)}`),
+        maxLossIncreaseBps: Number(result.maxLossIncreaseBps ?? result[9] ?? 0),
+        policyHash: String(result.policyHash ?? result[10]),
+        inputRoot: String(result.inputRoot ?? result[11]),
         chainTimestamp: Number(latestBlock.timestamp),
     };
+    if (policy.opened) {
+        const derivedPolicyHash = deriveRoundAggregationPolicyHash({
+            configurationVersion: policy.configurationVersion,
+            requiredSubmissions: policy.requiredSubmissions,
+            openedAt: policy.openedAt,
+            deadline: policy.deadline,
+            algorithmHash: policy.algorithmHash,
+            validationDataHash: policy.validationDataHash,
+            maxLossIncreaseBps: policy.maxLossIncreaseBps,
+        });
+        if (derivedPolicyHash.toLowerCase() !== policy.policyHash.toLowerCase()) {
+            throw new Error(`Aggregation policy hash mismatch for round ${expectedRound}: ` +
+                `contract=${policy.policyHash}, derived=${derivedPolicyHash}.`);
+        }
+    }
+    return policy;
 };
 export const openModelSubmissions = async (expectedRound) => {
     const current = await getRoundAggregationPolicy(expectedRound);

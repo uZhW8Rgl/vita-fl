@@ -8,8 +8,9 @@ The current prototype combines:
 
 - decentralized CNN training with multiple worker nodes,
 - smart-contract-based coordination and model metadata,
-- immutable per-round aggregation thresholds and TEE-signed input/output
-  statements with atomic model publication,
+- immutable per-round aggregation thresholds, deterministic adaptive robust
+  candidate selection on a separately signed validation split, and TEE-signed
+  input/output statements with atomic model publication,
 - local IPFS/Kubo storage for global model artifacts,
 - TDX/DCAP quote verification through Solidity contracts,
 - RSA signature verification for global model artifacts,
@@ -268,7 +269,11 @@ Generate the ignored development RSA files needed by the local bind mounts
 with `scripts/prepare_dfl_worker_experiment.py`; they are runtime material, not
 a Phala credential source, and are not copied into images.
 
-For dataset experiments, `DATASET_NAME=mnist` remains the default. `DATASET_NAME=chestmnist` switches the worker training path to ChestMNIST `.npz` shards under `data/chestmnist`.
+For dataset experiments, `DATASET_NAME=mnist` remains available for local
+utility runs. The policy-bound adaptive aggregation path requires
+`DATASET_NAME=chestmnist`, ChestMNIST worker shards, and the signed,
+training-disjoint validation artifact under `data/chestmnist`. The independent
+test split remains reporting-only.
 
 ## Quick Verification
 

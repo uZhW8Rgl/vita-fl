@@ -20,12 +20,16 @@ Together they cover the normal flow in separate steps:
 1. Read the current global model CID, signature CID, and last aggregator from `GMStorage`.
 2. Fetch the encrypted model bundle and signature from the local IPFS/Kubo node.
 3. Decrypt the model bundle for the intended recipient.
-4. Read the last aggregator's public key from `DeviceRegistry`.
-5. Verify the model signature with RSA-SHA256 and PKCS1v15 padding.
-6. Keep model and query artifacts inside the selected inference TEE, addressed
+4. Verify that any learned-model bundle contains the same canonical Hybrid-R
+   selection evidence in its encrypted payload and public recipient-key bundle,
+   and that the evidence matches the expected algorithm, signed validation
+   identity, source round, safety gate, and decrypted model hash.
+5. Read the last aggregator's public key from `DeviceRegistry`.
+6. Verify the model signature with RSA-SHA256 and PKCS1v15 padding.
+7. Keep model and query artifacts inside the selected inference TEE, addressed
    only through an opaque job ID.
-7. In the ZK service, export the verified model and create a single-image EZKL query.
-8. Generate and verify the EZKL proof in one final, fail-closed tool call.
+8. In the ZK service, export the verified model and create a single-image EZKL query.
+9. Generate and verify the EZKL proof in one final, fail-closed tool call.
 
 The smart contracts are the source of truth. Direct IPFS scanning is kept only as a debug fallback.
 

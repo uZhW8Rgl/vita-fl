@@ -62,7 +62,7 @@ For the Phala flow, this image should be published through the GitHub Actions wo
 contract-runtime compose file by immutable digest:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:719db30629d25e680776706aa4b70174bc15d27641a6607fe7e250d9df4f3bad
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:c0eafb7b91dd23d2ab9b0cec4b2b8c9695b253eec2c3c1e6ca86b1097fdf87fa
 ```
 
 Rebuild and republish this image when the contracts or bootstrap code changes.
@@ -133,22 +133,26 @@ invent another worker's accepted contribution nor replay it for a different
 round, model lineage or package. Exact retries are idempotent.
 
 `AggregationPolicy` additionally snapshots the configured minimum submission
-count, absolute deadline, algorithm identifier, and a domain-separated policy
-hash when a round opens. Every accepted worker commitment extends an ordered
-on-chain input root. Closing a round fixes that root and count and is impossible
-below the snapshotted minimum. Publication then requires the aggregator's
-current TEE action key to sign an EIP-712 statement that binds the closed input
-root and count, policy and algorithm hashes, plaintext model hash, encrypted
-output-bundle hash, CID tuple hash, and nonce. `GMStorage` verifies that
-statement and performs publication, reward, completion accounting, and round
-advancement atomically.
+count, absolute deadline, deterministic `HYBRID_R_V1_HASH`, canonical
+ChestMNIST validation-data hash, 500-basis-point maximum relative loss increase,
+and a domain-separated v2 policy hash when a non-bootstrap round opens. The
+algorithm hash fixes update-space aggregation, candidate and tie-break order,
+all coordinate-wise trimmed means, Multi-Krum parameters, float64 CPU scoring
+with mean BCE-with-logits, and unchanged-parent fallback. Every accepted worker
+commitment extends an ordered on-chain input root; closing the round fixes that
+root and count and is impossible below the snapshotted minimum.
 
-Together with the admitted worker image, this binds publication to the code
-path that verifies and stages the complete accepted set and computes the
-configured average. The guarantee remains conditional on TDX/dstack,
-workload-policy enforcement, and action-key custody; the signature is not an
-independent mathematical proof of aggregation, and arithmetic averaging is not
-a statistically Byzantine-robust learning rule.
+The admitted aggregator evaluates the Hybrid-R candidates against the
+policy-bound validation set. It selects the first minimum finite loss and uses
+the unchanged parent if no candidate is finite or the best loss exceeds
+`parent_loss * 1.05`. Publication requires its current TEE action key to sign an
+EIP-712 statement binding the closed inputs, algorithm and policy hashes,
+plaintext model hash, encrypted output bundle, CID tuple, and nonce.
+`GMStorage` verifies the statement and advances the round atomically. This
+provides policy-bound, empirically evaluated Byzantine resilience under the
+stated participant bound and TDX/dstack assumptions; it is not an independent
+mathematical proof or an unrestricted guarantee against arbitrary Byzantine
+participation.
 
 For the local Docker flow, `IPFS_PROVIDER` controls the bootstrap mode. With `IPFS_PROVIDER=kubo`, the deployment script signs `data/initial_gm/<dataset>/aggregated.bin`, imports model and signature into the local Kubo node, and writes those resulting CIDs into `GMStorage`. The dataset is selected through `DATASET_NAME` and defaults to `mnist`. With `IPFS_PROVIDER=pinata`, the script does not touch Kubo during initialization and instead expects `INITIAL_GM_CID` and `INITIAL_GM_SIG_CID` to already point to Pinata-hosted content.
 

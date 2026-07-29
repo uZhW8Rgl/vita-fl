@@ -6,10 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 START_SCRIPT = ROOT / "dfl" / "start_node_neural_network.sh"
 HEALTHCHECK = ROOT / "dfl" / "container_healthcheck.sh"
+DOCKERFILE = ROOT / "dfl" / "Dockerfile"
 NODE_SERVER_SOURCE = ROOT / "dfl" / "node_server" / "src" / "server.ts"
 NODE_SERVER_DIST = ROOT / "dfl" / "node_server" / "dist" / "server.js"
 
@@ -29,6 +29,23 @@ class CombinedWorkerScriptTests(unittest.TestCase):
         script = START_SCRIPT.read_text(encoding="utf-8")
         self.assertIn(
             'PARTICIPANT_RSA_PRIVATE_KEY_FILE:-${RSA_PRIVATE_KEY_FILE:-}',
+            script,
+        )
+
+    def test_chestmnist_validation_artifact_is_packaged_and_copied_to_runtime(self) -> None:
+        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+        script = START_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn(
+            "COPY data/chestmnist/validation_data ./config/chestmnist/validation_data",
+            dockerfile,
+        )
+        self.assertIn(
+            "CHESTMNIST_VALIDATION_DATA=/dfl/config/chestmnist/validation_data/validation-data.npz",
+            dockerfile,
+        )
+        self.assertIn("VALIDATION_DATA_SRC=${VALIDATION_DATA_SRC:-${CHESTMNIST_VALIDATION_DATA:-", script)
+        self.assertIn(
+            'cp "${VALIDATION_DATA_SRC}" /dfl/node_server/data/validation-data.npz',
             script,
         )
 

@@ -3,10 +3,14 @@ import assert from "node:assert/strict";
 
 import {
     BOOTSTRAP_ROLLOVER_V1_HASH,
-    FEDERATED_AVERAGING_V1_HASH,
+    AGGREGATION_POLICY_HASH_DOMAIN,
+    HYBRID_R_V1_HASH,
+    HYBRID_R_V1_PREIMAGE,
+    HYBRID_R_VALIDATION_DATA_V1_HASH,
     deriveAggregationStatementDigest,
     deriveModelSubmissionDigest,
     derivePublicationHash,
+    deriveRoundAggregationPolicyHash,
 } from "../dist/protocol_digest.js";
 
 const commitment = {
@@ -56,7 +60,7 @@ const aggregationStatement = {
     aggregator: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
     inputRoot: `0x${"44".repeat(32)}`,
     inputCount: 3,
-    algorithmHash: FEDERATED_AVERAGING_V1_HASH,
+    algorithmHash: HYBRID_R_V1_HASH,
     policyHash: `0x${"99".repeat(32)}`,
     outputModelHash: `0x${"55".repeat(32)}`,
     outputBundleHash: `0x${"66".repeat(32)}`,
@@ -66,8 +70,17 @@ const aggregationStatement = {
 
 test("aggregation policy constants match the Solidity protocol constants", () => {
     assert.equal(
-        FEDERATED_AVERAGING_V1_HASH,
-        "0x6c955b19c102b6c3438fb28e1190cda5a6fc0e0f435a62c14f2de62476784cd9",
+        AGGREGATION_POLICY_HASH_DOMAIN,
+        "0x03545c9295b6307cadb078599150abf360d5ce9b1d67152a83df4777add8ace9",
+    );
+    assert.equal(
+        HYBRID_R_V1_HASH,
+        "0xfee8d99e620214799109487915a0c3a4f37f5a6fb66cb08dfed75fb5b6573610",
+    );
+    assert.match(HYBRID_R_V1_PREIMAGE, /^VITA-FL:hybrid-r:v1\|/);
+    assert.equal(
+        HYBRID_R_VALIDATION_DATA_V1_HASH,
+        "0xe4457c09ceeb203858e9b74232a4aa5b8852c623d85a63742a8751405d189d63",
     );
     assert.equal(
         BOOTSTRAP_ROLLOVER_V1_HASH,
@@ -75,10 +88,41 @@ test("aggregation policy constants match the Solidity protocol constants", () =>
     );
 });
 
+test("Hybrid-R round policy hash binds validation data and safety gate", () => {
+    const policy = {
+        configurationVersion: 2,
+        requiredSubmissions: 3,
+        openedAt: 1000,
+        deadline: 1600,
+        algorithmHash: HYBRID_R_V1_HASH,
+        validationDataHash: `0x${"ab".repeat(32)}`,
+        maxLossIncreaseBps: 500,
+    };
+    assert.equal(
+        deriveRoundAggregationPolicyHash(policy),
+        "0x5e0efa0ef740ce867f4cb17469435ce4689ea9824ea1c74753635c4854909d5d",
+    );
+    for (const [field, value] of [
+        ["configurationVersion", 3],
+        ["requiredSubmissions", 4],
+        ["openedAt", 1001],
+        ["deadline", 1601],
+        ["algorithmHash", BOOTSTRAP_ROLLOVER_V1_HASH],
+        ["validationDataHash", `0x${"ac".repeat(32)}`],
+        ["maxLossIncreaseBps", 501],
+    ]) {
+        assert.notEqual(
+            deriveRoundAggregationPolicyHash({ ...policy, [field]: value }),
+            deriveRoundAggregationPolicyHash(policy),
+            `${field} was not bound by the round policy hash`,
+        );
+    }
+});
+
 test("aggregation-statement EIP-712 digest matches the independent ABI vector", () => {
     assert.equal(
         deriveAggregationStatementDigest(aggregationStatement),
-        "0x16a0072deac9beefba98c90de17ae3c16a672651891afb8c9da33c7b62fdb668",
+        "0x0f8316720e8169e8a9e384a31116f4b82ba8457a5533b98a2521e530342139c6",
     );
 });
 

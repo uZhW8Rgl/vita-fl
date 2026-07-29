@@ -2,22 +2,35 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import random
+import re
 import struct
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable, List
+from typing import Any, Iterable
 
 import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .dicom_provenance import verify_training_provenance
+from .dicom_provenance import (
+    VALIDATION_SPLIT_ID,
+    validation_semantic_sha256,
+    verify_training_provenance,
+)
+from .hybrid_r import (
+    DEFAULT_MAX_LOSS_INCREASE_BPS,
+    HYBRID_R_EVIDENCE_VERSION,
+    HYBRID_R_V1_HASH,
+    run_hybrid_r,
+    write_canonical_json,
+)
 
 torch.backends.nnpack.enabled = False
 torch.backends.nnpack.set_flags(False)
@@ -147,6 +160,10 @@ def received_models_dir() -> Path:
 
 def aggregation_inputs_dir() -> Path:
     return results_dir() / "aggregation_inputs"
+
+
+def validation_dataset_path() -> Path:
+    return data_dir() / "validation-data.npz"
 
 
 def private_key_path(path: str | None = None) -> Path:
@@ -998,6 +1015,180 @@ def start_client(server_ip: str, device_id: str, timeout_ms: int | None = None) 
         context.term()
 
 
+_CANONICAL_WORKER_MODEL_RE = re.compile(r"^wb_client_(0x[0-9a-f]{40})\.bin$")
+
+
+def _normalize_bytes32(value: Any, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a 32-byte hexadecimal string")
+    normalized = value.strip().lower()
+    if normalized.startswith("0x"):
+        normalized = normalized[2:]
+    if len(normalized) != 64 or any(character not in "0123456789abcdef" for character in normalized):
+        raise ValueError(f"{label} must be a 32-byte hexadecimal string")
+    return f"0x{normalized}"
+
+
+def _canonical_aggregation_model_paths(paths: Iterable[Path]) -> list[tuple[str, Path]]:
+    identified: list[tuple[bytes, str, Path]] = []
+    seen_addresses: set[str] = set()
+    for path in paths:
+        match = _CANONICAL_WORKER_MODEL_RE.fullmatch(path.name)
+        if match is None:
+            raise ValueError(
+                f"non-canonical aggregation input filename {path.name!r}; expected wb_client_0x<40-lowercase-hex>.bin"
+            )
+        address = match.group(1)
+        if address in seen_addresses:
+            raise ValueError(f"duplicate aggregation input address: {address}")
+        seen_addresses.add(address)
+        identified.append((bytes.fromhex(address[2:]), address, path))
+    identified.sort(key=lambda item: item[0])
+    return [(address, path) for _, address, path in identified]
+
+
+def _medical_snapshot_evidence(snapshot: dict[str, Any]) -> dict[str, Any]:
+    required = ("registry_address", "block_number", "block_hash", "key_set_version")
+    missing = [field for field in required if snapshot.get(field) in (None, "")]
+    if missing:
+        raise ValueError("medical_signer_snapshot lacks evidence fields: " + ", ".join(missing))
+    return {field: snapshot[field] for field in required}
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_verified_hybrid_validation(
+    *,
+    medical_signer_snapshot: dict[str, Any] | None,
+    expected_validation_data_hash: Any,
+) -> tuple[torch.Tensor, torch.Tensor, dict[str, Any], str, str]:
+    if not is_multilabel_dataset():
+        raise ValueError("Hybrid-R aggregation is restricted to signed ChestMNIST validation data")
+    if not isinstance(medical_signer_snapshot, dict) or not medical_signer_snapshot:
+        raise ValueError("Hybrid-R aggregation requires an on-chain medical_signer_snapshot")
+    _medical_snapshot_evidence(medical_signer_snapshot)
+
+    expected_hash = _normalize_bytes32(
+        expected_validation_data_hash,
+        "expected_validation_data_hash",
+    )
+    path = validation_dataset_path()
+    if not path.is_file():
+        raise ValueError(f"Hybrid-R validation artifact is missing: {path}")
+
+    actual_hash = f"0x{validation_semantic_sha256(path)}"
+    if actual_hash != expected_hash:
+        raise ValueError(f"Hybrid-R validation semantic hash mismatch: got {actual_hash}, expected {expected_hash}")
+
+    provenance = verify_training_provenance(path, medical_signer_snapshot)
+    if provenance.get("dataset_split") != VALIDATION_SPLIT_ID:
+        raise ValueError(
+            f"Hybrid-R validation split must be {VALIDATION_SPLIT_ID}, got {provenance.get('dataset_split')!r}"
+        )
+    images, labels = read_npz_images_and_labels(path)
+    labels = labels.to(torch.float64)
+    if labels.ndim != 2 or tuple(labels.shape) != (int(images.shape[0]), OUTPUT_SIZE):
+        raise ValueError(
+            f"Hybrid-R validation labels have shape {tuple(labels.shape)}, "
+            f"expected ({int(images.shape[0])}, {OUTPUT_SIZE})"
+        )
+    if images.shape[0] < 1:
+        raise ValueError("Hybrid-R validation artifact is empty")
+    if not torch.isfinite(images).all() or not torch.isfinite(labels).all():
+        raise ValueError("Hybrid-R validation tensors contain a non-finite value")
+
+    # Detect an in-process replacement between provenance verification and use.
+    post_verification_hash = f"0x{validation_semantic_sha256(path)}"
+    if post_verification_hash != actual_hash:
+        raise ValueError("Hybrid-R validation artifact changed while it was being verified")
+    return images, labels, provenance, actual_hash, _file_sha256(path)
+
+
+def _run_hybrid_aggregation(
+    canonical_inputs: list[tuple[str, Path]],
+    *,
+    source_round: int | None,
+    round_id: int | None,
+    medical_signer_snapshot: dict[str, Any] | None,
+    expected_algorithm_hash: Any,
+    expected_validation_data_hash: Any,
+    max_loss_increase_bps: Any,
+) -> tuple[FederatedCNN, dict[str, Any]]:
+    algorithm_hash = _normalize_bytes32(
+        expected_algorithm_hash,
+        "expected_algorithm_hash",
+    )
+    if algorithm_hash != HYBRID_R_V1_HASH:
+        raise ValueError(f"Hybrid-R algorithm hash mismatch: got {algorithm_hash}, expected {HYBRID_R_V1_HASH}")
+    if isinstance(max_loss_increase_bps, bool):
+        raise ValueError("max_loss_increase_bps must be an integer")
+    try:
+        loss_gate_bps = int(max_loss_increase_bps)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("max_loss_increase_bps must be an integer") from exc
+    if loss_gate_bps != DEFAULT_MAX_LOSS_INCREASE_BPS:
+        raise ValueError(
+            f"unsupported max_loss_increase_bps: got {loss_gate_bps}, expected {DEFAULT_MAX_LOSS_INCREASE_BPS}"
+        )
+    if source_round is None or source_round < 0:
+        raise ValueError("Hybrid-R aggregation requires a non-negative source_round")
+
+    validation_images, validation_labels, provenance, validation_hash, file_hash = _load_verified_hybrid_validation(
+        medical_signer_snapshot=medical_signer_snapshot,
+        expected_validation_data_hash=expected_validation_data_hash,
+    )
+    assert medical_signer_snapshot is not None
+
+    parent_path = data_dir() / "gm.bin"
+    if not parent_path.is_file():
+        raise ValueError(f"Hybrid-R parent model is missing: {parent_path}")
+    parent_model = read_model_bin(parent_path)
+    client_models = [read_model_bin(path) for _, path in canonical_inputs]
+    result = run_hybrid_r(
+        parent_model,
+        client_models,
+        validation_images,
+        validation_labels,
+        layout=MODEL_LAYOUT,
+        batch_size=BATCH_SIZE,
+        max_loss_increase_bps=loss_gate_bps,
+    )
+
+    evidence: dict[str, Any] = {
+        "version": HYBRID_R_EVIDENCE_VERSION,
+        "algorithm_hash": algorithm_hash,
+        "validation_data_hash": validation_hash,
+        "validation_data_file_sha256": f"0x{file_hash}",
+        "source_round": source_round,
+        "round": round_id,
+        "input_count": len(canonical_inputs),
+        "input_workers": [address for address, _ in canonical_inputs],
+        "input_model_sha256": [
+            {"worker": address, "sha256": f"0x{_file_sha256(path)}"} for address, path in canonical_inputs
+        ],
+        "parent_model_sha256": f"0x{_file_sha256(parent_path)}",
+        "parent_loss": result.parent_loss,
+        "allowed_loss": result.decision.allowed_loss,
+        "max_loss_increase_bps": loss_gate_bps,
+        "candidate_order": [str(candidate["candidate"]) for candidate in result.candidate_scores],
+        "candidate_scores": result.candidate_scores,
+        "selected_candidate": result.decision.selected_candidate,
+        "selected_loss": result.decision.selected_loss,
+        "gate_passed": result.decision.gate_passed,
+        "gate_reason": result.decision.reason,
+        "output_kind": result.decision.output_kind,
+        "validation_provenance": provenance,
+        "medical_signer_snapshot": _medical_snapshot_evidence(medical_signer_snapshot),
+    }
+    return result.output_model, evidence
+
+
 def aggregate(
     num_files: int | None = None,
     *,
@@ -1005,9 +1196,13 @@ def aggregate(
     source_round: int | None = None,
     expected_models: int | None = None,
     participant_count: int | None = None,
+    medical_signer_snapshot: dict[str, Any] | None = None,
+    expected_algorithm_hash: str | None = None,
+    expected_validation_data_hash: str | None = None,
+    max_loss_increase_bps: int | None = None,
     private_key: str | None = None,
 ) -> dict[str, Any]:
-    model_paths = sorted(aggregation_inputs_dir().glob("*.bin"), key=lambda p: p.name)
+    model_paths = list(aggregation_inputs_dir().glob("*.bin"))
     if num_files is not None and len(model_paths) != num_files:
         raise ValueError(
             "aggregate input-count mismatch: "
@@ -1019,21 +1214,33 @@ def aggregate(
     source_round = _optional_int(source_round)
     expected_models = _optional_int(expected_models)
     participant_count = _optional_int(participant_count)
-    models: List[FederatedCNN] = [read_model_bin(path) for path in model_paths]
-    if not models:
+    if not model_paths:
         raise ValueError("aggregate requires at least one model")
-    avg_model = FederatedCNN().double()
-    avg_state = {}
-    for key in avg_model.state_dict().keys():
-        averaged = torch.stack([m.state_dict()[key] for m in models]).mean(dim=0)
-        if not torch.isfinite(averaged).all():
-            raise ValueError(f"Federated average contains a non-finite parameter in {key}")
-        avg_state[key] = averaged
-    avg_model.load_state_dict(avg_state)
+    if expected_models is not None and len(model_paths) != expected_models:
+        raise ValueError(
+            f"aggregate expected-model-count mismatch: found {len(model_paths)}, expected {expected_models}"
+        )
+    canonical_inputs = _canonical_aggregation_model_paths(model_paths)
+    output_model, aggregation_evidence = _run_hybrid_aggregation(
+        canonical_inputs,
+        source_round=source_round,
+        round_id=round_id,
+        medical_signer_snapshot=medical_signer_snapshot,
+        expected_algorithm_hash=expected_algorithm_hash,
+        expected_validation_data_hash=expected_validation_data_hash,
+        max_loss_increase_bps=max_loss_increase_bps,
+    )
     out_path = results_dir() / "aggregated.bin"
-    write_model_bin(avg_model, out_path)
+    write_model_bin(output_model, out_path)
+    aggregation_evidence["output_model_sha256"] = f"0x{_file_sha256(out_path)}"
+    evidence_path = results_dir() / "aggregated.hybrid-r.json"
+    write_canonical_json(evidence_path, aggregation_evidence)
     sign_file(out_path, private_key_path(private_key))
-    print("Federated averaging complete")
+    print(
+        "Hybrid-R aggregation complete: "
+        f"output_kind={aggregation_evidence['output_kind']}, "
+        f"selected_candidate={aggregation_evidence['selected_candidate']}"
+    )
     metrics = run_test(
         out_path,
         round_id=round_id,
@@ -1042,7 +1249,12 @@ def aggregate(
         expected_models=expected_models,
         participant_count=participant_count,
     )
-    return {"model_path": str(out_path), "metrics": metrics}
+    return {
+        "model_path": str(out_path),
+        "metrics": metrics,
+        "aggregation_evidence": aggregation_evidence,
+        "aggregation_evidence_path": str(evidence_path),
+    }
 
 
 def sign_file(path: Path, key_file: Path) -> None:

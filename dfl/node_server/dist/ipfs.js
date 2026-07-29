@@ -4,6 +4,7 @@ import fs from "fs";
 import FormData from "form-data";
 import { getActiveModelBundle, getAuthorizedDevices, createAggregationStatement, finalizeRoundWithAggregation, getDevicePublicKey, getRound, isGlobalModelPublished, } from "./bc_client.js";
 import { buildEncryptedGlobalModelArtifacts, decryptEncryptedGlobalModelArtifacts, } from "./gm_crypto.js";
+import { HYBRID_R_V1_HASH, HYBRID_R_VALIDATION_DATA_V1_HASH, } from "./protocol_digest.js";
 export const pinFile = async (filePath) => {
     try {
         const formData = new FormData();
@@ -140,6 +141,8 @@ const encryptedBundlePaths = () => ({
     bundlePath: "./data/results_iid/aggregated.bundle.enc",
     bundleSignaturePath: "./data/results_iid/aggregated.bundle.enc.sig",
     keyBundlePath: "./data/results_iid/aggregated.bundle.keys.json",
+    aggregationEvidencePath: "./data/results_iid/aggregated.hybrid-r.json",
+    receivedAggregationEvidencePath: "./data/gm.hybrid-r.json",
 });
 export const updateGM = async (expectedModelRound, participantPrivateKey) => {
     const modelPath = "./data/results_iid/aggregated.bin";
@@ -172,10 +175,15 @@ export const updateGM = async (expectedModelRound, participantPrivateKey) => {
         }
         recipients.push({ address, publicKeyDerHex });
     }
-    const { bundlePath, bundleSignaturePath, keyBundlePath } = encryptedBundlePaths();
-    const { outputBundleHash } = await buildEncryptedGlobalModelArtifacts({
+    const { bundlePath, bundleSignaturePath, keyBundlePath, aggregationEvidencePath, } = encryptedBundlePaths();
+    if (sourceRound > 0 && !fs.existsSync(aggregationEvidencePath)) {
+        throw new Error(`Missing Hybrid-R aggregation evidence for source round ${sourceRound}: ` +
+            aggregationEvidencePath);
+    }
+    const { outputBundleHash, aggregationEvidenceHash } = await buildEncryptedGlobalModelArtifacts({
         modelPath,
         signaturePath: sigPath,
+        aggregationEvidencePath: sourceRound > 0 ? aggregationEvidencePath : undefined,
         encryptedBundlePath: bundlePath,
         encryptedSignaturePath: bundleSignaturePath,
         keyBundlePath,
@@ -228,6 +236,7 @@ export const updateGM = async (expectedModelRound, participantPrivateKey) => {
         policyHash: aggregationStatement.policy.policyHash,
         outputModelHash,
         outputBundleHash,
+        aggregationEvidenceHash,
         publicationHash: aggregationStatement.publicationHash,
         statementDigest: aggregationStatement.statementDigest,
     });
@@ -255,21 +264,43 @@ export const getCurrentModel = async (participantPrivateKey) => {
     console.log("Model CID:", modelCid);
     console.log("Sig CID:", sigCid);
     console.log("Key bundle CID:", keyBundleCid);
-    const { bundlePath, bundleSignaturePath, keyBundlePath } = encryptedBundlePaths();
+    const { bundlePath, bundleSignaturePath, keyBundlePath, receivedAggregationEvidencePath, } = encryptedBundlePaths();
     fs.writeFileSync(bundlePath, await fetchIPFSBytes(modelCid));
     console.log(`Encrypted GM bundle written to ${bundlePath}`);
     fs.writeFileSync(bundleSignaturePath, await fetchIPFSBytes(sigCid));
     console.log(`Encrypted GM bundle signature written to ${bundleSignaturePath}`);
     fs.writeFileSync(keyBundlePath, await fetchIPFSBytes(keyBundleCid));
     console.log(`Encrypted GM key bundle written to ${keyBundlePath}`);
-    await decryptEncryptedGlobalModelArtifacts({
+    const decrypted = await decryptEncryptedGlobalModelArtifacts({
         encryptedBundlePath: bundlePath,
         keyBundlePath,
         ownAddress: String(process.env.ACCOUNT_ADDRESS || ""),
         outModelPath: "./data/gm.bin",
         outSignaturePath: "./data/gm.bin.sig",
+        outAggregationEvidencePath: receivedAggregationEvidencePath,
         decryptionPrivateKey: participantPrivateKey,
     });
+    if (decrypted.round > 1 && !decrypted.aggregationEvidence) {
+        throw new Error(`Encrypted global model round ${decrypted.round} is missing bound Hybrid-R evidence.`);
+    }
+    if (decrypted.aggregationEvidence) {
+        const evidence = decrypted.aggregationEvidence;
+        const decryptedModelHash = `0x${crypto.createHash("sha256").update(fs.readFileSync("./data/gm.bin")).digest("hex")}`;
+        if (String(evidence.algorithm_hash || "").toLowerCase()
+            !== HYBRID_R_V1_HASH.toLowerCase()
+            || String(evidence.validation_data_hash || "").toLowerCase()
+                !== HYBRID_R_VALIDATION_DATA_V1_HASH.toLowerCase()
+            || String(evidence.output_model_sha256 || "").toLowerCase()
+                !== decryptedModelHash.toLowerCase()
+            || Number(evidence.source_round) !== decrypted.round - 1
+            || Number(evidence.max_loss_increase_bps) !== 500
+            || typeof evidence.gate_passed !== "boolean"
+            || evidence.output_kind
+                !== (evidence.gate_passed ? "candidate" : "parent_fallback")) {
+            throw new Error("Hybrid-R aggregation evidence does not match the implemented policy, " +
+                "decrypted model, or key-bundle round.");
+        }
+    }
     console.log("Encrypted global model bundle fetched + decrypted");
     return {
         modelCid,
@@ -277,5 +308,7 @@ export const getCurrentModel = async (participantPrivateKey) => {
         keyBundleCid,
         publisher: activeModel.publisher,
         publisherPublicKeyDerHex: activeModel.publisherPublicKeyDerHex,
+        aggregationEvidence: decrypted.aggregationEvidence,
+        aggregationEvidenceHash: decrypted.aggregationEvidenceHash,
     };
 };

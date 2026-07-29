@@ -38,6 +38,8 @@ interface IAggregationPolicy {
             uint32 acceptedSubmissions,
             uint64 roundConfigurationVersion,
             bytes32 algorithmHash,
+            bytes32 validationDataHash,
+            uint16 maxLossIncreaseBps,
             bytes32 policyHash,
             bytes32 inputRoot
         );
@@ -204,13 +206,16 @@ contract AggregatorSelection {
         (
             bool policyOpened,
             bool policyClosed,
-            ,
+            uint64 _openedAt,
             uint64 submissionDeadline,
             uint32 requiredSubmissions,
-            ,
-            ,
-            ,
-            ,
+            uint32 _acceptedSubmissions,
+            uint64 _configurationVersion,
+            bytes32 _algorithmHash,
+            bytes32 _validationDataHash,
+            uint16 _maxLossIncreaseBps,
+            bytes32 _policyHash,
+            bytes32 _inputRoot
         ) = IAggregationPolicy(aggregationPolicyAddress).getRoundPolicy(round);
         require(
             !policyOpened || policyClosed || requiredSubmissions == 0 || block.timestamp > submissionDeadline,

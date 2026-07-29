@@ -37,20 +37,39 @@ class AggregateParticipantKeyTests(unittest.TestCase):
             results = root / "results"
             inputs.mkdir()
             results.mkdir()
-            write_model_bin(FederatedCNN().double(), inputs / "worker.bin")
+            worker_address = "0x" + "11" * 20
+            write_model_bin(
+                FederatedCNN().double(),
+                inputs / f"wb_client_{worker_address}.bin",
+            )
             participant_key = root / "run" / "participant-private.pem"
+            aggregation_evidence = {
+                "output_kind": "candidate",
+                "selected_candidate": "coordinate_median",
+            }
 
             with (
                 patch.object(cli, "aggregation_inputs_dir", return_value=inputs),
                 patch.object(cli, "results_dir", return_value=results),
+                patch.object(
+                    cli,
+                    "_run_hybrid_aggregation",
+                    return_value=(FederatedCNN().double(), aggregation_evidence),
+                ),
                 patch.object(cli, "sign_file") as sign_file,
                 patch.object(cli, "run_test", return_value={}),
             ):
-                cli.aggregate(1, private_key=str(participant_key))
+                result = cli.aggregate(1, private_key=str(participant_key))
 
             sign_file.assert_called_once_with(
                 results / "aggregated.bin",
                 participant_key,
+            )
+            persisted_evidence = json.loads((results / "aggregated.hybrid-r.json").read_text(encoding="utf-8"))
+            self.assertEqual(result["aggregation_evidence"], persisted_evidence)
+            self.assertRegex(
+                persisted_evidence["output_model_sha256"],
+                r"^0x[0-9a-f]{64}$",
             )
 
     def test_aggregate_rejects_input_count_different_from_closed_round(self) -> None:
@@ -80,6 +99,10 @@ class AggregateParticipantKeyTests(unittest.TestCase):
                         "source_round": 2,
                         "expected_models": 2,
                         "participant_count": 3,
+                        "medical_signer_snapshot": {"block_number": 100},
+                        "expected_algorithm_hash": "0x" + "11" * 32,
+                        "expected_validation_data_hash": "0x" + "22" * 32,
+                        "max_loss_increase_bps": 500,
                         "private_key": participant_key,
                     }
                 ).encode("utf-8"),
@@ -101,6 +124,10 @@ class AggregateParticipantKeyTests(unittest.TestCase):
                 source_round=2,
                 expected_models=2,
                 participant_count=3,
+                medical_signer_snapshot={"block_number": 100},
+                expected_algorithm_hash="0x" + "11" * 32,
+                expected_validation_data_hash="0x" + "22" * 32,
+                max_loss_increase_bps=500,
                 private_key=participant_key,
             )
         finally:
@@ -167,10 +194,14 @@ class TrainingParticipantKeyTests(unittest.TestCase):
                 public_exponent=65537,
                 key_size=2048,
             )
-            aggregator_public_key_hex = aggregator_key.public_key().public_bytes(
-                serialization.Encoding.DER,
-                serialization.PublicFormat.SubjectPublicKeyInfo,
-            ).hex()
+            aggregator_public_key_hex = (
+                aggregator_key.public_key()
+                .public_bytes(
+                    serialization.Encoding.DER,
+                    serialization.PublicFormat.SubjectPublicKeyInfo,
+                )
+                .hex()
+            )
 
             cli.encrypt_model_package(
                 model_path,

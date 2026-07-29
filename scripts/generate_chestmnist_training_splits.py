@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import random
+import struct
 import sys
 from pathlib import Path
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -11,8 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dfl.neural_network.dicom_provenance import (  # noqa: E402
     PROVENANCE_VERSION,
+    VALIDATION_SPLIT_ID,
     load_rsa_private_key,
     sign_sample,
+    validation_semantic_sha256,
 )
 
 
@@ -24,6 +29,46 @@ def load_split(bundle: np.lib.npyio.NpzFile, images_key: str, labels_key: str) -
     if images.shape[0] != labels.shape[0]:
         raise ValueError(f"Mismatched split sizes for {images_key} and {labels_key}")
     return images, labels
+
+
+def _image_identity(image: np.ndarray) -> bytes:
+    array = np.ascontiguousarray(image)
+    digest = hashlib.sha256(b"VITA-FL:CHESTMNIST:IMAGE-IDENTITY:V1\x00")
+    digest.update(array.dtype.str.encode("ascii"))
+    digest.update(struct.pack("<H", array.ndim))
+    for dimension in array.shape:
+        digest.update(struct.pack("<Q", int(dimension)))
+    digest.update(array.tobytes(order="C"))
+    return digest.digest()
+
+
+def select_disjoint_validation_indices(
+    train_images: np.ndarray,
+    validation_images: np.ndarray,
+) -> tuple[np.ndarray, dict[str, int]]:
+    """Keep the first validation occurrence of images never present in training."""
+
+    training_identities = {_image_identity(image) for image in train_images}
+    validation_identities: set[bytes] = set()
+    selected: list[int] = []
+    train_overlaps = 0
+    internal_duplicates = 0
+    for source_index, image in enumerate(validation_images):
+        identity = _image_identity(image)
+        if identity in training_identities:
+            train_overlaps += 1
+            continue
+        if identity in validation_identities:
+            internal_duplicates += 1
+            continue
+        validation_identities.add(identity)
+        selected.append(source_index)
+    return np.asarray(selected, dtype="<i8"), {
+        "source_samples": int(validation_images.shape[0]),
+        "selected_samples": len(selected),
+        "removed_train_overlaps": train_overlaps,
+        "removed_internal_duplicates": internal_duplicates,
+    }
 
 
 def write_npz(
@@ -50,18 +95,51 @@ def write_npz(
     )
 
 
+def write_validation_npz(
+    path: Path,
+    images: np.ndarray,
+    labels: np.ndarray,
+    sample_indices: np.ndarray,
+    device_ids: np.ndarray,
+    device_signatures: np.ndarray,
+    radiologist_ids: np.ndarray,
+    radiologist_signatures: np.ndarray,
+) -> tuple[str, str]:
+    values: dict[str, Any] = {
+        "images": np.ascontiguousarray(images, dtype=np.uint8),
+        "labels": np.ascontiguousarray(labels, dtype=np.uint8),
+        "sample_indices": np.ascontiguousarray(sample_indices, dtype="<i8"),
+        "device_signer_ids": np.ascontiguousarray(device_ids),
+        "device_signatures": np.ascontiguousarray(device_signatures, dtype=np.uint8),
+        "radiologist_signer_ids": np.ascontiguousarray(radiologist_ids),
+        "radiologist_signatures": np.ascontiguousarray(radiologist_signatures, dtype=np.uint8),
+        "provenance_version": np.bytes_(PROVENANCE_VERSION),
+        "dataset_split": np.bytes_(VALIDATION_SPLIT_ID),
+    }
+    semantic_sha256 = validation_semantic_sha256(values)
+    values["semantic_sha256"] = np.bytes_(semantic_sha256)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, **values)
+    file_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+    return semantic_sha256, file_sha256
+
+
 def sign_shard(
     images: np.ndarray,
     labels: np.ndarray,
     sample_indices: np.ndarray,
     device_private_keys: list,
     radiologist_private_key,
+    *,
+    dataset_split: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     device_ids: list[bytes] = []
     device_signatures: list[bytes] = []
     radiologist_ids: list[bytes] = []
     radiologist_signatures: list[bytes] = []
-    for image, label, source_index in zip(images, labels, sample_indices, strict=True):
+    if not (int(images.shape[0]) == int(labels.shape[0]) == int(sample_indices.shape[0])):
+        raise ValueError("cannot sign arrays with inconsistent sample counts")
+    for image, label, source_index in zip(images, labels, sample_indices):
         sample_index = int(source_index)
         device_index = sample_index % len(device_private_keys)
         device_id = f"XRAY_DEVICE_{device_index}"
@@ -74,6 +152,7 @@ def sign_shard(
             device_private_keys[device_index],
             radiologist_id,
             radiologist_private_key,
+            dataset_split=dataset_split,
         )
         device_ids.append(device_id.encode("ascii"))
         device_signatures.append(image_signature)
@@ -87,7 +166,53 @@ def sign_shard(
     )
 
 
-def main() -> int:
+def generate_validation_split(
+    *,
+    train_images: np.ndarray,
+    validation_images: np.ndarray,
+    validation_labels: np.ndarray,
+    validation_out: Path,
+    device_private_keys: list,
+    radiologist_private_key: Any,
+) -> dict[str, int | str]:
+    selected_indices, stats = select_disjoint_validation_indices(train_images, validation_images)
+    if selected_indices.size == 0:
+        raise ValueError("strict validation filtering removed every source sample")
+    selected_images = validation_images[selected_indices]
+    selected_labels = validation_labels[selected_indices]
+    global_sample_indices = np.asarray(
+        int(train_images.shape[0]) + selected_indices,
+        dtype="<i8",
+    )
+    device_ids, device_signatures, radiologist_ids, radiologist_signatures = sign_shard(
+        selected_images,
+        selected_labels,
+        global_sample_indices,
+        device_private_keys,
+        radiologist_private_key,
+        dataset_split=VALIDATION_SPLIT_ID,
+    )
+    semantic_sha256, file_sha256 = write_validation_npz(
+        validation_out,
+        selected_images,
+        selected_labels,
+        global_sample_indices,
+        device_ids,
+        device_signatures,
+        radiologist_ids,
+        radiologist_signatures,
+    )
+    return {
+        **stats,
+        "split_id": VALIDATION_SPLIT_ID,
+        "first_global_sample_index": int(global_sample_indices[0]),
+        "last_global_sample_index": int(global_sample_indices[-1]),
+        "semantic_sha256": semantic_sha256,
+        "file_sha256": file_sha256,
+    }
+
+
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate reproducible ChestMNIST worker training splits.")
     parser.add_argument(
         "--source",
@@ -108,6 +233,17 @@ def main() -> int:
         help="Destination for the shared test split",
     )
     parser.add_argument(
+        "--validation-out",
+        type=Path,
+        default=Path("data/chestmnist/validation_data/validation-data.npz"),
+        help="Destination for the signed, strictly disjoint validation split",
+    )
+    parser.add_argument(
+        "--validation-only",
+        action="store_true",
+        help="Generate only the signed validation artifact; do not rewrite training shards or test data",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=500,
@@ -125,7 +261,7 @@ def main() -> int:
         default=Path("data/chestmnist/provenance/private"),
         help="Directory containing the synthetic DICOM signer fixture private keys",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.source.exists():
         raise FileNotFoundError(
@@ -136,52 +272,75 @@ def main() -> int:
 
     with np.load(args.source) as bundle:
         train_images, train_labels = load_split(bundle, "train_images", "train_labels")
-        test_images, test_labels = load_split(bundle, "test_images", "test_labels")
+        validation_images, validation_labels = load_split(bundle, "val_images", "val_labels")
+        if args.validation_only:
+            test_images = test_labels = None
+        else:
+            test_images, test_labels = load_split(bundle, "test_images", "test_labels")
 
     device_private_keys = [
         load_rsa_private_key(args.signer_private_dir / f"xray-device-{index}-private.pem") for index in range(5)
     ]
     radiologist_private_key = load_rsa_private_key(args.signer_private_dir / "radiologist-0-private.pem")
 
-    total = int(train_images.shape[0])
-    if total < args.workers:
-        raise ValueError(f"Cannot create {args.workers} splits from only {total} training examples")
+    if not args.validation_only:
+        total = int(train_images.shape[0])
+        if total < args.workers:
+            raise ValueError(f"Cannot create {args.workers} splits from only {total} training examples")
 
-    indices = list(range(total))
-    random.Random(args.seed).shuffle(indices)
-    base = total // args.workers
-    remainder = total % args.workers
+        indices = list(range(total))
+        random.Random(args.seed).shuffle(indices)
+        base = total // args.workers
+        remainder = total % args.workers
 
-    args.train_out_dir.mkdir(parents=True, exist_ok=True)
-    start = 0
-    for worker_id in range(args.workers):
-        size = base + (1 if worker_id < remainder else 0)
-        shard_indices = np.array(indices[start : start + size], dtype=np.int64)
-        start += size
-        shard_images = train_images[shard_indices]
-        shard_labels = train_labels[shard_indices]
-        device_ids, device_signatures, radiologist_ids, radiologist_signatures = sign_shard(
-            shard_images,
-            shard_labels,
-            shard_indices,
-            device_private_keys,
-            radiologist_private_key,
-        )
-        write_npz(
-            args.train_out_dir / f"train-data-{worker_id}.npz",
-            shard_images,
-            shard_labels,
-            shard_indices,
-            device_ids,
-            device_signatures,
-            radiologist_ids,
-            radiologist_signatures,
-        )
-        print(f"worker {worker_id}: {size} samples")
+        args.train_out_dir.mkdir(parents=True, exist_ok=True)
+        start = 0
+        for worker_id in range(args.workers):
+            size = base + (1 if worker_id < remainder else 0)
+            shard_indices = np.array(indices[start : start + size], dtype=np.int64)
+            start += size
+            shard_images = train_images[shard_indices]
+            shard_labels = train_labels[shard_indices]
+            device_ids, device_signatures, radiologist_ids, radiologist_signatures = sign_shard(
+                shard_images,
+                shard_labels,
+                shard_indices,
+                device_private_keys,
+                radiologist_private_key,
+            )
+            write_npz(
+                args.train_out_dir / f"train-data-{worker_id}.npz",
+                shard_images,
+                shard_labels,
+                shard_indices,
+                device_ids,
+                device_signatures,
+                radiologist_ids,
+                radiologist_signatures,
+            )
+            print(f"worker {worker_id}: {size} samples")
 
-    args.test_out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(args.test_out, images=test_images, labels=test_labels)
-    print(f"wrote test split: {args.test_out}")
+        assert test_images is not None and test_labels is not None
+        args.test_out.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(args.test_out, images=test_images, labels=test_labels)
+        print(f"wrote test split: {args.test_out}")
+
+    validation_result = generate_validation_split(
+        train_images=train_images,
+        validation_images=validation_images,
+        validation_labels=validation_labels,
+        validation_out=args.validation_out,
+        device_private_keys=device_private_keys,
+        radiologist_private_key=radiologist_private_key,
+    )
+    print(
+        f"wrote signed validation split: {args.validation_out} "
+        f"(selected={validation_result['selected_samples']}, "
+        f"train-overlaps-removed={validation_result['removed_train_overlaps']}, "
+        f"internal-duplicates-removed={validation_result['removed_internal_duplicates']})"
+    )
+    print(f"validation semantic SHA-256: {validation_result['semantic_sha256']}")
+    print(f"validation file SHA-256: {validation_result['file_sha256']}")
     return 0
 
 

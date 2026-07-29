@@ -13,12 +13,18 @@ contract AggregationPolicy {
     uint32 public constant MAX_REQUIRED_SUBMISSIONS = 500;
     uint64 public constant MAX_SUBMISSION_WINDOW_SECONDS = 7 days;
 
-    bytes32 public constant POLICY_HASH_DOMAIN = keccak256("VITA-FL:aggregation-policy:v1");
+    bytes32 public constant POLICY_HASH_DOMAIN = keccak256("VITA-FL:aggregation-policy:v2");
     bytes32 public constant INPUT_ROOT_SEED = keccak256("VITA-FL:aggregation-input-root:v1");
-    bytes32 public constant FEDERATED_AVERAGING_V1_HASH =
-        keccak256("VITA-FL:fedavg:torch-state-dict:float64:equal-weight:v1");
-    bytes32 public constant BOOTSTRAP_ROLLOVER_V1_HASH =
-        keccak256("VITA-FL:bootstrap-model-rollover:v1");
+    /// @dev Keccak-256 of this single-line ASCII preimage:
+    /// VITA-FL:hybrid-r:v1|model=torch-state-dict|layout=conv1.weight,conv1.bias,conv2.weight,conv2.bias,fc1.weight,fc1.bias,fc2.weight,fc2.bias|tensor-order=c-contiguous-row-major|numeric=ieee754-binary64-cpu|update=client-model-minus-parent-model|input-order=worker-address-ascending|candidates=fedavg(equal-weight-arithmetic-mean),coordinate-median(even-count=arithmetic-mean-of-middle-two),trimmed-mean(q=1..floor((n-1)/2),q-ascending,drop-q-lowest-and-q-highest-per-coordinate),multi-krum(n>=5,f=floor((n-3)/2),neighbors=n-f-2,select=n-f-2,single-pass,squared-l2,score=sum-nearest,score-ties=input-order,selected-update=equal-weight-arithmetic-mean)|candidate-order=fedavg,coordinate-median,trimmed-mean-q-ascending,multi-krum|candidate-model=parent-model-plus-candidate-update|validation=round.validationDataHash|risk=bce-with-logits(raw-logits,elementwise-mean-over-Nx14,binary64-cpu)|selection=exact-binary64-less-than;ties=earlier-candidate|gate=best-loss<=parent-loss*(1+round.maxLossIncreaseBps/10000)|parent-fallback=unchanged-parent-if-no-finite-candidate-or-gate-fails|fail-closed=missing-or-hash-mismatched-validation,invalid-model-layout,nonfinite-parent-loss
+    bytes32 public constant HYBRID_R_V1_HASH = 0xfee8d99e620214799109487915a0c3a4f37f5a6fb66cb08dfed75fb5b6573610;
+    /// @dev SHA-256 of the canonical ChestMNIST validation semantics. The
+    ///      domain-separated framing covers the split ID, dtype, shape and raw
+    ///      bytes of every image, label, sample ID and provenance field.
+    bytes32 public constant HYBRID_R_VALIDATION_DATA_V1_HASH =
+        0xe4457c09ceeb203858e9b74232a4aa5b8852c623d85a63742a8751405d189d63;
+    uint16 public constant HYBRID_R_MAX_LOSS_INCREASE_BPS = 500;
+    bytes32 public constant BOOTSTRAP_ROLLOVER_V1_HASH = keccak256("VITA-FL:bootstrap-model-rollover:v1");
 
     bytes32 public constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
@@ -37,6 +43,8 @@ contract AggregationPolicy {
         bool opened;
         bool closed;
         bytes32 algorithmHash;
+        bytes32 validationDataHash;
+        uint16 maxLossIncreaseBps;
         bytes32 policyHash;
         bytes32 inputRoot;
     }
@@ -71,7 +79,9 @@ contract AggregationPolicy {
         uint64 indexed configurationVersion,
         uint32 requiredSubmissions,
         uint64 submissionWindowSeconds,
-        bytes32 algorithmHash
+        bytes32 algorithmHash,
+        bytes32 validationDataHash,
+        uint16 maxLossIncreaseBps
     );
     event RoundAggregationPolicyOpened(
         uint256 indexed round,
@@ -80,6 +90,8 @@ contract AggregationPolicy {
         uint64 openedAt,
         uint64 deadline,
         bytes32 algorithmHash,
+        bytes32 validationDataHash,
+        uint16 maxLossIncreaseBps,
         bytes32 policyHash,
         bytes32 inputRoot
     );
@@ -90,11 +102,7 @@ contract AggregationPolicy {
         bytes32 submissionCommitment,
         bytes32 inputRoot
     );
-    event RoundAggregationInputsClosed(
-        uint256 indexed round,
-        uint32 acceptedSubmissions,
-        bytes32 inputRoot
-    );
+    event RoundAggregationInputsClosed(uint256 indexed round, uint32 acceptedSubmissions, bytes32 inputRoot);
     event AggregationStatementAccepted(
         uint256 indexed round,
         address indexed aggregator,
@@ -125,13 +133,9 @@ contract AggregationPolicy {
         owner = msg.sender;
     }
 
-    function configureDefaultPolicy(uint32 requiredSubmissions, uint64 submissionWindowSeconds)
-        external
-        onlyOwner
-    {
+    function configureDefaultPolicy(uint32 requiredSubmissions, uint64 submissionWindowSeconds) external onlyOwner {
         require(
-            requiredSubmissions > 0 && requiredSubmissions <= MAX_REQUIRED_SUBMISSIONS,
-            "invalid required submissions"
+            requiredSubmissions > 0 && requiredSubmissions <= MAX_REQUIRED_SUBMISSIONS, "invalid required submissions"
         );
         require(
             submissionWindowSeconds > 0 && submissionWindowSeconds <= MAX_SUBMISSION_WINDOW_SECONDS,
@@ -144,7 +148,9 @@ contract AggregationPolicy {
             configurationVersion,
             requiredSubmissions,
             submissionWindowSeconds,
-            FEDERATED_AVERAGING_V1_HASH
+            HYBRID_R_V1_HASH,
+            HYBRID_R_VALIDATION_DATA_V1_HASH,
+            HYBRID_R_MAX_LOSS_INCREASE_BPS
         );
     }
 
@@ -158,7 +164,9 @@ contract AggregationPolicy {
         require(block.timestamp <= type(uint64).max - defaultSubmissionWindowSeconds, "deadline overflow");
 
         uint32 requiredSubmissions = round == 0 ? 0 : defaultRequiredSubmissions;
-        bytes32 algorithmHash = round == 0 ? BOOTSTRAP_ROLLOVER_V1_HASH : FEDERATED_AVERAGING_V1_HASH;
+        bytes32 algorithmHash = round == 0 ? BOOTSTRAP_ROLLOVER_V1_HASH : HYBRID_R_V1_HASH;
+        bytes32 validationDataHash = round == 0 ? bytes32(0) : HYBRID_R_VALIDATION_DATA_V1_HASH;
+        uint16 maxLossIncreaseBps = round == 0 ? 0 : HYBRID_R_MAX_LOSS_INCREASE_BPS;
         uint64 openedAt = uint64(block.timestamp);
         uint64 deadline = openedAt + defaultSubmissionWindowSeconds;
         bytes32 policyHash = keccak256(
@@ -168,7 +176,9 @@ contract AggregationPolicy {
                 requiredSubmissions,
                 openedAt,
                 deadline,
-                algorithmHash
+                algorithmHash,
+                validationDataHash,
+                maxLossIncreaseBps
             )
         );
 
@@ -178,6 +188,8 @@ contract AggregationPolicy {
         policy.configurationVersion = configurationVersion;
         policy.opened = true;
         policy.algorithmHash = algorithmHash;
+        policy.validationDataHash = validationDataHash;
+        policy.maxLossIncreaseBps = maxLossIncreaseBps;
         policy.policyHash = policyHash;
         policy.inputRoot = INPUT_ROOT_SEED;
 
@@ -188,15 +200,14 @@ contract AggregationPolicy {
             openedAt,
             deadline,
             algorithmHash,
+            validationDataHash,
+            maxLossIncreaseBps,
             policyHash,
             INPUT_ROOT_SEED
         );
     }
 
-    function recordSubmission(uint256 round, address worker, bytes32 submissionCommitment)
-        external
-        onlyGMStorage
-    {
+    function recordSubmission(uint256 round, address worker, bytes32 submissionCommitment) external onlyGMStorage {
         RoundPolicy storage policy = roundPolicies[round];
         require(policy.opened, "round aggregation policy is not open");
         require(!policy.closed, "round inputs are closed");
@@ -206,15 +217,9 @@ contract AggregationPolicy {
         require(policy.acceptedSubmissions < MAX_REQUIRED_SUBMISSIONS, "too many submissions");
 
         policy.acceptedSubmissions++;
-        policy.inputRoot = keccak256(
-            abi.encode(policy.inputRoot, worker, submissionCommitment)
-        );
+        policy.inputRoot = keccak256(abi.encode(policy.inputRoot, worker, submissionCommitment));
         emit RoundAggregationInputExtended(
-            round,
-            worker,
-            policy.acceptedSubmissions,
-            submissionCommitment,
-            policy.inputRoot
+            round, worker, policy.acceptedSubmissions, submissionCommitment, policy.inputRoot
         );
     }
 
@@ -226,10 +231,7 @@ contract AggregationPolicy {
             return;
         }
         require(reportedSubmissionCount == policy.acceptedSubmissions, "input count mismatch");
-        require(
-            policy.acceptedSubmissions >= policy.requiredSubmissions,
-            "required submissions not reached"
-        );
+        require(policy.acceptedSubmissions >= policy.requiredSubmissions, "required submissions not reached");
         policy.closed = true;
         emit RoundAggregationInputsClosed(round, policy.acceptedSubmissions, policy.inputRoot);
     }
@@ -308,15 +310,10 @@ contract AggregationPolicy {
     }
 
     function domainSeparator() public view returns (bytes32) {
-        return keccak256(
-            abi.encode(
-                EIP712_DOMAIN_TYPEHASH,
-                EIP712_NAME_HASH,
-                EIP712_VERSION_HASH,
-                block.chainid,
-                gmStorage
-            )
-        );
+        return
+            keccak256(
+                abi.encode(EIP712_DOMAIN_TYPEHASH, EIP712_NAME_HASH, EIP712_VERSION_HASH, block.chainid, gmStorage)
+            );
     }
 
     function aggregationStatementDigest(
@@ -361,6 +358,8 @@ contract AggregationPolicy {
             uint32 acceptedSubmissions,
             uint64 roundConfigurationVersion,
             bytes32 algorithmHash,
+            bytes32 validationDataHash,
+            uint16 maxLossIncreaseBps,
             bytes32 policyHash,
             bytes32 inputRoot
         )
@@ -375,6 +374,8 @@ contract AggregationPolicy {
             policy.acceptedSubmissions,
             policy.configurationVersion,
             policy.algorithmHash,
+            policy.validationDataHash,
+            policy.maxLossIncreaseBps,
             policy.policyHash,
             policy.inputRoot
         );

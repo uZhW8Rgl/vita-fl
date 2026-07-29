@@ -113,6 +113,8 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
             uint32 accepted,
             ,
             bytes32 algorithmHash,
+            ,
+            ,
             bytes32 policyHash,
             bytes32 inputRoot
         ) = aggregationPolicy.getRoundPolicy(sourceRound);
