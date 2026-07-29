@@ -49,14 +49,22 @@ class CombinedWorkerScriptTests(unittest.TestCase):
             script,
         )
 
-    def test_completed_training_releases_the_training_python_service(self) -> None:
+    def test_completed_training_exits_once_and_cleanup_releases_services(self) -> None:
         script = START_SCRIPT.read_text(encoding="utf-8")
         completion = script.index(
-            'echo "DFL training process completed; stopping the training-only Python service."'
+            'echo "DFL training process completed; exiting once so Docker reboots the combined worker."'
         )
-        inference_wait = script.index('wait "${TEE_INFERENCE_PID}"', completion)
-        self.assertIn('kill "${PYTHON_PID}"', script[completion:inference_wait])
-        self.assertIn('PYTHON_PID=""', script[completion:inference_wait])
+        completion_branch = script[completion:script.index("\nfi", completion)]
+        self.assertIn("exit 0", completion_branch)
+        self.assertNotIn('wait "${TEE_INFERENCE_PID}"', completion_branch)
+
+        cleanup = script[script.index("cleanup() {"):script.index("terminate() {")]
+        self.assertIn(
+            'for pid in "${NODE_PID}" "${TEE_INFERENCE_PID}" "${PYTHON_PID}"',
+            cleanup,
+        )
+        self.assertIn('kill "${pid}"', cleanup)
+        self.assertIn('wait "${pid}"', cleanup)
 
     def test_combined_receiver_keeps_key_until_container_cleanup(self) -> None:
         start_script = START_SCRIPT.read_text(encoding="utf-8")
