@@ -206,6 +206,14 @@ Notes:
   REPORTDATA-bound HTTPS endpoint from `DeviceRegistry.public_ip`; an explicit
   `tee_inference_url_override` is only a diagnostic or compatibility escape
   hatch.
+- Worker containers use `restart: "no"`. A completed worker remains registered
+  on-chain, but Docker never starts its training process again automatically.
+  Worker 0 stays alive after successful training because its supervisor keeps
+  the co-located TEE-inference service running. A failed worker remains stopped
+  until the operator explicitly resets and recreates the workers for a fresh
+  run; this avoids deriving a new ephemeral action key and paying for another
+  DCAP registration automatically. The normal completion path never calls
+  `deregisterDevice`; deregistration remains an explicit participant action.
 - `ssh_public_key_path` can still configure the contract runtime and auxiliary
   apps. Official static and dynamically launched worker resources always pass
   an empty SSH-key list and no user-defined pre-launch script.
@@ -247,7 +255,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:37a70872cfb940babcab0a438364008e3e563230c195bd1aa65a3b7619d12c0d
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:30a17d32dfe5e9dad9f56bc73e2352e61177b2cdb4ff00081a09d3b5fad3c65c
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
@@ -255,7 +263,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:37a70872cfb940babcab0a438364008
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:c0eafb7b91dd23d2ab9b0cec4b2b8c9695b253eec2c3c1e6ca86b1097fdf87fa
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b578302f8f6234c8ad131e8eae573daed191c4aa36fa60379dedca5eca17e9ec
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
@@ -452,7 +460,7 @@ digest-pinned references in `.env.phala.anvil`:
 
 ```dotenv
 ENABLE_PHALA_AGENT=true
-AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:c750821699491d541d1a401d4b586e09403330a0b78536869349a1df59b999db
+AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:462503a94222fccf34818d93fcfbc3a949a979d5e43bd5d1b83a7181a74fb10c
 TRANSPARENCY_LOG_IMAGE=ghcr.io/uzhw8rgl/master-thesis-transparency-log@sha256:4c6789921d5ff89e546c65c435bc19d479acc8248715dff3f5b1536e2c8af723
 ENABLE_OLLAMA=true
 OLLAMA_MODEL=qwen3:1.7b

@@ -185,7 +185,7 @@ variable "sello_scitt_url" {
 variable "agent_image" {
   description = "Digest-pinned LLM/MCP agent image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:c750821699491d541d1a401d4b586e09403330a0b78536869349a1df59b999db"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:462503a94222fccf34818d93fcfbc3a949a979d5e43bd5d1b83a7181a74fb10c"
 
   validation {
     condition = (
@@ -630,19 +630,19 @@ variable "ssh_public_key_path" {
 variable "worker_image" {
   description = "Digest-pinned DFL worker container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:37a70872cfb940babcab0a438364008e3e563230c195bd1aa65a3b7619d12c0d"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:30a17d32dfe5e9dad9f56bc73e2352e61177b2cdb4ff00081a09d3b5fad3c65c"
 }
 
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:c0eafb7b91dd23d2ab9b0cec4b2b8c9695b253eec2c3c1e6ca86b1097fdf87fa"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b578302f8f6234c8ad131e8eae573daed191c4aa36fa60379dedca5eca17e9ec"
 }
 
 variable "zk_inference_image" {
   description = "Digest-pinned ZK inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:7df4d5632e68e4e97c7585130c99c4dd5eeba736c348a792842aba4b9c1ec8ed"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:49a37c12f13f508ebead5549cb0dece3d4549a8d6d884ae35dde09acd17dadd5"
 
   validation {
     condition = (

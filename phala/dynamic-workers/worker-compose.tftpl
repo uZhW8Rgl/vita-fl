@@ -1,7 +1,7 @@
 services:
   dfl-worker:
     image: ${worker_image}
-    restart: ${inference_enabled ? "unless-stopped" : "on-failure"}
+    restart: "no"
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
       - /var/run/tappd.sock:/var/run/tappd.sock
