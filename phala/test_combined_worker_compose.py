@@ -33,19 +33,33 @@ class CombinedWorkerComposeTests(unittest.TestCase):
                 with self.subTest(template=template[:20], entry=entry):
                     self.assertIn(entry, template)
 
-    def test_worker_templates_disable_automatic_restarts(self) -> None:
+    def test_worker_templates_reboot_without_policy_split(self) -> None:
         for template in (self.static_template, self.dynamic_template):
             with self.subTest(template=template[:20]):
-                self.assertIn('restart: "no"', template)
+                self.assertIn("restart: unless-stopped", template)
                 self.assertNotIn("restart: on-failure", template)
-                self.assertNotIn("restart: unless-stopped", template)
 
         compatibility_compose = (ROOT / "dstack-compose.template.yml").read_text(
             encoding="utf-8"
         )
-        self.assertIn('restart: "no"', compatibility_compose)
+        self.assertIn("restart: unless-stopped", compatibility_compose)
         self.assertNotIn("restart: on-failure", compatibility_compose)
-        self.assertNotIn("restart: unless-stopped", compatibility_compose)
+
+    def test_completed_training_reboots_once_then_keeps_worker_idle(self) -> None:
+        supervisor = (
+            REPOSITORY_ROOT / "dfl/start_node_neural_network.sh"
+        ).read_text(encoding="utf-8")
+        worker = (
+            REPOSITORY_ROOT / "dfl/node_server/src/server.ts"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "exiting once so Docker reboots the combined worker",
+            supervisor,
+        )
+        self.assertNotIn("Keeping only the TEE inference receiver available", supervisor)
+        self.assertIn("trainingWasCompleteAtStartup", worker)
+        self.assertIn("training.rebooted_idle", worker)
 
     def test_only_inference_worker_exposes_receiver_state_and_port(self) -> None:
         conditional_receiver = re.compile(

@@ -174,10 +174,11 @@ Notes:
 - The public Anvil account remains the logical worker identity and funds its
   action address, but it is not accepted as DFL transaction authority. At each
   worker-process start, the application combines a domain-separated dstack KMS
-  secret with a fresh 32-byte value held only in process memory to derive a
-  process-scoped secp256k1 action key. Its address is included in REPORTDATA
-  and registered on-chain. A restart therefore requires a fresh quote and
-  atomically revokes the previous action address.
+  secret with the logical participant, chain, and registry identities to
+  reconstruct an application-bound secp256k1 action key. Its address is
+  included in REPORTDATA during the first registration. An exact reboot reuses
+  that registration; any mismatching active registration fails closed before
+  quote generation, and the contract independently rejects a second one.
 - `worker_image` must stay pinned to a `sha256` digest. Terraform also renders
   training-only and Worker-0-with-inference policy references from
   `dynamic-workers/worker-compose.tftpl`. The contract runtime derives their
@@ -206,14 +207,14 @@ Notes:
   REPORTDATA-bound HTTPS endpoint from `DeviceRegistry.public_ip`; an explicit
   `tee_inference_url_override` is only a diagnostic or compatibility escape
   hatch.
-- Worker containers use `restart: "no"`. A completed worker remains registered
-  on-chain, but Docker never starts its training process again automatically.
-  Worker 0 stays alive after successful training because its supervisor keeps
-  the co-located TEE-inference service running. A failed worker remains stopped
-  until the operator explicitly resets and recreates the workers for a fresh
-  run; this avoids deriving a new ephemeral action key and paying for another
-  DCAP registration automatically. The normal completion path never calls
-  `deregisterDevice`; deregistration remains an explicit participant action.
+- Worker containers use `restart: unless-stopped`. After training completes,
+  the supervisor exits once so Docker reboots the container. The rebooted
+  worker derives the same app-bound action key, reuses its existing on-chain
+  registration, and remains idle when the configured rounds are already
+  complete. Worker 0 keeps its co-located TEE-inference service available in
+  that idle process. This avoids both a restart loop and another DCAP
+  registration. The normal completion path never calls `deregisterDevice`;
+  deregistration remains an explicit participant action.
 - `ssh_public_key_path` can still configure the contract runtime and auxiliary
   apps. Official static and dynamically launched worker resources always pass
   an empty SSH-key list and no user-defined pre-launch script.

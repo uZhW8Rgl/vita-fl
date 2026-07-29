@@ -396,17 +396,8 @@ if inference_enabled; then
         exit "${first_status}"
     fi
 
-    echo "DFL training process completed; stopping the training-only Python service."
-    kill "${PYTHON_PID}" 2>/dev/null || true
-    wait "${PYTHON_PID}" 2>/dev/null || true
-    PYTHON_PID=""
-    echo "Keeping only the TEE inference receiver available."
-    set +e
-    wait "${TEE_INFERENCE_PID}"
-    inference_status=$?
-    set -e
-    TEE_INFERENCE_PID=""
-    exit "${inference_status}"
+    echo "DFL training process completed; exiting once so Docker reboots the combined worker."
+    exit 0
 fi
 
 set +e

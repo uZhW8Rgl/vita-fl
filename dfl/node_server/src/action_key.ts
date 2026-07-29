@@ -10,14 +10,14 @@ import {
 const PHALA_SOCKET_PATH = "/var/run/dstack.sock";
 const ACTION_KEY_PATH = "vita-fl/participant-ethereum-action/v1";
 const ACTION_KEY_PURPOSE = "ethereum-secp256k1-action";
-const ACTION_KEY_SESSION_DOMAIN =
-    "MasterThesis.participant-ethereum-action.session.v1";
+const ACTION_KEY_DERIVATION_DOMAIN =
+    "MasterThesis.participant-ethereum-action.app-bound.v1";
 
 type ActionKeyProvider = () => Promise<Uint8Array>;
 
 export type ParticipantActionSigner = Readonly<{
     address: `0x${string}`;
-    source: "dstack-ephemeral" | "local-test-ephemeral";
+    source: "dstack-app-bound" | "local-test-derived";
     signTransaction(transaction: Record<string, unknown>): Promise<`0x${string}`>;
     signDigest(digest: `0x${string}`): Promise<`0x${string}`>;
     destroy(): void;
@@ -26,7 +26,6 @@ export type ParticipantActionSigner = Readonly<{
 export type ParticipantActionKeyOptions = {
     env?: NodeJS.ProcessEnv;
     deriveKey?: ActionKeyProvider;
-    sessionSalt?: Uint8Array;
 };
 
 const normalizePrivateKey = (raw: Uint8Array) => {
@@ -69,9 +68,39 @@ const dstackProvider = (): ActionKeyProvider => async () => {
     return response.key;
 };
 
-const deriveSessionPrivateKey = async (
+const derivationContext = (env: NodeJS.ProcessEnv) => {
+    const participant = String(env.ACCOUNT_ADDRESS || "").trim().toLowerCase();
+    const registry = String(
+        env.REGISTRY_ADDRESS || env.EXPECTED_DEVICE_REGISTRY_ADDRESS || "",
+    ).trim().toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(participant)) {
+        throw new Error("ACCOUNT_ADDRESS is required for participant action-key derivation.");
+    }
+    if (!/^0x[0-9a-f]{40}$/.test(registry)) {
+        throw new Error("REGISTRY_ADDRESS is required for participant action-key derivation.");
+    }
+
+    let chainId: bigint;
+    try {
+        chainId = BigInt(String(env.EXPECTED_CHAIN_ID || ""));
+    } catch {
+        throw new Error("EXPECTED_CHAIN_ID is required for participant action-key derivation.");
+    }
+    if (chainId <= 0n || chainId >= (1n << 256n)) {
+        throw new Error("EXPECTED_CHAIN_ID is outside the action-key derivation domain.");
+    }
+
+    return Buffer.concat([
+        Buffer.from(ACTION_KEY_DERIVATION_DOMAIN, "utf8"),
+        Buffer.from(participant.slice(2), "hex"),
+        Buffer.from(chainId.toString(16).padStart(64, "0"), "hex"),
+        Buffer.from(registry.slice(2), "hex"),
+    ]);
+};
+
+const deriveAppBoundPrivateKey = async (
     provider: ActionKeyProvider,
-    sessionSalt: Uint8Array,
+    context: Buffer,
 ) => {
     const root = await provider();
     if (!(root instanceof Uint8Array) || root.byteLength !== 32) {
@@ -84,8 +113,7 @@ const deriveSessionPrivateKey = async (
         for (let counter = 0; counter < 256; counter += 1) {
             const candidate = crypto
                 .createHmac("sha256", rootBytes)
-                .update(ACTION_KEY_SESSION_DOMAIN, "utf8")
-                .update(sessionSalt)
+                .update(context)
                 .update(Buffer.from([counter]))
                 .digest();
             try {
@@ -173,20 +201,14 @@ export const loadParticipantActionSigner = async (
     const env = options.env || process.env;
     const phala = env.DOCKER === "phala";
     const provider = options.deriveKey || (phala ? dstackProvider() : localTestProvider(env));
-    const source = phala ? "dstack-ephemeral" : "local-test-ephemeral";
-    const sessionSalt = options.sessionSalt
-        ? Uint8Array.from(options.sessionSalt)
-        : Uint8Array.from(crypto.randomBytes(32));
-    if (sessionSalt.byteLength !== 32) {
-        sessionSalt.fill(0);
-        throw new Error("Participant action-key session salt must be exactly 32 bytes.");
-    }
+    const source = phala ? "dstack-app-bound" : "local-test-derived";
+    const context = derivationContext(env);
     let destroyed = false;
     const derive = async () => {
         if (destroyed) {
             throw new Error("Participant action signer has been destroyed.");
         }
-        return deriveSessionPrivateKey(provider, sessionSalt);
+        return deriveAppBoundPrivateKey(provider, context);
     };
 
     const first = normalizePrivateKey(await derive());
@@ -240,7 +262,6 @@ export const loadParticipantActionSigner = async (
             signatureHex(digest, privateKey)),
         destroy: () => {
             if (destroyed) return;
-            sessionSalt.fill(0);
             destroyed = true;
         },
     });
@@ -249,5 +270,5 @@ export const loadParticipantActionSigner = async (
 export const PARTICIPANT_ACTION_KEY_CONTEXT = Object.freeze({
     path: ACTION_KEY_PATH,
     purpose: ACTION_KEY_PURPOSE,
-    sessionDomain: ACTION_KEY_SESSION_DOMAIN,
+    derivationDomain: ACTION_KEY_DERIVATION_DOMAIN,
 });

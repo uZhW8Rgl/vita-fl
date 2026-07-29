@@ -12,21 +12,31 @@ const KEY = Buffer.from(
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "hex",
 );
-const SESSION_SALT = Buffer.from("11".repeat(32), "hex");
 const web3 = new Web3();
+const PHALA_ENV = {
+    DOCKER: "phala",
+    ACCOUNT_ADDRESS: "0x1111111111111111111111111111111111111111",
+    EXPECTED_CHAIN_ID: "31337",
+    REGISTRY_ADDRESS: "0x2222222222222222222222222222222222222222",
+};
+const LOCAL_ENV = {
+    LOCAL_TDX_MOCK: "1",
+    PRIVATE_KEY: `0x${KEY.toString("hex")}`,
+    ACCOUNT_ADDRESS: "0x1111111111111111111111111111111111111111",
+    EXPECTED_CHAIN_ID: "31337",
+    REGISTRY_ADDRESS: "0x2222222222222222222222222222222222222222",
+};
 
 const derive = async () => Uint8Array.from(KEY);
 
-test("one dstack-backed session keeps a stable action key and signs raw digests", async () => {
+test("dstack-backed action key remains stable across process restarts and signs raw digests", async () => {
     const signer = await loadParticipantActionSigner({
-        env: { DOCKER: "phala" },
+        env: PHALA_ENV,
         deriveKey: derive,
-        sessionSalt: SESSION_SALT,
     });
     const second = await loadParticipantActionSigner({
-        env: { DOCKER: "phala" },
+        env: PHALA_ENV,
         deriveKey: derive,
-        sessionSalt: SESSION_SALT,
     });
     assert.equal(signer.address, second.address);
     assert.match(signer.address, /^0x[0-9a-f]{40}$/);
@@ -62,25 +72,37 @@ test("one dstack-backed session keeps a stable action key and signs raw digests"
     );
 });
 
-test("a fresh process salt rotates the dstack-backed action address", async () => {
+test("a different dstack application key derives a different action address", async () => {
     const first = await loadParticipantActionSigner({
-        env: { DOCKER: "phala" },
+        env: PHALA_ENV,
         deriveKey: derive,
-        sessionSalt: Buffer.from("22".repeat(32), "hex"),
     });
     const restarted = await loadParticipantActionSigner({
-        env: { DOCKER: "phala" },
-        deriveKey: derive,
-        sessionSalt: Buffer.from("33".repeat(32), "hex"),
+        env: PHALA_ENV,
+        deriveKey: async () => Uint8Array.from(Buffer.from("ab".repeat(32), "hex")),
     });
     assert.notEqual(first.address, restarted.address);
 });
 
+test("participant, chain, and registry are part of the action-key derivation context", async () => {
+    const base = await loadParticipantActionSigner({
+        env: PHALA_ENV,
+        deriveKey: derive,
+    });
+    for (const env of [
+        { ...PHALA_ENV, ACCOUNT_ADDRESS: "0x3333333333333333333333333333333333333333" },
+        { ...PHALA_ENV, EXPECTED_CHAIN_ID: "1" },
+        { ...PHALA_ENV, REGISTRY_ADDRESS: "0x4444444444444444444444444444444444444444" },
+    ]) {
+        const scoped = await loadParticipantActionSigner({ env, deriveKey: derive });
+        assert.notEqual(base.address, scoped.address);
+    }
+});
+
 test("action signer accepts only fully local contract calls and no value transfer", async () => {
     const signer = await loadParticipantActionSigner({
-        env: { DOCKER: "phala" },
+        env: PHALA_ENV,
         deriveKey: derive,
-        sessionSalt: SESSION_SALT,
     });
     const base = {
         from: signer.address,
@@ -109,14 +131,13 @@ test("Phala never falls back to an environment action key", async () => {
     await assert.rejects(
         loadParticipantActionSigner({
             env: {
-                DOCKER: "phala",
+                ...PHALA_ENV,
                 LOCAL_TDX_MOCK: "1",
                 LOCAL_ACTION_PRIVATE_KEY: `0x${KEY.toString("hex")}`,
             },
             deriveKey: async () => {
                 throw new Error("dstack unavailable");
             },
-            sessionSalt: SESSION_SALT,
         }),
         /dstack unavailable/,
     );
@@ -124,25 +145,26 @@ test("Phala never falls back to an environment action key", async () => {
 
 test("local action key is restricted to mock mode", async () => {
     await assert.rejects(
-        loadParticipantActionSigner({ env: {} }),
+        loadParticipantActionSigner({
+            env: {
+                ACCOUNT_ADDRESS: LOCAL_ENV.ACCOUNT_ADDRESS,
+                EXPECTED_CHAIN_ID: LOCAL_ENV.EXPECTED_CHAIN_ID,
+                REGISTRY_ADDRESS: LOCAL_ENV.REGISTRY_ADDRESS,
+            },
+        }),
         /only allowed with LOCAL_TDX_MOCK=1/,
     );
 
     const signer = await loadParticipantActionSigner({
-        env: {
-            LOCAL_TDX_MOCK: "1",
-            PRIVATE_KEY: `0x${KEY.toString("hex")}`,
-        },
-        sessionSalt: SESSION_SALT,
+        env: LOCAL_ENV,
     });
     assert.match(signer.address, /^0x[0-9a-f]{40}$/);
 });
 
-test("destroy wipes the session authority and prevents further signing", async () => {
+test("destroy disables the reconstructed authority and prevents further signing", async () => {
     const signer = await loadParticipantActionSigner({
-        env: { DOCKER: "phala" },
+        env: PHALA_ENV,
         deriveKey: derive,
-        sessionSalt: SESSION_SALT,
     });
     signer.destroy();
     await assert.rejects(
@@ -171,7 +193,7 @@ test("RSA and Ethereum action derivation contexts are distinct", () => {
         "ethereum-secp256k1-action",
     );
     assert.equal(
-        PARTICIPANT_ACTION_KEY_CONTEXT.sessionDomain,
-        "MasterThesis.participant-ethereum-action.session.v1",
+        PARTICIPANT_ACTION_KEY_CONTEXT.derivationDomain,
+        "MasterThesis.participant-ethereum-action.app-bound.v1",
     );
 });

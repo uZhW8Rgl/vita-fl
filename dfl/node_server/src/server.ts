@@ -3,7 +3,7 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
+import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getAuthorizedDevices, getDevicePublicKey, getDeviceActionKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
 import { getCurrentModel, pinFile, getFileFromIPFS, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
 import {
@@ -1290,14 +1290,23 @@ async function hasCurrentDeviceRegistration(
     canonicalAppCompose,
 ) {
     const accountAddress = process.env.ACCOUNT_ADDRESS;
-    if (!accountAddress || !(await isAuthorized(accountAddress))) return false;
-    return isDeviceRegistrationCurrent(
+    if (!accountAddress) return false;
+    const registeredActionKey = await getDeviceActionKey(accountAddress);
+    if (/^0x0{40}$/i.test(registeredActionKey)) return false;
+
+    const current = await isDeviceRegistrationCurrent(
         accountAddress,
         activeParticipantActionSigner?.address,
         publicIp,
         brokerIp,
         publicKey,
         canonicalAppCompose,
+    );
+    if (current) return true;
+
+    throw new Error(
+        "Participant already has a different on-chain device registration; "
+        + "explicit deregistration or a fresh contract runtime is required.",
     );
 }
 
@@ -1543,6 +1552,8 @@ async function prepareRoundZeroBootstrapRollover() {
 }
 
 const stateMachine = async () => {
+    const completedRoundsAtStartup = Number(await getCompletedRoundCount());
+    const trainingWasCompleteAtStartup = completedRoundsAtStartup >= targetRound();
     if (process.env.DOCKER === "phala") {
         const publicKey = rsaPublicKeyDerHex();
         const liveIdentity = await currentPhalaIdentity();
@@ -1587,6 +1598,21 @@ const stateMachine = async () => {
     }
     else {
         await registerWithLocalTdxMock();
+    }
+    if (trainingWasCompleteAtStartup) {
+        console.log(
+            `Training was already complete at worker startup `
+            + `(${completedRoundsAtStartup}/${targetRound()} rounds); `
+            + "keeping the rebooted worker idle without submitting transactions.",
+        );
+        await runtimeEvent("training.rebooted_idle", {
+            role: "worker",
+            completed_rounds: completedRoundsAtStartup,
+            target_rounds: targetRound(),
+        });
+        await new Promise<void>(() => {
+            setInterval(() => {}, 60 * 60 * 1000);
+        });
     }
     while (Number(await getCompletedRoundCount()) < targetRound()) {
         let state = await getCurrentState();

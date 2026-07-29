@@ -3,7 +3,7 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getDevicePublicKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
+import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getDevicePublicKey, getDeviceActionKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
 import { getCurrentModel, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
 import { loadParticipantKey, materializeParticipantPrivateKey, PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH, } from "./participant_key.js";
@@ -1099,9 +1099,16 @@ async function receivedWorkerModelFiles() {
 }
 async function hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, canonicalAppCompose) {
     const accountAddress = process.env.ACCOUNT_ADDRESS;
-    if (!accountAddress || !(await isAuthorized(accountAddress)))
+    if (!accountAddress)
         return false;
-    return isDeviceRegistrationCurrent(accountAddress, activeParticipantActionSigner?.address, publicIp, brokerIp, publicKey, canonicalAppCompose);
+    const registeredActionKey = await getDeviceActionKey(accountAddress);
+    if (/^0x0{40}$/i.test(registeredActionKey))
+        return false;
+    const current = await isDeviceRegistrationCurrent(accountAddress, activeParticipantActionSigner?.address, publicIp, brokerIp, publicKey, canonicalAppCompose);
+    if (current)
+        return true;
+    throw new Error("Participant already has a different on-chain device registration; "
+        + "explicit deregistration or a fresh contract runtime is required.");
 }
 async function registerWithLocalTdxMock() {
     if (localTdxRegistrationDone || process.env.DOCKER === "phala")
@@ -1302,6 +1309,8 @@ async function prepareRoundZeroBootstrapRollover() {
     console.log("Round 0 bootstrap rollover prepared aggregated.bin + aggregated.bin.sig for encrypted republish.");
 }
 const stateMachine = async () => {
+    const completedRoundsAtStartup = Number(await getCompletedRoundCount());
+    const trainingWasCompleteAtStartup = completedRoundsAtStartup >= targetRound();
     if (process.env.DOCKER === "phala") {
         const publicKey = rsaPublicKeyDerHex();
         const liveIdentity = await currentPhalaIdentity();
@@ -1323,6 +1332,19 @@ const stateMachine = async () => {
     }
     else {
         await registerWithLocalTdxMock();
+    }
+    if (trainingWasCompleteAtStartup) {
+        console.log(`Training was already complete at worker startup `
+            + `(${completedRoundsAtStartup}/${targetRound()} rounds); `
+            + "keeping the rebooted worker idle without submitting transactions.");
+        await runtimeEvent("training.rebooted_idle", {
+            role: "worker",
+            completed_rounds: completedRoundsAtStartup,
+            target_rounds: targetRound(),
+        });
+        await new Promise(() => {
+            setInterval(() => { }, 60 * 60 * 1000);
+        });
     }
     while (Number(await getCompletedRoundCount()) < targetRound()) {
         let state = await getCurrentState();

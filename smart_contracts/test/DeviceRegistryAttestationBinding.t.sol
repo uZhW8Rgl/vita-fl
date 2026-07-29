@@ -164,6 +164,9 @@ contract DeviceRegistryAttestationBindingTest is Test {
         registry.setWorkerPolicyHashAllowed(policyHash, false);
         assertFalse(registry.isAuthorized(worker));
         assertEq(registry.allowedWorkerPolicyHashCount(), 0);
+
+        vm.expectRevert(bytes("device already registered"));
+        _reportData(registry, appCompose, publicKey);
     }
 
     function testWorkerPolicySetIsFailClosed() public {
@@ -290,14 +293,19 @@ contract DeviceRegistryAttestationBindingTest is Test {
         );
     }
 
-    function testRejectsQuoteReplayAfterNonceIncrement() public {
+    function testRegisteredDeviceCannotSubmitSecondRegistration() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
         vm.prank(actionKey);
         _register(registry, reportData, appCompose, publicKey);
 
+        vm.expectRevert(bytes("device already registered"));
+        _reportData(registry, appCompose, publicKey);
+
         _expectRegisterRevert(
-            bytes("quote report data mismatch"), registry, reportData, appCompose, publicKey, actionKey
+            bytes("device already registered"), registry, reportData, appCompose, publicKey, actionKey
         );
+        assertEq(registry.registrationNonces(worker), 1);
+        assertEq(registry.actionKeys(worker), actionKey);
     }
 
     function testImagePolicyIsFailClosed() public {
@@ -449,20 +457,24 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertTrue(registry.isAuthorized(worker));
     }
 
-    function testFreshAttestedRegistrationAtomicallyRotatesActionKey() public {
+    function testRegisteredDeviceCannotRotateActionKeyWithoutDeregistering() public {
         bytes memory firstReportData = _reportData(registry, appCompose, publicKey);
         _register(registry, firstReportData, appCompose, publicKey);
-        address oldActionKey = actionKey;
+        address registeredActionKey = actionKey;
 
         actionKey = makeAddr("rotated-worker-action-key");
-        bytes memory rotatedReportData = _reportData(registry, appCompose, publicKey);
-        _register(registry, rotatedReportData, appCompose, publicKey);
+        vm.expectRevert(bytes("device already registered"));
+        _reportData(registry, appCompose, publicKey);
+        _expectRegisterRevert(
+            bytes("device already registered"), registry, new bytes(64), appCompose, publicKey, actionKey
+        );
 
-        assertEq(registry.actionKeys(worker), actionKey);
-        assertEq(registry.participantForActionKey(oldActionKey), address(0));
-        assertEq(registry.resolveAuthorizedParticipant(actionKey), worker);
+        assertEq(registry.registrationNonces(worker), 1);
+        assertEq(registry.actionKeys(worker), registeredActionKey);
+        assertEq(registry.participantForActionKey(registeredActionKey), worker);
+        assertEq(registry.participantForActionKey(actionKey), address(0));
         vm.expectRevert(bytes("action key not registered"));
-        vm.prank(oldActionKey);
+        vm.prank(actionKey);
         registry.deregisterDevice();
     }
 
@@ -474,14 +486,15 @@ contract DeviceRegistryAttestationBindingTest is Test {
 
         bytes memory firstReportData = _reportData(registry, appCompose, publicKey);
         _register(registry, firstReportData, appCompose, publicKey);
-        address registeredActionKey = actionKey;
+        vm.prank(actionKey);
+        registry.deregisterDevice();
         actionKey = nextActionKey;
 
         bytes memory freshReportData =
             registry.registrationReportData(worker, nextActionKey, PUBLIC_IP, BROKER_IP, publicKey, appCompose);
         vm.expectRevert(bytes("invalid participant authorization"));
         _registerWithAuthorization(registry, freshReportData, appCompose, publicKey, nextActionKey, staleAuthorization);
-        assertEq(registry.actionKeys(worker), registeredActionKey);
+        assertEq(registry.actionKeys(worker), address(0));
         assertEq(registry.participantForActionKey(nextActionKey), address(0));
     }
 

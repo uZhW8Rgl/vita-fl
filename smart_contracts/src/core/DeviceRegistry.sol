@@ -234,6 +234,7 @@ contract DeviceRegistry {
         bytes memory participantAuthorization
     ) public {
         require(actionKey == msg.sender, "sender/action key mismatch");
+        require(!knownDevice[_address], "device already registered");
 
         // Image and role policy are derived from the exact app_compose preimage on-chain.
         // The complete preimage is then hashed independently for REPORTDATA and RTMR3 replay.
@@ -247,7 +248,7 @@ contract DeviceRegistry {
             "invalid participant authorization"
         );
         address assignedParticipant = participantForActionKey[actionKey];
-        require(assignedParticipant == address(0) || assignedParticipant == _address, "action key already assigned");
+        require(assignedParticipant == address(0), "action key already assigned");
         bytes32 binding = _registrationBinding(
             _address,
             actionKey,
@@ -267,10 +268,6 @@ contract DeviceRegistry {
         registeredComposeHashes[_address] = composeHash;
         registeredImageDigests[_address] = workerImageDigest;
         registeredWorkerPolicyHashes[_address] = policyHash;
-        address previousActionKey = actionKeyForParticipant[_address];
-        if (previousActionKey != address(0) && previousActionKey != actionKey) {
-            delete participantForActionKey[previousActionKey];
-        }
         actionKeyForParticipant[_address] = actionKey;
         participantForActionKey[actionKey] = _address;
         _registerVerifiedDevice(_address, _public_ip, _msg_broker_ip, _public_key);
@@ -289,6 +286,7 @@ contract DeviceRegistry {
         bytes memory canonicalAppCompose
     ) public view returns (bytes memory) {
         require(actionKey != address(0), "invalid action key");
+        require(!knownDevice[_address], "device already registered");
         (bytes32 composeHash, bytes32 workerImageDigest, bytes32 policyHash) = _workloadIdentity(canonicalAppCompose);
         _requireRegistrationPreparation(_address, _public_key, workerImageDigest, policyHash);
         uint256 nonce = registrationNonces[_address];
