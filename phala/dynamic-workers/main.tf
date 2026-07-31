@@ -30,6 +30,13 @@ resource "phala_app" "worker" {
     expected_gm_storage_address              = var.expected_gm_storage_address
     expected_medical_signer_registry_address = var.expected_medical_signer_registry_address
     expected_chain_id                        = var.expected_chain_id
+    eth_eur_price                            = var.eth_eur_price
+    eth_usd_price                            = var.eth_usd_price
+    exchange_rate_source                     = var.exchange_rate_source
+    exchange_rate_timestamp_utc              = var.exchange_rate_timestamp_utc
+    reference_mainnet_gas_price_gwei         = var.reference_mainnet_gas_price_gwei
+    reference_gas_price_source               = var.reference_gas_price_source
+    reference_gas_price_timestamp_utc        = var.reference_gas_price_timestamp_utc
     epoch                                    = var.epoch
     round                                    = var.round
     gm_update_timeout_ms                     = var.gm_update_timeout_ms

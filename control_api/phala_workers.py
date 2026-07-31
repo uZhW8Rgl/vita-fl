@@ -73,6 +73,13 @@ class WorkerDeploymentConfig:
     expected_gm_storage_address: str
     expected_medical_signer_registry_address: str
     expected_chain_id: int
+    eth_eur_price: str = "3000"
+    eth_usd_price: str = ""
+    exchange_rate_source: str = "manual_configuration"
+    exchange_rate_timestamp_utc: str = ""
+    reference_mainnet_gas_price_gwei: str = ""
+    reference_gas_price_source: str = ""
+    reference_gas_price_timestamp_utc: str = ""
     region: str = "US-WEST-1"
     os_image: str = "dstack-dev-0.5.7"
     epoch: int = 1
@@ -464,6 +471,19 @@ def controller_from_environment() -> PhalaWorkerController:
             "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
         ),
         expected_chain_id=integer("DYNAMIC_WORKER_EXPECTED_CHAIN_ID", 31337),
+        eth_eur_price=os.environ.get("ETH_EUR_PRICE", "3000"),
+        eth_usd_price=os.environ.get("ETH_USD_PRICE", ""),
+        exchange_rate_source=os.environ.get(
+            "EXCHANGE_RATE_SOURCE", "manual_configuration"
+        ),
+        exchange_rate_timestamp_utc=os.environ.get("EXCHANGE_RATE_TIMESTAMP_UTC", ""),
+        reference_mainnet_gas_price_gwei=os.environ.get(
+            "REFERENCE_MAINNET_GAS_PRICE_GWEI", ""
+        ),
+        reference_gas_price_source=os.environ.get("REFERENCE_GAS_PRICE_SOURCE", ""),
+        reference_gas_price_timestamp_utc=os.environ.get(
+            "REFERENCE_GAS_PRICE_TIMESTAMP_UTC", ""
+        ),
         region=os.environ.get("PHALA_REGION", "US-WEST-1"),
         os_image=os.environ.get("PHALA_OS_IMAGE", "dstack-dev-0.5.7"),
         epoch=integer("EPOCH", 1),

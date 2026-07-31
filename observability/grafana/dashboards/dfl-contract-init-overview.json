@@ -27,6 +27,50 @@
       },
       "fieldConfig": {
         "defaults": {
+          "decimals": 0,
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_contract_init_gas_used_total",
+          "refId": "A"
+        }
+      ],
+      "title": "Contract Init Gas Used",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
           "decimals": 6,
           "unit": "ether"
         },
@@ -34,8 +78,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 12,
-        "x": 0,
+        "w": 8,
+        "x": 8,
         "y": 0
       },
       "id": 1,
@@ -61,7 +105,7 @@
           "refId": "A"
         }
       ],
-      "title": "Contract Init Cost ETH",
+      "title": "Contract Init Transaction Fee (ETH)",
       "type": "stat"
     },
     {
@@ -78,8 +122,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 16,
         "y": 0
       },
       "id": 2,
@@ -105,7 +149,7 @@
           "refId": "A"
         }
       ],
-      "title": "Contract Init Cost EUR",
+      "title": "Contract Init EUR Scenario Value",
       "type": "stat"
     },
     {

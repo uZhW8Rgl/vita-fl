@@ -98,7 +98,14 @@ AggregationPolicy reached through the compose-measured GMStorage contract.
 The Training Setup view can export the current evaluation and transaction-cost
 data as a ZIP archive of CSV tables. In Phala mode, the Control API merges the
 signed in-memory worker telemetry with CSV artifacts from the shared evaluation
-volume and includes per-worker cost totals in GWEI, ETH, and EUR.
+volume. The export includes exact gas-used and Wei totals, receipt-implied Gwei
+and ETH fees, and explicitly configured EUR or USD estimates. Optional
+Mainnet-reference estimates remain in separate fields; the corresponding gas
+price, exchange rates, source identifiers, and UTC observation times are passed
+from the selected Phala environment file. Configure them through
+`ETH_EUR_PRICE`, optional `ETH_USD_PRICE`, `EXCHANGE_RATE_SOURCE`,
+`EXCHANGE_RATE_TIMESTAMP_UTC`, and the analogous `REFERENCE_*` gas-price
+variables shown in `.env.phala.anvil.example`.
 
 If you already keep the deployment values in repository-root env files, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
 
@@ -256,7 +263,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:30a17d32dfe5e9dad9f56bc73e2352e61177b2cdb4ff00081a09d3b5fad3c65c
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:8dd007b3cf005efe2a4f59a46a76fd83ef9380879df32beb66443bca9c82d400
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
@@ -264,7 +271,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:30a17d32dfe5e9dad9f56bc73e2352e
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b578302f8f6234c8ad131e8eae573daed191c4aa36fa60379dedca5eca17e9ec
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:8b8993644c53d287d63af68ce32e20b93f56c3cb533595013ffd0ad2bdfe1c26
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.

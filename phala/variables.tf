@@ -347,7 +347,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:545cb76dbe268e6e66de5d5fa7c64161cc20cf93d5c739efcccbbafc22963c3c"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:0cbc61168d2a44de67ca8b75e600351808085d1138c12e02d2c941f461fac3f5"
 
   validation {
     condition = (
@@ -630,13 +630,13 @@ variable "ssh_public_key_path" {
 variable "worker_image" {
   description = "Digest-pinned DFL worker container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:30a17d32dfe5e9dad9f56bc73e2352e61177b2cdb4ff00081a09d3b5fad3c65c"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:8dd007b3cf005efe2a4f59a46a76fd83ef9380879df32beb66443bca9c82d400"
 }
 
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b578302f8f6234c8ad131e8eae573daed191c4aa36fa60379dedca5eca17e9ec"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:8b8993644c53d287d63af68ce32e20b93f56c3cb533595013ffd0ad2bdfe1c26"
 }
 
 variable "zk_inference_image" {
@@ -720,9 +720,45 @@ variable "initial_gm_sig_cid" {
 }
 
 variable "eth_eur_price" {
-  description = "ETH/EUR conversion value used when exporting transaction costs."
+  description = "ETH/EUR scenario rate used for receipt-fee fiat estimates."
   type        = string
   default     = "3000"
+}
+
+variable "eth_usd_price" {
+  description = "Optional ETH/USD scenario rate used for receipt-fee fiat estimates."
+  type        = string
+  default     = ""
+}
+
+variable "exchange_rate_source" {
+  description = "Source identifier or URL for the configured ETH fiat rates."
+  type        = string
+  default     = "manual_configuration"
+}
+
+variable "exchange_rate_timestamp_utc" {
+  description = "UTC observation timestamp for the configured ETH fiat rates."
+  type        = string
+  default     = ""
+}
+
+variable "reference_mainnet_gas_price_gwei" {
+  description = "Optional Mainnet gas-price scenario in Gwei for counterfactual estimates."
+  type        = string
+  default     = ""
+}
+
+variable "reference_gas_price_source" {
+  description = "Source identifier or URL for the optional Mainnet gas-price scenario."
+  type        = string
+  default     = ""
+}
+
+variable "reference_gas_price_timestamp_utc" {
+  description = "UTC observation timestamp for the optional Mainnet gas-price scenario."
+  type        = string
+  default     = ""
 }
 
 variable "transaction_cost_csv" {

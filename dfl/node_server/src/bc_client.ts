@@ -14,6 +14,11 @@ import {
     derivePublicationHash,
     deriveRoundAggregationPolicyHash,
 } from "./protocol_digest.js";
+import {
+    gweiRateToWei,
+    parseDecimalRate,
+    transactionCostAmounts,
+} from "./transaction_cost.js";
 // setup client´
 //const web3 = new Web3("https://eth-sepolia.g.alchemy.com/v2/pFowzUSGYob62Q7i2YVsF0LFUX3WiCT2");
 const web3 = new Web3(process.env.RPC_URL);
@@ -73,7 +78,21 @@ const logJson = (label, payload) => {
     console.log(label, JSON.stringify(payload, jsonReplacer));
 };
 
-const ethEurPrice = Number(process.env.ETH_EUR_PRICE || "3000");
+const ethEurPrice = parseDecimalRate(process.env.ETH_EUR_PRICE || "3000", "ETH_EUR_PRICE");
+const configuredEthUsdPrice = String(process.env.ETH_USD_PRICE || "").trim();
+const ethUsdPrice = configuredEthUsdPrice
+    ? parseDecimalRate(configuredEthUsdPrice, "ETH_USD_PRICE")
+    : undefined;
+const exchangeRateSource = String(process.env.EXCHANGE_RATE_SOURCE || "manual_configuration").trim();
+const exchangeRateTimestampUtc = String(process.env.EXCHANGE_RATE_TIMESTAMP_UTC || "").trim();
+const configuredReferenceGasPriceGwei = String(process.env.REFERENCE_MAINNET_GAS_PRICE_GWEI || "").trim();
+const referenceGasPriceGwei = configuredReferenceGasPriceGwei
+    ? parseDecimalRate(configuredReferenceGasPriceGwei, "REFERENCE_MAINNET_GAS_PRICE_GWEI")
+    : undefined;
+const referenceGasPriceSource = String(process.env.REFERENCE_GAS_PRICE_SOURCE || "").trim();
+const referenceGasPriceTimestampUtc = String(
+    process.env.REFERENCE_GAS_PRICE_TIMESTAMP_UTC || ""
+).trim();
 const transactionCostCsvPath = process.env.DFL_TRANSACTION_COST_CSV || "./data/evaluation/transaction_costs.csv";
 
 const transactionCostCsvHeader = [
@@ -89,9 +108,26 @@ const transactionCostCsvHeader = [
     "gasUsed",
     "effectiveGasPriceWei",
     "effectiveGasPriceGwei",
+    "costWei",
+    "costGwei",
     "costEth",
     "costEur",
+    "costUsd",
     "ethEurPrice",
+    "ethUsdPrice",
+    "feeBasis",
+    "valuationKind",
+    "exchangeRateSource",
+    "exchangeRateTimestampUtc",
+    "referenceGasPriceGwei",
+    "referenceGasPriceSource",
+    "referenceGasPriceTimestampUtc",
+    "mainnetEstimateWei",
+    "mainnetEstimateGwei",
+    "mainnetEstimateEth",
+    "mainnetEstimateEur",
+    "mainnetEstimateUsd",
+    "mainnetEstimateKind",
     "account",
     "deviceId",
 ];
@@ -122,20 +158,39 @@ const logTransactionCost = (scope, operation, receipt, fallbackGasPriceWei) => {
     const effectiveGasPriceWei = BigInt(
         receipt?.effectiveGasPrice?.toString?.() ?? receipt?.effectiveGasPrice ?? fallbackGasPriceWei ?? 0
     );
-    const costWei = gasUsed * effectiveGasPriceWei;
-    const costEth = Number(costWei) / 1e18;
+    const amounts = transactionCostAmounts(gasUsed, effectiveGasPriceWei, ethEurPrice, ethUsdPrice);
+    const mainnetAmounts = referenceGasPriceGwei
+        ? transactionCostAmounts(
+            gasUsed,
+            gweiRateToWei(referenceGasPriceGwei),
+            ethEurPrice,
+            ethUsdPrice,
+        )
+        : undefined;
     const event = {
         timestamp_unix_ms: Date.now(),
         kind: "gas_cost",
         scope,
         operation,
         phase: "",
-        gasUsed: Number(gasUsed),
-        effectiveGasPriceWei: Number(effectiveGasPriceWei),
-        effectiveGasPriceGwei: Number(effectiveGasPriceWei) / 1e9,
-        costEth,
-        costEur: costEth * ethEurPrice,
-        ethEurPrice,
+        gasUsed: gasUsed.toString(),
+        effectiveGasPriceWei: effectiveGasPriceWei.toString(),
+        ...amounts,
+        ethEurPrice: ethEurPrice.text,
+        ethUsdPrice: ethUsdPrice?.text || "",
+        feeBasis: "receipt.effectiveGasPrice",
+        valuationKind: "receipt_fee_fiat_estimate",
+        exchangeRateSource,
+        exchangeRateTimestampUtc,
+        referenceGasPriceGwei: referenceGasPriceGwei?.text || "",
+        referenceGasPriceSource,
+        referenceGasPriceTimestampUtc,
+        mainnetEstimateWei: mainnetAmounts?.costWei || "",
+        mainnetEstimateGwei: mainnetAmounts?.costGwei || "",
+        mainnetEstimateEth: mainnetAmounts?.costEth || "",
+        mainnetEstimateEur: mainnetAmounts?.costEur || "",
+        mainnetEstimateUsd: mainnetAmounts?.costUsd || "",
+        mainnetEstimateKind: mainnetAmounts ? "counterfactual_mainnet_equivalent" : "",
         transactionHash: receipt?.transactionHash,
         blockNumber: Number(receipt?.blockNumber?.toString?.() ?? receipt?.blockNumber ?? 0),
         from: receipt?.from,

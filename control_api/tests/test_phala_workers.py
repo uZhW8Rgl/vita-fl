@@ -72,6 +72,13 @@ class WorkerInventoryTests(unittest.TestCase):
             expected_gm_storage_address="0x" + "33" * 20,
             expected_medical_signer_registry_address="0x" + "44" * 20,
             expected_chain_id=31337,
+            eth_eur_price="1416.33",
+            eth_usd_price="1609.87",
+            exchange_rate_source="https://prices.example/ethereum/2026-06-29",
+            exchange_rate_timestamp_utc="2026-06-29T00:00:00Z",
+            reference_mainnet_gas_price_gwei="0.9291",
+            reference_gas_price_source="https://gas.example/2026-06-29",
+            reference_gas_price_timestamp_utc="2026-06-29T00:00:00Z",
         )
 
         values = config.terraform_values()
@@ -84,6 +91,22 @@ class WorkerInventoryTests(unittest.TestCase):
             "0x" + "44" * 20,
         )
         self.assertEqual(values["expected_chain_id"], 31337)
+        self.assertEqual(values["eth_eur_price"], "1416.33")
+        self.assertEqual(values["eth_usd_price"], "1609.87")
+        self.assertEqual(
+            values["exchange_rate_source"],
+            "https://prices.example/ethereum/2026-06-29",
+        )
+        self.assertEqual(values["exchange_rate_timestamp_utc"], "2026-06-29T00:00:00Z")
+        self.assertEqual(values["reference_mainnet_gas_price_gwei"], "0.9291")
+        self.assertEqual(
+            values["reference_gas_price_source"],
+            "https://gas.example/2026-06-29",
+        )
+        self.assertEqual(
+            values["reference_gas_price_timestamp_utc"],
+            "2026-06-29T00:00:00Z",
+        )
         self.assertNotIn("client_limit", values)
         self.assertNotIn("model_submission_deadline_ms", values)
 

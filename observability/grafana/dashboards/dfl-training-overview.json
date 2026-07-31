@@ -25,6 +25,52 @@
         "type": "prometheus",
         "uid": "Prometheus"
       },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 8
+      },
+      "id": 27,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_worker_gas_used_total",
+          "refId": "A"
+        }
+      ],
+      "title": "Worker Gas Used",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -430,8 +476,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 0,
+        "w": 6,
+        "x": 6,
         "y": 8
       },
       "id": 25,
@@ -459,7 +505,7 @@
           "refId": "A"
         }
       ],
-      "title": "Worker Cost GWEI",
+      "title": "Worker Transaction Fee (Gwei)",
       "type": "stat"
     },
     {
@@ -476,8 +522,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 8,
+        "w": 6,
+        "x": 12,
         "y": 8
       },
       "id": 13,
@@ -505,7 +551,7 @@
           "refId": "A"
         }
       ],
-      "title": "Worker Cost ETH",
+      "title": "Worker Transaction Fee (ETH)",
       "type": "stat"
     },
     {
@@ -522,8 +568,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 16,
+        "w": 6,
+        "x": 18,
         "y": 8
       },
       "id": 14,
@@ -551,7 +597,7 @@
           "refId": "A"
         }
       ],
-      "title": "Worker Cost EUR",
+      "title": "Worker EUR Scenario Value",
       "type": "stat"
     },
     {
@@ -563,7 +609,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 44
       },
       "id": 19,
       "options": {
@@ -659,6 +705,82 @@
       },
       "fieldConfig": {
         "defaults": {
+          "decimals": 0,
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 28,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "dfl_worker_gas_used_by_worker",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Gas Used by Worker",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "job": true,
+              "instance": true,
+              "account": true,
+              "device_id": true
+            },
+            "indexByName": {
+              "worker": 0,
+              "Value": 1
+            },
+            "renameByName": {
+              "Value": "Gas Used",
+              "worker": "Worker"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
           "decimals": 2,
           "unit": "suffix:Gwei"
         },
@@ -668,7 +790,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 20
       },
       "id": 26,
       "options": {
@@ -696,7 +818,7 @@
           "refId": "A"
         }
       ],
-      "title": "Worker Cost GWEI by Worker",
+      "title": "Transaction Fee (Gwei) by Worker",
       "transformations": [
         {
           "id": "labelsToFields",
@@ -720,7 +842,7 @@
               "Value": 1
             },
             "renameByName": {
-              "Value": "Cost GWEI",
+              "Value": "Transaction Fee (Gwei)",
               "worker": "Worker"
             }
           }
@@ -744,7 +866,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 28
       },
       "id": 23,
       "options": {
@@ -772,7 +894,7 @@
           "refId": "A"
         }
       ],
-      "title": "Worker Cost ETH by Worker",
+      "title": "Transaction Fee (ETH) by Worker",
       "transformations": [
         {
           "id": "labelsToFields",
@@ -796,7 +918,7 @@
               "Value": 1
             },
             "renameByName": {
-              "Value": "Cost ETH",
+              "Value": "Transaction Fee (ETH)",
               "worker": "Worker"
             }
           }
@@ -820,7 +942,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 36
       },
       "id": 24,
       "options": {
@@ -848,7 +970,7 @@
           "refId": "A"
         }
       ],
-      "title": "Worker Cost EUR by Worker",
+      "title": "EUR Scenario Value by Worker",
       "transformations": [
         {
           "id": "labelsToFields",
@@ -872,7 +994,7 @@
               "Value": 1
             },
             "renameByName": {
-              "Value": "Cost EUR",
+              "Value": "EUR Scenario Value",
               "worker": "Worker"
             }
           }

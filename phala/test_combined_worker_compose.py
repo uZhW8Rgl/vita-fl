@@ -45,6 +45,21 @@ class CombinedWorkerComposeTests(unittest.TestCase):
         self.assertIn("restart: unless-stopped", compatibility_compose)
         self.assertNotIn("restart: on-failure", compatibility_compose)
 
+    def test_cost_scenario_metadata_reaches_every_worker_template(self) -> None:
+        expected_entries = (
+            'ETH_EUR_PRICE: "${eth_eur_price}"',
+            'ETH_USD_PRICE: "${eth_usd_price}"',
+            'EXCHANGE_RATE_SOURCE: "${exchange_rate_source}"',
+            'EXCHANGE_RATE_TIMESTAMP_UTC: "${exchange_rate_timestamp_utc}"',
+            'REFERENCE_MAINNET_GAS_PRICE_GWEI: "${reference_mainnet_gas_price_gwei}"',
+            'REFERENCE_GAS_PRICE_SOURCE: "${reference_gas_price_source}"',
+            'REFERENCE_GAS_PRICE_TIMESTAMP_UTC: "${reference_gas_price_timestamp_utc}"',
+        )
+        for template in (self.static_template, self.dynamic_template):
+            for entry in expected_entries:
+                with self.subTest(template=template[:20], entry=entry):
+                    self.assertIn(entry, template)
+
     def test_completed_training_reboots_once_then_keeps_worker_idle(self) -> None:
         supervisor = (
             REPOSITORY_ROOT / "dfl/start_node_neural_network.sh"

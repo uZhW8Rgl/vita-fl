@@ -18,6 +18,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -60,10 +61,26 @@ TRANSACTION_COST_EXPORT_FIELDS = (
     "gasUsed",
     "effectiveGasPriceWei",
     "effectiveGasPriceGwei",
+    "costWei",
     "costGwei",
     "costEth",
     "costEur",
+    "costUsd",
     "ethEurPrice",
+    "ethUsdPrice",
+    "feeBasis",
+    "valuationKind",
+    "exchangeRateSource",
+    "exchangeRateTimestampUtc",
+    "referenceGasPriceGwei",
+    "referenceGasPriceSource",
+    "referenceGasPriceTimestampUtc",
+    "mainnetEstimateWei",
+    "mainnetEstimateGwei",
+    "mainnetEstimateEth",
+    "mainnetEstimateEur",
+    "mainnetEstimateUsd",
+    "mainnetEstimateKind",
     "account",
     "deviceId",
 )
@@ -351,6 +368,58 @@ def _prometheus_float(value: Any) -> float | None:
         return None
 
 
+def _prometheus_quantity(value: Any) -> float | None:
+    text = str(value).strip()
+    if text.lower().startswith("0x"):
+        try:
+            return float(int(text, 16))
+        except ValueError:
+            return None
+    return _prometheus_float(value)
+
+
+def _decimal_value(value: Any) -> Decimal | None:
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        parsed = Decimal(text)
+        return parsed if parsed.is_finite() else None
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _decimal_text(value: Decimal) -> str:
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _integer_value(value: Any) -> int | None:
+    text = str(value).strip()
+    if re.fullmatch(r"0[xX][0-9a-fA-F]+", text):
+        try:
+            return int(text, 16)
+        except ValueError:
+            return None
+    if not re.fullmatch(r"[0-9]+", text):
+        return None
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_decimal_units(value: int, decimals: int) -> str:
+    digits = str(value).rjust(decimals + 1, "0")
+    if decimals == 0:
+        return digits
+    integer = digits[:-decimals]
+    fraction = digits[-decimals:].rstrip("0")
+    return f"{integer}.{fraction}" if fraction else integer
+
+
 def read_evaluation_summary_records(
     path: Path = EVALUATION_SUMMARY_CSV,
     min_timestamp_unix_ms: int | None = None,
@@ -392,11 +461,19 @@ def read_transaction_cost_records(path: Path = TRANSACTION_COST_CSV) -> list[dic
 
 def transaction_cost_with_gwei(record: dict[str, str]) -> dict[str, str]:
     normalized = dict(record)
-    cost_gwei = _prometheus_float(normalized.get("costGwei"))
-    if cost_gwei is None:
-        cost_eth = _prometheus_float(normalized.get("costEth")) or 0.0
-        cost_gwei = cost_eth * 1_000_000_000
-    normalized["costGwei"] = format(cost_gwei, ".12g")
+    cost_wei = _integer_value(normalized.get("costWei"))
+    if cost_wei is not None:
+        normalized["costWei"] = str(cost_wei)
+        normalized["costGwei"] = _format_decimal_units(cost_wei, 9)
+        normalized["costEth"] = _format_decimal_units(cost_wei, 18)
+    else:
+        cost_gwei = _decimal_value(normalized.get("costGwei"))
+        if cost_gwei is None:
+            cost_eth = _decimal_value(normalized.get("costEth")) or Decimal(0)
+            cost_gwei = cost_eth * Decimal(1_000_000_000)
+        normalized["costGwei"] = _decimal_text(cost_gwei)
+    normalized.setdefault("feeBasis", "legacy_unspecified")
+    normalized.setdefault("valuationKind", "receipt_fee_fiat_estimate")
     return normalized
 
 
@@ -416,7 +493,7 @@ def _csv_text(records: list[dict[str, str]], preferred_fields: tuple[str, ...] =
 
 
 def worker_cost_export_records(records: list[dict[str, str]]) -> list[dict[str, str]]:
-    totals: dict[tuple[str, str, str], dict[str, float]] = {}
+    totals: dict[tuple[str, str, str], dict[str, Decimal | int]] = {}
     for raw_record in records:
         record = transaction_cost_with_gwei(raw_record)
         if (record.get("scope") or "").strip() != "worker":
@@ -426,12 +503,23 @@ def worker_cost_export_records(records: list[dict[str, str]]) -> list[dict[str, 
         key = (_worker_display_name(device_id, account), account, device_id)
         values = totals.setdefault(
             key,
-            {"transactionCount": 0.0, "costGwei": 0.0, "costEth": 0.0, "costEur": 0.0},
+            {
+                "transactionCount": 0,
+                "gasUsed": 0,
+                "costWei": 0,
+                "costGwei": Decimal(0),
+                "costEth": Decimal(0),
+                "costEur": Decimal(0),
+                "costUsd": Decimal(0),
+            },
         )
         values["transactionCount"] += 1
-        values["costGwei"] += _prometheus_float(record.get("costGwei")) or 0.0
-        values["costEth"] += _prometheus_float(record.get("costEth")) or 0.0
-        values["costEur"] += _prometheus_float(record.get("costEur")) or 0.0
+        values["gasUsed"] += _integer_value(record.get("gasUsed")) or 0
+        values["costWei"] += _integer_value(record.get("costWei")) or 0
+        values["costGwei"] += _decimal_value(record.get("costGwei")) or Decimal(0)
+        values["costEth"] += _decimal_value(record.get("costEth")) or Decimal(0)
+        values["costEur"] += _decimal_value(record.get("costEur")) or Decimal(0)
+        values["costUsd"] += _decimal_value(record.get("costUsd")) or Decimal(0)
 
     exported: list[dict[str, str]] = []
     for (worker, account, device_id), values in sorted(totals.items()):
@@ -441,9 +529,12 @@ def worker_cost_export_records(records: list[dict[str, str]]) -> list[dict[str, 
                 "account": account,
                 "deviceId": device_id,
                 "transactionCount": str(int(values["transactionCount"])),
-                "costGwei": format(values["costGwei"], ".12g"),
-                "costEth": format(values["costEth"], ".12g"),
-                "costEur": format(values["costEur"], ".12g"),
+                "gasUsed": str(values["gasUsed"]),
+                "costWei": str(values["costWei"]),
+                "costGwei": _decimal_text(values["costGwei"]),
+                "costEth": _decimal_text(values["costEth"]),
+                "costEur": _decimal_text(values["costEur"]),
+                "costUsd": _decimal_text(values["costUsd"]),
             }
         )
     return exported
@@ -482,7 +573,18 @@ def build_observability_export() -> tuple[str, bytes]:
             root + "worker_costs_by_worker.csv",
             _csv_text(
                 worker_cost_records,
-                ("worker", "account", "deviceId", "transactionCount", "costGwei", "costEth", "costEur"),
+                (
+                    "worker",
+                    "account",
+                    "deviceId",
+                    "transactionCount",
+                    "gasUsed",
+                    "costWei",
+                    "costGwei",
+                    "costEth",
+                    "costEur",
+                    "costUsd",
+                ),
             ),
         )
         for filename in ("global_model_label_metrics.csv", "global_model_sample_metrics.csv"):
@@ -632,34 +734,61 @@ def append_evaluation_metrics(
 def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict[str, str]]) -> None:
     totals: dict[str, dict[str, float]] = {}
     worker_totals: dict[tuple[str, str, str], dict[str, float]] = {}
-    for record in records:
+    for raw_record in records:
+        record = transaction_cost_with_gwei(raw_record)
         scope = record.get("scope") or "unknown"
-        scope_totals = totals.setdefault(scope, {"gwei": 0.0, "eth": 0.0, "eur": 0.0, "transactions": 0.0})
+        scope_totals = totals.setdefault(
+            scope,
+            {
+                "gas": 0.0,
+                "gwei": 0.0,
+                "eth": 0.0,
+                "eur": 0.0,
+                "usd": 0.0,
+                "transactions": 0.0,
+            },
+        )
+        gas_used = _prometheus_quantity(record.get("gasUsed")) or 0.0
         cost_eth = _prometheus_float(record.get("costEth")) or 0.0
         cost_gwei = _prometheus_float(record.get("costGwei"))
         if cost_gwei is None:
             cost_gwei = cost_eth * 1_000_000_000
         cost_eur = _prometheus_float(record.get("costEur")) or 0.0
+        cost_usd = _prometheus_float(record.get("costUsd")) or 0.0
+        scope_totals["gas"] += gas_used
         scope_totals["gwei"] += cost_gwei
         scope_totals["eth"] += cost_eth
         scope_totals["eur"] += cost_eur
+        scope_totals["usd"] += cost_usd
         scope_totals["transactions"] += 1.0
         if scope == "worker":
             account = record.get("account") or record.get("from") or "unknown"
             device_id = record.get("deviceId") or "unknown"
             worker_key = (_worker_display_name(device_id, account), account, device_id)
             worker_values = worker_totals.setdefault(
-                worker_key, {"gwei": 0.0, "eth": 0.0, "eur": 0.0, "transactions": 0.0}
+                worker_key,
+                {
+                    "gas": 0.0,
+                    "gwei": 0.0,
+                    "eth": 0.0,
+                    "eur": 0.0,
+                    "usd": 0.0,
+                    "transactions": 0.0,
+                },
             )
+            worker_values["gas"] += gas_used
             worker_values["gwei"] += cost_gwei
             worker_values["eth"] += cost_eth
             worker_values["eur"] += cost_eur
+            worker_values["usd"] += cost_usd
             worker_values["transactions"] += 1.0
 
     metric_specs = {
-        "dfl_transaction_cost_gwei_total": ("gwei", "Total transaction cost in Gwei by scope."),
-        "dfl_transaction_cost_eth_total": ("eth", "Total transaction cost in ETH by scope."),
-        "dfl_transaction_cost_eur_total": ("eur", "Total transaction cost in EUR by scope."),
+        "dfl_transaction_gas_used_total": ("gas", "Total gas used by scope."),
+        "dfl_transaction_cost_gwei_total": ("gwei", "Total transaction fee denominated in Gwei by scope."),
+        "dfl_transaction_cost_eth_total": ("eth", "Total transaction fee denominated in ETH by scope."),
+        "dfl_transaction_cost_eur_total": ("eur", "Total configured EUR scenario value by scope."),
+        "dfl_transaction_cost_usd_total": ("usd", "Total configured USD scenario value by scope."),
         "dfl_transaction_count_total": ("transactions", "Total number of unique transactions by scope."),
     }
     for metric_name, (field, help_text) in metric_specs.items():
@@ -676,27 +805,54 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
     worker = totals.get("worker", {})
     contract_init = totals.get("smart_contracts_init", {})
     fixed_totals = {
-        "dfl_worker_cost_gwei_total": worker.get("gwei", 0.0),
-        "dfl_worker_cost_eth_total": worker.get("eth", 0.0),
-        "dfl_worker_cost_eur_total": worker.get("eur", 0.0),
-        "dfl_contract_init_cost_gwei_total": contract_init.get("gwei", 0.0),
-        "dfl_contract_init_cost_eth_total": contract_init.get("eth", 0.0),
-        "dfl_contract_init_cost_eur_total": contract_init.get("eur", 0.0),
+        "dfl_worker_gas_used_total": (worker.get("gas", 0.0), "Total gas used by worker transactions."),
+        "dfl_worker_cost_gwei_total": (
+            worker.get("gwei", 0.0),
+            "Total worker transaction fee denominated in Gwei.",
+        ),
+        "dfl_worker_cost_eth_total": (
+            worker.get("eth", 0.0),
+            "Total worker transaction fee denominated in ETH.",
+        ),
+        "dfl_worker_cost_eur_total": (worker.get("eur", 0.0), "Total configured worker EUR scenario value."),
+        "dfl_worker_cost_usd_total": (worker.get("usd", 0.0), "Total configured worker USD scenario value."),
+        "dfl_contract_init_gas_used_total": (
+            contract_init.get("gas", 0.0),
+            "Total gas used by contract initialization transactions.",
+        ),
+        "dfl_contract_init_cost_gwei_total": (
+            contract_init.get("gwei", 0.0),
+            "Total contract initialization transaction fee denominated in Gwei.",
+        ),
+        "dfl_contract_init_cost_eth_total": (
+            contract_init.get("eth", 0.0),
+            "Total contract initialization transaction fee denominated in ETH.",
+        ),
+        "dfl_contract_init_cost_eur_total": (
+            contract_init.get("eur", 0.0),
+            "Total configured contract initialization EUR scenario value.",
+        ),
+        "dfl_contract_init_cost_usd_total": (
+            contract_init.get("usd", 0.0),
+            "Total configured contract initialization USD scenario value.",
+        ),
     }
-    for metric_name, value in fixed_totals.items():
+    for metric_name, (value, help_text) in fixed_totals.items():
         payload_lines.extend(
             [
                 "",
-                f"# HELP {metric_name} Transaction cost total derived from deduplicated CSV records.",
+                f"# HELP {metric_name} {help_text} Derived from deduplicated transaction records.",
                 f"# TYPE {metric_name} gauge",
                 f"{metric_name} {value}",
             ]
         )
 
     worker_metric_specs = {
-        "dfl_worker_cost_gwei_by_worker": ("gwei", "Worker transaction cost in Gwei by worker."),
-        "dfl_worker_cost_eth_by_worker": ("eth", "Worker transaction cost in ETH by worker."),
-        "dfl_worker_cost_eur_by_worker": ("eur", "Worker transaction cost in EUR by worker."),
+        "dfl_worker_gas_used_by_worker": ("gas", "Gas used by worker transactions."),
+        "dfl_worker_cost_gwei_by_worker": ("gwei", "Worker transaction fee in Gwei by worker."),
+        "dfl_worker_cost_eth_by_worker": ("eth", "Worker transaction fee in ETH by worker."),
+        "dfl_worker_cost_eur_by_worker": ("eur", "Configured EUR scenario value by worker."),
+        "dfl_worker_cost_usd_by_worker": ("usd", "Configured USD scenario value by worker."),
         "dfl_worker_transaction_count_by_worker": ("transactions", "Worker transaction count by worker."),
     }
     for metric_name, (field, help_text) in worker_metric_specs.items():

@@ -78,6 +78,41 @@ variable "expected_chain_id" {
   }
 }
 
+variable "eth_eur_price" {
+  type    = string
+  default = "3000"
+}
+
+variable "eth_usd_price" {
+  type    = string
+  default = ""
+}
+
+variable "exchange_rate_source" {
+  type    = string
+  default = "manual_configuration"
+}
+
+variable "exchange_rate_timestamp_utc" {
+  type    = string
+  default = ""
+}
+
+variable "reference_mainnet_gas_price_gwei" {
+  type    = string
+  default = ""
+}
+
+variable "reference_gas_price_source" {
+  type    = string
+  default = ""
+}
+
+variable "reference_gas_price_timestamp_utc" {
+  type    = string
+  default = ""
+}
+
 variable "region" {
   type    = string
   default = "US-WEST-1"

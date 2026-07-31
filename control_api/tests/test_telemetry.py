@@ -86,13 +86,14 @@ class SignedTelemetryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "device ID"):
                 server._record_telemetry(payload, self.signature(payload))
 
-    def test_worker_cost_metrics_include_derived_gwei(self) -> None:
+    def test_worker_cost_metrics_include_gas_used_and_derived_gwei(self) -> None:
         metrics: list[str] = []
         server.append_transaction_cost_metrics(
             metrics,
             [
                 {
                     "scope": "worker",
+                    "gasUsed": "21000",
                     "costEth": "0.000000123",
                     "costEur": "0.000369",
                     "account": self.account.address,
@@ -101,16 +102,64 @@ class SignedTelemetryTests(unittest.TestCase):
             ],
         )
         rendered = "\n".join(metrics)
+        self.assertIn("dfl_worker_gas_used_total 21000.0", rendered)
+        self.assertIn("dfl_worker_gas_used_by_worker", rendered)
         self.assertIn("dfl_worker_cost_gwei_total 123.0", rendered)
         self.assertIn("dfl_worker_cost_gwei_by_worker", rendered)
         self.assertIn('worker="VM-0"', rendered)
+
+    def test_worker_gas_used_accepts_json_rpc_hex_quantity(self) -> None:
+        metrics: list[str] = []
+        server.append_transaction_cost_metrics(
+            metrics,
+            [
+                {
+                    "scope": "worker",
+                    "gasUsed": "0x5208",
+                    "costEth": "0",
+                    "costEur": "0",
+                    "account": self.account.address,
+                    "deviceId": "0",
+                }
+            ],
+        )
+
+        self.assertIn("dfl_worker_gas_used_total 21000.0", "\n".join(metrics))
+        exported = server.worker_cost_export_records(
+            [
+                {
+                    "scope": "worker",
+                    "gasUsed": "0x5208",
+                    "costEth": "0",
+                    "costEur": "0",
+                    "account": self.account.address,
+                    "deviceId": "0",
+                }
+            ]
+        )
+        self.assertEqual(exported[0]["gasUsed"], "21000")
+
+    def test_cost_wei_is_exported_without_float_rounding(self) -> None:
+        normalized = server.transaction_cost_with_gwei(
+            {
+                "costWei": "123456789012345678901",
+                "costEth": "rounded-legacy-value",
+            }
+        )
+
+        self.assertEqual(normalized["costWei"], "123456789012345678901")
+        self.assertEqual(normalized["costGwei"], "123456789012.345678901")
+        self.assertEqual(normalized["costEth"], "123.456789012345678901")
 
     def test_observability_export_contains_csv_tables(self) -> None:
         transaction = {
             "scope": "worker",
             "transactionHash": "0x1234",
+            "gasUsed": "21000",
+            "costWei": "123000000000",
             "costEth": "0.000000123",
             "costEur": "0.000369",
+            "costUsd": "0.0004305",
             "account": self.account.address,
             "deviceId": "0",
         }
@@ -129,7 +178,10 @@ class SignedTelemetryTests(unittest.TestCase):
             worker_rows = list(csv.DictReader(io.TextIOWrapper(archive.open(worker_name))))
         self.assertEqual(transaction_rows[0]["costGwei"], "123")
         self.assertEqual(worker_rows[0]["worker"], "VM-0")
+        self.assertEqual(worker_rows[0]["gasUsed"], "21000")
+        self.assertEqual(worker_rows[0]["costWei"], "123000000000")
         self.assertEqual(worker_rows[0]["costGwei"], "123")
+        self.assertEqual(worker_rows[0]["costUsd"], "0.0004305")
 
 
 if __name__ == "__main__":

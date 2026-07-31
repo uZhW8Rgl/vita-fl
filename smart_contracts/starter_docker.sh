@@ -211,6 +211,12 @@ clear_runtime_bootstrap_markers
 
 CHAIN_ID=$(cast chain-id --rpc-url $rpc_url)
 ETH_EUR_PRICE=${ETH_EUR_PRICE:-3000}
+ETH_USD_PRICE=${ETH_USD_PRICE:-}
+EXCHANGE_RATE_SOURCE=${EXCHANGE_RATE_SOURCE:-manual_configuration}
+EXCHANGE_RATE_TIMESTAMP_UTC=${EXCHANGE_RATE_TIMESTAMP_UTC:-}
+REFERENCE_MAINNET_GAS_PRICE_GWEI=${REFERENCE_MAINNET_GAS_PRICE_GWEI:-}
+REFERENCE_GAS_PRICE_SOURCE=${REFERENCE_GAS_PRICE_SOURCE:-}
+REFERENCE_GAS_PRICE_TIMESTAMP_UTC=${REFERENCE_GAS_PRICE_TIMESTAMP_UTC:-}
 
 require_address() {
     local name=$1
@@ -441,10 +447,20 @@ log_broadcast_gas_cost() {
         return 0
     fi
 
-    ETH_EUR_PRICE="$ETH_EUR_PRICE" PHASE="$phase" TRANSACTION_COST_CSV="${TRANSACTION_COST_CSV:-/dfl/data/evaluation/transaction_costs.csv}" python3 - "$broadcast_file" <<'PY' || true
+    ETH_EUR_PRICE="$ETH_EUR_PRICE" \
+    ETH_USD_PRICE="$ETH_USD_PRICE" \
+    EXCHANGE_RATE_SOURCE="$EXCHANGE_RATE_SOURCE" \
+    EXCHANGE_RATE_TIMESTAMP_UTC="$EXCHANGE_RATE_TIMESTAMP_UTC" \
+    REFERENCE_MAINNET_GAS_PRICE_GWEI="$REFERENCE_MAINNET_GAS_PRICE_GWEI" \
+    REFERENCE_GAS_PRICE_SOURCE="$REFERENCE_GAS_PRICE_SOURCE" \
+    REFERENCE_GAS_PRICE_TIMESTAMP_UTC="$REFERENCE_GAS_PRICE_TIMESTAMP_UTC" \
+    PHASE="$phase" \
+    TRANSACTION_COST_CSV="${TRANSACTION_COST_CSV:-/dfl/data/evaluation/transaction_costs.csv}" \
+    python3 - "$broadcast_file" <<'PY' || true
 import csv
 import json
 import os
+import re
 import sys
 import time
 
@@ -458,10 +474,60 @@ def to_int(value):
     return int(text, 16) if text.startswith(("0x", "0X")) else int(text)
 
 
+def parse_decimal_rate(value, name):
+    text = str(value).strip()
+    match = re.fullmatch(r"([0-9]+)(?:\.([0-9]+))?", text)
+    if not match:
+        raise ValueError(f"{name} must be a non-negative decimal without exponent notation")
+    fraction = match.group(2) or ""
+    return text, int(f"{match.group(1)}{fraction}"), len(fraction)
+
+
+def format_decimal_units(value, decimals):
+    digits = str(value).rjust(decimals + 1, "0")
+    if decimals == 0:
+        return digits
+    integer = digits[:-decimals]
+    fraction = digits[-decimals:].rstrip("0")
+    return f"{integer}.{fraction}" if fraction else integer
+
+
+def value_wei_at_rate(value_wei, rate):
+    _text, coefficient, scale = rate
+    return format_decimal_units(value_wei * coefficient, 18 + scale)
+
+
+def gwei_rate_to_wei(rate):
+    _text, coefficient, scale = rate
+    if scale > 9:
+        raise ValueError(
+            "REFERENCE_MAINNET_GAS_PRICE_GWEI may contain at most nine decimal places"
+        )
+    return coefficient * 10 ** (9 - scale)
+
+
 with open(sys.argv[1], encoding="utf-8") as fh:
     data = json.load(fh)
 
-eth_eur_price = float(os.environ.get("ETH_EUR_PRICE", "3000"))
+eth_eur_price = parse_decimal_rate(os.environ.get("ETH_EUR_PRICE", "3000"), "ETH_EUR_PRICE")
+eth_usd_price_text = os.environ.get("ETH_USD_PRICE", "").strip()
+eth_usd_price = (
+    parse_decimal_rate(eth_usd_price_text, "ETH_USD_PRICE")
+    if eth_usd_price_text
+    else None
+)
+exchange_rate_source = os.environ.get("EXCHANGE_RATE_SOURCE", "manual_configuration").strip()
+exchange_rate_timestamp_utc = os.environ.get("EXCHANGE_RATE_TIMESTAMP_UTC", "").strip()
+reference_gas_price_text = os.environ.get("REFERENCE_MAINNET_GAS_PRICE_GWEI", "").strip()
+reference_gas_price = (
+    parse_decimal_rate(reference_gas_price_text, "REFERENCE_MAINNET_GAS_PRICE_GWEI")
+    if reference_gas_price_text
+    else None
+)
+reference_gas_price_source = os.environ.get("REFERENCE_GAS_PRICE_SOURCE", "").strip()
+reference_gas_price_timestamp_utc = os.environ.get(
+    "REFERENCE_GAS_PRICE_TIMESTAMP_UTC", ""
+).strip()
 phase = os.environ["PHASE"]
 csv_path = os.environ.get("TRANSACTION_COST_CSV", "")
 csv_header = [
@@ -477,9 +543,26 @@ csv_header = [
     "gasUsed",
     "effectiveGasPriceWei",
     "effectiveGasPriceGwei",
+    "costWei",
+    "costGwei",
     "costEth",
     "costEur",
+    "costUsd",
     "ethEurPrice",
+    "ethUsdPrice",
+    "feeBasis",
+    "valuationKind",
+    "exchangeRateSource",
+    "exchangeRateTimestampUtc",
+    "referenceGasPriceGwei",
+    "referenceGasPriceSource",
+    "referenceGasPriceTimestampUtc",
+    "mainnetEstimateWei",
+    "mainnetEstimateGwei",
+    "mainnetEstimateEth",
+    "mainnetEstimateEur",
+    "mainnetEstimateUsd",
+    "mainnetEstimateKind",
     "account",
     "deviceId",
 ]
@@ -489,7 +572,12 @@ csv_rows = []
 for receipt in data.get("receipts", []):
     gas_used = to_int(receipt.get("gasUsed"))
     gas_price = to_int(receipt.get("effectiveGasPrice"))
-    cost_eth = gas_used * gas_price / 10**18
+    cost_wei = gas_used * gas_price
+    mainnet_cost_wei = (
+        gas_used * gwei_rate_to_wei(reference_gas_price)
+        if reference_gas_price
+        else None
+    )
     event = {
         "timestamp_unix_ms": int(time.time() * 1000),
         "kind": "gas_cost",
@@ -498,10 +586,47 @@ for receipt in data.get("receipts", []):
         "operation": "contract_deploy" if receipt.get("contractAddress") else "transaction",
         "gasUsed": gas_used,
         "effectiveGasPriceWei": gas_price,
-        "effectiveGasPriceGwei": gas_price / 10**9,
-        "costEth": cost_eth,
-        "costEur": cost_eth * eth_eur_price,
-        "ethEurPrice": eth_eur_price,
+        "effectiveGasPriceGwei": format_decimal_units(gas_price, 9),
+        "costWei": str(cost_wei),
+        "costGwei": format_decimal_units(cost_wei, 9),
+        "costEth": format_decimal_units(cost_wei, 18),
+        "costEur": value_wei_at_rate(cost_wei, eth_eur_price),
+        "costUsd": value_wei_at_rate(cost_wei, eth_usd_price) if eth_usd_price else "",
+        "ethEurPrice": eth_eur_price[0],
+        "ethUsdPrice": eth_usd_price[0] if eth_usd_price else "",
+        "feeBasis": "receipt.effectiveGasPrice",
+        "valuationKind": "receipt_fee_fiat_estimate",
+        "exchangeRateSource": exchange_rate_source,
+        "exchangeRateTimestampUtc": exchange_rate_timestamp_utc,
+        "referenceGasPriceGwei": reference_gas_price[0] if reference_gas_price else "",
+        "referenceGasPriceSource": reference_gas_price_source,
+        "referenceGasPriceTimestampUtc": reference_gas_price_timestamp_utc,
+        "mainnetEstimateWei": str(mainnet_cost_wei) if mainnet_cost_wei is not None else "",
+        "mainnetEstimateGwei": (
+            format_decimal_units(mainnet_cost_wei, 9)
+            if mainnet_cost_wei is not None
+            else ""
+        ),
+        "mainnetEstimateEth": (
+            format_decimal_units(mainnet_cost_wei, 18)
+            if mainnet_cost_wei is not None
+            else ""
+        ),
+        "mainnetEstimateEur": (
+            value_wei_at_rate(mainnet_cost_wei, eth_eur_price)
+            if mainnet_cost_wei is not None
+            else ""
+        ),
+        "mainnetEstimateUsd": (
+            value_wei_at_rate(mainnet_cost_wei, eth_usd_price)
+            if mainnet_cost_wei is not None and eth_usd_price
+            else ""
+        ),
+        "mainnetEstimateKind": (
+            "counterfactual_mainnet_equivalent"
+            if mainnet_cost_wei is not None
+            else ""
+        ),
         "transactionHash": receipt.get("transactionHash"),
         "blockNumber": to_int(receipt.get("blockNumber")),
         "from": receipt.get("from"),

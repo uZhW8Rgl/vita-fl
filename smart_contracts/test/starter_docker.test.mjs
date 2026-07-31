@@ -104,6 +104,58 @@ test("deployment address selection fails closed for duplicate deployments", () =
   assert.match(result.stderr, /expected exactly one deployment/);
 });
 
+test("contract receipt accounting keeps receipt fees and Mainnet scenarios separate", () => {
+  const directory = mkdtempSync(join(tmpdir(), "starter-cost-"));
+  const fixture = join(directory, "run-latest.json");
+  const costCsv = join(directory, "transaction-costs.csv");
+  writeFileSync(
+    fixture,
+    JSON.stringify({
+      receipts: [
+        {
+          gasUsed: "21000",
+          effectiveGasPrice: "1234567890",
+          transactionHash: `0x${"12".repeat(32)}`,
+          blockNumber: "1",
+          from: `0x${"34".repeat(20)}`,
+          to: `0x${"56".repeat(20)}`,
+          contractAddress: null,
+        },
+      ],
+    }),
+  );
+
+  const result = runFunction(
+    "log_broadcast_gas_cost",
+    [
+      "ETH_EUR_PRICE=3000.25",
+      "ETH_USD_PRICE=3500.5",
+      "EXCHANGE_RATE_SOURCE=exchange-rate-fixture",
+      "EXCHANGE_RATE_TIMESTAMP_UTC=2026-06-29T00:00:00Z",
+      "REFERENCE_MAINNET_GAS_PRICE_GWEI=0.9291",
+      "REFERENCE_GAS_PRICE_SOURCE=gas-price-fixture",
+      "REFERENCE_GAS_PRICE_TIMESTAMP_UTC=2026-06-29T00:00:00Z",
+      'TRANSACTION_COST_CSV="$2"',
+      'log_broadcast_gas_cost "test" "$1"',
+    ].join("\n"),
+    [fixture, costCsv],
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const event = JSON.parse(result.stdout.trim());
+  assert.equal(event.gasUsed, 21000);
+  assert.equal(event.costWei, "25925925690000");
+  assert.equal(event.costGwei, "25925.92569");
+  assert.equal(event.costEth, "0.00002592592569");
+  assert.equal(event.costEur, "0.0777842605514225");
+  assert.equal(event.costUsd, "0.090753704981845");
+  assert.equal(event.feeBasis, "receipt.effectiveGasPrice");
+  assert.equal(event.valuationKind, "receipt_fee_fiat_estimate");
+  assert.equal(event.mainnetEstimateWei, "19511100000000");
+  assert.equal(event.mainnetEstimateEur, "0.058538177775");
+  assert.equal(event.mainnetEstimateKind, "counterfactual_mainnet_equivalent");
+});
+
 test("address validation rejects a multi-line value", () => {
   const result = runFunction(
     "require_address",
