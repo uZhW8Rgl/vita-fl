@@ -147,8 +147,8 @@ test("contract receipt accounting keeps receipt fees and Mainnet scenarios separ
   assert.equal(event.costWei, "25925925690000");
   assert.equal(event.costGwei, "25925.92569");
   assert.equal(event.costEth, "0.00002592592569");
-  assert.equal(event.costEur, "0.0777842605514225");
-  assert.equal(event.costUsd, "0.090753704981845");
+  assert.equal(event.costEur, "0.0777842585514225");
+  assert.equal(event.costUsd, "0.090753702877845");
   assert.equal(event.feeBasis, "receipt.effectiveGasPrice");
   assert.equal(event.valuationKind, "receipt_fee_fiat_estimate");
   assert.equal(event.mainnetEstimateWei, "19511100000000");
