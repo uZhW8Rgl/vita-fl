@@ -347,7 +347,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:0cbc61168d2a44de67ca8b75e600351808085d1138c12e02d2c941f461fac3f5"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:edc292e54938530217a26e5b2afb1c0f093094b629cc471ae8e4c8a54ef416dd"
 
   validation {
     condition = (
@@ -630,13 +630,13 @@ variable "ssh_public_key_path" {
 variable "worker_image" {
   description = "Digest-pinned DFL worker container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:8dd007b3cf005efe2a4f59a46a76fd83ef9380879df32beb66443bca9c82d400"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:c25feb4b38df34efe895652ba686b607751560f1941174131e9a2f77439c9937"
 }
 
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:8b8993644c53d287d63af68ce32e20b93f56c3cb533595013ffd0ad2bdfe1c26"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b08ca9e141c7259774b8ec6988e7f7e8fbf5c94c597964a35726bf85672af5a6"
 }
 
 variable "zk_inference_image" {

@@ -263,7 +263,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:8dd007b3cf005efe2a4f59a46a76fd83ef9380879df32beb66443bca9c82d400
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:c25feb4b38df34efe895652ba686b607751560f1941174131e9a2f77439c9937
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
@@ -271,7 +271,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:8dd007b3cf005efe2a4f59a46a76fd8
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:8b8993644c53d287d63af68ce32e20b93f56c3cb533595013ffd0ad2bdfe1c26
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b08ca9e141c7259774b8ec6988e7f7e8fbf5c94c597964a35726bf85672af5a6
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
