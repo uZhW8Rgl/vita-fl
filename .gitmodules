@@ -1,3 +1,6 @@
 [submodule "overleaf"]
 	path = overleaf
 	url = https://github.com/uZhW8Rgl/Overleaf.git
+[submodule "presentation"]
+	path = presentation
+	url = https://github.com/uZhW8Rgl/presentation.git
