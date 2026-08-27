@@ -367,7 +367,7 @@
           "refId": "A"
         }
       ],
-      "title": "Latest Macro F1",
+      "title": "Latest Macro F1 (calibrated)",
       "type": "stat"
     },
     {
@@ -582,9 +582,13 @@
               "loss": 6,
               "micro_f1": 7,
               "macro_f1": 8,
-              "macro_auroc": 9,
-              "exact_match_percent": 10,
-              "recorded_at_unix_ms": 11
+              "macro_f1_at_0_5": 9,
+              "macro_auroc": 10,
+              "macro_auprc": 11,
+              "mean_decision_threshold": 12,
+              "threshold_source": 13,
+              "exact_match_percent": 14,
+              "recorded_at_unix_ms": 15
             },
             "renameByName": {
               "round": "Round",
@@ -595,8 +599,12 @@
               "accuracy_percent": "Accuracy (%)",
               "loss": "Loss",
               "micro_f1": "Micro F1",
-              "macro_f1": "Macro F1",
+              "macro_f1": "Macro F1 (calibrated)",
+              "macro_f1_at_0_5": "Macro F1 @ 0.5",
               "macro_auroc": "Macro AUROC",
+              "macro_auprc": "Macro AUPRC",
+              "mean_decision_threshold": "Mean Threshold",
+              "threshold_source": "Threshold Source",
               "exact_match_percent": "Exact Match (%)",
               "dataset": "Dataset",
               "experiment_id": "Experiment",

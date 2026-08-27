@@ -7,7 +7,19 @@ __pycache__/
 *.pyc
 node_modules/
 .env
+/.env.*
+!/.env.example
 cache/
+.tools/
+
+# Standalone repositories maintained and published independently.
+/expose/
+/journal/
+/presentation/
+
+# Local Terraform runtime state must never be committed.
+*.tfstate
+*.tfstate.*
 smart_contracts/out/
 smart_contracts/cache/
 smart_contracts/broadcast/
@@ -26,3 +38,4 @@ agent/downloads/
 ollama-data/
 data/evaluation/*.csv
 data/evaluation/*.jsonl
+data/chestmnist/provenance/private/

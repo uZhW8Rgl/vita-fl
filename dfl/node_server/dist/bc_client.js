@@ -425,7 +425,9 @@ export const submitModel = async (modelHash) => {
     const tx = {
         from: account.address,
         to: address,
-        gas: gasEstimate,
+        // Concurrent worker submissions can change the storage-cost branch after
+        // estimateGas returns. Keep the estimate, but add bounded execution headroom.
+        gas: withGasBuffer(gasEstimate),
         gasPrice: gasPrice,
         data: contract.methods.submitModel(modelHash).encodeABI(),
     };

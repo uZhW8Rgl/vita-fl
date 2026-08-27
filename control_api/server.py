@@ -19,7 +19,19 @@ from fastapi import FastAPI, HTTPException, Response
 
 
 WORKSPACE_ROOT = Path(os.environ.get("TRAINING_WORKSPACE_ROOT", "/workspace")).resolve()
-TRAINING_ENV_FILE = WORKSPACE_ROOT / ".env"
+
+
+def resolve_workspace_path(value: str, default_value: str) -> Path:
+    configured = Path(value.strip() or default_value)
+    if not configured.is_absolute():
+        configured = WORKSPACE_ROOT / configured
+    return configured.resolve()
+
+
+TRAINING_ENV_FILE = resolve_workspace_path(os.environ.get("TRAINING_ENV_FILE", ""), ".env")
+TRAINING_COMPOSE_ENV_FILE = resolve_workspace_path(
+    os.environ.get("TRAINING_COMPOSE_ENV_FILE", ""), str(TRAINING_ENV_FILE)
+)
 TRAINING_COMPOSE_FILE = WORKSPACE_ROOT / "compose.yml"
 EVALUATION_SUMMARY_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "global_model_round_summary.csv"
 TRANSACTION_COST_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "transaction_costs.csv"
@@ -212,7 +224,11 @@ def append_evaluation_metrics(payload_lines: list[str], records: list[dict[str, 
             "loss": record.get("loss", ""),
             "micro_f1": record.get("micro_f1", ""),
             "macro_f1": record.get("macro_f1", ""),
+            "macro_f1_at_0_5": record.get("macro_f1_at_0_5", ""),
             "macro_auroc": record.get("macro_auroc", ""),
+            "macro_auprc": record.get("macro_auprc", ""),
+            "threshold_source": record.get("threshold_source", ""),
+            "mean_decision_threshold": record.get("mean_decision_threshold", ""),
             "exact_match_percent": record.get("exact_match_percent", ""),
         }
         labels = ",".join(f'{key}="{_prometheus_label_value(value)}"' for key, value in info_labels.items())
@@ -224,8 +240,12 @@ def append_evaluation_metrics(payload_lines: list[str], records: list[dict[str, 
         "accuracy_percent": "dfl_global_model_evaluation_accuracy_percent",
         "loss": "dfl_global_model_evaluation_loss",
         "micro_f1": "dfl_global_model_evaluation_micro_f1",
+        "micro_f1_at_0_5": "dfl_global_model_evaluation_micro_f1_at_0_5",
         "macro_f1": "dfl_global_model_evaluation_macro_f1",
+        "macro_f1_at_0_5": "dfl_global_model_evaluation_macro_f1_at_0_5",
         "macro_auroc": "dfl_global_model_evaluation_macro_auroc",
+        "macro_auprc": "dfl_global_model_evaluation_macro_auprc",
+        "mean_decision_threshold": "dfl_global_model_evaluation_mean_decision_threshold",
         "exact_match_percent": "dfl_global_model_evaluation_exact_match_percent",
     }
     for field, metric_name in metric_map.items():
@@ -266,12 +286,14 @@ def append_evaluation_metrics(payload_lines: list[str], records: list[dict[str, 
         latest_loss = _prometheus_float(latest.get("loss"))
         latest_macro_f1 = _prometheus_float(latest.get("macro_f1"))
         latest_macro_auroc = _prometheus_float(latest.get("macro_auroc"))
+        latest_macro_auprc = _prometheus_float(latest.get("macro_auprc"))
         latest_values = {
             "dfl_global_model_latest_round": latest_round,
             "dfl_global_model_latest_accuracy_percent": latest_accuracy,
             "dfl_global_model_latest_loss": latest_loss,
             "dfl_global_model_latest_macro_f1": latest_macro_f1,
             "dfl_global_model_latest_macro_auroc": latest_macro_auroc,
+            "dfl_global_model_latest_macro_auprc": latest_macro_auprc,
         }
         for metric_name, value in latest_values.items():
             if value is None:
@@ -466,6 +488,8 @@ def compose_command(*args: str, include_profile: bool = True) -> list[str]:
         str(WORKSPACE_ROOT),
         "-f",
         str(TRAINING_COMPOSE_FILE),
+        "--env-file",
+        str(TRAINING_COMPOSE_ENV_FILE),
     ]
     compose_project_name = os.environ.get("TRAINING_COMPOSE_PROJECT_NAME", "").strip()
     if compose_project_name:

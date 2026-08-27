@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, setGlobalModel, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, setContribution, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, incrementRound, isAuthorized, getAuthorizedDevices, getDevicePublicKey, getPreviousAggregatorFromGMStorage, getLastRoundsAggregator, registerDeviceWithTeeQuote, registerDeviceWithTeeQuoteAndRtmr3Events, submitModel, hasSubmittedModel, penalizeContribution } from "./bc_client.js";
 import { getCurrentModel, pinFile, getFileFromIPFS, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, validateTimingConfig } from "./state_timing.js";
+import { compareTrainingContexts } from "./training_freshness.js";
 import fs from 'fs/promises';
 import { readFileSync } from 'fs';
 import { DstackClient } from '@phala/dstack-sdk';
@@ -189,7 +190,7 @@ async function expectedWorkerAddresses() {
         .filter(address => address.toLowerCase() !== own);
 }
 
-async function receivedWorkerModelFiles() {
+async function receivedWorkerModelFiles(expectedRound = null) {
     const expected = new Set((await expectedWorkerAddresses()).map(address => address.toLowerCase()));
     const entries = await fs.readdir(srcModelsDir, { withFileTypes: true }).catch(err => {
         if (err && err.code === 'ENOENT') return [];
@@ -199,14 +200,22 @@ async function receivedWorkerModelFiles() {
     for (const entry of entries) {
         if (!entry.isFile() || !entry.name.endsWith('.bin')) continue;
         const filePath = path.join(srcModelsDir, entry.name);
-        const match = entry.name.match(/^wb_client_(.+)\.bin$/);
+        const match = entry.name.match(/^wb_client_(0x[0-9a-fA-F]{40})_round_([0-9]+)\.bin$/);
         if (!match) {
             files.push({ name: entry.name, path: filePath, authorized: false, reason: "unknown filename" });
             continue;
         }
         const address = match[1];
-        if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
-            files.push({ name: entry.name, path: filePath, authorized: false, reason: "filename does not contain a device address" });
+        const submittedRound = Number(match[2]);
+        if (expectedRound !== null && submittedRound !== Number(expectedRound)) {
+            files.push({
+                name: entry.name,
+                path: filePath,
+                address,
+                submittedRound,
+                authorized: false,
+                reason: `model belongs to round ${submittedRound}, expected round ${expectedRound}`,
+            });
             continue;
         }
         if (!expected.has(address.toLowerCase())) {
@@ -218,6 +227,7 @@ async function receivedWorkerModelFiles() {
             name: entry.name,
             path: filePath,
             address,
+            submittedRound,
             authorized,
             reason: authorized ? "" : "not TEE authorized",
         });
@@ -225,8 +235,8 @@ async function receivedWorkerModelFiles() {
     return files.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function receivedWorkerAddresses() {
-    const files = await receivedWorkerModelFiles();
+async function receivedWorkerAddresses(expectedRound = null) {
+    const files = await receivedWorkerModelFiles(expectedRound);
     return new Set(
         files
             .filter(file => file.authorized && file.address)
@@ -234,13 +244,13 @@ async function receivedWorkerAddresses() {
     );
 }
 
-async function getMissingAuthorizedWorkers() {
+async function getMissingAuthorizedWorkers(expectedRound = null) {
     const expected = await expectedWorkerAddresses();
     if (expected.length === 0) {
         console.warn("No onchain authorized workers found; skipping missed-deadline penalties.");
         return [];
     }
-    const received = await receivedWorkerAddresses();
+    const received = await receivedWorkerAddresses(expectedRound);
     const missing = [];
     for (const address of expected) {
         if (received.has(address.toLowerCase())) continue;
@@ -454,6 +464,7 @@ const stateMachine = async () => {
                         if (!aggregatorServerRunning) {
                             await callPythonService('/server/start', {
                                 client_limit: Number(process.env.CLIENT_LIMIT || 1),
+                                expected_round: currentRound,
                             });
                             aggregatorServerRunning = true;
                         }
@@ -472,6 +483,7 @@ const stateMachine = async () => {
                             dir: srcModelsDir,
                             pollMs: 2000,
                             timeoutMs: modelSubmissionDeadlineMs,
+                            expectedRound: currentRound,
                         }));
                         await runtimeEvent("aggregator.wait_for_models.finished", {
                             role: "aggregator",
@@ -533,6 +545,13 @@ const stateMachine = async () => {
                         continue;
                     }
                     const prevGM = currentGlobalModel.modelCid;
+                    const roundAggregator = String(state[1]);
+                    const trainedContext = {
+                        round: currentRound,
+                        state: "TRAINING",
+                        aggregator: roundAggregator,
+                        parentModelCid: prevGM,
+                    };
 
                     const lastSignerAddress = await getLastRoundsAggregator();
                     const lastSignersPubKey = await getDevicePublicKey(lastSignerAddress);
@@ -553,6 +572,8 @@ const stateMachine = async () => {
                         await runOperation("worker.training", { role: "worker" }, async () => callPythonService('/train', {
                             epochs: Number(process.env.EPOCH),
                             aggregator_public_key_der_hex: await getDevicePublicKey(state[1]),
+                            round_id: currentRound,
+                            device_id: process.env.DEVICE_ID,
                         }));
                     } catch (e) {
                         console.error("Error during local training:", e);
@@ -561,12 +582,31 @@ const stateMachine = async () => {
                     console.log("Local training complete.");
                     await runtimeEvent("worker.training.finished", { role: "worker" });
 
+                    const latestRound = Number(await getRound());
                     const latestState = await getCurrentState();
-                    if (sameAddress(latestState[1], process.env.ACCOUNT_ADDRESS)) {
-                        console.log("I became the aggregator before model transfer. Returning to the state loop to start the aggregator server.");
-                        await runtimeEvent("worker.promoted_to_aggregator_before_transfer", {
-                            role: "aggregator",
-                            previous_aggregator: String(state["1"]),
+                    const latestGM = String(await getCurrentGM() || "");
+                    const confirmedRound = Number(await getRound());
+                    const latestContext = {
+                        round: latestRound === confirmedRound ? latestRound : Number.NaN,
+                        state: String(latestState[0] || ""),
+                        aggregator: String(latestState[1] || ""),
+                        parentModelCid: latestGM,
+                    };
+                    const latestComparison = compareTrainingContexts(trainedContext, latestContext);
+                    if (!latestComparison.valid) {
+                        console.warn(
+                            `Discarding local update for round ${currentRound}: ` +
+                            `active round=${confirmedRound}, state=${latestState[0]}, ` +
+                            `aggregator=${latestState[1]}, parent unchanged=${latestGM === prevGM}, ` +
+                            `reasons=${latestComparison.reasons.join(',')}.`
+                        );
+                        await runtimeEvent("worker.training_context.stale", {
+                            role: "worker",
+                            trained_round: currentRound,
+                            active_round: confirmedRound,
+                            trained_aggregator: roundAggregator,
+                            active_aggregator: String(latestState[1]),
+                            parent_model_unchanged: latestGM === prevGM,
                         });
                         continue;
                     }
@@ -583,7 +623,28 @@ const stateMachine = async () => {
                             server_ip: String(state["1"]),
                             device_id: String(process.env.ACCOUNT_ADDRESS),
                             timeout_ms: modelTransferTimeoutMs,
+                            round_id: currentRound,
                         }, { timeoutMs: modelTransferTimeoutMs + 5000 }));
+                        const submissionRound = Number(await getRound());
+                        const submissionState = await getCurrentState();
+                        const submissionGM = String(await getCurrentGM() || "");
+                        const confirmedSubmissionRound = Number(await getRound());
+                        const submissionContext = {
+                            round: submissionRound === confirmedSubmissionRound
+                                ? submissionRound
+                                : Number.NaN,
+                            state: String(submissionState[0] || ""),
+                            aggregator: String(submissionState[1] || ""),
+                            parentModelCid: submissionGM,
+                        };
+                        const submissionComparison = compareTrainingContexts(
+                            trainedContext,
+                            submissionContext,
+                        );
+                        if (!submissionComparison.valid) {
+                            console.warn(`Round context changed during model transfer; skipping on-chain submission for round ${currentRound}.`);
+                            continue;
+                        }
                         if (await hasSubmittedModel(currentRound, process.env.ACCOUNT_ADDRESS)) {
                             console.log(`Model submission already recorded for round ${currentRound}; skipping duplicate submit/contribution transactions.`);
                         } else {
@@ -649,6 +710,7 @@ const stateMachine = async () => {
                             dir: srcModelsDir,
                             pollMs: 2000,
                             timeoutMs: 1,
+                            expectedRound: currentRound,
                         });
                         console.log(`Models present before aggregation: ${present}/${expected}`);
 
@@ -657,7 +719,7 @@ const stateMachine = async () => {
                             await stopAggregatorServer();
                         }
 
-                        const count = await stageAggregation();
+                        const count = await stageAggregation(currentRound);
                         console.log(`Staged ${count} model file(s) for aggregation.`);
                         await runtimeEvent("aggregator.models.staged", {
                             role: "aggregator",
@@ -678,7 +740,7 @@ const stateMachine = async () => {
                             await sleep(5000);
                             continue;
                         }
-                        const missingWorkers = currentRound === 0 ? [] : await getMissingAuthorizedWorkers();
+                        const missingWorkers = currentRound === 0 ? [] : await getMissingAuthorizedWorkers(currentRound);
                         if (missingWorkers.length > 0) {
                             console.log("Penalizing missing model submissions:", missingWorkers);
                             await penalizeContribution(missingWorkers, "missed_model_deadline");
@@ -720,7 +782,10 @@ const stateMachine = async () => {
                                 accuracy_percent: Number(metrics.accuracy_percent ?? 0),
                                 loss: Number(metrics.loss ?? 0),
                                 macro_f1: Number(metrics.macro_f1 ?? 0),
+                                macro_f1_at_0_5: Number(metrics.macro_f1_at_0_5 ?? 0),
                                 macro_auroc: Number(metrics.macro_auroc ?? 0),
+                                macro_auprc: Number(metrics.macro_auprc ?? 0),
+                                mean_decision_threshold: Number(metrics.mean_decision_threshold ?? 0),
                             });
                         }
                     } catch (e) {
@@ -794,7 +859,7 @@ const stateMachine = async () => {
 
 const srcModelsDir = path.join(__dirname, '../received_models');
 const resultsIIDDir = path.join(__dirname, '../data/results_iid');
-async function stageAggregation() {
+async function stageAggregation(expectedRound = null) {
     await fs.mkdir(resultsIIDDir, { recursive: true });
 
     try {
@@ -806,7 +871,7 @@ async function stageAggregation() {
         );
     } catch {}
 
-    const modelFiles = await receivedWorkerModelFiles();
+    const modelFiles = await receivedWorkerModelFiles(expectedRound);
     const acceptedFiles = modelFiles.filter(file => file.authorized);
     const rejectedFiles = modelFiles.filter(file => !file.authorized);
 
@@ -842,15 +907,20 @@ async function countBinFiles(dir) {
     }
 }
 
-async function countAuthorizedModelFiles() {
-    const files = await receivedWorkerModelFiles();
+async function countAuthorizedModelFiles(expectedRound = null) {
+    const files = await receivedWorkerModelFiles(expectedRound);
     return files.filter(file => file.authorized).length;
 }
 
-async function waitForModels(expected, { dir, pollMs = 2000, timeoutMs = 10 * 60 * 1000 } = {}) {
+async function waitForModels(
+    expected,
+    { dir, pollMs = 2000, timeoutMs = 10 * 60 * 1000, expectedRound = null } = {},
+) {
     const start = Date.now();
     while (true) {
-        const n = dir === srcModelsDir ? await countAuthorizedModelFiles() : await countBinFiles(dir);
+        const n = dir === srcModelsDir
+            ? await countAuthorizedModelFiles(expectedRound)
+            : await countBinFiles(dir);
         if (n >= expected) {
             console.log(`Received ${n}/${expected} TEE-authorized model files.`);
             return n; // Anzahl zurückgeben

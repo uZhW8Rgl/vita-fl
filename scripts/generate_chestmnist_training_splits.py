@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import random
 from pathlib import Path
 
@@ -20,6 +21,27 @@ def load_split(bundle: np.lib.npyio.NpzFile, images_key: str, labels_key: str) -
 def write_npz(path: Path, images: np.ndarray, labels: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, images=images, labels=labels)
+
+
+def write_training_metadata(path: Path, labels: np.ndarray) -> None:
+    flattened = labels.reshape(labels.shape[0], -1)
+    if flattened.shape[1] != 14:
+        raise ValueError(f"Expected 14 ChestMNIST labels, got {flattened.shape[1]}")
+    if not np.isfinite(flattened).all() or not np.isin(flattened, (0, 1)).all():
+        raise ValueError("ChestMNIST labels must be finite binary values")
+    positive_counts = flattened.astype(np.int64).sum(axis=0)
+    sample_count = int(flattened.shape[0])
+    payload = {
+        "schema_version": 1,
+        "dataset": "chestmnist",
+        "source_split": "train",
+        "sample_count": sample_count,
+        "label_count": int(flattened.shape[1]),
+        "positive_counts": [int(value) for value in positive_counts],
+        "negative_counts": [int(sample_count - value) for value in positive_counts],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
 def main() -> int:
@@ -43,9 +65,15 @@ def main() -> int:
         help="Destination for the shared test split",
     )
     parser.add_argument(
+        "--metadata-out",
+        type=Path,
+        default=Path("data/chestmnist/training-metadata.json"),
+        help="Destination for task-wide training-label statistics",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
-        default=20,
+        default=25,
         help="Number of worker splits to create",
     )
     parser.add_argument(
@@ -89,8 +117,20 @@ def main() -> int:
         )
         print(f"worker {worker_id}: {size} samples")
 
+    stale_shards = []
+    for path in args.train_out_dir.glob("train-data-*.npz"):
+        worker_id = path.stem.removeprefix("train-data-")
+        if worker_id.isdigit() and int(worker_id) >= args.workers:
+            stale_shards.append(path)
+    for path in sorted(stale_shards):
+        path.unlink()
+    if stale_shards:
+        print(f"removed {len(stale_shards)} stale worker shards")
+
     write_npz(args.test_out, test_images, test_labels)
     print(f"wrote test split: {args.test_out}")
+    write_training_metadata(args.metadata_out, train_labels)
+    print(f"wrote training metadata: {args.metadata_out}")
     return 0
 
 

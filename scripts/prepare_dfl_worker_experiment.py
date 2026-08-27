@@ -8,7 +8,6 @@ import re
 import subprocess
 from pathlib import Path
 
-
 DEFAULT_MNEMONIC = "test test test test test test test test test test test junk"
 HARDENED = 0x80000000
 SECP256K1_P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
@@ -249,16 +248,25 @@ def render_worker_services(worker_count: int) -> str:
 
 def update_compose(compose_path: Path, worker_count: int) -> None:
     text = compose_path.read_text(encoding="utf-8")
-    text = text.replace('      - "20"\n      - --hardfork', '      - ${ANVIL_ACCOUNT_COUNT:-20}\n      - --hardfork')
-    text = re.sub(r"\n\s+RSA_PRIVATE_KEY: \$\{W0_RSA_PRIVATE_KEY\}\n\s+RSA_PUBLIC_KEY: \$\{W0_RSA_PUBLIC_KEY\}", "", text)
+    text = text.replace('      - "20"\n      - --hardfork', "      - ${ANVIL_ACCOUNT_COUNT:-20}\n      - --hardfork")
+    text = re.sub(
+        r"\n\s+RSA_PRIVATE_KEY: \$\{W0_RSA_PRIVATE_KEY\}\n\s+RSA_PUBLIC_KEY: \$\{W0_RSA_PUBLIC_KEY\}",
+        "",
+        text,
+    )
 
     marker = "\n  VM-0:\n"
     volumes_marker = "\nvolumes:\n"
-    if marker not in text or volumes_marker not in text:
-        raise ValueError("Could not locate VM service block or volumes block in compose.yml")
-    before = text[: text.index(marker)]
-    after = text[text.index(volumes_marker) :]
-    compose_path.write_text(before + "\n" + render_worker_services(worker_count) + after, encoding="utf-8")
+    if marker not in text:
+        raise ValueError("Could not locate VM service block in compose.yml")
+    worker_block_start = text.index(marker)
+    volumes_start = text.find(volumes_marker, worker_block_start)
+    before = text[:worker_block_start]
+    after = text[volumes_start:].strip() if volumes_start >= 0 else ""
+    generated = before.rstrip() + "\n\n" + render_worker_services(worker_count).rstrip() + "\n"
+    if after:
+        generated += "\n" + after + "\n"
+    compose_path.write_text(generated, encoding="utf-8")
 
 
 def parse_env_key(line: str) -> str | None:
@@ -276,6 +284,9 @@ def update_env_file(env_path: Path, accounts: list[tuple[str, str]], worker_coun
     value_map = {
         "WORKER_COUNT": str(worker_count),
         "ANVIL_ACCOUNT_COUNT": str(worker_count),
+        # The selected aggregator does not submit a local update in its own
+        # round, so a complete round receives one fewer model than participants.
+        "CLIENT_LIMIT": str(max(0, worker_count - 1)),
     }
     seen: set[str] = set()
     kept: list[str] = []
@@ -301,7 +312,7 @@ def update_env_file(env_path: Path, accounts: list[tuple[str, str]], worker_coun
 
     if kept and kept[-1] != "":
         kept.append("")
-    for key in ("ANVIL_ACCOUNT_COUNT", "WORKER_COUNT"):
+    for key in ("ANVIL_ACCOUNT_COUNT", "WORKER_COUNT", "CLIENT_LIMIT"):
         if key not in seen:
             kept.append(f"{key}={value_map[key]}")
 
@@ -323,7 +334,7 @@ def update_env_file(env_path: Path, accounts: list[tuple[str, str]], worker_coun
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare local DFL worker configuration for larger experiments.")
-    parser.add_argument("--workers", type=int, default=500, help="Total number of worker services/accounts/keys")
+    parser.add_argument("--workers", type=int, default=25, help="Total number of worker services/accounts/keys")
     parser.add_argument("--keys-dir", type=Path, default=Path("data/rsa_keys"))
     parser.add_argument("--compose", type=Path, default=Path("compose.yml"))
     parser.add_argument("--env", type=Path, default=Path(".env"))

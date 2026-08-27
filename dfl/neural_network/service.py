@@ -12,6 +12,7 @@ from .cli import aggregate, save_random, start_client, start_server, train_model
 
 server_thread: threading.Thread | None = None
 server_stop_event: threading.Event | None = None
+server_expected_round: int | None = None
 server_lock = threading.Lock()
 
 
@@ -31,19 +32,34 @@ def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return json.loads(handler.rfile.read(length).decode("utf-8"))
 
 
-def _start_zmq_server(client_limit: int, private_key: str | None = None) -> dict[str, Any]:
-    global server_thread, server_stop_event
+def _start_zmq_server(
+    client_limit: int,
+    private_key: str | None = None,
+    expected_round: int | None = None,
+) -> dict[str, Any]:
+    global server_thread, server_stop_event, server_expected_round
+    if expected_round is not None:
+        expected_round = int(expected_round)
+        if expected_round < 0:
+            raise ValueError("expected_round must be non-negative")
     with server_lock:
         if server_thread and server_thread.is_alive():
+            if server_expected_round != expected_round:
+                raise RuntimeError(
+                    f"model server is already running for round {server_expected_round}, "
+                    f"not requested round {expected_round}"
+                )
             return {"running": True, "already_running": True}
 
         server_stop_event = threading.Event()
+        server_expected_round = expected_round
         server_thread = threading.Thread(
             target=start_server,
             kwargs={
                 "client_limit": client_limit,
                 "key_path": private_key,
                 "stop_event": server_stop_event,
+                "expected_round": expected_round,
             },
             daemon=True,
         )
@@ -52,11 +68,12 @@ def _start_zmq_server(client_limit: int, private_key: str | None = None) -> dict
 
 
 def _stop_zmq_server() -> dict[str, Any]:
-    global server_thread, server_stop_event
+    global server_thread, server_stop_event, server_expected_round
     with server_lock:
         if not server_thread or not server_thread.is_alive():
             server_thread = None
             server_stop_event = None
+            server_expected_round = None
             return {"running": False}
         assert server_stop_event is not None
         server_stop_event.set()
@@ -69,6 +86,7 @@ def _stop_zmq_server() -> dict[str, Any]:
         if not running:
             server_thread = None
             server_stop_event = None
+            server_expected_round = None
         return {"running": running}
 
 
@@ -90,6 +108,8 @@ class Handler(BaseHTTPRequestHandler):
                 train_model(
                     int(payload["epochs"]),
                     str(payload.get("aggregator_public_key_der_hex", "")),
+                    round_id=payload.get("round_id"),
+                    device_id=payload.get("device_id"),
                 )
                 _json_response(self, 200, {"ok": True})
                 return
@@ -98,6 +118,7 @@ class Handler(BaseHTTPRequestHandler):
                     str(payload["server_ip"]),
                     str(payload["device_id"]),
                     int(payload.get("timeout_ms") or os.environ.get("MODEL_TRANSFER_TIMEOUT_MS", "20000")),
+                    round_id=payload.get("round_id"),
                 )
                 _json_response(self, 200, {"ok": True})
                 return
@@ -119,6 +140,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = _start_zmq_server(
                     int(payload["client_limit"]),
                     payload.get("private_key"),
+                    payload.get("expected_round"),
                 )
                 _json_response(self, 200, {"ok": True, **result})
                 return

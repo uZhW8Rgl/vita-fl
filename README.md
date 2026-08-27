@@ -175,6 +175,39 @@ sequenceDiagram
 
 ## Reproducible Demo
 
+### Evaluation branch: local 25-worker profile
+
+This branch provides `.env.example` as the versioned template for the Docker-only ChestMNIST evaluation. Create the ignored local `.env.evaluation` from it so that an existing `.env` remains untouched. The profile uses local Anvil and Kubo, replays the stored TDX quote, and obtains the required DCAP collateral from Intel PCS instead of a Phala service. Always pass the file explicitly so that both the initial Compose process and the UI control service continue to use it:
+
+```bash
+cp .env.example .env.evaluation
+docker compose --env-file .env.evaluation down --volumes --remove-orphans
+docker compose --env-file .env.evaluation up --build --force-recreate
+```
+
+The profile exposes all 25 workers to the UI. `WORKER_COUNT`, `CLIENT_LIMIT`, `ROUND`, and `EPOCH` can be adjusted from the UI before starting a training run; those changes are written to `.env.evaluation`, not `.env`. The bundled worker keys are deterministic Anvil test credentials and must never be reused outside the local chain.
+
+The versioned evaluation template partitions the complete ChestMNIST training
+split across 25 IID shards. A learned round expects 24 submissions because the
+selected aggregator does not submit its own shard; thus, one round processes
+about 96% of the training split. The current `.env.evaluation` setting
+`ROUND=50` includes the round-0 bootstrap rollover and therefore produces 49
+learned aggregations. The evaluation profile
+uses two local epochs per learned round and limits each worker to one PyTorch
+intra-op and one inter-op thread so that 25 containers do not oversubscribe the
+host CPU. The learning rate remains `0.003` through source round 20 and then
+follows a late cosine decay to `0.00075` in source round 49. ChestMNIST training
+uses the reproducible configuration documented in
+`dfl/neural_network/README.md`; the local quote remains a replayed fixture and
+is not evidence of execution on Phala.
+
+Multi-label decision thresholds are fitted per pathology on the official
+Validation split and only then applied to the Test split. Their predicted-positive
+count is capped at twice the pathology's Validation prevalence so that a very
+rare label cannot select an extremely permissive threshold. The exported metrics
+distinguish this calibrated Macro-F1 from the diagnostic Macro-F1 at threshold
+`0.5`, and also include threshold-independent Macro-AUROC and Macro-AUPRC.
+
 For a clean local demo, start from a fresh stack and use Docker Compose as the single entry point:
 
 ```bash
