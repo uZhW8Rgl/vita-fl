@@ -24,16 +24,18 @@ Set `DATASET_NAME=chestmnist` to switch the worker training/evaluation path to `
 
 ## Model Layout
 
-The model is now a compact MNIST CNN used by the DFL prototype:
+The model is a compact CNN used by the DFL prototype:
 
 ```text
 reshape(784) -> 1x28x28
-conv(1->8, k=3, s=2, p=1) -> tanh
-conv(8->16, k=3, s=2, p=1) -> tanh
+conv(1->8, k=3, s=2, p=1) -> hidden activation
+conv(8->16, k=3, s=2, p=1) -> hidden activation
 flatten(16x7x7) -> 784
 784 -> 32 -> 10
-tanh -> logits
+hidden activation -> logits
 ```
+
+MNIST retains `tanh`; ChestMNIST uses LeakyReLU with slope `0.1` to avoid saturating the compact network.
 
 The serialized model layout is:
 
@@ -58,13 +60,17 @@ python -m neural_network.cli aggregate <num-files>
 ## ChestMNIST
 
 ChestMNIST uses 14 multi-label targets, so the final layer automatically expands from `10` to `14` outputs when `DATASET_NAME=chestmnist`.
-The loss also switches from `CrossEntropyLoss` to `BCEWithLogitsLoss`.
+Local training uses float32, AdamW (`lr=0.003`, weight decay `0.0001`), gradient clipping at `5`, and `BCEWithLogitsLoss` with task-wide inverse-prevalence weights capped at `10`. The weights come from the complete official training split rather than individual worker shards, so every worker optimizes the same objective. A deterministic round-and-worker seed controls batch order. The on-chain-compatible model remains serialized as little-endian float64.
+
+The default run uses two local epochs and a constant learning rate. Longer evaluations can set `DFL_TRAIN_LR_SCHEDULE=late_cosine`; local multi-container runs additionally limit Torch to one thread per worker. Phala `tdx.small` workers do not need an explicit thread limit because each CVM already has one vCPU.
 
 Create worker shards from the official `chestmnist.npz` bundle with:
 
 ```bash
 .venv/bin/python scripts/generate_chestmnist_training_splits.py
 ```
+
+The generator creates 25 signed IID shards by default, removes obsolete higher-numbered shards, and writes the task-wide label-count metadata.
 
 The generator also creates a signed `CHESTMNIST-VAL-V1` reference artifact
 from the official validation split. Images that duplicate a training image or

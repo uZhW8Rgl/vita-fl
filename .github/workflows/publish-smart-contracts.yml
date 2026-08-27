@@ -9,6 +9,8 @@ on:
       - ".dockerignore"
       - "smart_contracts/**"
       - "dfl/node_server/abi/registry.json"
+      - "data/initial_gm/**"
+      - "phala/**"
       - ".github/workflows/publish-smart-contracts.yml"
   workflow_dispatch:
     inputs:

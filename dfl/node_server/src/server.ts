@@ -1806,6 +1806,8 @@ const stateMachine = async () => {
                             aggregator_public_key_der_hex: await getDevicePublicKey(trainingAggregator),
                             medical_signer_snapshot: medicalSignerSnapshot,
                             private_key: participantPrivateKeyRuntimePath,
+                            round_id: currentRound,
+                            device_id: process.env.DEVICE_ID,
                         }));
                     } catch (e) {
                         console.error("Error during local training:", e);

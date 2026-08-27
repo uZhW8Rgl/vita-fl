@@ -788,13 +788,73 @@ variable "client_limit" {
 variable "epoch" {
   description = "DFL epoch value."
   type        = string
-  default     = "1"
+  default     = "2"
 }
 
 variable "round" {
   description = "DFL round value."
   type        = string
   default     = "1"
+}
+
+variable "dfl_model_seed" {
+  description = "Deterministic seed used to initialize the DFL model."
+  type        = string
+  default     = "42"
+}
+
+variable "dfl_train_seed" {
+  description = "Base seed used for deterministic per-worker, per-round training shuffles."
+  type        = string
+  default     = "42"
+}
+
+variable "dfl_train_optimizer" {
+  description = "Optimizer selected by the DFL training service."
+  type        = string
+  default     = "adamw"
+}
+
+variable "dfl_train_learning_rate" {
+  description = "Base learning rate used by the DFL training service."
+  type        = string
+  default     = "0.003"
+}
+
+variable "dfl_train_lr_schedule" {
+  description = "Learning-rate schedule used by the DFL training service."
+  type        = string
+  default     = "constant"
+}
+
+variable "dfl_train_lr_decay_start_round" {
+  description = "First source-model round at which the optional late-cosine schedule decays."
+  type        = string
+  default     = "20"
+}
+
+variable "dfl_train_lr_final_factor" {
+  description = "Final learning-rate factor used by the optional late-cosine schedule."
+  type        = string
+  default     = "0.25"
+}
+
+variable "dfl_train_weight_decay" {
+  description = "Weight decay used by the DFL optimizer."
+  type        = string
+  default     = "0.0001"
+}
+
+variable "dfl_grad_clip_norm" {
+  description = "Maximum gradient norm used during DFL training."
+  type        = string
+  default     = "5"
+}
+
+variable "dfl_pos_weight_cap" {
+  description = "Upper bound for ChestMNIST positive-class weights."
+  type        = string
+  default     = "10"
 }
 
 variable "model_submission_deadline_ms" {

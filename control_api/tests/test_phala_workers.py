@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
+from unittest import mock
 
 from control_api.phala_workers import (
     PhalaWorkerController,
     WorkerConfigurationError,
     WorkerDeploymentConfig,
+    controller_from_environment,
     dynamic_worker_inventory_json_from_environment,
     load_worker_inventory,
     redact_terraform_output,
@@ -59,6 +62,42 @@ def controller(count: int = 3) -> tuple[PhalaWorkerController, FakeRunner]:
 
 
 class WorkerInventoryTests(unittest.TestCase):
+    def test_training_optimization_environment_reaches_dynamic_worker_config(self) -> None:
+        environment = {
+            "DYNAMIC_WORKER_INVENTORY": inventory_json(1),
+            "PHALA_CLOUD_API_KEY": "phak_test",
+            "DYNAMIC_WORKER_IMAGE": "ghcr.io/example/worker@sha256:" + "11" * 32,
+            "DYNAMIC_WORKER_RPC_URL": "https://runtime-8545.dstack.example",
+            "DYNAMIC_WORKER_KUBO_API_URL": "https://runtime-5001.dstack.example",
+            "DYNAMIC_WORKER_KUBO_GATEWAY_URL": "https://runtime-8080.dstack.example",
+            "DYNAMIC_WORKER_TELEMETRY_URL": "https://runtime-8091.dstack.example",
+            "DFL_MODEL_SEED": "101",
+            "DFL_TRAIN_SEED": "202",
+            "DFL_TRAIN_OPTIMIZER": "adamw",
+            "DFL_TRAIN_LEARNING_RATE": "0.0025",
+            "DFL_TRAIN_LR_SCHEDULE": "late_cosine",
+            "DFL_TRAIN_LR_DECAY_START_ROUND": "12",
+            "DFL_TRAIN_LR_FINAL_FACTOR": "0.2",
+            "DFL_TRAIN_WEIGHT_DECAY": "0.0002",
+            "DFL_GRAD_CLIP_NORM": "4",
+            "DFL_POS_WEIGHT_CAP": "8",
+        }
+
+        with mock.patch.dict(os.environ, environment, clear=True):
+            instance = controller_from_environment()
+
+        values = instance.runner.config.terraform_values()
+        self.assertEqual(values["dfl_model_seed"], "101")
+        self.assertEqual(values["dfl_train_seed"], "202")
+        self.assertEqual(values["dfl_train_optimizer"], "adamw")
+        self.assertEqual(values["dfl_train_learning_rate"], "0.0025")
+        self.assertEqual(values["dfl_train_lr_schedule"], "late_cosine")
+        self.assertEqual(values["dfl_train_lr_decay_start_round"], "12")
+        self.assertEqual(values["dfl_train_lr_final_factor"], "0.2")
+        self.assertEqual(values["dfl_train_weight_decay"], "0.0002")
+        self.assertEqual(values["dfl_grad_clip_norm"], "4")
+        self.assertEqual(values["dfl_pos_weight_cap"], "8")
+
     def test_deployment_tfvars_include_the_measured_contract_trust_root(self) -> None:
         config = WorkerDeploymentConfig(
             phala_cloud_api_key="phak_test",
@@ -79,6 +118,16 @@ class WorkerInventoryTests(unittest.TestCase):
             reference_mainnet_gas_price_gwei="0.9291",
             reference_gas_price_source="https://gas.example/2026-06-29",
             reference_gas_price_timestamp_utc="2026-06-29T00:00:00Z",
+            dfl_model_seed="101",
+            dfl_train_seed="202",
+            dfl_train_optimizer="adamw",
+            dfl_train_learning_rate="0.0025",
+            dfl_train_lr_schedule="late_cosine",
+            dfl_train_lr_decay_start_round="12",
+            dfl_train_lr_final_factor="0.2",
+            dfl_train_weight_decay="0.0002",
+            dfl_grad_clip_norm="4",
+            dfl_pos_weight_cap="8",
         )
 
         values = config.terraform_values()
@@ -107,6 +156,16 @@ class WorkerInventoryTests(unittest.TestCase):
             values["reference_gas_price_timestamp_utc"],
             "2026-06-29T00:00:00Z",
         )
+        self.assertEqual(values["dfl_model_seed"], "101")
+        self.assertEqual(values["dfl_train_seed"], "202")
+        self.assertEqual(values["dfl_train_optimizer"], "adamw")
+        self.assertEqual(values["dfl_train_learning_rate"], "0.0025")
+        self.assertEqual(values["dfl_train_lr_schedule"], "late_cosine")
+        self.assertEqual(values["dfl_train_lr_decay_start_round"], "12")
+        self.assertEqual(values["dfl_train_lr_final_factor"], "0.2")
+        self.assertEqual(values["dfl_train_weight_decay"], "0.0002")
+        self.assertEqual(values["dfl_grad_clip_norm"], "4")
+        self.assertEqual(values["dfl_pos_weight_cap"], "8")
         self.assertNotIn("client_limit", values)
         self.assertNotIn("model_submission_deadline_ms", values)
 

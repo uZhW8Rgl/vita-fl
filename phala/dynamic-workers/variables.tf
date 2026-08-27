@@ -125,6 +125,16 @@ variable "os_image" {
 
 variable "epoch" { type = number }
 variable "round" { type = number }
+variable "dfl_model_seed" { type = string }
+variable "dfl_train_seed" { type = string }
+variable "dfl_train_optimizer" { type = string }
+variable "dfl_train_learning_rate" { type = string }
+variable "dfl_train_lr_schedule" { type = string }
+variable "dfl_train_lr_decay_start_round" { type = string }
+variable "dfl_train_lr_final_factor" { type = string }
+variable "dfl_train_weight_decay" { type = string }
+variable "dfl_grad_clip_norm" { type = string }
+variable "dfl_pos_weight_cap" { type = string }
 variable "gm_update_timeout_ms" { type = number }
 variable "gm_update_timeout_loops" { type = number }
 variable "aggregation_update_estimate_ms" { type = number }

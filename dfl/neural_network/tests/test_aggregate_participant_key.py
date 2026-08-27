@@ -7,9 +7,9 @@ import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
+import torch
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -149,15 +149,17 @@ class TrainingParticipantKeyTests(unittest.TestCase):
                 patch.object(
                     cli,
                     "load_training_dataset",
-                    return_value=(SimpleNamespace(shape=(0,)), object()),
+                    return_value=(torch.zeros((1, 784)), torch.zeros((1,), dtype=torch.long)),
                 ),
                 patch.object(cli, "write_model_bin"),
                 patch.object(cli, "encrypt_model_package") as encrypt_model_package,
             ):
                 cli.train_model(
-                    0,
+                    1,
                     "0x0102",
                     private_key=participant_key,
+                    round_id=7,
+                    device_id="worker-3",
                 )
 
             encrypt_model_package.assert_called_once_with(
@@ -231,6 +233,8 @@ class TrainingParticipantKeyTests(unittest.TestCase):
                         "aggregator_public_key_der_hex": "0x0102",
                         "medical_signer_snapshot": {"version": 1},
                         "private_key": participant_key,
+                        "round_id": 7,
+                        "device_id": "worker-3",
                     }
                 ).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
@@ -246,6 +250,8 @@ class TrainingParticipantKeyTests(unittest.TestCase):
                 "0x0102",
                 {"version": 1},
                 private_key=participant_key,
+                round_id=7,
+                device_id="worker-3",
             )
         finally:
             server.shutdown()

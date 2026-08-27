@@ -4,8 +4,8 @@ import argparse
 import csv
 import hashlib
 import json
+import math
 import os
-import random
 import re
 import struct
 import sys
@@ -32,6 +32,24 @@ from .hybrid_r import (
     write_canonical_json,
 )
 
+
+def _configure_torch_runtime_from_environment() -> None:
+    """Apply optional per-worker CPU limits before Torch starts parallel work."""
+    settings = (
+        ("DFL_TORCH_NUM_THREADS", torch.set_num_threads),
+        ("DFL_TORCH_INTEROP_THREADS", torch.set_num_interop_threads),
+    )
+    for name, setter in settings:
+        raw_value = os.environ.get(name, "").strip()
+        if not raw_value:
+            continue
+        value = int(raw_value)
+        if value <= 0:
+            raise ValueError(f"{name} must be greater than zero")
+        setter(value)
+
+
+_configure_torch_runtime_from_environment()
 torch.backends.nnpack.enabled = False
 torch.backends.nnpack.set_flags(False)
 
@@ -64,6 +82,11 @@ OUTPUT_SIZE = CHESTMNIST_NUM_LABELS if DATASET_NAME == "chestmnist" else 10
 BATCH_SIZE = 32
 NUM_TRAIN_IMAGES = 10_000
 LEARNING_RATE = 0.1
+CHESTMNIST_LEAKY_RELU_SLOPE = 0.1
+CHESTMNIST_DEFAULT_LEARNING_RATE = 0.003
+CHESTMNIST_DEFAULT_WEIGHT_DECAY = 0.0001
+CHESTMNIST_DEFAULT_POS_WEIGHT_CAP = 10.0
+CHESTMNIST_DEFAULT_GRAD_CLIP_NORM = 5.0
 
 
 def model_layout() -> tuple[tuple[str, tuple[int, ...]], ...]:
@@ -104,11 +127,17 @@ class FederatedCNN(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.reshape(-1, IMAGE_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH)
-        x = torch.tanh(self.conv1(x))
-        x = torch.tanh(self.conv2(x))
+        x = self._hidden_activation(self.conv1(x))
+        x = self._hidden_activation(self.conv2(x))
         x = x.reshape(x.shape[0], -1)
-        x = torch.tanh(self.fc1(x))
+        x = self._hidden_activation(self.fc1(x))
         return self.fc2(x)
+
+    @staticmethod
+    def _hidden_activation(x: torch.Tensor) -> torch.Tensor:
+        if DATASET_NAME == "chestmnist":
+            return F.leaky_relu(x, negative_slope=CHESTMNIST_LEAKY_RELU_SLOPE)
+        return torch.tanh(x)
 
 
 FederatedMLP = FederatedCNN
@@ -257,12 +286,12 @@ def write_model_bin(model: FederatedCNN, path: Path) -> None:
     path.write_bytes(model_to_bytes(model))
 
 
-def random_model() -> FederatedCNN:
-    model = FederatedCNN().double()
-    with torch.no_grad():
-        for param in model.parameters():
-            param.uniform_(-0.5, 0.5)
-    return model
+def random_model(seed: int | None = None) -> FederatedCNN:
+    """Create a reproducible bootstrap with PyTorch's fan-in-aware defaults."""
+    resolved_seed = int(os.environ.get("DFL_MODEL_SEED", "42")) if seed is None else int(seed)
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(resolved_seed)
+        return FederatedCNN().double()
 
 
 def read_idx_labels(path: Path, limit: int = NUM_TRAIN_IMAGES) -> torch.Tensor:
@@ -305,6 +334,68 @@ def current_dataset_name() -> str:
 
 def is_multilabel_dataset() -> bool:
     return current_dataset_name() == "chestmnist"
+
+
+def chestmnist_training_metadata_path() -> Path:
+    override = os.environ.get("CHESTMNIST_TRAINING_METADATA_PATH")
+    if override:
+        return Path(override).resolve()
+
+    candidates = [
+        data_dir() / "training-metadata.json",
+        repo_root() / "data" / "chestmnist" / "training-metadata.json",
+        Path("/dfl/config/chestmnist/training-metadata.json"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+def multilabel_pos_weight_from_counts(
+    sample_count: int,
+    positive_counts: Iterable[int],
+    *,
+    cap: float = CHESTMNIST_DEFAULT_POS_WEIGHT_CAP,
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    positives = torch.tensor(list(positive_counts), dtype=dtype)
+    if positives.numel() != CHESTMNIST_NUM_LABELS:
+        raise ValueError(f"Expected {CHESTMNIST_NUM_LABELS} ChestMNIST positive counts, got {positives.numel()}")
+    if sample_count <= 0 or torch.any(positives <= 0) or torch.any(positives >= sample_count):
+        raise ValueError("ChestMNIST positive counts must be between zero and the sample count")
+    if not np.isfinite(cap) or cap < 1.0:
+        raise ValueError("DFL_POS_WEIGHT_CAP must be a finite number greater than or equal to one")
+
+    negatives = float(sample_count) - positives
+    return torch.clamp(negatives / positives, max=float(cap))
+
+
+def load_chestmnist_pos_weight(*, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    metadata_path = chestmnist_training_metadata_path()
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if (
+        metadata.get("schema_version") != 1
+        or metadata.get("dataset") != "chestmnist"
+        or metadata.get("source_split") != "train"
+        or metadata.get("label_count") != CHESTMNIST_NUM_LABELS
+    ):
+        raise ValueError(f"Unexpected ChestMNIST metadata in {metadata_path}")
+    sample_count = int(metadata["sample_count"])
+    positive_counts = [int(value) for value in metadata["positive_counts"]]
+    negative_counts = [int(value) for value in metadata["negative_counts"]]
+    if len(negative_counts) != CHESTMNIST_NUM_LABELS or any(
+        positive + negative != sample_count
+        for positive, negative in zip(positive_counts, negative_counts, strict=True)
+    ):
+        raise ValueError(f"Inconsistent ChestMNIST class counts in {metadata_path}")
+    cap = _environment_float("DFL_POS_WEIGHT_CAP", CHESTMNIST_DEFAULT_POS_WEIGHT_CAP)
+    return multilabel_pos_weight_from_counts(
+        sample_count,
+        positive_counts,
+        cap=cap,
+        dtype=dtype,
+    )
 
 
 def train_dataset_paths() -> tuple[Path, Path | None]:
@@ -786,16 +877,113 @@ def _persist_evaluation_metrics(
     return persisted_summary
 
 
+def deterministic_training_seed(round_id: int | None = None, device_id: str | int | None = None) -> int:
+    base_seed = int(os.environ.get("DFL_TRAIN_SEED", "42"))
+    parsed_round = _optional_int(round_id)
+    round_component = 0 if parsed_round is None else parsed_round
+    device_component = "" if device_id is None else str(device_id)
+    seed_material = f"{base_seed}:{round_component}:{device_component}".encode("utf-8")
+    return int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "little") & ((1 << 63) - 1)
+
+
+def _environment_float(name: str, default: float) -> float:
+    value = os.environ.get(name, "").strip()
+    return default if not value else float(value)
+
+
+def training_learning_rate(round_id: int | None = None) -> float:
+    """Return the configured learning rate for the current source-model round."""
+    default_lr = CHESTMNIST_DEFAULT_LEARNING_RATE if is_multilabel_dataset() else LEARNING_RATE
+    base_learning_rate = _environment_float("DFL_TRAIN_LEARNING_RATE", default_lr)
+    if not np.isfinite(base_learning_rate) or base_learning_rate <= 0:
+        raise ValueError("DFL_TRAIN_LEARNING_RATE must be finite and greater than zero")
+
+    schedule = os.environ.get("DFL_TRAIN_LR_SCHEDULE", "constant").strip().lower() or "constant"
+    if schedule not in {"constant", "late_cosine"}:
+        raise ValueError(
+            f"Unsupported DFL_TRAIN_LR_SCHEDULE={schedule!r}; expected 'constant' or 'late_cosine'"
+        )
+    if schedule == "constant" or round_id is None:
+        return base_learning_rate
+
+    parsed_round = _optional_int(round_id)
+    if parsed_round is None or parsed_round < 0:
+        raise ValueError("round_id must be a non-negative integer for the late-cosine schedule")
+    target_round = int(os.environ.get("ROUND", "0"))
+    decay_start_round = int(os.environ.get("DFL_TRAIN_LR_DECAY_START_ROUND", "20"))
+    final_factor = _environment_float("DFL_TRAIN_LR_FINAL_FACTOR", 0.25)
+    final_source_round = target_round - 1
+    if target_round < 2:
+        raise ValueError("ROUND must be at least 2 for the late-cosine schedule")
+    if decay_start_round < 0 or decay_start_round >= final_source_round:
+        raise ValueError(
+            "DFL_TRAIN_LR_DECAY_START_ROUND must be non-negative and smaller than ROUND - 1"
+        )
+    if not np.isfinite(final_factor) or not 0.0 < final_factor <= 1.0:
+        raise ValueError("DFL_TRAIN_LR_FINAL_FACTOR must be finite and in (0, 1]")
+    if parsed_round <= decay_start_round:
+        return base_learning_rate
+
+    progress = min(
+        1.0,
+        (parsed_round - decay_start_round) / (final_source_round - decay_start_round),
+    )
+    multiplier = final_factor + (1.0 - final_factor) * 0.5 * (
+        1.0 + math.cos(math.pi * progress)
+    )
+    return base_learning_rate * multiplier
+
+
+def build_training_optimizer(
+    model: nn.Module,
+    *,
+    round_id: int | None = None,
+) -> torch.optim.Optimizer:
+    default_name = "adamw" if is_multilabel_dataset() else "sgd"
+    name = os.environ.get("DFL_TRAIN_OPTIMIZER", "").strip().lower() or default_name
+    learning_rate = training_learning_rate(round_id)
+    weight_decay = _environment_float(
+        "DFL_TRAIN_WEIGHT_DECAY",
+        CHESTMNIST_DEFAULT_WEIGHT_DECAY if is_multilabel_dataset() else 0.0,
+    )
+    if not np.isfinite(weight_decay) or weight_decay < 0:
+        raise ValueError("DFL_TRAIN_WEIGHT_DECAY must be finite and non-negative")
+
+    if name == "adamw":
+        return torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    if name == "sgd":
+        momentum = _environment_float("DFL_TRAIN_MOMENTUM", 0.0)
+        if not np.isfinite(momentum) or not 0 <= momentum < 1:
+            raise ValueError("DFL_TRAIN_MOMENTUM must be finite and in [0, 1)")
+        return torch.optim.SGD(
+            model.parameters(),
+            lr=learning_rate,
+            momentum=momentum,
+            weight_decay=weight_decay,
+        )
+    raise ValueError(f"Unsupported DFL_TRAIN_OPTIMIZER={name!r}; expected 'adamw' or 'sgd'")
+
+
+def build_training_criterion(*, dtype: torch.dtype = torch.float32) -> nn.Module:
+    if is_multilabel_dataset():
+        return nn.BCEWithLogitsLoss(pos_weight=load_chestmnist_pos_weight(dtype=dtype))
+    return nn.CrossEntropyLoss()
+
+
 def train_model(
     epochs: int,
     aggregator_public_key_der_hex: str,
     medical_signer_snapshot: dict[str, Any] | None = None,
     *,
     private_key: str | None = None,
+    round_id: int | None = None,
+    device_id: str | int | None = None,
 ) -> None:
+    if epochs <= 0:
+        raise ValueError("epochs must be greater than zero")
     gm_path = data_dir() / "gm.bin"
     print(f"Starting local training from on-chain resolved global model: {gm_path}")
-    model = read_model_bin(gm_path)
+    model = read_model_bin(gm_path).float()
     if is_multilabel_dataset():
         if not medical_signer_snapshot:
             raise ValueError("signed ChestMNIST training requires an on-chain medical signer snapshot")
@@ -803,30 +991,73 @@ def train_model(
         provenance = verify_training_provenance(train_data_path, medical_signer_snapshot)
         print(f"Verified signed ChestMNIST provenance: {json.dumps(provenance, sort_keys=True)}")
     images, labels = load_training_dataset()
+    images = images.float()
+    labels = labels.float() if is_multilabel_dataset() else labels.long()
     num_images = int(images.shape[0])
-    optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
-    criterion: nn.Module = nn.BCEWithLogitsLoss() if is_multilabel_dataset() else nn.CrossEntropyLoss()
+    if num_images <= 0:
+        raise ValueError("The local training shard is empty")
+    optimizer = build_training_optimizer(model, round_id=round_id)
+    criterion = build_training_criterion(dtype=images.dtype)
+    grad_clip_norm = _environment_float(
+        "DFL_GRAD_CLIP_NORM",
+        CHESTMNIST_DEFAULT_GRAD_CLIP_NORM if is_multilabel_dataset() else 5.0,
+    )
+    if not np.isfinite(grad_clip_norm) or grad_clip_norm <= 0:
+        raise ValueError("DFL_GRAD_CLIP_NORM must be finite and greater than zero")
+    training_seed = deterministic_training_seed(round_id, device_id)
+    generator = torch.Generator().manual_seed(training_seed)
+    optimizer_group = optimizer.param_groups[0]
+    print(
+        f"Training configuration: optimizer={optimizer.__class__.__name__}, "
+        f"lr={optimizer_group['lr']}, "
+        f"lr_schedule={os.environ.get('DFL_TRAIN_LR_SCHEDULE', 'constant') or 'constant'}, "
+        f"weight_decay={optimizer_group['weight_decay']}, "
+        f"batch_size={BATCH_SIZE}, grad_clip_norm={grad_clip_norm}, "
+        f"seed={training_seed}, samples={num_images}, "
+        f"torch_threads={torch.get_num_threads()}, "
+        f"torch_interop_threads={torch.get_num_interop_threads()}"
+    )
 
     for epoch in range(1, epochs + 1):
-        indices = list(range(num_images))
-        random.shuffle(indices)
+        indices = torch.randperm(num_images, generator=generator)
         correct = 0
         total_predictions = 0
+        predicted_positives = 0
+        cumulative_loss = 0.0
         for start in range(0, num_images, BATCH_SIZE):
-            batch_idx = torch.tensor(indices[start : start + BATCH_SIZE], dtype=torch.long)
+            batch_idx = indices[start : start + BATCH_SIZE]
             x = images.index_select(0, batch_idx)
             y = labels.index_select(0, batch_idx)
             logits = model(x)
             loss = criterion(logits, y)
-            optimizer.zero_grad()
+            if not torch.isfinite(loss):
+                raise FloatingPointError(f"Non-finite training loss in epoch {epoch}")
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(),
+                max_norm=grad_clip_norm,
+                error_if_nonfinite=True,
+            )
             optimizer.step()
             batch_correct, batch_total = batch_accuracy_stats(logits, y)
             correct += batch_correct
             total_predictions += batch_total
+            cumulative_loss += float(loss.detach().item()) * int(x.shape[0])
+            if is_multilabel_dataset():
+                predicted_positives += int((torch.sigmoid(logits.detach()) >= 0.5).sum().item())
         accuracy_percent = (correct / total_predictions) * 100 if total_predictions else 0.0
         print(f"Epoch: {epoch}/{epochs}")
-        print(f"Accuracy: {accuracy_percent:.2f}% ({correct}/{total_predictions})")
+        print(f"Mean loss: {cumulative_loss / num_images:.6f}")
+        if is_multilabel_dataset():
+            positive_rate = (predicted_positives / total_predictions) * 100 if total_predictions else 0.0
+            print(
+                f"Uncalibrated label-wise accuracy @0.5: "
+                f"{accuracy_percent:.2f}% ({correct}/{total_predictions})"
+            )
+            print(f"Uncalibrated predicted-positive rate @0.5: {positive_rate:.2f}%")
+        else:
+            print(f"Accuracy: {accuracy_percent:.2f}% ({correct}/{total_predictions})")
         print()
 
     lm_path = data_dir() / "lm.bin"
@@ -1332,6 +1563,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     train = sub.add_parser("train")
     train.add_argument("epochs", type=int)
     train.add_argument("aggregator_public_key_der_hex", nargs="?", default="")
+    train.add_argument("--round-id", type=int)
+    train.add_argument("--device-id")
     sub.add_parser("get_random_wb")
     aggregate_parser = sub.add_parser("aggregate")
     aggregate_parser.add_argument("num_files", type=int)
@@ -1347,7 +1580,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     elif args.command == "client":
         start_client(args.server_ip, args.device_id)
     elif args.command == "train":
-        train_model(args.epochs, args.aggregator_public_key_der_hex)
+        train_model(
+            args.epochs,
+            args.aggregator_public_key_der_hex,
+            round_id=args.round_id,
+            device_id=args.device_id,
+        )
     elif args.command == "get_random_wb":
         save_random()
     elif args.command == "aggregate":

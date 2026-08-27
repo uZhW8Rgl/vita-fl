@@ -50,16 +50,29 @@ services:
       EXPECTED_CHAIN_ID: "31337"
       RPC_URL: "REPLACE_WITH_RPC_URL"
 
-      EPOCH: "1"
+      EPOCH: "2"
       ROUND: "1"
+      DFL_MODEL_SEED: "42"
+      DFL_TRAIN_SEED: "42"
+      DFL_TRAIN_OPTIMIZER: "adamw"
+      DFL_TRAIN_LEARNING_RATE: "0.003"
+      DFL_TRAIN_LR_SCHEDULE: "constant"
+      DFL_TRAIN_LR_DECAY_START_ROUND: "20"
+      DFL_TRAIN_LR_FINAL_FACTOR: "0.25"
+      DFL_TRAIN_WEIGHT_DECAY: "0.0001"
+      DFL_GRAD_CLIP_NORM: "5"
+      DFL_POS_WEIGHT_CAP: "10"
       GM_UPDATE_TIMEOUT_MS: "30000"
       GM_UPDATE_TIMEOUT_LOOPS: "2"
       AGGREGATION_UPDATE_ESTIMATE_MS: "30000"
       GM_UPDATE_POLL_MS: "5000"
       WORKER_COUNT: "1"
 
+      DATASET_NAME: chestmnist
       TRAIN_IMAGES_SRC: /dfl/config/training_data/train-images-0.idx3-ubyte
       TRAIN_LABELS_SRC: /dfl/config/training_data/train-labels-0.idx1-ubyte
+      TRAIN_DATA_SRC: /dfl/config/chestmnist/training_data/train-data-0.npz
+      TEST_DATA_SRC: /dfl/config/chestmnist/test_data/test-data.npz
 
       PYTHON_SERVICE_URL: http://127.0.0.1:8000
       MODEL_UPLOAD_PORT: "8001"

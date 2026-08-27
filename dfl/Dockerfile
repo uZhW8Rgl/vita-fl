@@ -69,6 +69,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY data/mnist ./config
 COPY data/chestmnist/training_data ./config/chestmnist/training_data
+COPY data/chestmnist/training-metadata.json ./config/chestmnist/training-metadata.json
 COPY data/chestmnist/validation_data ./config/chestmnist/validation_data
 COPY data/chestmnist/test_data ./config/chestmnist/test_data
 COPY data/chestmnist/README.md ./config/chestmnist/README.md

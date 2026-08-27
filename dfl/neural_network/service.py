@@ -167,6 +167,8 @@ class Handler(BaseHTTPRequestHandler):
                     str(payload.get("aggregator_public_key_der_hex", "")),
                     payload.get("medical_signer_snapshot"),
                     private_key=_required_private_key(payload),
+                    round_id=payload.get("round_id"),
+                    device_id=payload.get("device_id"),
                 )
                 _json_response(self, 200, {"ok": True})
                 return

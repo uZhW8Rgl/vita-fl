@@ -254,7 +254,7 @@ def update_compose(compose_path: Path, worker_count: int) -> None:
     text = compose_path.read_text(encoding="utf-8")
     text = re.sub(
         r'      - (?:"\d+"|\$\{ANVIL_ACCOUNT_COUNT:-\d+\})\n      - --hardfork',
-        '      - ${ANVIL_ACCOUNT_COUNT:-500}\n      - --hardfork',
+        f'      - ${{ANVIL_ACCOUNT_COUNT:-{worker_count}}}\n      - --hardfork',
         text,
         count=1,
     )
@@ -332,7 +332,7 @@ def update_env_file(env_path: Path, accounts: list[tuple[str, str]], worker_coun
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare local DFL worker configuration for larger experiments.")
-    parser.add_argument("--workers", type=int, default=500, help="Total number of worker services/accounts/keys")
+    parser.add_argument("--workers", type=int, default=25, help="Total number of worker services/accounts/keys")
     parser.add_argument("--keys-dir", type=Path, default=Path("data/rsa_keys"))
     parser.add_argument("--compose", type=Path, default=Path("compose.yml"))
     parser.add_argument("--env", type=Path, default=Path(".env"))

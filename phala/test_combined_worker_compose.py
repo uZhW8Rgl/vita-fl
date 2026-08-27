@@ -60,6 +60,60 @@ class CombinedWorkerComposeTests(unittest.TestCase):
                 with self.subTest(template=template[:20], entry=entry):
                     self.assertIn(entry, template)
 
+    def test_training_optimization_inputs_reach_every_worker_path(self) -> None:
+        expected_template_entries = (
+            'DFL_MODEL_SEED: "${dfl_model_seed}"',
+            'DFL_TRAIN_SEED: "${dfl_train_seed}"',
+            'DFL_TRAIN_OPTIMIZER: "${dfl_train_optimizer}"',
+            'DFL_TRAIN_LEARNING_RATE: "${dfl_train_learning_rate}"',
+            'DFL_TRAIN_LR_SCHEDULE: "${dfl_train_lr_schedule}"',
+            'DFL_TRAIN_LR_DECAY_START_ROUND: "${dfl_train_lr_decay_start_round}"',
+            'DFL_TRAIN_LR_FINAL_FACTOR: "${dfl_train_lr_final_factor}"',
+            'DFL_TRAIN_WEIGHT_DECAY: "${dfl_train_weight_decay}"',
+            'DFL_GRAD_CLIP_NORM: "${dfl_grad_clip_norm}"',
+            'DFL_POS_WEIGHT_CAP: "${dfl_pos_weight_cap}"',
+        )
+        for template in (self.static_template, self.dynamic_template):
+            for entry in expected_template_entries:
+                with self.subTest(template=template[:20], entry=entry):
+                    self.assertIn(entry, template)
+
+        manual_template = (ROOT / "dstack-compose.template.yml").read_text(
+            encoding="utf-8"
+        )
+        for environment_name in (
+            "DFL_MODEL_SEED",
+            "DFL_TRAIN_SEED",
+            "DFL_TRAIN_OPTIMIZER",
+            "DFL_TRAIN_LEARNING_RATE",
+            "DFL_TRAIN_LR_SCHEDULE",
+            "DFL_TRAIN_LR_DECAY_START_ROUND",
+            "DFL_TRAIN_LR_FINAL_FACTOR",
+            "DFL_TRAIN_WEIGHT_DECAY",
+            "DFL_GRAD_CLIP_NORM",
+            "DFL_POS_WEIGHT_CAP",
+        ):
+            with self.subTest(manual_environment_name=environment_name):
+                self.assertIn(f"      {environment_name}:", manual_template)
+
+        contracts_template = (
+            ROOT / "dstack-compose.contracts.phala.tftpl"
+        ).read_text(encoding="utf-8")
+        for environment_name in (
+            "DFL_MODEL_SEED",
+            "DFL_TRAIN_SEED",
+            "DFL_TRAIN_OPTIMIZER",
+            "DFL_TRAIN_LEARNING_RATE",
+            "DFL_TRAIN_LR_SCHEDULE",
+            "DFL_TRAIN_LR_DECAY_START_ROUND",
+            "DFL_TRAIN_LR_FINAL_FACTOR",
+            "DFL_TRAIN_WEIGHT_DECAY",
+            "DFL_GRAD_CLIP_NORM",
+            "DFL_POS_WEIGHT_CAP",
+        ):
+            with self.subTest(environment_name=environment_name):
+                self.assertIn(f"      {environment_name}:", contracts_template)
+
     def test_completed_training_reboots_once_then_keeps_worker_idle(self) -> None:
         supervisor = (
             REPOSITORY_ROOT / "dfl/start_node_neural_network.sh"

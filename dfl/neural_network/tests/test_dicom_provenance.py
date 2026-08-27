@@ -42,7 +42,7 @@ def signer_snapshot() -> dict[str, object]:
 class DicomProvenanceTests(unittest.TestCase):
     def test_checked_in_shard_verifies_against_onchain_style_snapshot(self) -> None:
         result = verify_training_provenance(SIGNED_SHARD, signer_snapshot())
-        self.assertEqual(result["verified_samples"], 157)
+        self.assertEqual(result["verified_samples"], 3139)
         self.assertEqual(result["active_device_keys"], 5)
         self.assertEqual(result["active_radiologist_keys"], 1)
 

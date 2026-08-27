@@ -84,6 +84,16 @@ class WorkerDeploymentConfig:
     os_image: str = "dstack-dev-0.5.7"
     epoch: int = 1
     round: int = 5
+    dfl_model_seed: str = "42"
+    dfl_train_seed: str = "42"
+    dfl_train_optimizer: str = "adamw"
+    dfl_train_learning_rate: str = "0.003"
+    dfl_train_lr_schedule: str = "constant"
+    dfl_train_lr_decay_start_round: str = "20"
+    dfl_train_lr_final_factor: str = "0.25"
+    dfl_train_weight_decay: str = "0.0001"
+    dfl_grad_clip_norm: str = "5"
+    dfl_pos_weight_cap: str = "10"
     gm_update_timeout_ms: int = 30_000
     gm_update_timeout_loops: int = 2
     aggregation_update_estimate_ms: int = 30_000
@@ -488,6 +498,18 @@ def controller_from_environment() -> PhalaWorkerController:
         os_image=os.environ.get("PHALA_OS_IMAGE", "dstack-dev-0.5.7"),
         epoch=integer("EPOCH", 1),
         round=integer("ROUND", 5),
+        dfl_model_seed=os.environ.get("DFL_MODEL_SEED", "42"),
+        dfl_train_seed=os.environ.get("DFL_TRAIN_SEED", "42"),
+        dfl_train_optimizer=os.environ.get("DFL_TRAIN_OPTIMIZER", "adamw"),
+        dfl_train_learning_rate=os.environ.get("DFL_TRAIN_LEARNING_RATE", "0.003"),
+        dfl_train_lr_schedule=os.environ.get("DFL_TRAIN_LR_SCHEDULE", "constant"),
+        dfl_train_lr_decay_start_round=os.environ.get(
+            "DFL_TRAIN_LR_DECAY_START_ROUND", "20"
+        ),
+        dfl_train_lr_final_factor=os.environ.get("DFL_TRAIN_LR_FINAL_FACTOR", "0.25"),
+        dfl_train_weight_decay=os.environ.get("DFL_TRAIN_WEIGHT_DECAY", "0.0001"),
+        dfl_grad_clip_norm=os.environ.get("DFL_GRAD_CLIP_NORM", "5"),
+        dfl_pos_weight_cap=os.environ.get("DFL_POS_WEIGHT_CAP", "10"),
         gm_update_timeout_ms=integer("GM_UPDATE_TIMEOUT_MS", 30_000),
         gm_update_timeout_loops=integer("GM_UPDATE_TIMEOUT_LOOPS", 2),
         aggregation_update_estimate_ms=integer("AGGREGATION_UPDATE_ESTIMATE_MS", 30_000),

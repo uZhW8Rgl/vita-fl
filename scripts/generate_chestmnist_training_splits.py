@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import random
 import struct
 import sys
@@ -93,6 +94,27 @@ def write_npz(
         radiologist_signatures=radiologist_signatures,
         provenance_version=np.bytes_(PROVENANCE_VERSION),
     )
+
+
+def write_training_metadata(path: Path, labels: np.ndarray) -> None:
+    flattened = labels.reshape(labels.shape[0], -1)
+    if flattened.shape[1] != 14:
+        raise ValueError(f"Expected 14 ChestMNIST labels, got {flattened.shape[1]}")
+    if not np.isfinite(flattened).all() or not np.isin(flattened, (0, 1)).all():
+        raise ValueError("ChestMNIST labels must be finite binary values")
+    positive_counts = flattened.astype(np.int64).sum(axis=0)
+    sample_count = int(flattened.shape[0])
+    metadata = {
+        "schema_version": 1,
+        "dataset": "chestmnist",
+        "source_split": "train",
+        "sample_count": sample_count,
+        "label_count": int(flattened.shape[1]),
+        "positive_counts": [int(value) for value in positive_counts],
+        "negative_counts": [int(sample_count - value) for value in positive_counts],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 
 
 def write_validation_npz(
@@ -239,6 +261,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Destination for the signed, strictly disjoint validation split",
     )
     parser.add_argument(
+        "--metadata-out",
+        type=Path,
+        default=Path("data/chestmnist/training-metadata.json"),
+        help="Destination for task-wide training-label statistics",
+    )
+    parser.add_argument(
         "--validation-only",
         action="store_true",
         help="Generate only the signed validation artifact; do not rewrite training shards or test data",
@@ -246,7 +274,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--workers",
         type=int,
-        default=500,
+        default=25,
         help="Number of worker splits to create",
     )
     parser.add_argument(
@@ -262,6 +290,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Directory containing the synthetic DICOM signer fixture private keys",
     )
     args = parser.parse_args(argv)
+
+    if args.workers < 1:
+        raise ValueError("--workers must be at least 1")
 
     if not args.source.exists():
         raise FileNotFoundError(
@@ -320,6 +351,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print(f"worker {worker_id}: {size} samples")
 
+        write_training_metadata(args.metadata_out, train_labels)
+        print(f"wrote training metadata: {args.metadata_out}")
+
         assert test_images is not None and test_labels is not None
         args.test_out.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(args.test_out, images=test_images, labels=test_labels)
@@ -341,6 +375,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     print(f"validation semantic SHA-256: {validation_result['semantic_sha256']}")
     print(f"validation file SHA-256: {validation_result['file_sha256']}")
+
+    if not args.validation_only:
+        stale_shards = []
+        for path in args.train_out_dir.glob("train-data-*.npz"):
+            worker_id = path.stem.removeprefix("train-data-")
+            if worker_id.isdigit() and int(worker_id) >= args.workers:
+                stale_shards.append(path)
+        for path in sorted(stale_shards):
+            path.unlink()
+        if stale_shards:
+            print(f"removed {len(stale_shards)} stale worker shards")
     return 0
 
 

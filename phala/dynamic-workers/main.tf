@@ -39,6 +39,16 @@ resource "phala_app" "worker" {
     reference_gas_price_timestamp_utc        = var.reference_gas_price_timestamp_utc
     epoch                                    = var.epoch
     round                                    = var.round
+    dfl_model_seed                           = var.dfl_model_seed
+    dfl_train_seed                           = var.dfl_train_seed
+    dfl_train_optimizer                      = var.dfl_train_optimizer
+    dfl_train_learning_rate                  = var.dfl_train_learning_rate
+    dfl_train_lr_schedule                    = var.dfl_train_lr_schedule
+    dfl_train_lr_decay_start_round           = var.dfl_train_lr_decay_start_round
+    dfl_train_lr_final_factor                = var.dfl_train_lr_final_factor
+    dfl_train_weight_decay                   = var.dfl_train_weight_decay
+    dfl_grad_clip_norm                       = var.dfl_grad_clip_norm
+    dfl_pos_weight_cap                       = var.dfl_pos_weight_cap
     gm_update_timeout_ms                     = var.gm_update_timeout_ms
     gm_update_timeout_loops                  = var.gm_update_timeout_loops
     aggregation_update_estimate_ms           = var.aggregation_update_estimate_ms
