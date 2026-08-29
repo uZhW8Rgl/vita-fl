@@ -725,6 +725,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(server, "phala_runtime_mode", return_value=True),
             patch.object(server, "require_control_admin"),
             patch.object(server, "normalize_training_config", return_value=normalized),
+            patch.object(server, "write_training_config") as write_config,
             patch.object(
                 server,
                 "configure_default_aggregation_policy",
@@ -742,6 +743,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raised.exception.status_code, 500)
         self.assertIn("policy transaction reverted", raised.exception.detail)
+        write_config.assert_called_once_with(normalized)
         controller.preflight_scale.assert_called_once()
         controller.scale.assert_not_called()
 
@@ -758,6 +760,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(server, "phala_runtime_mode", return_value=True),
             patch.object(server, "require_control_admin"),
             patch.object(server, "normalize_training_config", return_value=normalized),
+            patch.object(server, "write_training_config") as write_config,
             patch.object(server, "configure_default_aggregation_policy") as configure_policy,
             patch.object(server, "phala_worker_controller", return_value=controller),
             patch.object(
@@ -771,6 +774,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(raised.exception.status_code, 500)
         self.assertIn("attested compose mismatch", raised.exception.detail)
+        write_config.assert_called_once_with(normalized)
         configure_policy.assert_not_called()
         controller.scale.assert_not_called()
 
