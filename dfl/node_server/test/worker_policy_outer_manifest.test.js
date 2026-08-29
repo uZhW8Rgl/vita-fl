@@ -8,7 +8,7 @@ const IMAGE =
     "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:"
     + "4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553";
 const POLICY_V2_GOLDEN =
-    "0xafdf5af53b2261b7033b16222437b53335c6fa5ae3e71303e90336f272c3cf36";
+    "0xe4bda57e5c71e65b35ae363d33a338d0027033f648a9f91829d16d80f00e1864";
 
 const dockerCompose = [
     "services:",

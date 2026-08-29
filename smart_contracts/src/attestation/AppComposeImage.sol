@@ -47,10 +47,10 @@ library AppComposeImage {
     uint8 private constant OUTER_STORAGE_FS = 16;
     uint8 private constant OUTER_TPROXY_ENABLED = 17;
 
-    // SHA-256 of the decoded Phala Cloud platform pre-launch script v0.0.15
+    // SHA-256 of the decoded Phala Cloud platform pre-launch script v0.0.19
     // exported in phala/app_code.txt. User-supplied pre-launch code is rejected.
-    bytes32 private constant PHALA_PLATFORM_PRE_LAUNCH_V0_0_15 =
-        0xbf12939bc82c9bdd103b6b1226913e6da58ed7cfcfc7c7ae808ac0813715b9a8;
+    bytes32 private constant PHALA_PLATFORM_PRE_LAUNCH_V0_0_19 =
+        0xcec8f68ce6185b912023d886bba20cd06386dd9751af904e6107e758b9d68983;
     bytes private constant SERVICES = "services:";
     bytes private constant WORKER_SERVICE = "dfl-worker:";
     bytes private constant PARTICIPANT_KEY_VOLUME = "participant-key-state:";
@@ -175,7 +175,7 @@ library AppComposeImage {
                         OUTER_MANIFEST_POLICY_DOMAIN,
                         uint256(2),
                         keccak256(DOCKER_COMPOSE_RUNNER),
-                        PHALA_PLATFORM_PRE_LAUNCH_V0_0_15
+                        PHALA_PLATFORM_PRE_LAUNCH_V0_0_19
                     )
                 )
             )
@@ -262,7 +262,7 @@ library AppComposeImage {
             bytes memory script;
             (script, next) = _decodeJsonString(input, cursor);
             require(
-                script.length == 0 || sha256(script) == PHALA_PLATFORM_PRE_LAUNCH_V0_0_15,
+                script.length == 0 || sha256(script) == PHALA_PLATFORM_PRE_LAUNCH_V0_0_19,
                 "user pre-launch script not allowed"
             );
             return next;

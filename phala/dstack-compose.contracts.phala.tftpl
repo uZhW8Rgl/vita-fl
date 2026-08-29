@@ -131,6 +131,19 @@ ${dynamic_worker_inventory_environment}
     image: ${control_api_image}
     restart: unless-stopped
     working_dir: /app
+    command:
+      - bash
+      - -ec
+      - |
+        if [ -n "${node_id}" ]; then
+          case "${node_id}" in
+            *[!0-9]*) echo "PHALA_NODE_ID must be a positive integer" >&2; exit 1 ;;
+          esac
+          if ! grep -Eq '^[[:space:]]*node_id[[:space:]]*=' /app/phala/dynamic-workers/main.tf; then
+            sed -i "/^[[:space:]]*image[[:space:]]*= var\\.os_image$/a\\  node_id   = ${node_id}" /app/phala/dynamic-workers/main.tf
+          fi
+        fi
+        exec python control_api/server.py
     ports:
       - "8091:8091"
     environment:

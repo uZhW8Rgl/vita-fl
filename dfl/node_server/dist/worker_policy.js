@@ -9,7 +9,7 @@ const SHA256_MARKER = "@sha256:";
 const YAML_MERGE_KEY = "<<:";
 const ENVIRONMENT_KEY = "environment:";
 const MAX_ENVIRONMENT_KEYS = 128;
-const PLATFORM_PRE_LAUNCH_SHA256 = "bf12939bc82c9bdd103b6b1226913e6da58ed7cfcfc7c7ae808ac0813715b9a8";
+const PLATFORM_PRE_LAUNCH_SHA256 = "cec8f68ce6185b912023d886bba20cd06386dd9751af904e6107e758b9d68983";
 const OUTER_MANIFEST_FIELDS = new Set([
     "docker_compose_file",
     "manifest_version",

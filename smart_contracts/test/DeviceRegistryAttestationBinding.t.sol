@@ -63,7 +63,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertEq(composeHash, sha256(appCompose));
         assertEq(derivedImageDigest, imageDigest);
         assertEq(
-            registry.workerPolicyHash(appCompose), 0xafdf5af53b2261b7033b16222437b53335c6fa5ae3e71303e90336f272c3cf36
+            registry.workerPolicyHash(appCompose), 0xe4bda57e5c71e65b35ae363d33a338d0027033f648a9f91829d16d80f00e1864
         );
     }
 
