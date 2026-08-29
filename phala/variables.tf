@@ -1031,7 +1031,7 @@ variable "tdx_quote_path" {
 }
 
 variable "tdx_reference_quote_path" {
-  description = "Path inside the contract-runtime container to the reference TDX quote."
+  description = "Explicit path inside the contract-runtime container to the owner-approved dstack base-runtime reference quote; this must not reuse the PCCS collateral quote."
   type        = string
   default     = ""
 }

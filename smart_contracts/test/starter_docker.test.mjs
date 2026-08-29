@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,34 @@ const contractsComposeTemplate = readFileSync(
   "utf8",
 );
 const localCompose = readFileSync(new URL("../../compose.yml", import.meta.url), "utf8");
+const smartContractsDockerfile = readFileSync(
+  new URL("../Dockerfile", import.meta.url),
+  "utf8",
+);
+const phalaEnvExample = readFileSync(
+  new URL("../../.env.phala.anvil.example", import.meta.url),
+  "utf8",
+);
+const manualContractsCompose = readFileSync(
+  new URL("../../phala/dstack-compose.contracts.template.yml", import.meta.url),
+  "utf8",
+);
+const runtimeOnlyContractsCompose = readFileSync(
+  new URL("../../phala/dstack-compose.contracts.runtime-only.yml", import.meta.url),
+  "utf8",
+);
+const phalaTfEnv = readFileSync(new URL("../../phala/tf-env.sh", import.meta.url), "utf8");
+const smartContractsWorkflow = readFileSync(
+  new URL("../../.github/workflows/publish-smart-contracts.yml", import.meta.url),
+  "utf8",
+);
+const dstackReferenceQuoteHex = readFileSync(
+  new URL(
+    "../../data/dstack-dev-0.5.9-de9c74f0-reference-tdx-quote",
+    import.meta.url,
+  ),
+  "utf8",
+).replace(/^0x/i, "").replace(/\s/g, "");
 const staticWorkerTemplate = readFileSync(
   new URL("../../phala/dstack-compose.worker.phala.tftpl", import.meta.url),
   "utf8",
@@ -219,6 +248,56 @@ test("worker policies are pre-rendered from the dynamic worker template", () => 
     contractsComposeTemplate,
     /INFERENCE_WORKER_POLICY_APP_COMPOSE_B64: "\$\$\{INFERENCE_WORKER_POLICY_APP_COMPOSE_B64\}"/,
   );
+});
+
+test("prod9 base-runtime policy quote is explicit, immutable, and separate from PCCS collateral", () => {
+  const referencePath = "data/dstack-dev-0.5.9-de9c74f0-reference-tdx-quote";
+  const containerReferencePath = `/dfl/${referencePath}`;
+  const quote = Buffer.from(dstackReferenceQuoteHex, "hex");
+  const measurementAt = (offset) => quote.subarray(offset, offset + 48).toString("hex");
+
+  assert.equal(quote.length, 5010);
+  assert.equal(
+    createHash("sha256").update(quote).digest("hex"),
+    "d5a6cd1b0dfb939633804b58fe65788debffd6a16b4ef55e8756777362df8543",
+  );
+  assert.equal(
+    measurementAt(184),
+    "f06dfda6dce1cf904d4e2bab1dc370634cf95cefa2ceb2de2eee127c9382698090d7a4a13e14c536ec6c9c3c8fa87077",
+  );
+  assert.equal(
+    measurementAt(376),
+    "68102e7b524af310f7b7d426ce75481e36c40f5d513a9009c046e9d37e31551f0134d954b496a3357fd61d03f07ffe96",
+  );
+  assert.equal(
+    measurementAt(424),
+    "07e6f51aa763abfe75c3ddfbf4f425fe3f0ceff66d807a75e049303dce9addf68e7218729bd419638af63a370f65878c",
+  );
+  assert.equal(
+    measurementAt(472),
+    "a2a58c9a959a4fa44bd6da0c97a2270c051faf12084cfe91ae900e4fdff6cdd4f69a82005e04ee920f231497894d677f",
+  );
+
+  assert.ok(
+    smartContractsDockerfile.includes(`COPY ${referencePath} ./${referencePath}`),
+  );
+  assert.match(
+    phalaEnvExample,
+    /^PCCS_QUOTE_PATH=\.\.\/data\/phala_tdx_quote$/m,
+  );
+  assert.match(
+    phalaEnvExample,
+    /^TDX_REFERENCE_QUOTE_PATH=\.\.\/data\/dstack-dev-0\.5\.9-de9c74f0-reference-tdx-quote$/m,
+  );
+  assert.ok(manualContractsCompose.includes(`TDX_REFERENCE_QUOTE_PATH: ${containerReferencePath}`));
+  assert.ok(runtimeOnlyContractsCompose.includes(`TDX_REFERENCE_QUOTE_PATH: ${containerReferencePath}`));
+  assert.ok(localCompose.includes(`TDX_REFERENCE_QUOTE_PATH: \${TDX_REFERENCE_QUOTE_PATH:-../${referencePath}}`));
+  assert.match(contractsComposeTemplate, /TDX_REFERENCE_QUOTE_PATH: "\$\{tdx_reference_quote_path\}"/);
+  assert.match(phalaTfEnv, /append_var_if_set "tdx_reference_quote_path" "TDX_REFERENCE_QUOTE_PATH"/);
+  assert.ok(smartContractsWorkflow.includes(`- "${referencePath}"`));
+  assert.doesNotMatch(script, /DSTACK_REFERENCE_QUOTE_PATH=.*PCCS_QUOTE_PATH/);
+  assert.match(script, /TDX_REFERENCE_QUOTE_PATH is required/);
+  assert.match(script, /TDX_REFERENCE_QUOTE_PATH must identify a dedicated policy artifact/);
 });
 
 test("static and dynamic worker templates cannot drift outside variable telemetry", () => {

@@ -790,9 +790,18 @@ if [ "$ENABLE_DCAP" = "1" ]; then
 	        echo "$TDX_CREATE_JSON"
 	        export DCAP_TDX_V4_ADDRESS=$(printf '%s' "$TDX_CREATE_JSON" | jq -re '.deployedTo // .deployed_to')
 	        echo "AutomataDcapTdxV4Attestation: $DCAP_TDX_V4_ADDRESS"
-		        DSTACK_REFERENCE_QUOTE_PATH=${DSTACK_REFERENCE_QUOTE_PATH:-${TDX_REFERENCE_QUOTE_PATH:-${PCCS_QUOTE_PATH:-../data/phala_tdx_quote}}}
+		        DSTACK_REFERENCE_QUOTE_PATH=${DSTACK_REFERENCE_QUOTE_PATH:-${TDX_REFERENCE_QUOTE_PATH:-}}
+		        if [ -z "$DSTACK_REFERENCE_QUOTE_PATH" ]; then
+		            echo "TDX_REFERENCE_QUOTE_PATH is required to pin the approved dstack MRTD and RTMR0-2; the PCCS collateral quote is a separate input"
+		            exit 1
+		        fi
 		        if [ ! -f "$DSTACK_REFERENCE_QUOTE_PATH" ]; then
 		            echo "A dstack reference quote is required to pin MRTD and RTMR0-2: $DSTACK_REFERENCE_QUOTE_PATH"
+		            exit 1
+		        fi
+		        PCCS_COLLATERAL_QUOTE_PATH=${PCCS_QUOTE_PATH:-../data/phala_tdx_quote}
+		        if [ "$(readlink -f "$DSTACK_REFERENCE_QUOTE_PATH")" = "$(readlink -f "$PCCS_COLLATERAL_QUOTE_PATH")" ]; then
+		            echo "TDX_REFERENCE_QUOTE_PATH must identify a dedicated policy artifact, not PCCS_QUOTE_PATH"
 		            exit 1
 		        fi
 		        TDX_REFERENCE_QUOTE_HEX=$(tr -d '[:space:]' < "$DSTACK_REFERENCE_QUOTE_PATH")

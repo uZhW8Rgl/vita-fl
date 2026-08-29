@@ -84,7 +84,7 @@ services:
       AGGREGATOR_TIMEOUT_REPORT_PERCENT: "50"
       EXPECTED_WORKER_IMAGE: "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:2f28735250cc1c955d7f711f6218fdcbfa6cdacbd5642730bb324ba68e5858e0"
       PCCS_QUOTE_PATH: /dfl/data/phala_tdx_quote
-      TDX_REFERENCE_QUOTE_PATH: ""
+      TDX_REFERENCE_QUOTE_PATH: /dfl/data/dstack-dev-0.5.9-de9c74f0-reference-tdx-quote
       DATASET_NAME: chestmnist
       W0_ACCOUNT_ADDRESS: "0x561c6C160021EBfD0810F013f4efCa24edB7e9E3"
       W1_ACCOUNT_ADDRESS: "0x6004D395731f85938177d5B07aCfEc2D5D7ECcB0"

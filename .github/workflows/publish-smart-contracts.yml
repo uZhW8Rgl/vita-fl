@@ -10,6 +10,8 @@ on:
       - "smart_contracts/**"
       - "dfl/node_server/abi/registry.json"
       - "data/initial_gm/**"
+      - "data/phala_tdx_quote"
+      - "data/dstack-dev-0.5.9-de9c74f0-reference-tdx-quote"
       - "phala/**"
       - ".github/workflows/publish-smart-contracts.yml"
   workflow_dispatch:

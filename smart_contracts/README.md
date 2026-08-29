@@ -21,8 +21,10 @@ It contains the minimum Solidity and deployment bundle required by the Docker-ba
   - `script/UploadPccsCollaterals.s.sol`
   - `script/VerifyTDXV4Quote.s.sol`
   - `starter_docker.sh`
-- runtime quote/collateral input:
-  - `../data/phala_tdx_quote`
+- runtime quote inputs:
+  - `../data/phala_tdx_quote` for PCCS collateral discovery
+  - `../data/dstack-dev-0.5.9-de9c74f0-reference-tdx-quote` for the
+    owner-approved dstack base-runtime measurements
 
 The contract and attestation deployment code is consolidated here so Docker builds use one focused source tree.
 
@@ -186,7 +188,7 @@ launch the selected workers.
 
 ## RTMR3 Workload Policy
 
-The live Phala path verifies the quote, certificate chain, QE identity and TCB status. It also fails closed unless the quote's dstack OS/boot tuple (`MRTD` and `RTMR0`--`RTMR2`) matches the owner-pinned tuple extracted during bootstrap from a reference dstack quote. That reference quote identifies the approved base runtime only; its Compose hash and `RTMR3` are not application allowlist inputs for the structured-log selector.
+The live Phala path verifies the quote, certificate chain, QE identity and TCB status. It also fails closed unless the quote's dstack OS/boot tuple (`MRTD` and `RTMR0`--`RTMR2`) matches the owner-pinned tuple extracted during bootstrap from the dedicated, version-bound reference quote. `PCCS_QUOTE_PATH` and `TDX_REFERENCE_QUOTE_PATH` are deliberately separate inputs; bootstrap never substitutes the collateral-discovery quote for the policy reference. The reference quote identifies the approved base runtime only; its Compose hash and `RTMR3` are not application allowlist inputs for the structured-log selector.
 
 Registration supplies the exact canonical `app_compose` byte preimage reported
 by dstack, not a caller-supplied compose hash, image digest, or policy claim.

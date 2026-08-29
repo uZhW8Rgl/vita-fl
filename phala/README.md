@@ -168,7 +168,7 @@ It also forwards the current Anvil/DFL profile settings into Terraform, includin
 - `DATASET_NAME`
 - `PCCS_FMSPC`, `PCCS_FETCH`, `PCCS_TEE`, `P256_MODE`
 - `DEPLOY_TDX_V4_DCAP`, `VERIFY_TDX_QUOTE_ONCHAIN`, `AGGREGATOR_TIMEOUT_REPORT_PERCENT`
-- `TDX_REFERENCE_QUOTE_PATH` for the owner-reviewed dstack base-runtime quote; when empty, bootstrap falls back to `PCCS_QUOTE_PATH`
+- `TDX_REFERENCE_QUOTE_PATH` for the owner-reviewed dstack base-runtime quote; it is mandatory when DCAP verification is deployed and must be distinct from `PCCS_QUOTE_PATH`
 
 The wrapper validates the complete fixed inventory, splits it into numbered
 JSON-array chunks below 60,000 bytes each, and supplies those chunks through a
@@ -307,8 +307,12 @@ ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eabdce36a18aaf53862de864f0
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
 7. Deploy the digest-pinned compose files on Phala/dstack.
-8. Fetch the TDX quote emitted by the worker.
-9. Store the quote as `data/phala_tdx_quote`.
+8. Fetch a current TDX quote for PCCS collateral discovery and store it as
+   `data/phala_tdx_quote`.
+9. Keep the owner-reviewed base-runtime policy quote separately at
+   `data/dstack-dev-0.5.9-de9c74f0-reference-tdx-quote`. Replace it only when
+   intentionally approving a different dstack base-runtime image, then review
+   its `MRTD` and `RTMR0`--`RTMR2` values and rebuild the smart-contract image.
 10. Optionally inspect its RTMR3:
 
 ```bash
@@ -347,7 +351,7 @@ the structured event fields on-chain, requires that hash in the unique
 `compose-hash` event, replays RTMR3, and compares it with the hardware-signed
 quote.
 
-Independently, bootstrap extracts `MRTD` and `RTMR0`--`RTMR2` from the owner-reviewed dstack reference quote and pins that OS/boot tuple in the verifier. The structured-log selector is fail-closed until this tuple is configured and requires every live worker quote to match it. The reference quote does not pin the worker-specific Compose hash or `RTMR3`; those remain live-derived and may differ between workers.
+Independently, bootstrap extracts `MRTD` and `RTMR0`--`RTMR2` from the owner-reviewed dstack reference quote and pins that OS/boot tuple in the verifier. The structured-log selector is fail-closed until this tuple is configured and requires every live worker quote to match it. This version-bound policy file is not the quote used for PCCS collateral discovery. The reference quote does not pin the worker-specific Compose hash or `RTMR3`; those remain live-derived and may differ between workers.
 
 For an independent offline audit, a live worker can publish its current RTMR3 event log and app-code export into the runtime Kubo MFS under `/phala-artifacts/latest`. Pull those into the repository with:
 
@@ -471,8 +475,8 @@ python scripts/verify_phala_rtmr3.py \
 Important:
 
 - The on-chain attestation policy verifies the live worker quote and event replay, not the contract-runtime TEE quote.
-- The dstack reference quote is mandatory for pinning `MRTD` and `RTMR0`--`RTMR2`, but it is not a Compose or `RTMR3` allowlist. `PHALA_ENFORCE_REFERENCE_RTMR3` remains a separate legacy-only debugging input. The new `registerDeviceWithAttestedAppCompose` selector calls the structured-log verifier without exact-`RTMR3` enforcement, so keep that flag disabled for the normal Phala flow.
-- If the worker digest changes, update `worker_image` and redeploy the contract runtime so it installs the new expected digest. Rebuild the `smart-contracts` image only when its contract or bootstrap code changes.
+- The dstack reference quote is mandatory for pinning `MRTD` and `RTMR0`--`RTMR2`, but it is not a Compose or `RTMR3` allowlist. It must be selected explicitly for the worker OS version; bootstrap aborts instead of falling back to the PCCS quote. `PHALA_ENFORCE_REFERENCE_RTMR3` remains a separate legacy-only debugging input. The new `registerDeviceWithAttestedAppCompose` selector calls the structured-log verifier without exact-`RTMR3` enforcement, so keep that flag disabled for the normal Phala flow.
+- If the worker digest changes, update `worker_image` and redeploy the contract runtime so it installs the new expected digest. Rebuild the `smart-contracts` image when its contract/bootstrap code or either packaged quote artifact changes.
 
 Current Terraform defaults in this scaffold match that target layout:
 
