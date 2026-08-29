@@ -197,7 +197,8 @@ locals {
     max_dynamic_workers                  = var.max_dynamic_workers
     initial_dynamic_worker_count         = min(var.initial_dynamic_worker_count, var.max_dynamic_workers)
     region                               = var.region
-    os_image                             = var.os_image
+    os_image                             = var.dynamic_worker_os_image
+    node_id                              = var.dynamic_worker_node_id == null ? "" : tostring(var.dynamic_worker_node_id)
     sello_required                       = var.enable_sello_receipts ? "1" : "0"
     sello_scitt_url                      = var.sello_scitt_url
   })
@@ -283,9 +284,9 @@ resource "phala_app" "contract_runtime" {
   size = var.contracts_size
 
   region    = var.region
-  image     = var.os_image
+  image     = var.contracts_os_image != null ? var.contracts_os_image : var.os_image
   disk_size = var.contracts_disk_size
-  replicas  = 1
+  replicas  = var.contracts_replicas
 
   kms           = var.kms
   listed        = var.listed
@@ -303,7 +304,7 @@ resource "phala_app" "contract_runtime" {
   gateway_enabled = var.contracts_gateway_enabled
   secure_time     = var.secure_time
 
-  wait_for_ready       = var.wait_for_ready
+  wait_for_ready       = var.contracts_wait_for_ready
   wait_timeout_seconds = var.wait_timeout_seconds
 }
 

@@ -81,7 +81,8 @@ class WorkerDeploymentConfig:
     reference_gas_price_source: str = ""
     reference_gas_price_timestamp_utc: str = ""
     region: str = "US-WEST-1"
-    os_image: str = "dstack-dev-0.5.7"
+    os_image: str = "dstack-dev-0.5.9-de9c74f0"
+    node_id: int | None = None
     epoch: int = 1
     round: int = 5
     dfl_model_seed: str = "42"
@@ -458,6 +459,18 @@ def controller_from_environment() -> PhalaWorkerController:
         except ValueError as exc:
             raise WorkerConfigurationError(f"{name} must be an integer") from exc
 
+    def optional_integer(name: str) -> int | None:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return None
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise WorkerConfigurationError(f"{name} must be an integer") from exc
+        if value <= 0:
+            raise WorkerConfigurationError(f"{name} must be a positive integer")
+        return value
+
     inventory = load_worker_inventory(inventory_json)
     telemetry_url = os.environ.get("DYNAMIC_WORKER_TELEMETRY_URL", "").strip()
     if not telemetry_url:
@@ -504,7 +517,8 @@ def controller_from_environment() -> PhalaWorkerController:
             "REFERENCE_GAS_PRICE_TIMESTAMP_UTC", ""
         ),
         region=os.environ.get("PHALA_REGION", "US-WEST-1"),
-        os_image=os.environ.get("PHALA_OS_IMAGE", "dstack-dev-0.5.7"),
+        os_image=os.environ.get("PHALA_OS_IMAGE", "dstack-dev-0.5.9-de9c74f0"),
+        node_id=optional_integer("PHALA_NODE_ID"),
         epoch=integer("EPOCH", 1),
         round=integer("ROUND", 5),
         dfl_model_seed=os.environ.get("DFL_MODEL_SEED", "42"),

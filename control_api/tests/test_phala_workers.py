@@ -71,6 +71,7 @@ class WorkerInventoryTests(unittest.TestCase):
             "DYNAMIC_WORKER_KUBO_API_URL": "https://runtime-5001.dstack.example",
             "DYNAMIC_WORKER_KUBO_GATEWAY_URL": "https://runtime-8080.dstack.example",
             "DYNAMIC_WORKER_TELEMETRY_URL": "https://runtime-8091.dstack.example",
+            "PHALA_NODE_ID": "18",
             "DFL_MODEL_SEED": "101",
             "DFL_TRAIN_SEED": "202",
             "DFL_TRAIN_OPTIMIZER": "adamw",
@@ -97,6 +98,7 @@ class WorkerInventoryTests(unittest.TestCase):
         self.assertEqual(values["dfl_train_weight_decay"], "0.0002")
         self.assertEqual(values["dfl_grad_clip_norm"], "4")
         self.assertEqual(values["dfl_pos_weight_cap"], "8")
+        self.assertEqual(values["node_id"], 18)
 
     def test_deployment_tfvars_include_the_measured_contract_trust_root(self) -> None:
         config = WorkerDeploymentConfig(

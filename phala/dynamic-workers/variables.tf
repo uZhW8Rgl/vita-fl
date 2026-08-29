@@ -120,7 +120,18 @@ variable "region" {
 
 variable "os_image" {
   type    = string
-  default = "dstack-dev-0.5.7"
+  default = "dstack-dev-0.5.9-de9c74f0"
+}
+
+variable "node_id" {
+  description = "Optional Phala teepod placement ID for all dynamic worker CVMs."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.node_id == null || (var.node_id > 0 && floor(var.node_id) == var.node_id)
+    error_message = "node_id must be null or a positive integer."
+  }
 }
 
 variable "epoch" { type = number }

@@ -84,6 +84,7 @@ resource "phala_app" "worker" {
   replicas  = 1
   region    = var.region
   image     = var.os_image
+  node_id   = var.node_id
 
   kms                 = "phala"
   listed              = false

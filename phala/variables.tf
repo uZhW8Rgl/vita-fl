@@ -185,7 +185,7 @@ variable "sello_scitt_url" {
 variable "agent_image" {
   description = "Digest-pinned LLM/MCP agent image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:462503a94222fccf34818d93fcfbc3a949a979d5e43bd5d1b83a7181a74fb10c"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:337df28644a1db406cd34963cd0007e46266b3146333a911a6e3b76715ed96d3"
 
   validation {
     condition = (
@@ -347,7 +347,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:edc292e54938530217a26e5b2afb1c0f093094b629cc471ae8e4c8a54ef416dd"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:4a8c0f82a92b8b308fb678fdabdd860419928c05d52fae45e480160e9f527044"
 
   validation {
     condition = (
@@ -460,10 +460,45 @@ variable "os_image" {
   default     = "dstack-dev-0.5.7"
 }
 
+variable "contracts_os_image" {
+  description = "Optional Phala OS image override for the contract-runtime CVM."
+  type        = string
+  default     = null
+}
+
+variable "dynamic_worker_os_image" {
+  description = "Exact Phala OS image slug used by dynamically provisioned worker CVMs."
+  type        = string
+  default     = "dstack-dev-0.5.9-de9c74f0"
+}
+
+variable "dynamic_worker_node_id" {
+  description = "Optional Phala teepod placement ID for dynamically provisioned worker CVMs."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.dynamic_worker_node_id == null || (var.dynamic_worker_node_id > 0 && floor(var.dynamic_worker_node_id) == var.dynamic_worker_node_id)
+    error_message = "dynamic_worker_node_id must be null or a positive integer."
+  }
+}
+
 variable "contracts_disk_size" {
   description = "Disk size in GB for the contract-runtime TEE."
   type        = number
   default     = 20
+}
+
+variable "contracts_replicas" {
+  description = "Number of contract-runtime CVM replicas."
+  type        = number
+  default     = 1
+}
+
+variable "contracts_wait_for_ready" {
+  description = "Whether contract-runtime updates wait for every configured replica to become ready."
+  type        = bool
+  default     = true
 }
 
 variable "worker_disk_size" {
@@ -630,19 +665,19 @@ variable "ssh_public_key_path" {
 variable "worker_image" {
   description = "Digest-pinned DFL worker container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:c25feb4b38df34efe895652ba686b607751560f1941174131e9a2f77439c9937"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:2f28735250cc1c955d7f711f6218fdcbfa6cdacbd5642730bb324ba68e5858e0"
 }
 
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b08ca9e141c7259774b8ec6988e7f7e8fbf5c94c597964a35726bf85672af5a6"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eabdce36a18aaf53862de864f016c12cf5ac92c3e0800034c0ed21ee25c93db2"
 }
 
 variable "zk_inference_image" {
   description = "Digest-pinned ZK inference container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:49a37c12f13f508ebead5549cb0dece3d4549a8d6d884ae35dde09acd17dadd5"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:3563b261372f23731e7f36287a6562f03f22d40b1524145408a05345fd6c1462"
 
   validation {
     condition = (
