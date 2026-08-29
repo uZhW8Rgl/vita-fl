@@ -3,7 +3,7 @@
 # - contracts_size = "tdx.small"
 # - worker_size    = "tdx.small"
 # - region    = "US-WEST-1"
-# - os_image  = "dstack-dev-0.5.7-9b6a5239"
+# - os_image  = "dstack-dev-0.5.7"
 # - contracts_os_image = null (falls back to os_image)
 # - contracts_disk_size = 20
 # - contracts_replicas = 1
@@ -19,7 +19,7 @@
 # contracts_app_name = "master-thesis-contract-runtime-phala"
 # worker_app_name    = "master-thesis-dfl-worker-0"
 # worker_replicas    = 1
-# contracts_os_image = "dstack-dev-0.5.9-de9c74f0"
+# contracts_os_image = "dstack-dev-0.5.9"
 # contracts_replicas = 1
 # contracts_wait_for_ready = true
 # max_dynamic_workers = 500
@@ -37,7 +37,7 @@
 # reference_gas_price_source = ""
 # reference_gas_price_timestamp_utc = ""
 # worker_image     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:2f28735250cc1c955d7f711f6218fdcbfa6cdacbd5642730bb324ba68e5858e0"
-# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eabdce36a18aaf53862de864f016c12cf5ac92c3e0800034c0ed21ee25c93db2"
+# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eb73c75a51f02b1ed30babda32c3d02c2d1bc3a425dc35a40f9b5e2a70ee19a3"
 # control_api_image = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:4a8c0f82a92b8b308fb678fdabdd860419928c05d52fae45e480160e9f527044"
 # ui_image = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:cfa6bf74771b4b16e3bf928ff9f3d7066e924ec728875dbc05cda9e312389a22"
 # ui_basic_auth_username = "operator"

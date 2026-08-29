@@ -469,7 +469,7 @@ variable "contracts_os_image" {
 variable "dynamic_worker_os_image" {
   description = "Exact Phala OS image slug used by dynamically provisioned worker CVMs."
   type        = string
-  default     = "dstack-dev-0.5.9-de9c74f0"
+  default     = "dstack-dev-0.5.9"
 }
 
 variable "dynamic_worker_node_id" {
@@ -671,7 +671,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eabdce36a18aaf53862de864f016c12cf5ac92c3e0800034c0ed21ee25c93db2"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eb73c75a51f02b1ed30babda32c3d02c2d1bc3a425dc35a40f9b5e2a70ee19a3"
 }
 
 variable "zk_inference_image" {

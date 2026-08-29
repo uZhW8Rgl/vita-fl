@@ -45,6 +45,34 @@ class CombinedWorkerComposeTests(unittest.TestCase):
         self.assertIn("restart: unless-stopped", compatibility_compose)
         self.assertNotIn("restart: on-failure", compatibility_compose)
 
+    def test_dynamic_worker_os_image_uses_provider_canonical_slug(self) -> None:
+        canonical = "dstack-dev-0.5.9"
+        deprecated = canonical + "-de9c74f0"
+        root_variables = (ROOT / "variables.tf").read_text(encoding="utf-8")
+        dynamic_variables = (
+            ROOT / "dynamic-workers/variables.tf"
+        ).read_text(encoding="utf-8")
+        environment_example = (
+            REPOSITORY_ROOT / ".env.phala.anvil.example"
+        ).read_text(encoding="utf-8")
+
+        self.assertRegex(
+            root_variables,
+            rf'(?s)variable "dynamic_worker_os_image".*?default\s+= "{re.escape(canonical)}"',
+        )
+        self.assertRegex(
+            dynamic_variables,
+            rf'(?s)variable "os_image".*?default\s+= "{re.escape(canonical)}"',
+        )
+        self.assertIn(
+            f"PHALA_DYNAMIC_WORKER_OS_IMAGE={canonical}",
+            environment_example,
+        )
+        self.assertNotIn(
+            f"PHALA_DYNAMIC_WORKER_OS_IMAGE={deprecated}",
+            environment_example,
+        )
+
     def test_cost_scenario_metadata_reaches_every_worker_template(self) -> None:
         expected_entries = (
             'ETH_EUR_PRICE: "${eth_eur_price}"',

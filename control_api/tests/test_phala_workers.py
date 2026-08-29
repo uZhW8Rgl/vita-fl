@@ -98,6 +98,7 @@ class WorkerInventoryTests(unittest.TestCase):
         self.assertEqual(values["dfl_train_weight_decay"], "0.0002")
         self.assertEqual(values["dfl_grad_clip_norm"], "4")
         self.assertEqual(values["dfl_pos_weight_cap"], "8")
+        self.assertEqual(values["os_image"], "dstack-dev-0.5.9")
         self.assertEqual(values["node_id"], 18)
 
     def test_deployment_tfvars_include_the_measured_contract_trust_root(self) -> None:

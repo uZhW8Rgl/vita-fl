@@ -302,7 +302,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:2f28735250cc1c955d7f711f6218fdc
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eabdce36a18aaf53862de864f016c12cf5ac92c3e0800034c0ed21ee25c93db2
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eb73c75a51f02b1ed30babda32c3d02c2d1bc3a425dc35a40f9b5e2a70ee19a3
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
@@ -487,6 +487,11 @@ Current Terraform defaults in this scaffold match that target layout:
 - `worker_size = "tdx.small"`
 - `zk_inference_size = "tdx.medium"` (4 GB RAM; the ZK prover does not complete on the 2 GB `tdx.small` profile)
 - `os_image = "dstack-dev-0.5.7"`
+- `dynamic_worker_os_image = "dstack-dev-0.5.9"`
+
+Use the canonical Phala OS selector above for dynamic workers. The
+`de9c74f0` suffix belongs only to the separately reviewed reference-quote
+artifact and is not part of the OS image slug returned by the Phala provider.
 
 TEE inference has no independent image, enable flag, size, disk, or Phala app
 setting. Publishing and selecting `worker_image` updates both Worker 0's DFL

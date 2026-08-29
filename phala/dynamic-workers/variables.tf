@@ -120,7 +120,7 @@ variable "region" {
 
 variable "os_image" {
   type    = string
-  default = "dstack-dev-0.5.9-de9c74f0"
+  default = "dstack-dev-0.5.9"
 }
 
 variable "node_id" {
