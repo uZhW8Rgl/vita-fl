@@ -43,6 +43,10 @@ contract GMStorage {
     bytes32 private constant EIP712_NAME_HASH = keccak256("VITA-FL GMStorage");
     bytes32 private constant EIP712_VERSION_HASH = keccak256("1");
 
+    /// @notice Content-addressed, public model from which bootstrap round 0 starts.
+    /// @dev This CID is fixed at deployment. It is the integrity anchor for the
+    ///      unsigned plaintext bootstrap model and is never overwritten.
+    string public initialModelCid;
     string public globalModel;
     string public backupGlobalModel;
     string public globalModelSignature;
@@ -52,7 +56,6 @@ contract GMStorage {
     uint256 public round;
     uint256 public completedRoundCount;
     address public lastRoundAggregator;
-    address public bootstrapAuthority;
     address public owner;
     address public device_registry_address;
     address public aggregator_selection_address;
@@ -107,30 +110,29 @@ contract GMStorage {
         bytes32 statementDigest
     );
     event AggregationPolicyAddressSet(address indexed aggregationPolicy);
-    event EncryptedBootstrapInitialized(
-        address indexed authority, string model, string signature, string keyBundle, bytes32 publisherPublicKeyHash
-    );
     event RoundAborted(uint256 indexed round, address indexed failedAggregator);
 
     constructor(
         address _device_registry_address,
         address _aggregator_selection_address,
-        string memory _initial_GM_CID,
-        string memory _initial_GM_SIG_CID,
-        address _initial_GM_SIGNER_ADDRESS
+        string memory _initial_GM_CID
     ) {
+        require(bytes(_initial_GM_CID).length > 0, "Initial model CID is empty");
+        initialModelCid = _initial_GM_CID;
         globalModel = _initial_GM_CID;
         backupGlobalModel = _initial_GM_CID;
-        globalModelSignature = _initial_GM_SIG_CID;
-        backupGlobalModelSignature = _initial_GM_SIG_CID;
+        // The public bootstrap model deliberately has neither an origin
+        // signature nor an encryption-key bundle. W0 creates both artifacts
+        // when it finalizes round 0 through the normal aggregation path.
+        globalModelSignature = "";
+        backupGlobalModelSignature = "";
         globalModelKeyBundle = "";
         backupGlobalModelKeyBundle = "";
         device_registry_address = _device_registry_address;
         aggregator_selection_address = _aggregator_selection_address;
         round = 0;
         owner = msg.sender;
-        bootstrapAuthority = msg.sender;
-        lastRoundAggregator = _initial_GM_SIGNER_ADDRESS;
+        lastRoundAggregator = address(0);
     }
 
     function setAggregationPolicyAddress(address aggregationPolicy) external {
@@ -144,33 +146,6 @@ contract GMStorage {
         );
         aggregation_policy_address = aggregationPolicy;
         emit AggregationPolicyAddressSet(aggregationPolicy);
-    }
-
-    function initializeEncryptedBootstrap(
-        string memory encryptedModel,
-        string memory encryptedSignature,
-        string memory encryptedKeyBundle,
-        bytes memory publisherPublicKey
-    ) external {
-        require(msg.sender == bootstrapAuthority, "Caller is not bootstrap authority");
-        require(round == 0 && !globalModelPublished[0], "Bootstrap phase is closed");
-        require(bytes(encryptedModel).length > 0, "Model CID is empty");
-        require(bytes(encryptedSignature).length > 0, "Model signature CID is empty");
-        require(bytes(encryptedKeyBundle).length > 0, "Model key bundle CID is empty");
-        require(publisherPublicKey.length > 0, "Bootstrap publisher public key is empty");
-
-        globalModel = encryptedModel;
-        backupGlobalModel = encryptedModel;
-        globalModelSignature = encryptedSignature;
-        backupGlobalModelSignature = encryptedSignature;
-        globalModelKeyBundle = encryptedKeyBundle;
-        backupGlobalModelKeyBundle = encryptedKeyBundle;
-        activeModelPublisherPublicKey = publisherPublicKey;
-        address authority = bootstrapAuthority;
-        bootstrapAuthority = address(0);
-        emit EncryptedBootstrapInitialized(
-            authority, encryptedModel, encryptedSignature, encryptedKeyBundle, keccak256(publisherPublicKey)
-        );
     }
 
     function setGlobalModel(string memory _newGlobalModel) external {
@@ -477,6 +452,7 @@ contract GMStorage {
 
     function abortRound(address failedAggregator) external {
         require(msg.sender == aggregator_selection_address, "Caller is not aggregator selection");
+        require(round > 0, "Bootstrap round cannot be aborted");
         require(
             IAggregatorSelection(aggregator_selection_address).isAggregator(failedAggregator),
             "Failed aggregator is not current aggregator"

@@ -411,14 +411,22 @@ export const getCurrentGMKeyBundle = async () => {
 
 export const getActiveModelBundle = async () => {
     const contract = getGMStorageContract();
-    const result = await contract.methods.getActiveModelBundle().call();
+    // The legacy active-bundle view has no model-round output. Use the atomic
+    // finalized view so the CID tuple, publisher key and authoritative model
+    // round are obtained under the same contract invariants and eth_call.
+    const result = await contract.methods.getFinalizedModelBundle().call();
+    const modelRound = Number(result.modelRound ?? result[4]);
+    if (!Number.isSafeInteger(modelRound) || modelRound <= 0) {
+        throw new Error(`GMStorage returned an invalid finalized model round: ${modelRound}`);
+    }
     return {
         modelCid: String(result.model ?? result[0] ?? ""),
         sigCid: String(result.signature ?? result[1] ?? ""),
         keyBundleCid: String(result.keyBundle ?? result[2] ?? ""),
-        publisher: String(result.publisher ?? result[3] ?? ""),
+        publisher: String(result.aggregator ?? result[3] ?? ""),
+        modelRound,
         publisherPublicKeyDerHex: normalizePublisherPublicKeyDerHex(
-            result.publisherPublicKey ?? result[4]
+            result.publisherPublicKey ?? result[5]
         ),
     };
 };
@@ -515,6 +523,13 @@ export const isGlobalModelPublished = async (sourceRound) => {
         .globalModelPublished(sourceRound)
         .call();
     return Boolean(published);
+};
+
+export const isRoundCompleted = async (sourceRound) => {
+    const completed = await getGMStorageContract().methods
+        .roundCompleted(sourceRound)
+        .call();
+    return Boolean(completed);
 };
 
 export const createAggregationStatement = async ({
@@ -920,6 +935,49 @@ export const getAuthorizedDevices = async () => {
     const contract = new web3.eth.Contract(abi, device_registry_address);
     const result = await contract.methods.getAuthorizedDevices().call();
     return Array.from(result || []);
+};
+
+export const getCommittedRunRosterState = async () => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    const blockNumber = await web3.eth.getBlockNumber();
+    const callAtSnapshot = (method) => method.call({}, blockNumber);
+    const normalizeBoolean = (value, label) => {
+        if (value === true || value === "true" || value === 1 || value === "1") {
+            return true;
+        }
+        if (value === false || value === "false" || value === 0 || value === "0") {
+            return false;
+        }
+        throw new Error(`DeviceRegistry returned an invalid ${label}: ${value}`);
+    };
+    const [committedRaw, frozenRaw, digest, registeredWorkerCount, roster] =
+        await Promise.all([
+            callAtSnapshot(contract.methods.runRosterCommitted()),
+            callAtSnapshot(contract.methods.runRosterFrozen()),
+            callAtSnapshot(contract.methods.runRosterDigest()),
+            callAtSnapshot(contract.methods.registeredRunMemberCount()),
+            callAtSnapshot(contract.methods.getRunRoster()),
+        ]);
+    const committed = normalizeBoolean(committedRaw, "run-roster commitment flag");
+    if (!committed) {
+        return {
+            committed: false,
+            frozen: false,
+            digest: null,
+            registeredWorkerCount: 0,
+            roster: [],
+        };
+    }
+    return {
+        committed: true,
+        frozen: normalizeBoolean(frozenRaw, "run-roster frozen flag"),
+        digest: String(digest || "").toLowerCase(),
+        registeredWorkerCount: Number(registeredWorkerCount),
+        roster: Array.from(roster || []).map((address) =>
+            String(address || "").toLowerCase()
+        ),
+    };
 };
 
 const decodeBytes32Text = (value) => {

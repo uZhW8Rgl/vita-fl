@@ -15,6 +15,36 @@ It coordinates:
 
 The actual model training and aggregation implementation lives in `neural_network`. The Node server is the orchestration layer around that Python service.
 
+## Round-0 Bootstrap
+
+Contract deployment publishes only an unsigned, plaintext initial-model CID
+and the worker-admission marker. Workers can therefore start and register their
+TEE-generated keys without waiting for a pre-encrypted model bundle. The
+Control API transports the exact selected roster to W0, but the immutable
+`DeviceRegistry.runRosterDigest` and ordered committed roster are authoritative.
+Before its first snapshot, W0 checks the MFS declaration against that on-chain
+commitment and waits until every committed worker has registered and the roster
+is frozen. It then reads every registered RSA key twice, rejects a changing
+view, and atomically persists the exact addresses and DER/SPKI keys in its
+protected participant-state directory. The snapshot contains only public keys
+and is bound to the on-chain roster digest and order. A round-0 restart
+validates the snapshot and each stored key byte-for-byte against the
+now-immutable on-chain registration, but
+does not reread MFS. A later mutable MFS marker therefore cannot wedge or
+retarget recovery, while a locally modified key snapshot fails closed.
+Subsequent model publications likewise encrypt for
+the complete frozen committed roster rather than a mutable authorized-device
+enumeration.
+
+Round 0 performs no local training. W0 fetches the deployment-fixed initial
+model CID, encrypts the model once, wraps the round key for every selected
+worker, signs the encrypted bundle with its registered participant key, and
+finalizes through the normal policy-bound aggregation path. Other workers wait
+for round 1 without participating in timeout recovery. The initial plaintext
+has no origin signature; recipients authenticate W0's encrypted bundle before
+decrypting it. Learned global models retain their existing plaintext model
+signatures in addition to the encrypted-bundle signature.
+
 ## Runtime Role
 
 Each worker process determines whether it is the current aggregator from the smart contracts:
@@ -37,13 +67,15 @@ separate:
 - `PRIVATE_KEY` is the bootstrap key for that logical account. In the Phala
   prototype it authorizes enrollment of the TEE action address and funds that
   address with Anvil test ETH; it does not authorize DFL state transitions.
-- The worker derives a process-scoped secp256k1 action key from a dstack KMS
-  secret and a fresh value held only in TEE memory, using the fixed context
-  `vita-fl/participant-ethereum-action/v1`. Its address is bound into the
-  registration `REPORTDATA`, the exact Compose evidence, and an enrollment
-  authorization signed by the logical participant. A process restart produces a
-  new action address and therefore requires fresh attestation; successful
-  registration atomically revokes the prior address.
+- The worker deterministically derives an application-bound secp256k1 action
+  key from a dstack KMS secret and a domain-separated context containing the
+  logical participant, chain, and Registry identities. Its address is bound
+  into the registration `REPORTDATA`, the exact Compose evidence, and an
+  enrollment authorization signed by the logical participant. Restarting the
+  same measured application derives the same action address and reuses the
+  existing registration. A changed application or derivation context cannot
+  impersonate that registration and must be attested and admitted separately;
+  once a run roster is frozen, its action-key bindings cannot be rotated.
 - `DeviceRegistry`, `AggregatorSelection`, and `GMStorage` resolve transaction
   senders through the registered action-address-to-participant mapping. Worker
   and aggregator operations therefore have to be signed by the action key of a

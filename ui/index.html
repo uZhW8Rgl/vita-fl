@@ -1126,6 +1126,27 @@
       return Boolean(workflowState.contract_initialized);
     }
 
+    function trainingPhase() {
+      if (typeof workflowState.training_phase === "string") {
+        return workflowState.training_phase;
+      }
+      if (!contractsReady()) {
+        return "contracts";
+      }
+      if (workflowState.bootstrap_in_progress) {
+        return "bootstrap";
+      }
+      return workflowState.training_started ? "training" : "setup";
+    }
+
+    function trainingRunActive() {
+      return ["bootstrap", "training", "completed"].includes(trainingPhase());
+    }
+
+    function canResumeTrainingStart() {
+      return trainingPhase() === "bootstrap" && Boolean(workflowState.run_roster?.committed);
+    }
+
     function trainingReady() {
       return contractsReady() && Boolean(workflowState.training_started);
     }
@@ -1195,14 +1216,15 @@
       return payload;
     }
 
-    function setTrainingControlsDisabled(disabled) {
+    function setTrainingControlsDisabled(disabled, lockConfiguration = false, allowStartRetry = false) {
+      const configurationDisabled = disabled || lockConfiguration;
       for (const button of trainingStepBtns) {
-        button.disabled = disabled;
+        button.disabled = configurationDisabled;
       }
       for (const input of trainingInputs) {
-        input.disabled = disabled;
+        input.disabled = configurationDisabled;
       }
-      trainingStartBtn.disabled = disabled;
+      trainingStartBtn.disabled = disabled || (lockConfiguration && !allowStartRetry);
       trainingResetBtn.disabled = disabled;
       grafanaValuesResetBtn.disabled = disabled || !hasAnyDashboardUrl;
       grafanaValuesResetBtn.classList.toggle("hidden", !hasAnyDashboardUrl);
@@ -1329,6 +1351,12 @@
           ? "Status: Smart contract initialization is running..."
           : "Status: Waiting for smart contracts to initialize.";
       }
+      if (trainingPhase() === "bootstrap") {
+        return "Status: Workers are registering. W0 is preparing the encrypted round-0 bootstrap model.";
+      }
+      if (trainingPhase() === "completed") {
+        return "Status: Federated training completed. Reset the run before selecting a new roster.";
+      }
       if (!trainingReady()) {
         return "Status: Smart contracts ready. Configure training in the Training Setup tab.";
       }
@@ -1338,7 +1366,10 @@
           : "Status: Training is live. Waiting for the agent chat backend.";
       }
       if (currentMode === "training") {
-        return "Status: Dynamic Phala training workers are running.";
+        const currentRound = Number(workflowState.current_round);
+        return Number.isFinite(currentRound)
+          ? `Status: Dynamic Phala training workers are running in on-chain round ${currentRound}.`
+          : "Status: Dynamic Phala training workers are running.";
       }
       if (currentMode === "transparency") {
         return "Status: Showing receipt-verified SCITT inference evidence.";
@@ -1350,7 +1381,7 @@
       if (workflowState.contract_running || contractBusy) {
         contractInitNoteEl.textContent = "Contract initialization is currently running. The next tabs unlock automatically after success.";
       } else if (contractsReady()) {
-        contractInitNoteEl.textContent = "Smart contracts initialized successfully. You can continue with the Training Setup tab.";
+        contractInitNoteEl.textContent = "Smart contracts initialized successfully and the deployment container has finished. You can continue with the Training Setup tab.";
       } else {
         contractInitNoteEl.textContent = "The base stack starts anvil, ipfs, and smart-contracts automatically. Training and agent access unlock after initialization finishes successfully.";
       }
@@ -1363,12 +1394,24 @@
       setTrainingInputValue("client_limit", trainingConfig.client_limit);
       if (!contractsReady()) {
         trainingNoteEl.textContent = "Initialize the smart contracts first to unlock the training controls.";
+      } else if (trainingPhase() === "bootstrap") {
+        const deployedWorkers = Number(workflowState.phala_workers?.deployed_worker_count || workflowState.running_workers?.length || 0);
+        trainingNoteEl.textContent = `${deployedWorkers} selected workers are deployed. W0 is waiting for their on-chain registrations and will encrypt the public initial model for the exact roster. Resume Start safely retries an interrupted deployment without changing that roster.`;
+      } else if (trainingPhase() === "training") {
+        trainingNoteEl.textContent = `Round-0 bootstrap is complete. Federated training is active at on-chain round ${workflowState.current_round}.`;
+      } else if (trainingPhase() === "completed") {
+        trainingNoteEl.textContent = `Training completed at on-chain round ${workflowState.current_round}. The finalized model remains available for inference; reset before starting another run.`;
       } else if (trainingDraftDirty) {
         trainingNoteEl.textContent = `Draft kept locally. Start Training will use rounds=${trainingConfig.rounds}, epoch=${trainingConfig.epoch}, workers=${trainingConfig.worker_count}, client limit=${trainingConfig.client_limit}.`;
       } else {
         trainingNoteEl.textContent = `Available Phala worker slots: ${trainingConfig.max_worker_count}. Client limit is capped to selected workers minus the active aggregator.`;
       }
-      setTrainingControlsDisabled(!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady());
+      setTrainingControlsDisabled(
+        !trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady(),
+        trainingRunActive(),
+        canResumeTrainingStart()
+      );
+      trainingStartBtn.textContent = canResumeTrainingStart() ? "Resume Start" : "Start Training";
     }
 
     function renderWorkflow() {
@@ -1432,7 +1475,7 @@
     }
 
     function adjustTrainingConfig(field, delta) {
-      if (!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady()) {
+      if (!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady() || trainingRunActive()) {
         return;
       }
       const currentValue = Number(trainingConfig[field] || 1);
@@ -1440,16 +1483,27 @@
     }
 
     async function startTrainingRun() {
-      if (!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady()) {
+      const resumeStart = canResumeTrainingStart();
+      if (
+        !trainingConfigLoaded
+        || trainingBusy
+        || contractBusy
+        || !contractsReady()
+        || (trainingRunActive() && !resumeStart)
+      ) {
         statusEl.textContent = "Status: Training controls are not ready yet.";
         return;
       }
 
       let finalStatus = "";
       trainingBusy = true;
-      commitAllTrainingInputs();
+      if (!resumeStart) {
+        commitAllTrainingInputs();
+      }
       renderTrainingConfig();
-      statusEl.textContent = "Status: Starting training stack with the selected setup...";
+      statusEl.textContent = resumeStart
+        ? "Status: Resuming the exact committed training roster..."
+        : "Status: Starting training stack with the selected setup...";
 
       try {
         const response = await fetch("/api/training/start", {
@@ -1470,7 +1524,7 @@
         await reloadDashboardFrames();
         const selectedWorkers = Array.isArray(payload.selected_workers) ? payload.selected_workers.join(", ") : "none";
         renderWorkflow();
-        finalStatus = `Status: Training restart triggered for ${selectedWorkers}.`;
+        finalStatus = `Status: ${selectedWorkers} deployed. W0 will complete the encrypted round-0 bootstrap after all selected workers register on-chain.`;
       } catch (error) {
         finalStatus = `Status: ERROR :: ${error.message || error}`;
       } finally {

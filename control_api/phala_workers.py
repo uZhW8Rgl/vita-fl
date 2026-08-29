@@ -386,6 +386,15 @@ class PhalaWorkerController:
         with self._lock:
             self._validated_training_request(worker_count, training_config)
 
+    def selected_account_addresses(self, worker_count: int) -> list[str]:
+        """Return the exact ordered identities that a subsequent scale will use."""
+        with self._lock:
+            self._validated_training_request(worker_count, None)
+            return [
+                identity.account_address
+                for identity in self.inventory[:worker_count]
+            ]
+
     def scale(self, worker_count: int, training_config: dict[str, int] | None = None) -> dict[str, Any]:
         with self._lock:
             requested = self._validated_training_request(worker_count, training_config)

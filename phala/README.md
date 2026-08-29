@@ -34,19 +34,29 @@ bash phala/start.sh
 On a fresh account the launcher first creates the contract-runtime endpoint,
 then reapplies the runtime with the derived RPC, Kubo API, and Kubo gateway
 URLs used by dynamically created worker TEEs. The application bootstrap is
-also deliberately two-phase:
+deliberately separated from deployment:
 
 1. the runtime deploys the contracts and publishes
    `/runtime/contracts.json` (including `aggregation_policy_address`) and
-   `/runtime/admission-ready.json`;
-2. workers derive their participant keys and complete DCAP registration;
-3. the runtime reads the live authorized public keys from `DeviceRegistry`,
-   creates the encrypted initial model for those recipients, and publishes
-   `/runtime/ready.json`.
+   `/runtime/admission-ready.json`, then exits successfully;
+2. Start Training validates the measured Registry, AggregatorSelection, and
+   GMStorage addresses against the live chain, derives the AggregationPolicy
+   directly from GMStorage, requires an empty worker deployment, and
+   owner-commits the exact ordered roster with W0 first. If the published
+   manifest is available, it is cross-checked as additional metadata;
+3. only then does it launch those worker TEEs; only committed identities can
+   complete DCAP registration, and the last registration freezes the roster;
+4. W0 reads the frozen keys from `DeviceRegistry`, encrypts the public,
+   unsigned initial model for that fixed roster, and finalizes contract round
+   0. The other workers wait for this transition, and federated training starts
+   in round 1.
 
-Workers do not begin training until the final marker and active encrypted model
-bundle exist. This ordering avoids provisioning a worker RSA key before its
-attested workload has registered it.
+This ordering leaves deployment independent of a future worker count and never
+provisions a participant RSA key outside its attested workload. The roster
+marker transports readiness only and is not a security authority: W0 requires
+the exact immutable on-chain roster, its digest and every registered public
+key. On restart, W0 validates its protected public-key snapshot against that frozen
+on-chain state without rereading mutable MFS metadata.
 
 Dynamic worker TEEs send operational training events to the Control API over
 its Phala `8091` endpoint. Each event is signed by the worker's configured
@@ -82,12 +92,19 @@ worker receives an absolute target round equal to the requested count plus
 one.
 
 Immediately before the Control API scales the selected workers for a training
-start, it reads `aggregation_policy_address` from `/runtime/contracts.json` and
-uses the encrypted Anvil-owner `ETH_WALLET_PRIVATE_KEY` against the internal
-`RPC_URL` to configure the contract's default policy. The required submission
-count is the selected `client_limit`; the submission window is
-`ceil(MODEL_SUBMISSION_DEADLINE_MS / 1000)` seconds. The transaction must be
-mined successfully before any worker is created.
+start, it validates the measured Registry, AggregatorSelection, GMStorage, RPC
+chain, deployed bytecode, and the contracts' on-chain links. It reads
+`aggregation_policy_address()` from that GMStorage and checks the policy's code
+and GMStorage backlink. A readable `/runtime/contracts.json` is cross-checked,
+but losing this mutable hand-off after the deployment container exits cannot
+block setup recovery. The Control API then uses the encrypted Anvil-owner
+`ETH_WALLET_PRIVATE_KEY` against the internal `RPC_URL` to configure the policy
+and commit the exact ordered roster. The required submission count is the selected
+`client_limit`; the submission window is
+`ceil(MODEL_SUBMISSION_DEADLINE_MS / 1000)` seconds. Both transactions must be
+mined successfully before any worker is created. If deployment is interrupted
+after commitment, **Resume Start** may reapply only the same saved
+configuration and exact roster; a different roster requires a reset.
 
 `CLIENT_LIMIT` and `MODEL_SUBMISSION_DEADLINE_MS` are therefore owner-controlled
 contract-runtime/Control-API inputs, not measured Worker-Compose security
@@ -131,15 +148,15 @@ The wrapper reads these values from the selected env file:
 
 The Ethereum accounts and device identifiers are unchanged. Per-worker
 `Wn_RSA_PRIVATE_KEY` and `Wn_RSA_PUBLIC_KEY` values are not deployment inputs:
-each worker creates its participant RSA key inside its TEE. The existing W0
-RSA fixture may still be used by prototype components such as initial-model
-signing or the agent, but it is not the worker/aggregator key registered by
+each worker creates its participant RSA key inside its TEE. Any existing W0 RSA
+fixture is only retained for legacy prototype components; it neither signs the
+public initial model nor replaces the worker/aggregator key registered by
 `DeviceRegistry`.
 
 It also forwards the current Anvil/DFL profile settings into Terraform, including:
 
 - `WORKER_COUNT`, `MAX_DYNAMIC_WORKERS`, and `ANVIL_ACCOUNT_COUNT`
-- `INITIAL_GM_SIGNER_ADDRESS`
+- `INITIAL_GM_CID`
 - `CLIENT_LIMIT`, `EPOCH`, `ROUND`
 - `DFL_MODEL_SEED`, `DFL_TRAIN_SEED`, `DFL_TRAIN_OPTIMIZER`, and
   `DFL_TRAIN_LEARNING_RATE`
@@ -218,7 +235,10 @@ Notes:
   load the current model. The agent normally reads Worker 0's authorized,
   REPORTDATA-bound HTTPS endpoint from `DeviceRegistry.public_ip`; an explicit
   `tee_inference_url_override` is only a diagnostic or compatibility escape
-  hatch.
+  hatch. Tool-triggered model loading uses the same compose-bound GMStorage,
+  Registry, RPC endpoint, and chain ID as the worker. A present contract
+  manifest is validated, but a missing MFS copy does not disable inference
+  after a valid Worker 0 reboot.
 - Worker containers use `restart: unless-stopped`. After training completes,
   the supervisor exits once so Docker reboots the container. The rebooted
   worker derives the same app-bound action key, reuses its existing on-chain
@@ -237,10 +257,16 @@ Notes:
   the fixed W0--W499 prototype pool. Terraform additionally passes explicitly
   configured static worker addresses through `WORKER_ACCOUNT_ADDRESSES` so the
   bootstrap can fund non-default static identities before registration.
-- The worker resolves `REGISTRY_ADDRESS`, `AGGREGATOR_ADDRESS`, and `GM_STORAGE_ADDRESS` from the contract-runtime TEE's Kubo manifest at `/runtime/contracts.json`.
-- The worker uses `/runtime/admission-ready.json` plus
-  `/runtime/contracts.json` to begin DCAP registration, then waits for
-  `/runtime/ready.json` and an active encrypted model bundle before training.
+- The worker's measured `RPC_URL`, `EXPECTED_CHAIN_ID`, and `EXPECTED_*`
+  contract addresses are the authoritative startup and recovery configuration.
+  If `/runtime/admission-ready.json` or `/runtime/contracts.json` is present,
+  the worker validates that optional first-deployment hand-off against those
+  values. Missing mutable MFS metadata therefore cannot block a valid worker
+  reboot; deployed bytecode and on-chain state remain authoritative.
+- W0 additionally reads `/runtime/bootstrap-recipients.json` for the initial
+  round-0 readiness hand-off, verifies it against the exact immutable on-chain
+  run roster, and performs the encryption rollover. The other selected workers
+  wait for round 1 before training.
 - The worker image expects the real Phala attestation socket. In this scaffold the worker compose mounts `/var/run/dstack.sock` and keeps `/var/run/tappd.sock` only for compatibility.
 - At runtime the worker requires `app_compose` from Phala `info()` and checks its SDK-compatible canonicalization against the live `compose-hash` event as a local consistency preflight. The authoritative decision is on-chain: the Registry derives both the image digest and role policy from the submitted byte preimage before calculating its complete Compose hash.
 - The legacy `tappd.sock` path is not accepted unless it also exposes `app_compose`; otherwise the worker aborts instead of trusting a mock or env-only digest.
@@ -293,7 +319,7 @@ scripts/extract_tdx_rtmr3.py data/phala_tdx_quote
 
 ```bash
 docker compose down --volumes --remove-orphans
-KEEP_ALIVE=0 docker compose up --build --force-recreate
+docker compose up --build --force-recreate
 ```
 
 During deployment, `starter_docker.sh` requires the digest-pinned
@@ -394,8 +420,10 @@ hash, image digest, role-policy hash, logical participant address, current
 action address, endpoints, participant RSA public key, verifier, deployment,
 and nonce. Registration additionally requires an EIP-712 enrollment signature
 from the logical participant and the transaction itself must be sent by that
-action address. Any caller satisfying this attestation and workload policy can
-register.
+action address. Only an identity in the owner-committed run roster that also
+satisfies this attestation and workload policy can register. Once every
+committed identity is registered, the roster and its action-key/public-key
+bindings are frozen for the run.
 
 This means worker-specific `app-id`, `instance-id`, variable environment values,
 and final RTMR3 measurements need not be known in advance. Security-relevant
@@ -405,9 +433,10 @@ while the complete variable Compose remains quote-bound.
 The official launcher configuration removes worker SSH keys, but this is a
 deployment control rather than an attestation claim: Phala supplies
 `ssh_authorized_keys` through separate user configuration that is not part of
-the currently verified `app_compose`. Consequently, open admission cannot yet
-cryptographically prove that an independently launched otherwise-identical CVM
-has no SSH key. A production claim that the action key is non-exportable would
+the currently verified `app_compose`. Consequently, roster admission cannot by
+itself cryptographically prove that a committed participant's independently
+launched, otherwise-identical CVM has no SSH key. A production claim that the
+action key is non-exportable would
 need an attested user-configuration policy, trusted deployment identity, or a
 non-exporting signing interface in addition to the checks above.
 
@@ -417,8 +446,9 @@ For the Phala layout with one contract-runtime TEE and a configurable number of
 worker TEEs, the sequence is:
 
 1. Deploy the contract-runtime TEE with `anvil`, `ipfs`, and `smart-contracts`.
-2. Deploy the selected worker TEEs, all using the same digest-pinned combined
-   worker image. Worker 0 also exposes TEE inference.
+2. In Training Setup, commit the exact ordered participant roster and then
+   deploy those worker TEEs, all using the same digest-pinned combined worker
+   image. Worker 0 also exposes TEE inference.
 3. Optional: from a worker deployment, export measured artifacts for local consistency checks:
    - the TDX quote into `data/phala_tdx_quote`
    - the RTMR3 event log into `phala/rtmr3_event_log.txt`

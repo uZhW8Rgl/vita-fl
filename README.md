@@ -129,6 +129,7 @@ flowchart TB
 sequenceDiagram
   autonumber
   participant Compose as Docker Compose
+  participant Control as Control API / UI
   participant Anvil as Anvil
   participant SC as Smart Contracts
   participant IPFS as Kubo / IPFS
@@ -140,23 +141,29 @@ sequenceDiagram
   Compose->>IPFS: Start local IPFS node
   Compose->>SC: Deploy DeviceRegistry, AggregatorSelection, GMStorage
   SC->>SC: Deploy/configure TDX/DCAP attestation contracts
-  SC->>IPFS: Pin initial global model metadata
-  SC->>SC: Store initial model CID and signature CID
+  SC->>IPFS: Pin public plaintext initial model
+  SC->>SC: Store unsigned initial-model CID
+  SC-->>Control: Exit successfully; enable Training Setup
 
-  Compose->>W: Start worker containers
+  Control->>SC: Commit exact ordered run roster
+  Control->>W: Start selected worker containers
   W->>SC: Register device with quote/public key context
   SC->>SC: Verify TDX/DCAP quote path
+  W->>SC: W0 encrypts the initial model for the fixed roster
+  W->>SC: W0 signs the encrypted bundle and finalizes round 0
+  Note over W,SC: Federated training begins in round 1
   W->>W: Train local dataset model
   W->>W: Transfer local model artifacts
   W->>W: Aggregate submitted local models
   W->>IPFS: Upload aggregated model and RSA signature
-  W->>SC: Update GMStorage with model CID and signature CID
+  W->>SC: Atomically finalize model, signature, and key-bundle CIDs
 
-  Compose->>A: Start agent after workers complete
-  A->>SC: Read current model CID, signature CID, last aggregator
+  Control->>A: Start agent alongside the selected workers
+  A->>A: Wait for the first finalized encrypted model
+  A->>SC: Read the atomic finalized model bundle and publisher
   A->>SC: Read aggregator public key from DeviceRegistry
   A->>IPFS: Fetch model and signature
-  A->>A: Verify RSA signature over model artifact
+  A->>A: Verify bundle provenance, decrypt, and verify model signature
   A->>ZK: Request single-image inference proof
   ZK->>ZK: Export model to ONNX and run EZKL
   ZK-->>A: Return prediction, witness, proof, verification status
@@ -177,7 +184,8 @@ sequenceDiagram
 
 ## Design Notes
 
-- `GMStorage` is treated as the source of truth for the active global model and signature CIDs.
+- `GMStorage` is the source of truth for the atomic active model, signature, and recipient-key-bundle CIDs. Its deployment-fixed `initialModelCid` anchors the public unsigned bootstrap model.
+- `DeviceRegistry` commits the exact ordered roster before any selected worker starts; only those identities can register for the run.
 - IPFS stores bytes, but authenticity is checked through on-chain metadata and the aggregator's registered public key.
 - TDX/DCAP verification is represented by the on-chain attestation deployment and quote verification flow used during worker registration.
 - The ZK inference path proves one selected single-image inference over the exported model artifacts; it complements, but does not replace, model provenance checks.
@@ -185,12 +193,12 @@ sequenceDiagram
 
 ## Reproducible Demo
 
-For a clean local demo, start from a fresh stack and use Docker Compose as the single entry point:
+For a clean local demo, start from a fresh stack and use Docker Compose for the base runtime:
 
 ```bash
 docker compose --env-file .env.example --env-file .env.phala.anvil.example \
   down --volumes --remove-orphans
-KEEP_ALIVE=0 docker compose --env-file .env.example \
+docker compose --env-file .env.example \
   --env-file .env.phala.anvil.example up --build --force-recreate
 ```
 
@@ -212,7 +220,7 @@ cp .env.sepolia.example .env.sepolia
 
 This keeps common values in `.env.shared`, puts chain-specific values into `.env.phala.anvil` or `.env.sepolia`, and regenerates the active `.env` from the selected profile. That avoids dangerous mixes such as a Sepolia RPC together with Anvil contract addresses.
 
-This is the recommended demo run for the thesis prototype. It rebuilds the active services, launches the local infrastructure, deploys the contracts, runs the DFL flow, stores the new global model in IPFS, and updates the on-chain metadata.
+This rebuilds the base services, launches the local infrastructure, deploys the contracts, pins the public initial model, and leaves the deployment container successfully exited. Open the UI, select the desired configuration in **Training Setup**, and press **Start Training**. That action commits the exact roster and starts only the selected workers, the agent, and the inference service.
 
 After the stack is up, the browser frontend is available at:
 
@@ -244,11 +252,11 @@ The Docker setup is the primary way to run the DFL prototype:
 ```bash
 docker compose --env-file .env.example --env-file .env.phala.anvil.example \
   down --volumes --remove-orphans
-KEEP_ALIVE=0 docker compose --env-file .env.example \
+docker compose --env-file .env.example \
   --env-file .env.phala.anvil.example up --build --force-recreate
 ```
 
-This starts Anvil, Kubo/IPFS, observability services, deploys the smart contracts, registers workers through an explicitly local mock verifier with the same address/key/nonce binding as production, runs training, aggregates local models, stores the new global model and signature in IPFS, and updates the on-chain model metadata. The local mock is not a hardware attestation; Phala uses live TDX quotes only.
+This starts Anvil, Kubo/IPFS, observability, the Control API, and the UI, then deploys the smart contracts and exits the deployment container. Continue in the UI's **Training Setup** tab. **Start Training** commits the chosen identities, registers those workers through an explicitly local mock verifier with the same address/key/nonce binding as production, completes the W0 bootstrap, and runs the requested federated rounds. The local mock is not a hardware attestation; Phala uses live TDX quotes only.
 
 For local Anvil runs, `P256_MODE=native` is the default. The deployment script probes the native P-256 precompile at `0x0000000000000000000000000000000000000100` and uses it when available. If the current Anvil build does not expose the precompile, the script installs the local P-256 verifier at the same canonical address so the contracts still use the native verifier address. `P256_MODE=fallback` can be used to force the Daimo fallback verifier address instead.
 
@@ -257,8 +265,10 @@ The local stack starts:
 - Anvil as local Ethereum-compatible chain,
 - Kubo as local IPFS node,
 - the `smart-contracts` deployment container,
-- three DFL worker containers,
+- the Control API and browser UI,
 - Grafana and Prometheus.
+
+DFL workers, the agent, and the inference service start only after **Start Training** fixes the selected roster.
 
 `.env.example` provides local timing, contract, IPFS, and dataset settings;
 `.env.phala.anvil.example` is the single tracked worker-identity source. Pass
@@ -277,7 +287,7 @@ test split remains reporting-only.
 
 ## Quick Verification
 
-After `docker compose up`, these quick checks confirm that the core demo finished in a meaningful state:
+After `docker compose up` and a training run started from the UI, these quick checks confirm that the core demo finished in a meaningful state:
 
 1. Check that the main containers are healthy or completed:
 
@@ -320,13 +330,13 @@ The sequence diagram above visualizes this flow.
 2. Deploys core DFL contracts from `smart_contracts`.
 3. Deploys Automata PCCS and TDX/DCAP attestation contracts.
 4. Uploads PCCS collateral.
-5. Pins the initial global model to IPFS and writes model metadata on-chain.
-6. Starts workers.
-7. Registers local workers through the local-only mock verifier while enforcing the production REPORTDATA binding and replay nonce.
-8. Runs local training and model transfer.
-9. Aggregates submitted local models.
-10. Signs and uploads the new global model and signature.
-11. Updates `GMStorage` with the new model CID and signature CID.
+5. Pins the public, unsigned initial global model to IPFS, stores its CID on-chain, and exits contract initialization.
+6. Commits the exact selected run roster to `DeviceRegistry` when Start Training is requested.
+7. Starts only those workers and registers them through the local-only mock verifier while enforcing the production REPORTDATA binding and replay nonce.
+8. Lets W0 encrypt the initial model for the complete frozen roster, sign the outer bundle, and finalize bootstrap round 0.
+9. Starts federated training in round 1, transfers local models, and aggregates accepted submissions.
+10. Signs and encrypts each learned global model for the fixed roster.
+11. Atomically finalizes the model, signature, and recipient-key-bundle CIDs in `GMStorage`.
 
 ## Observability
 

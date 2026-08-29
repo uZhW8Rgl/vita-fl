@@ -3,8 +3,8 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getDevicePublicKey, getDeviceActionKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
-import { getCurrentModel, updateGM } from "./ipfs.js";
+import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getCommittedRunRosterState, getDevicePublicKey, getDeviceActionKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, isGlobalModelPublished, isRoundCompleted, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
+import { getCurrentModel, getFileFromIPFS, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
 import { loadParticipantKey, materializeParticipantPrivateKey, PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH, } from "./participant_key.js";
 import { loadParticipantActionSigner, } from "./action_key.js";
@@ -16,6 +16,9 @@ import { DstackClient, TappdClient, getComposeHash } from '@phala/dstack-sdk';
 import crypto from 'crypto';
 import http from 'http';
 import { emitTelemetryEvent } from "./telemetry.js";
+import { buildRoundZeroBootstrapSnapshot, createCommittedRunRosterBinding, frozenRecipientsForCommittedRoster, normalizeBootstrapPublicKey, normalizeRunRosterDigest, requireFrozenRecipientKeysMatchRegistry, } from "./bootstrap_snapshot.js";
+import { reconcileFetchedGlobalModel } from "./model_bundle.js";
+import { isExplicitlyFinalizedSourceRound } from "./finalization_recovery.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const deviceID = process.env.DEVICE_ID;
@@ -127,23 +130,9 @@ function targetRound() {
 }
 async function assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel) {
     const current = await getActiveModelBundle();
-    const fetched = {
-        modelCid: String(fetchedGlobalModel?.modelCid || ""),
-        sigCid: String(fetchedGlobalModel?.sigCid || ""),
-        keyBundleCid: String(fetchedGlobalModel?.keyBundleCid || ""),
-        publisher: String(fetchedGlobalModel?.publisher || ""),
-        publisherPublicKeyDerHex: String(fetchedGlobalModel?.publisherPublicKeyDerHex || ""),
-    };
-    if (!fetched.modelCid ||
-        fetched.modelCid !== current.modelCid ||
-        fetched.sigCid !== current.sigCid ||
-        fetched.keyBundleCid !== current.keyBundleCid ||
-        !sameAddress(fetched.publisher, current.publisher) ||
-        fetched.publisherPublicKeyDerHex !== current.publisherPublicKeyDerHex) {
-        throw new Error("Fetched global model or publisher key is no longer the active on-chain bundle; skipping local training.");
-    }
-    console.log("Fetched global model and publisher key match the active on-chain bundle.");
-    return current;
+    const reconciled = reconcileFetchedGlobalModel(fetchedGlobalModel, current);
+    console.log("Fetched global model, finalized round, and publisher key match the active on-chain bundle.");
+    return reconciled;
 }
 async function runtimeEvent(name, attributes = {}) {
     await emitTelemetryEvent(name, attributes);
@@ -249,6 +238,20 @@ async function monitorNonAggregatorStateProgress(observedRound, expectedAggregat
         await recordMissedAggregatorProgress(observedRound, expectedAggregator, `aggregator_state_stalled_${String(observedState || "unknown").toLowerCase()}`, error);
     }
     await sleep(2000);
+}
+async function waitForRoundZeroBootstrap(expectedAggregator) {
+    console.log(`Round 0 is a bootstrap-only phase. Waiting for W0 ${expectedAggregator} `
+        + 'to publish the encrypted initial model.');
+    await runtimeEvent('worker.round0_bootstrap.waiting', {
+        role: 'worker',
+        round: 0,
+        aggregator: expectedAggregator,
+    });
+    const nextRound = await waitForRoundAdvance(0, {
+        pollMs: gmUpdatePollMs,
+        timeoutMs: 0,
+    });
+    console.log(`Round-0 bootstrap completed; on-chain round is now ${nextRound}.`);
 }
 async function recoverSelectionGap(observedRound, expectedAggregator, observedState) {
     const [lastSelectionRound, completedRounds] = await Promise.all([
@@ -968,12 +971,12 @@ function positiveRuntimeDuration(name, fallback, minimum) {
         return fallback;
     return Math.floor(parsed);
 }
-async function readRuntimeReadyMarker(timeoutMs) {
+async function readRuntimeMfsJson(markerPath, timeoutMs) {
     const kuboApi = String(process.env.KUBO_API || '').trim().replace(/\/+$/, '');
     if (!kuboApi)
-        throw new Error('KUBO_API is required while waiting for runtime bootstrap');
+        throw new Error('KUBO_API is required while reading runtime bootstrap data');
     const url = new URL(`${kuboApi}/api/v0/files/read`);
-    url.searchParams.set('arg', '/runtime/ready.json');
+    url.searchParams.set('arg', markerPath);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -982,27 +985,117 @@ async function readRuntimeReadyMarker(timeoutMs) {
             signal: controller.signal,
         });
         if (!response.ok) {
-            throw new Error(`Kubo MFS ready marker returned HTTP ${response.status}`);
+            throw new Error(`Kubo MFS marker ${markerPath} returned HTTP ${response.status}`);
         }
-        const value = await response.json();
-        if (!value || value.status !== 'ready') {
-            throw new Error('runtime ready marker does not contain status=ready');
-        }
-        return value;
+        return await response.json();
     }
     finally {
         clearTimeout(timeout);
     }
 }
-function activeModelBundleIsReady(bundle) {
-    return Boolean(String(bundle?.modelCid || '').trim() &&
-        String(bundle?.sigCid || '').trim() &&
-        String(bundle?.keyBundleCid || '').trim() &&
-        /^0x[0-9a-fA-F]{40}$/.test(String(bundle?.publisher || '')) &&
-        /^0x[0-9a-fA-F]+$/.test(String(bundle?.publisherPublicKeyDerHex || '')) &&
-        String(bundle?.publisherPublicKeyDerHex || '') !== '0x');
+function normalizeBootstrapRecipientAddresses(declaration) {
+    if (!declaration || declaration.status !== 'declared') {
+        throw new Error('bootstrap recipient declaration does not contain status=declared');
+    }
+    if (!Array.isArray(declaration.recipients) || declaration.recipients.length === 0) {
+        throw new Error('bootstrap recipient declaration must contain at least one recipient');
+    }
+    const addresses = declaration.recipients.map((address, index) => {
+        const normalized = String(address || '').trim().toLowerCase();
+        if (!/^0x[0-9a-f]{40}$/.test(normalized)) {
+            throw new Error(`invalid bootstrap recipient ${index}: ${address}`);
+        }
+        return normalized;
+    });
+    if (new Set(addresses).size !== addresses.length) {
+        throw new Error('bootstrap recipient declaration contains duplicates');
+    }
+    return addresses;
 }
-async function waitForRuntimeBootstrapReady() {
+async function currentCommittedRunRosterContext({ requireFrozen = false } = {}) {
+    const [liveChainIdRaw, rosterState] = await Promise.all([
+        getBlockchainChainId(),
+        getCommittedRunRosterState(),
+    ]);
+    const liveChainId = Number(liveChainIdRaw);
+    if (!Number.isSafeInteger(liveChainId) || liveChainId <= 0) {
+        throw new Error(`live blockchain returned an invalid chain id: ${liveChainIdRaw}`);
+    }
+    const registryAddress = String(process.env.REGISTRY_ADDRESS || '')
+        .trim()
+        .toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(registryAddress)) {
+        throw new Error('REGISTRY_ADDRESS is invalid during round-0 bootstrap');
+    }
+    if (!rosterState?.committed) {
+        throw new Error('DeviceRegistry run roster is not committed');
+    }
+    const binding = createCommittedRunRosterBinding({
+        chainId: liveChainId,
+        registryAddress,
+        rosterDigest: rosterState.digest,
+        recipientAddresses: rosterState.roster,
+    });
+    const registeredWorkerCount = Number(rosterState.registeredWorkerCount);
+    if (!Number.isSafeInteger(registeredWorkerCount)
+        || registeredWorkerCount < 0
+        || registeredWorkerCount > binding.workerCount) {
+        throw new Error(`DeviceRegistry returned invalid registered run-member count: `
+            + `${rosterState.registeredWorkerCount}`);
+    }
+    if (Number(process.env.WORKER_COUNT || binding.workerCount)
+        !== binding.workerCount) {
+        throw new Error(`committed run-roster count ${binding.workerCount} does not match `
+            + 'the selected worker count');
+    }
+    if (!sameAddress(binding.bootstrapWorker, process.env.ACCOUNT_ADDRESS)) {
+        throw new Error('round-0 bootstrap must be executed by committed run-roster worker W0');
+    }
+    const frozen = rosterState.frozen === true;
+    if (frozen && registeredWorkerCount !== binding.workerCount) {
+        throw new Error('DeviceRegistry froze an incomplete committed run roster');
+    }
+    if (requireFrozen && !frozen) {
+        throw new Error(`DeviceRegistry run roster is not frozen `
+            + `(${registeredWorkerCount}/${binding.workerCount} registered)`);
+    }
+    return { binding, frozen, registeredWorkerCount };
+}
+async function validateBootstrapDeclarationAgainstCommittedRoster(binding, timeoutMs = 5_000) {
+    const declaration = await readRuntimeMfsJson('/runtime/bootstrap-recipients.json', timeoutMs);
+    const addresses = normalizeBootstrapRecipientAddresses(declaration);
+    if (Number(declaration.worker_count) !== addresses.length
+        || addresses.length !== binding.workerCount) {
+        throw new Error(`bootstrap recipient count ${addresses.length} does not match `
+            + `the committed run-roster count ${binding.workerCount}`);
+    }
+    if (!sameAddress(declaration.bootstrap_worker, binding.bootstrapWorker)
+        || !sameAddress(binding.bootstrapWorker, process.env.ACCOUNT_ADDRESS)) {
+        throw new Error('bootstrap declaration does not select committed run-roster worker W0');
+    }
+    if (Number(declaration.chain_id) !== binding.chainId) {
+        throw new Error('bootstrap declaration has the wrong chain id');
+    }
+    if (!sameAddress(declaration.registry_address, binding.registryAddress)) {
+        throw new Error('bootstrap declaration has the wrong DeviceRegistry address');
+    }
+    if (normalizeRunRosterDigest(declaration.onchain_roster_digest, 'bootstrap declaration on-chain roster digest') !== binding.rosterDigest) {
+        throw new Error('bootstrap declaration does not match the committed run-roster digest');
+    }
+    if (JSON.stringify(addresses) !== JSON.stringify(binding.recipientAddresses)) {
+        throw new Error('bootstrap declaration does not match the exact ordered committed run roster');
+    }
+    return declaration;
+}
+async function readBootstrapRecipientKeys(addresses) {
+    const recipients = [];
+    for (const address of addresses) {
+        const publicKeyDerHex = normalizeBootstrapPublicKey(await getDevicePublicKey(address), `registered bootstrap recipient ${address} RSA public key`);
+        recipients.push({ address, publicKeyDerHex });
+    }
+    return recipients;
+}
+async function waitForRegisteredBootstrapRecipients() {
     const timeoutMs = positiveRuntimeDuration('RUNTIME_BOOTSTRAP_TIMEOUT_MS', 10 * 60 * 1000, 1_000);
     const pollMs = positiveRuntimeDuration('RUNTIME_BOOTSTRAP_POLL_MS', 2_000, 100);
     const deadline = Date.now() + timeoutMs;
@@ -1012,27 +1105,41 @@ async function waitForRuntimeBootstrapReady() {
         attempt++;
         try {
             const remaining = Math.max(1, deadline - Date.now());
-            await readRuntimeReadyMarker(Math.min(5_000, remaining));
-            const bundle = await getActiveModelBundle();
-            if (!activeModelBundleIsReady(bundle)) {
-                throw new Error('on-chain active model bundle is incomplete');
+            const firstContext = await currentCommittedRunRosterContext();
+            await validateBootstrapDeclarationAgainstCommittedRoster(firstContext.binding, Math.min(5_000, remaining));
+            if (!firstContext.frozen) {
+                throw new Error(`DeviceRegistry run roster registration is incomplete `
+                    + `(${firstContext.registeredWorkerCount}/`
+                    + `${firstContext.binding.workerCount})`);
             }
-            console.log('Runtime bootstrap is ready and the active model bundle is pollable.', {
-                modelCid: bundle.modelCid,
-                keyBundleCid: bundle.keyBundleCid,
-                publisher: bundle.publisher,
+            const firstRecipients = await readBootstrapRecipientKeys(firstContext.binding.recipientAddresses);
+            // Re-read the immutable commitment and every registered key before
+            // committing the snapshot. A changing or mixed view fails closed.
+            const finalContext = await currentCommittedRunRosterContext({
+                requireFrozen: true,
             });
-            return bundle;
+            frozenRecipientsForCommittedRoster(buildRoundZeroBootstrapSnapshot(firstContext.binding, firstRecipients), finalContext.binding);
+            const secondRecipients = await readBootstrapRecipientKeys(finalContext.binding.recipientAddresses);
+            if (JSON.stringify(firstRecipients) !== JSON.stringify(secondRecipients)) {
+                throw new Error('selected worker RSA keys changed while the round-0 roster was frozen');
+            }
+            await validateBootstrapDeclarationAgainstCommittedRoster(finalContext.binding, Math.min(5_000, Math.max(1, deadline - Date.now())));
+            console.log(`All ${firstContext.binding.workerCount} committed workers are registered `
+                + 'and the frozen round-0 RSA-key snapshot is stable.');
+            return {
+                binding: finalContext.binding,
+                recipients: firstRecipients,
+            };
         }
         catch (error) {
             lastError = error;
             if (attempt === 1 || attempt % 15 === 0) {
-                console.log(`Waiting for the post-admission runtime bootstrap (attempt ${attempt}):`, error?.message || String(error));
+                console.log(`Waiting for the selected round-0 recipients (attempt ${attempt}):`, error?.message || String(error));
             }
         }
         await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
     }
-    throw new Error(`Timed out after ${timeoutMs}ms waiting for the post-admission runtime bootstrap: ` +
+    throw new Error(`Timed out after ${timeoutMs}ms waiting for the selected round-0 recipients: ` +
         `${lastError?.message || String(lastError || 'not ready')}`);
 }
 async function receivedWorkerModelFiles() {
@@ -1280,33 +1387,88 @@ function isMissingRoundKeyError(error) {
     const message = error?.message || String(error || "");
     return message.includes("No wrapped GM round key found");
 }
-async function signFileWithParticipantKey(inputPath, outputSignaturePath) {
-    if (!activeParticipantKey) {
-        throw new Error("Participant key has not been initialized.");
+async function fixedRoundZeroRecipients() {
+    const snapshotDirectory = process.env.DOCKER === 'phala'
+        ? path.dirname(process.env.PARTICIPANT_KEY_STATE_PATH
+            || '/var/lib/vita-fl/participant-rsa.v1.sealed.json')
+        : resultsIIDDir;
+    const snapshotPath = path.join(snapshotDirectory, 'round-0-bootstrap-recipients.json');
+    await fs.mkdir(snapshotDirectory, { recursive: true });
+    try {
+        const existing = JSON.parse(await fs.readFile(snapshotPath, 'utf8'));
+        // Recovery deliberately consults only the immutable on-chain roster.
+        // Mutable MFS readiness declarations are transport for the first
+        // freeze and cannot wedge or retarget a restart.
+        const currentContext = await currentCommittedRunRosterContext({
+            requireFrozen: true,
+        });
+        const recipients = frozenRecipientsForCommittedRoster(existing, currentContext.binding);
+        const registeredRecipients = await readBootstrapRecipientKeys(currentContext.binding.recipientAddresses);
+        requireFrozenRecipientKeysMatchRegistry(recipients, registeredRecipients);
+        console.log(`Reusing ${recipients.length} frozen round-0 recipient keys for the `
+            + `immutable on-chain roster ${currentContext.binding.rosterDigest}.`);
+        return recipients;
     }
-    const inputBytes = await fs.readFile(inputPath);
-    const signatureBytes = crypto.sign('RSA-SHA256', inputBytes, {
-        key: activeParticipantKey.privateKey,
-        padding: crypto.constants.RSA_PKCS1_PADDING,
+    catch (error) {
+        if (error?.code !== 'ENOENT')
+            throw error;
+    }
+    const frozen = await waitForRegisteredBootstrapRecipients();
+    const snapshot = buildRoundZeroBootstrapSnapshot(frozen.binding, frozen.recipients);
+    // Validate against the immutable on-chain commitment immediately before
+    // the atomic commit. MFS was checked while creating the first snapshot,
+    // but it is intentionally not part of the persisted recovery binding.
+    const currentContext = await currentCommittedRunRosterContext({
+        requireFrozen: true,
     });
-    await fs.writeFile(outputSignaturePath, signatureBytes);
+    frozenRecipientsForCommittedRoster(snapshot, currentContext.binding);
+    const temporaryPath = `${snapshotPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    let temporaryHandle;
+    try {
+        temporaryHandle = await fs.open(temporaryPath, 'wx', 0o600);
+        await temporaryHandle.writeFile(`${JSON.stringify(snapshot)}\n`, 'utf8');
+        await temporaryHandle.sync();
+        await temporaryHandle.close();
+        temporaryHandle = null;
+        await fs.rename(temporaryPath, snapshotPath);
+        const directoryHandle = await fs.open(snapshotDirectory, 'r');
+        try {
+            await directoryHandle.sync();
+        }
+        finally {
+            await directoryHandle.close();
+        }
+    }
+    finally {
+        if (temporaryHandle)
+            await temporaryHandle.close().catch(() => { });
+        await fs.unlink(temporaryPath).catch(() => { });
+    }
+    const persisted = JSON.parse(await fs.readFile(snapshotPath, 'utf8'));
+    const persistedContext = await currentCommittedRunRosterContext({
+        requireFrozen: true,
+    });
+    const persistedRecipients = frozenRecipientsForCommittedRoster(persisted, persistedContext.binding);
+    const registeredRecipients = await readBootstrapRecipientKeys(persistedContext.binding.recipientAddresses);
+    return requireFrozenRecipientKeysMatchRegistry(persistedRecipients, registeredRecipients);
 }
-async function prepareRoundZeroBootstrapRollover() {
-    console.log("Round 0 bootstrap rollover: fetching current encrypted GM bundle.");
-    const fetchedGlobalModel = await getCurrentModel(activeParticipantKey.privateKey);
-    const activeGlobalModel = await assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel);
-    const sigOk = await verifyDownloadedGlobalModelSignature({
-        publicKeyDerHex: activeGlobalModel.publisherPublicKeyDerHex,
-        modelPath: "./data/gm.bin",
-        sigPath: "./data/gm.bin.sig",
-    });
-    if (!sigOk) {
-        throw new Error("Round-0 bootstrap rollover signature verification failed.");
+async function prepareRoundZeroBootstrap() {
+    if (Number(await getRound()) !== 0) {
+        throw new Error('The public initial model may only be prepared in round 0.');
     }
+    const initialModelCid = String(await getCurrentGM()).trim();
+    if (!initialModelCid) {
+        throw new Error('GMStorage contains no public initial-model CID.');
+    }
+    const frozenRecipients = await fixedRoundZeroRecipients();
     await fs.mkdir(resultsIIDDir, { recursive: true });
-    await fs.copyFile("./data/gm.bin", path.join(resultsIIDDir, "aggregated.bin"));
-    await signFileWithParticipantKey(path.join(resultsIIDDir, "aggregated.bin"), path.join(resultsIIDDir, "aggregated.bin.sig"));
-    console.log("Round 0 bootstrap rollover prepared aggregated.bin + aggregated.bin.sig for encrypted republish.");
+    await getFileFromIPFS(initialModelCid, path.join(resultsIIDDir, 'aggregated.bin'));
+    // The public initial model intentionally has no origin signature. W0 will
+    // authenticate the encrypted bundle it publishes through the normal
+    // participant-key and aggregation-statement path.
+    await fs.writeFile(path.join(resultsIIDDir, 'aggregated.bin.sig'), Buffer.alloc(0));
+    console.log(`Round 0 bootstrap prepared the public initial model for `
+        + `${frozenRecipients.length} fixed recipients; no origin signature was required.`);
 }
 const stateMachine = async () => {
     const completedRoundsAtStartup = Number(await getCompletedRoundCount());
@@ -1328,7 +1490,6 @@ const stateMachine = async () => {
             await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventLog, canonicalAppCompose, process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey);
             console.log("Device registered with onchain TDX quote and RTMR3 event replay verification.");
         }
-        await waitForRuntimeBootstrapReady();
     }
     else {
         await registerWithLocalTdxMock();
@@ -1348,6 +1509,12 @@ const stateMachine = async () => {
     }
     while (Number(await getCompletedRoundCount()) < targetRound()) {
         let state = await getCurrentState();
+        const observedRound = Number(await getRound());
+        if (observedRound === 0
+            && !sameAddress(state[1], process.env.ACCOUNT_ADDRESS)) {
+            await waitForRoundZeroBootstrap(String(state[1]));
+            continue;
+        }
         switch (state["0"]) {
             case "TRAINING":
                 if (sameAddress(state[1], process.env.ACCOUNT_ADDRESS)) {
@@ -1491,16 +1658,26 @@ const stateMachine = async () => {
                         continue;
                     }
                     const prevGM = currentGlobalModel.modelCid;
-                    const sigOk = await verifyDownloadedGlobalModelSignature({
-                        publicKeyDerHex: currentGlobalModel.publisherPublicKeyDerHex,
-                        modelPath: "./data/gm.bin",
-                        sigPath: "./data/gm.bin.sig",
-                    });
-                    if (!sigOk) {
-                        console.error("Global model signature verification FAILED. Aborting training.");
-                        return;
+                    if (!currentGlobalModel.plaintextSignaturePresent) {
+                        if (Number(currentGlobalModel.modelRound) !== 1) {
+                            throw new Error(`Encrypted global model round ${currentGlobalModel.modelRound} `
+                                + 'has no plaintext aggregator signature.');
+                        }
+                        console.log('Bootstrap model has no origin signature; its encrypted bundle '
+                            + 'was authenticated with the registered W0 participant key.');
                     }
-                    console.log("Global model signature verification successful.");
+                    else {
+                        const sigOk = await verifyDownloadedGlobalModelSignature({
+                            publicKeyDerHex: currentGlobalModel.publisherPublicKeyDerHex,
+                            modelPath: "./data/gm.bin",
+                            sigPath: "./data/gm.bin.sig",
+                        });
+                        if (!sigOk) {
+                            console.error("Global model signature verification FAILED. Aborting training.");
+                            return;
+                        }
+                        console.log("Global model signature verification successful.");
+                    }
                     const trainingAggregator = String(state[1]);
                     console.log("Starting local training ...");
                     await runtimeEvent("worker.training.started", { role: "worker" });
@@ -1622,11 +1799,11 @@ const stateMachine = async () => {
                             policy_hash: aggregationPolicy.policyHash,
                         });
                         if (currentRound === 0 && count === 0) {
-                            console.log("Round 0 has no worker submissions. Re-publishing the verified bootstrap model for the next encrypted round.");
-                            await runOperation("aggregator.round0.bootstrap_rollover", {
+                            console.log("Round 0 has no worker submissions. Encrypting the public initial model for the fixed worker set.");
+                            await runOperation("aggregator.round0.bootstrap", {
                                 role: "aggregator",
                                 round: currentRound,
-                            }, () => prepareRoundZeroBootstrapRollover());
+                            }, () => prepareRoundZeroBootstrap());
                             await setCurrentState("UPDATING");
                             continue;
                         }
@@ -1758,6 +1935,20 @@ const stateMachine = async () => {
                     const journalPath = path.join(resultsIIDDir, ".updating-finalization.json");
                     const journalTempPath = `${journalPath}.${process.pid}.tmp`;
                     const aggregatedModelPath = path.join(resultsIIDDir, "aggregated.bin");
+                    const aggregatedSignaturePath = path.join(resultsIIDDir, "aggregated.bin.sig");
+                    if (recoveryRound === 0
+                        && (!existsSync(aggregatedModelPath)
+                            || !existsSync(aggregatedSignaturePath))) {
+                        console.log("Recovering the round-0 bootstrap artifacts from the immutable initial-model CID.");
+                        try {
+                            await runOperation("aggregator.round0.bootstrap_recovery", { role: "aggregator", round: recoveryRound }, () => prepareRoundZeroBootstrap());
+                        }
+                        catch (error) {
+                            console.error("Round-0 bootstrap artifact recovery failed; keeping UPDATING for retry:", error);
+                            await sleep(2000);
+                            continue;
+                        }
+                    }
                     let artifactFingerprint;
                     try {
                         const [artifactStat, artifactHash] = await Promise.all([
@@ -1855,7 +2046,10 @@ const stateMachine = async () => {
                             round: finalization.sourceRound,
                         });
                         try {
-                            await runOperation("aggregator.update_global_model", { role: "aggregator", round: finalization.sourceRound }, () => updateGM(finalization.expectedNextRound, activeParticipantKey.privateKey));
+                            const frozenBootstrapRecipients = finalization.sourceRound === 0
+                                ? await fixedRoundZeroRecipients()
+                                : undefined;
+                            await runOperation("aggregator.update_global_model", { role: "aggregator", round: finalization.sourceRound }, () => updateGM(finalization.expectedNextRound, activeParticipantKey.privateKey, { frozenBootstrapRecipients }));
                         }
                         catch (e) {
                             console.error("Error during updating the global model; keeping UPDATING for retry:", e);
@@ -1877,7 +2071,7 @@ const stateMachine = async () => {
                     }
                     else {
                         console.log(`Recovered UPDATING finalization after round advancement ` +
-                            `${finalization.sourceRound} -> ${observedRound}; skipping duplicate atomic publication.`);
+                            `${finalization.sourceRound} -> ${observedRound}; reconciling its explicit publication status.`);
                     }
                     try {
                         observedRound = Number(await getRound());
@@ -1891,6 +2085,41 @@ const stateMachine = async () => {
                         console.error(`Round ${finalization.sourceRound} is not yet finalized on-chain; keeping UPDATING for retry.`);
                         await sleep(2000);
                         continue;
+                    }
+                    let sourceRoundPublished;
+                    let sourceRoundCompleted;
+                    try {
+                        [sourceRoundPublished, sourceRoundCompleted] = await Promise.all([
+                            isGlobalModelPublished(finalization.sourceRound),
+                            isRoundCompleted(finalization.sourceRound),
+                        ]);
+                    }
+                    catch (e) {
+                        console.error('Cannot reconcile explicit source-round finalization flags:', e);
+                        await sleep(2000);
+                        continue;
+                    }
+                    if (!isExplicitlyFinalizedSourceRound({
+                        published: sourceRoundPublished,
+                        completed: sourceRoundCompleted,
+                    })) {
+                        console.error(`On-chain round advanced beyond ${finalization.sourceRound}, but that `
+                            + `source round is not finalized (published=${sourceRoundPublished}, `
+                            + `completed=${sourceRoundCompleted}). Preserving the UPDATING journal `
+                            + 'and artifacts instead of treating an aborted round as successful.');
+                        await runtimeEvent('aggregator.update.not_finalized', {
+                            role: 'aggregator',
+                            source_round: finalization.sourceRound,
+                            observed_round: observedRound,
+                            published: sourceRoundPublished,
+                            completed: sourceRoundCompleted,
+                        });
+                        await sleep(2000);
+                        continue;
+                    }
+                    if (observedRound > finalization.sourceRound) {
+                        console.log(`Round ${finalization.sourceRound} is explicitly published and completed; `
+                            + 'duplicate atomic publication is unnecessary.');
                     }
                     const completedRounds = Number(await getCompletedRoundCount());
                     console.log("Completed training rounds left: ", (targetRound() - completedRounds));

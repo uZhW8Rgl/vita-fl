@@ -18,12 +18,96 @@ class CombinedWorkerScriptTests(unittest.TestCase):
     def test_start_script_is_valid_bash(self) -> None:
         subprocess.run(["bash", "-n", str(START_SCRIPT)], check=True)
 
-    def test_shell_bootstrap_waits_for_admission_but_not_final_readiness(self) -> None:
+    def test_shell_bootstrap_treats_mfs_as_optional_handoff(self) -> None:
         script = START_SCRIPT.read_text(encoding="utf-8")
         self.assertIn('"/runtime/admission-ready.json"', script)
         self.assertIn('"status") == "admission-ready"', script)
         self.assertIn('"/runtime/contracts.json"', script)
         self.assertNotIn('"/runtime/ready.json"', script)
+        self.assertIn("read_optional_mfs_json", script)
+        self.assertIn(
+            "The Compose-measured RPC endpoint and EXPECTED_* addresses are the durable",
+            script,
+        )
+        self.assertNotIn("manifest_deadline", script)
+        self.assertNotIn("Waiting for contract runtime admission marker", script)
+        self.assertIn(
+            "registry_address from runtime admission marker does not match measured",
+            script,
+        )
+
+        server = NODE_SERVER_SOURCE.read_text(encoding="utf-8")
+        self.assertNotIn("/runtime/ready.json", server)
+        self.assertIn("/runtime/bootstrap-recipients.json", server)
+        self.assertIn("waitForRegisteredBootstrapRecipients", server)
+
+    def test_round_zero_encrypts_unsigned_initial_model_without_worker_training(self) -> None:
+        server = NODE_SERVER_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("prepareRoundZeroBootstrap", server)
+        self.assertIn("Buffer.alloc(0)", server)
+        self.assertIn("fixedRoundZeroRecipients", server)
+        self.assertIn("waitForRoundZeroBootstrap", server)
+        self.assertNotIn("prepareRoundZeroBootstrapRollover", server)
+
+    def test_round_zero_bootstrap_survives_worker_restart_in_updating(self) -> None:
+        server = NODE_SERVER_SOURCE.read_text(encoding="utf-8")
+        ipfs = (ROOT / "dfl" / "node_server" / "src" / "ipfs.ts").read_text(
+            encoding="utf-8"
+        )
+        snapshot = (
+            ROOT / "dfl" / "node_server" / "src" / "bootstrap_snapshot.ts"
+        ).read_text(encoding="utf-8")
+        self.assertIn("round-0-bootstrap-recipients.json", server)
+        self.assertIn("PARTICIPANT_KEY_STATE_PATH", server)
+        self.assertIn("public_key_der_hex", snapshot)
+        self.assertIn("run_roster_digest", snapshot)
+        self.assertNotIn("declaration_generation_sha256", snapshot)
+        self.assertNotIn("admission_generation_sha256", snapshot)
+        self.assertIn("getCommittedRunRosterState", server)
+        self.assertIn("frozenRecipientsForCommittedRoster", server)
+        self.assertIn("onchain_roster_digest", server)
+        self.assertIn("getCommittedRunRosterState", ipfs)
+        self.assertIn("frozenBootstrapRecipients", ipfs)
+        self.assertIn("aggregator.round0.bootstrap_recovery", server)
+        self.assertIn(
+            "Recovering the round-0 bootstrap artifacts from the immutable initial-model CID.",
+            server,
+        )
+        snapshot_reuse = server[
+            server.index("const existing = JSON.parse(await fs.readFile(snapshotPath"):
+            server.index("const frozen = await waitForRegisteredBootstrapRecipients()")
+        ]
+        self.assertNotIn("readRuntimeMfsJson", snapshot_reuse)
+        self.assertNotIn("validateBootstrapDeclarationAgainstCommittedRoster", snapshot_reuse)
+        self.assertIn("requireFrozenRecipientKeysMatchRegistry", snapshot_reuse)
+
+    def test_updating_recovery_does_not_treat_aborted_round_as_finalized(self) -> None:
+        client = (
+            ROOT / "dfl" / "node_server" / "src" / "bc_client.ts"
+        ).read_text(encoding="utf-8")
+        server = NODE_SERVER_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("roundCompleted(sourceRound)", client)
+        self.assertIn("isGlobalModelPublished(finalization.sourceRound)", server)
+        self.assertIn("isRoundCompleted(finalization.sourceRound)", server)
+        self.assertIn("isExplicitlyFinalizedSourceRound", server)
+        ipfs = (
+            ROOT / "dfl" / "node_server" / "src" / "ipfs.ts"
+        ).read_text(encoding="utf-8")
+        self.assertIn("isRoundCompleted(intendedSourceRound)", ipfs)
+        self.assertIn("isRoundCompleted(sourceRound)", ipfs)
+
+    def test_worker_binds_decrypted_model_to_atomic_finalized_bundle_round(self) -> None:
+        client = (
+            ROOT / "dfl" / "node_server" / "src" / "bc_client.ts"
+        ).read_text(encoding="utf-8")
+        crypto_source = (
+            ROOT / "dfl" / "node_server" / "src" / "gm_crypto.ts"
+        ).read_text(encoding="utf-8")
+        server = NODE_SERVER_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("getFinalizedModelBundle().call()", client)
+        self.assertIn("modelRound", client)
+        self.assertIn("expectedModelRound", crypto_source)
+        self.assertIn("reconcileFetchedGlobalModel", server)
 
     def test_local_file_provider_preserves_the_configured_fixture_key_source(self) -> None:
         script = START_SCRIPT.read_text(encoding="utf-8")

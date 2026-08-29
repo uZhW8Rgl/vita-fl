@@ -16,16 +16,6 @@
         "name": "_initial_GM_CID",
         "type": "string",
         "internalType": "string"
-      },
-      {
-        "name": "_initial_GM_SIG_CID",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "_initial_GM_SIGNER_ADDRESS",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
@@ -162,19 +152,6 @@
         "name": "",
         "type": "string",
         "internalType": "string"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "bootstrapAuthority",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -763,31 +740,16 @@
   },
   {
     "type": "function",
-    "name": "initializeEncryptedBootstrap",
-    "inputs": [
+    "name": "initialModelCid",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "encryptedModel",
+        "name": "",
         "type": "string",
         "internalType": "string"
-      },
-      {
-        "name": "encryptedSignature",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "encryptedKeyBundle",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "publisherPublicKey",
-        "type": "bytes",
-        "internalType": "bytes"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1407,43 +1369,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "EncryptedBootstrapInitialized",
-    "inputs": [
-      {
-        "name": "authority",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "model",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      },
-      {
-        "name": "signature",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      },
-      {
-        "name": "keyBundle",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      },
-      {
-        "name": "publisherPublicKeyHash",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
       }
     ],
     "anonymous": false

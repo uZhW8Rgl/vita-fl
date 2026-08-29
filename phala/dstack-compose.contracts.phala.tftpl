@@ -75,15 +75,12 @@ services:
       RPC_URL: http://anvil:8545
       KUBO_API_URL: http://ipfs:5001
       IPFS_PROVIDER: kubo
-      KEEP_ALIVE: "${keep_alive}"
       # Supplied through Phala's encrypted app environment. Only allow-list
       # names belong in the measured compose policy.
       ETH_WALLET_PRIVATE_KEY: "$${ETH_WALLET_PRIVATE_KEY}"
-      INITIAL_GM_SIGNING_KEY: "$${INITIAL_GM_SIGNING_KEY}"
       DYNAMIC_WORKER_INVENTORY: "$${DYNAMIC_WORKER_INVENTORY}"
 ${dynamic_worker_inventory_environment}
       INITIAL_GM_CID: "${initial_gm_cid}"
-      INITIAL_GM_SIG_CID: "${initial_gm_sig_cid}"
       ETH_EUR_PRICE: "${eth_eur_price}"
       ETH_USD_PRICE: "${eth_usd_price}"
       EXCHANGE_RATE_SOURCE: "${exchange_rate_source}"
@@ -102,12 +99,6 @@ ${dynamic_worker_inventory_environment}
       DEPLOY_TDX_V4_DCAP: "${deploy_tdx_v4_dcap}"
       VERIFY_TDX_QUOTE_ONCHAIN: "${verify_tdx_quote_onchain}"
       AGGREGATOR_TIMEOUT_REPORT_PERCENT: "${aggregator_timeout_report_percent}"
-      BOOTSTRAP_MIN_RECIPIENTS: "${bootstrap_min_recipients}"
-      BOOTSTRAP_REGISTRATION_SETTLE_SECONDS: "${bootstrap_registration_settle_seconds}"
-      BOOTSTRAP_REGISTRATION_TIMEOUT_SECONDS: "${bootstrap_registration_timeout_seconds}"
-      BOOTSTRAP_REGISTRATION_POLL_SECONDS: "${bootstrap_registration_poll_seconds}"
-      BOOTSTRAP_REQUIRE_RECIPIENT_DECLARATION: "${enable_control_api ? 1 : 0}"
-      BOOTSTRAP_DECLARATION_TIMEOUT_SECONDS: "0"
       EXPECTED_WORKER_IMAGE: "${worker_image}"
       TRAINING_WORKER_POLICY_APP_COMPOSE_B64: "$${TRAINING_WORKER_POLICY_APP_COMPOSE_B64}"
       INFERENCE_WORKER_POLICY_APP_COMPOSE_B64: "$${INFERENCE_WORKER_POLICY_APP_COMPOSE_B64}"
@@ -122,7 +113,6 @@ ${dynamic_worker_inventory_environment}
       WORKER_ACCOUNT_ADDRESSES: "${worker_account_addresses}"
       WORKER_ACCOUNT_BALANCE_WEI: "10000000000000000000000"
       FUND_WORKER_ACCOUNTS: "0"
-      INITIAL_GM_SIGNER_ADDRESS: "${initial_gm_signer_address}"
     volumes:
       - evaluation-data:/dfl/data/evaluation
       - runtime-logs:/runtime-logs

@@ -219,6 +219,18 @@ class WorkerInventoryTests(unittest.TestCase):
         self.assertNotIn("private_key", serialized)
         self.assertNotIn("BEGIN PRIVATE KEY", serialized)
 
+    def test_selected_account_addresses_match_the_exact_scale_prefix(self) -> None:
+        instance, _runner = controller()
+
+        selected = instance.selected_account_addresses(2)
+        scaled = instance.scale(2)
+
+        self.assertEqual(
+            selected,
+            [worker["account_address"] for worker in scaled["workers"]],
+        )
+        self.assertEqual(selected, ["0x" + f"{slot + 1:040x}" for slot in range(2)])
+
     def test_scale_down_removes_highest_slots_first(self) -> None:
         instance, _runner = controller()
         instance.scale(3)

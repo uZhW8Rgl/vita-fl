@@ -35,8 +35,8 @@ services:
       PARTICIPANT_KEY_STATE_PATH: /var/lib/vita-fl/participant-rsa.v1.sealed.json
       PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH: /run/vita-fl/participant-private.pem
       PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH: /run/vita-fl/participant-public.pem
-      # Auto-resolved from the contract-runtime TEE's Kubo manifest at
-      # /runtime/contracts.json when the worker boots.
+      # Filled from the compose-bound EXPECTED_* values below. A readable
+      # /runtime/contracts.json is validated only as an optional hand-off.
       REGISTRY_ADDRESS: ""
       AGGREGATOR_ADDRESS: ""
       GM_STORAGE_ADDRESS: ""

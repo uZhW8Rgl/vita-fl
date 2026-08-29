@@ -47,6 +47,12 @@ contract DeviceRegistry {
     mapping(address => address) public participantForActionKey;
     mapping(bytes32 => bool) public allowedWorkerPolicyHashes;
     uint256 public allowedWorkerPolicyHashCount;
+    mapping(address => bool) public committedRunMembers;
+    address[] private committedRunRoster;
+    bytes32 public runRosterDigest;
+    bool public runRosterCommitted;
+    bool public runRosterFrozen;
+    uint256 public registeredRunMemberCount;
     mapping(address => bool) private knownDevice;
     address[] private deviceAddresses;
     uint256 public number;
@@ -60,6 +66,8 @@ contract DeviceRegistry {
     event WorkerPolicyHashPermissionUpdated(bytes32 indexed workerPolicyHash, bool allowed);
     event DeviceWorkerPolicyRegistered(address indexed device, bytes32 indexed workerPolicyHash);
     event DeviceActionKeyRegistered(address indexed device, address indexed actionKey);
+    event RunRosterCommitted(bytes32 indexed rosterDigest, uint256 workerCount, address indexed bootstrapWorker);
+    event RunRosterFrozen(bytes32 indexed rosterDigest, uint256 workerCount);
 
     constructor(bytes32 _deploymentId) {
         require(_deploymentId != bytes32(0), "invalid deployment id");
@@ -74,11 +82,13 @@ contract DeviceRegistry {
     }
 
     function setTdxV4Attestation(address _tdxV4Attestation) public onlyOwner {
+        require(!runRosterCommitted, "run admission policy is immutable");
         require(_tdxV4Attestation != address(0), "invalid attestation address");
         tdxV4Attestation = ITdxV4Attestation(_tdxV4Attestation);
     }
 
     function setExpectedWorkerImageDigest(bytes32 _expectedWorkerImageDigest) public onlyOwner {
+        require(!runRosterCommitted, "run admission policy is immutable");
         expectedWorkerImageDigest = _expectedWorkerImageDigest;
         emit ExpectedWorkerImageDigestUpdated(_expectedWorkerImageDigest);
     }
@@ -88,6 +98,7 @@ contract DeviceRegistry {
     ///         worker-specific environment, endpoints and other runtime values remain
     ///         free to vary and are bound separately through REPORTDATA and RTMR3.
     function setWorkerPolicyHashAllowed(bytes32 policyHash, bool allowed) public onlyOwner {
+        require(!runRosterCommitted, "run admission policy is immutable");
         require(policyHash != bytes32(0), "invalid worker policy hash");
         bool current = allowedWorkerPolicyHashes[policyHash];
         if (current == allowed) return;
@@ -98,13 +109,45 @@ contract DeviceRegistry {
         emit WorkerPolicyHashPermissionUpdated(policyHash, allowed);
     }
 
+    /// @notice Commits the exact, ordered participant set for this deployment.
+    /// @dev This is deliberately a one-time owner action. Registration remains
+    ///      closed until the commitment exists, and only committed participants
+    ///      can subsequently register attested workload/action keys.
+    function commitRunRoster(address[] calldata roster) external onlyOwner {
+        require(!runRosterCommitted, "run roster already committed");
+        require(roster.length > 0, "run roster is empty");
+
+        for (uint256 i = 0; i < roster.length; i++) {
+            address participant = roster[i];
+            require(participant != address(0), "run roster contains zero address");
+            require(!knownDevice[participant], "run member already registered");
+            require(!committedRunMembers[participant], "run roster contains duplicate");
+            committedRunMembers[participant] = true;
+            committedRunRoster.push(participant);
+        }
+
+        runRosterDigest = keccak256(abi.encode(roster));
+        runRosterCommitted = true;
+        emit RunRosterCommitted(runRosterDigest, roster.length, roster[0]);
+    }
+
+    function getRunRoster() external view returns (address[] memory) {
+        return committedRunRoster;
+    }
+
+    function runRosterSize() external view returns (uint256) {
+        return committedRunRoster.length;
+    }
+
     function authorizeAddress(address _address) public onlyOwner {
+        require(!runRosterCommitted, "run roster is immutable");
         require(knownDevice[_address], "device not registered");
         devices[_address].authorized = true;
         emit DeviceAuthorized(_address);
     }
 
     function deauthorizeAddress(address _address) public onlyOwner {
+        require(!runRosterCommitted, "run roster is immutable");
         require(knownDevice[_address], "device not registered");
         devices[_address].authorized = false;
         emit DeviceDeauthorized(_address);
@@ -123,7 +166,10 @@ contract DeviceRegistry {
     }
 
     function isAuthorized(address _address) public view returns (bool) {
-        if (!devices[_address].authorized || expectedWorkerImageDigest == bytes32(0)) {
+        if (
+            !runRosterCommitted || !committedRunMembers[_address] || !devices[_address].authorized
+                || expectedWorkerImageDigest == bytes32(0)
+        ) {
             return false;
         }
         bytes32 imageDigest = registeredImageDigests[_address];
@@ -150,16 +196,16 @@ contract DeviceRegistry {
 
     function getAuthorizedDevices() external view returns (address[] memory) {
         uint256 count = 0;
-        for (uint256 i = 0; i < deviceAddresses.length; i++) {
-            if (isAuthorized(deviceAddresses[i])) {
+        for (uint256 i = 0; i < committedRunRoster.length; i++) {
+            if (isAuthorized(committedRunRoster[i])) {
                 count++;
             }
         }
 
         address[] memory authorized = new address[](count);
         uint256 index = 0;
-        for (uint256 i = 0; i < deviceAddresses.length; i++) {
-            address device = deviceAddresses[i];
+        for (uint256 i = 0; i < committedRunRoster.length; i++) {
+            address device = committedRunRoster[i];
             if (isAuthorized(device)) {
                 authorized[index] = device;
                 index++;
@@ -388,6 +434,9 @@ contract DeviceRegistry {
         bytes32 policyHash
     ) internal view {
         require(_address != address(0), "invalid device address");
+        require(runRosterCommitted, "run roster not committed");
+        require(committedRunMembers[_address], "participant not in committed run roster");
+        require(!runRosterFrozen, "run roster registration is closed");
         require(_public_key.length != 0, "public key required");
         require(expectedWorkerImageDigest != bytes32(0), "worker image policy not configured");
         require(workerImageDigest == expectedWorkerImageDigest, "worker image digest mismatch");
@@ -416,6 +465,11 @@ contract DeviceRegistry {
     ) internal {
         addKnownDevice(_address);
         devices[_address] = Device(true, _public_ip, _msg_broker_ip, _public_key);
+        registeredRunMemberCount++;
+        if (registeredRunMemberCount == committedRunRoster.length) {
+            runRosterFrozen = true;
+            emit RunRosterFrozen(runRosterDigest, committedRunRoster.length);
+        }
     }
 
     function addKnownDevice(address _address) internal {
@@ -426,6 +480,7 @@ contract DeviceRegistry {
     }
 
     function _deregisterDevice(address _address) internal {
+        require(!runRosterFrozen, "run roster is immutable");
         require(actionKeyForParticipant[_address] == msg.sender, "only current action key can deregister");
         require(knownDevice[_address], "device not registered");
 
@@ -437,6 +492,7 @@ contract DeviceRegistry {
         delete actionKeyForParticipant[_address];
         delete participantForActionKey[actionKey];
         knownDevice[_address] = false;
+        registeredRunMemberCount--;
         _removeDeviceAddress(_address);
 
         emit DeviceDeregistered(_address, registrationNonces[_address]);

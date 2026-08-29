@@ -109,8 +109,7 @@ contract GMStorageContributionTest is Test {
         selection = new ContributionAggregatorSelectionStub();
         selection.setAggregator(aggregator);
 
-        gmStorage =
-            new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
+        gmStorage = new GMStorage(address(registry), address(selection), "initial-model");
         aggregationPolicy = new AggregationPolicy(address(gmStorage));
         aggregationPolicy.configureDefaultPolicy(1, 3600);
         gmStorage.setAggregationPolicyAddress(address(aggregationPolicy));
@@ -320,7 +319,7 @@ contract GMStorageContributionTest is Test {
     }
 
     function testParentHashCommitsToModelSignatureAndKeyBundle() public {
-        assertEq(gmStorage.currentParentModelHash(), keccak256(abi.encode("initial-model", "initial-signature", "")));
+        assertEq(gmStorage.currentParentModelHash(), keccak256(abi.encode("initial-model", "", "")));
 
         finalizeCurrentRound("next-model", "next-signature", "next-key-bundle");
 

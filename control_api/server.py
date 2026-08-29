@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
 import json
 import os
@@ -25,7 +26,24 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, Response
 
 WORKSPACE_ROOT = Path(os.environ.get("TRAINING_WORKSPACE_ROOT", "/workspace")).resolve()
-TRAINING_ENV_FILE = Path(os.environ.get("TRAINING_CONFIG_FILE", str(WORKSPACE_ROOT / ".env"))).resolve()
+
+
+def _workspace_relative_path(value: str, default: Path) -> Path:
+    configured = Path(value.strip()) if value.strip() else default
+    if not configured.is_absolute():
+        configured = WORKSPACE_ROOT / configured
+    return configured.resolve()
+
+
+TRAINING_ENV_FILE = _workspace_relative_path(
+    os.environ.get("TRAINING_CONFIG_FILE", "").strip()
+    or os.environ.get("TRAINING_ENV_FILE", "").strip(),
+    WORKSPACE_ROOT / ".env",
+)
+TRAINING_COMPOSE_ENV_FILE = _workspace_relative_path(
+    os.environ.get("TRAINING_COMPOSE_ENV_FILE", "").strip(),
+    TRAINING_ENV_FILE,
+)
 TRAINING_COMPOSE_FILE = WORKSPACE_ROOT / "compose.yml"
 EVALUATION_SUMMARY_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "global_model_round_summary.csv"
 TRANSACTION_COST_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "transaction_costs.csv"
@@ -109,6 +127,8 @@ AGGREGATION_POLICY_CONFIGURE_SELECTOR = "95b40727"
 AGGREGATION_POLICY_OWNER_SELECTOR = "8da5cb5b"
 AGGREGATION_POLICY_REQUIRED_SUBMISSIONS_SELECTOR = "ea2e7c87"
 AGGREGATION_POLICY_SUBMISSION_WINDOW_SELECTOR = "0dbc13f0"
+DEVICE_REGISTRY_OWNER_SELECTOR = "8da5cb5b"
+RUN_ROSTER_TRANSACTION_TIMEOUT_SECONDS = 60
 
 
 def phala_runtime_mode() -> bool:
@@ -885,14 +905,35 @@ def read_training_config(
                 MAX_DYNAMIC_WORKERS,
             ),
         )
-        worker_count = max(2, min(_safe_int(os.environ.get("WORKER_COUNT"), 3), maximum))
+        worker_count = max(
+            2,
+            min(
+                _safe_int(
+                    values.get("WORKER_COUNT") or os.environ.get("WORKER_COUNT"),
+                    3,
+                ),
+                maximum,
+            ),
+        )
         client_limit = max(
             1,
-            min(_safe_int(os.environ.get("CLIENT_LIMIT"), max(1, worker_count - 1)), max(1, worker_count - 1)),
+            min(
+                _safe_int(
+                    values.get("CLIENT_LIMIT") or os.environ.get("CLIENT_LIMIT"),
+                    max(1, worker_count - 1),
+                ),
+                max(1, worker_count - 1),
+            ),
         )
         return {
-            "rounds": max(1, _safe_int(os.environ.get("ROUND"), 5)),
-            "epoch": max(1, _safe_int(os.environ.get("EPOCH"), 1)),
+            "rounds": max(
+                1,
+                _safe_int(values.get("ROUND") or os.environ.get("ROUND"), 5),
+            ),
+            "epoch": max(
+                1,
+                _safe_int(values.get("EPOCH") or os.environ.get("EPOCH"), 1),
+            ),
             "worker_count": worker_count,
             "client_limit": client_limit,
             "max_worker_count": maximum,
@@ -938,7 +979,7 @@ def normalize_training_config(payload: dict[str, Any]) -> dict[str, int]:
     }
 
 
-def phala_worker_training_config(config: dict[str, int]) -> dict[str, int]:
+def worker_runtime_training_config(config: dict[str, int]) -> dict[str, int]:
     """Translate user-visible training rounds to the worker's absolute target round.
 
     Contract round 0 only republishes the bootstrap model; it is not a federated
@@ -982,10 +1023,17 @@ def write_training_config(config: dict[str, int], env_file: Path = TRAINING_ENV_
     return read_training_config(env_file)
 
 
-async def run_subprocess(command: list[str], *, cwd: Path, check: bool = True) -> dict[str, Any]:
+async def run_subprocess(
+    command: list[str],
+    *,
+    cwd: Path,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
     process = await asyncio.create_subprocess_exec(
         *command,
         cwd=str(cwd),
+        env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -1013,6 +1061,8 @@ def compose_command(*args: str, include_profile: bool = True) -> list[str]:
         "-f",
         str(TRAINING_COMPOSE_FILE),
     ]
+    if TRAINING_COMPOSE_ENV_FILE.exists():
+        command.extend(["--env-file", str(TRAINING_COMPOSE_ENV_FILE)])
     compose_project_name = os.environ.get("TRAINING_COMPOSE_PROJECT_NAME", "").strip()
     if compose_project_name:
         command.extend(["-p", compose_project_name])
@@ -1212,7 +1262,7 @@ def probe_contract_deployment(env_values: dict[str, str]) -> bool:
         env_values.get("GM_STORAGE_ADDRESS", "").strip(),
     ]
     valid_addresses = [address for address in addresses if re.fullmatch(r"0x[a-fA-F0-9]{40}", address)]
-    if not valid_addresses:
+    if len(valid_addresses) != len(addresses):
         return False
 
     for index, address in enumerate(valid_addresses, start=1):
@@ -1224,24 +1274,46 @@ def probe_contract_deployment(env_values: dict[str, str]) -> bool:
         }
         response = _post_json(rpc_url, payload)
         code = (response or {}).get("result", "0x")
-        if isinstance(code, str) and code not in {"0x", "0X", ""}:
-            return True
-    return False
+        if not isinstance(code, str) or code in {"0x", "0X", ""}:
+            return False
+    return True
 
 
 def runtime_contract_env_values() -> dict[str, str]:
     values = read_env_values()
-    if not phala_runtime_mode():
-        return values
-    rpc_url = (
-        os.environ.get("RPC_URL", "").strip()
-        or os.environ.get("DYNAMIC_WORKER_RPC_URL", "").strip()
-    )
-    kubo_api = (
-        os.environ.get("KUBO_API_URL", "").strip()
-        or os.environ.get("KUBO_API", "").strip()
-        or os.environ.get("DYNAMIC_WORKER_KUBO_API_URL", "").strip()
-    ).rstrip("/")
+    if phala_runtime_mode():
+        rpc_url = (
+            os.environ.get("RPC_URL", "").strip()
+            or os.environ.get("DYNAMIC_WORKER_RPC_URL", "").strip()
+        )
+        kubo_api = (
+            os.environ.get("KUBO_API_URL", "").strip()
+            or os.environ.get("KUBO_API", "").strip()
+            or os.environ.get("DYNAMIC_WORKER_KUBO_API_URL", "").strip()
+        ).rstrip("/")
+        # These values are measured into the control deployment and remain
+        # authoritative when mutable MFS metadata is lost. A manifest, when
+        # present, is only an additional consistency check.
+        expected_addresses = {
+            "REGISTRY_ADDRESS": "DYNAMIC_WORKER_EXPECTED_DEVICE_REGISTRY_ADDRESS",
+            "AGGREGATOR_ADDRESS": "DYNAMIC_WORKER_EXPECTED_AGGREGATOR_ADDRESS",
+            "GM_STORAGE_ADDRESS": "DYNAMIC_WORKER_EXPECTED_GM_STORAGE_ADDRESS",
+        }
+        for env_key, expected_key in expected_addresses.items():
+            expected = os.environ.get(expected_key, "").strip()
+            if not re.fullmatch(r"0x[a-fA-F0-9]{40}", expected):
+                raise RuntimeError(f"{expected_key} is missing or invalid")
+            values[env_key] = expected
+        # Never inherit a policy address from a mutable training env file in
+        # Phala mode. It is derived from the measured GMStorage below before a
+        # setup transaction is signed.
+        values.pop("AGGREGATION_POLICY_ADDRESS", None)
+    else:
+        rpc_url = values.get("RPC_URL", "").strip()
+        kubo_api = (
+            values.get("KUBO_API", "").strip()
+            or values.get("KUBO_API_URL", "").strip()
+        ).rstrip("/")
     if rpc_url:
         values["RPC_URL"] = rpc_url
     if kubo_api:
@@ -1255,13 +1327,52 @@ def runtime_contract_env_values() -> dict[str, str]:
                 "registry_address": "REGISTRY_ADDRESS",
                 "aggregator_address": "AGGREGATOR_ADDRESS",
                 "gm_storage_address": "GM_STORAGE_ADDRESS",
-                "aggregation_policy_address": "AGGREGATION_POLICY_ADDRESS",
             }
+            if not isinstance(manifest, dict):
+                raise RuntimeError("runtime contract manifest is not a JSON object")
             for manifest_key, env_key in address_keys.items():
                 address = str(manifest.get(manifest_key, "")).strip()
-                if re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
+                if not re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
+                    raise RuntimeError(
+                        f"runtime contract manifest has no valid {manifest_key}"
+                    )
+                if phala_runtime_mode() and address.lower() != values[env_key].lower():
+                    raise RuntimeError(
+                        f"runtime contract manifest {env_key} does not match "
+                        f"{expected_addresses[env_key]}"
+                    )
+                if not phala_runtime_mode():
                     values[env_key] = address
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+
+            manifest_policy_address = str(
+                manifest.get("aggregation_policy_address", "")
+            ).strip()
+            if not re.fullmatch(r"0x[a-fA-F0-9]{40}", manifest_policy_address):
+                raise RuntimeError(
+                    "runtime contract manifest has no valid aggregation_policy_address"
+                )
+            values["RUNTIME_MANIFEST_AGGREGATION_POLICY_ADDRESS"] = (
+                manifest_policy_address
+            )
+            if phala_runtime_mode():
+                manifest_chain_id = str(manifest.get("chain_id", "")).strip()
+                expected_chain_id = os.environ.get(
+                    "DYNAMIC_WORKER_EXPECTED_CHAIN_ID",
+                    "",
+                ).strip()
+                if (
+                    not manifest_chain_id.isdigit()
+                    or not expected_chain_id.isdigit()
+                    or int(manifest_chain_id) != int(expected_chain_id)
+                ):
+                    raise RuntimeError(
+                        "runtime contract manifest chain_id does not match "
+                        "DYNAMIC_WORKER_EXPECTED_CHAIN_ID"
+                    )
+        except (urllib.error.URLError, TimeoutError, OSError):
+            # Mutable MFS is a deployment hand-off, not a recovery authority.
+            # If it cannot be read, callers continue with the measured values
+            # and verify the live chain before signing.
             pass
     return values
 
@@ -1349,6 +1460,392 @@ def _sign_ethereum_transaction(transaction: dict[str, Any], private_key: str) ->
     return raw_hex if raw_hex.startswith("0x") else f"0x{raw_hex}"
 
 
+def _ethereum_function_selector(signature: str) -> str:
+    from eth_utils import keccak
+
+    return keccak(text=signature)[:4].hex()
+
+
+def verified_setup_contract_env_values() -> dict[str, str]:
+    """Resolve the setup trust root without depending on mutable MFS state.
+
+    Registry, AggregatorSelection, and GMStorage come from the measured control
+    configuration in Phala mode. The AggregationPolicy address is deliberately
+    not accepted from an env file: it is read from that verified GMStorage, and
+    all four contracts must have deployed code before a transaction is signed.
+    A readable MFS manifest is only cross-checked against the same live state.
+    """
+
+    values = runtime_contract_env_values()
+    rpc_url = os.environ.get("RPC_URL", "").strip() or values.get("RPC_URL", "").strip()
+    if not rpc_url:
+        raise RuntimeError("RPC_URL is not configured for contract setup")
+
+    chain_id = _rpc_quantity(_ethereum_rpc(rpc_url, "eth_chainId", []), "chain ID")
+    if phala_runtime_mode():
+        expected_chain_id_text = os.environ.get(
+            "DYNAMIC_WORKER_EXPECTED_CHAIN_ID",
+            "",
+        ).strip()
+        if not expected_chain_id_text.isdigit() or int(expected_chain_id_text) <= 0:
+            raise RuntimeError("DYNAMIC_WORKER_EXPECTED_CHAIN_ID is missing or invalid")
+        if chain_id != int(expected_chain_id_text):
+            raise RuntimeError(
+                "live RPC chain ID does not match DYNAMIC_WORKER_EXPECTED_CHAIN_ID"
+            )
+
+    addresses = {
+        "REGISTRY_ADDRESS": _checksum_ethereum_address(
+            values.get("REGISTRY_ADDRESS", ""),
+            "registry_address",
+        ),
+        "AGGREGATOR_ADDRESS": _checksum_ethereum_address(
+            values.get("AGGREGATOR_ADDRESS", ""),
+            "aggregator_address",
+        ),
+        "GM_STORAGE_ADDRESS": _checksum_ethereum_address(
+            values.get("GM_STORAGE_ADDRESS", ""),
+            "gm_storage_address",
+        ),
+    }
+
+    def require_code(address: str, name: str) -> None:
+        code = _ethereum_rpc(rpc_url, "eth_getCode", [address, "latest"])
+        if not isinstance(code, str) or code in {"", "0x", "0X", "0x0", "0X0"}:
+            raise RuntimeError(f"{name} has no deployed code on the verified runtime chain")
+
+    for env_key, address in addresses.items():
+        require_code(address, env_key)
+
+    gm_storage = addresses["GM_STORAGE_ADDRESS"]
+
+    def gm_address(function_signature: str, name: str) -> str:
+        return _rpc_address(
+            _ethereum_rpc(
+                rpc_url,
+                "eth_call",
+                [
+                    {
+                        "to": gm_storage,
+                        "data": f"0x{_ethereum_function_selector(function_signature)}",
+                    },
+                    "latest",
+                ],
+            ),
+            name,
+        )
+
+    linked_registry = gm_address("device_registry_address()", "GMStorage registry")
+    if linked_registry.lower() != addresses["REGISTRY_ADDRESS"].lower():
+        raise RuntimeError("GMStorage is linked to a different DeviceRegistry")
+    linked_aggregator = gm_address(
+        "aggregator_selection_address()",
+        "GMStorage aggregator selection",
+    )
+    if linked_aggregator.lower() != addresses["AGGREGATOR_ADDRESS"].lower():
+        raise RuntimeError("GMStorage is linked to a different AggregatorSelection")
+
+    policy_address = gm_address(
+        "aggregation_policy_address()",
+        "GMStorage aggregation policy",
+    )
+    if policy_address.lower() == "0x" + "0" * 40:
+        raise RuntimeError("GMStorage aggregation policy is not configured")
+    require_code(policy_address, "AggregationPolicy")
+
+    policy_gm_storage = _rpc_address(
+        _ethereum_rpc(
+            rpc_url,
+            "eth_call",
+            [
+                {
+                    "to": policy_address,
+                    "data": f"0x{_ethereum_function_selector('gmStorage()')}",
+                },
+                "latest",
+            ],
+        ),
+        "AggregationPolicy GMStorage",
+    )
+    if policy_gm_storage.lower() != gm_storage.lower():
+        raise RuntimeError("AggregationPolicy is linked to a different GMStorage")
+
+    manifest_policy = values.get(
+        "RUNTIME_MANIFEST_AGGREGATION_POLICY_ADDRESS",
+        "",
+    ).strip()
+    if manifest_policy:
+        manifest_policy = _checksum_ethereum_address(
+            manifest_policy,
+            "runtime manifest aggregation_policy_address",
+        )
+        if manifest_policy.lower() != policy_address.lower():
+            raise RuntimeError(
+                "runtime contract manifest aggregation policy does not match GMStorage"
+            )
+
+    return {
+        **values,
+        **addresses,
+        "RPC_URL": rpc_url,
+        "AGGREGATION_POLICY_ADDRESS": policy_address,
+        "VERIFIED_CHAIN_ID": str(chain_id),
+    }
+
+
+def _normalize_run_roster(addresses: list[str]) -> list[str]:
+    if not addresses:
+        raise ValueError("at least one run-roster address is required")
+    normalized = [
+        _checksum_ethereum_address(address, f"run-roster address {index}")
+        for index, address in enumerate(addresses)
+    ]
+    if len({address.lower() for address in normalized}) != len(normalized):
+        raise ValueError("run-roster addresses must be unique")
+    return normalized
+
+
+def _encode_address_array_argument(addresses: list[str]) -> bytes:
+    return (
+        (32).to_bytes(32, byteorder="big")
+        + len(addresses).to_bytes(32, byteorder="big")
+        + b"".join(
+            bytes.fromhex(address.removeprefix("0x")).rjust(32, b"\0")
+            for address in addresses
+        )
+    )
+
+
+def _decode_rpc_address_array(value: Any, name: str) -> list[str]:
+    encoded = str(value or "").removeprefix("0x")
+    if len(encoded) % 64 != 0 or not encoded:
+        raise RuntimeError(f"Ethereum RPC returned an invalid {name}")
+    try:
+        data = bytes.fromhex(encoded)
+        offset = int.from_bytes(data[:32], byteorder="big")
+        if offset + 32 > len(data):
+            raise ValueError
+        length = int.from_bytes(data[offset : offset + 32], byteorder="big")
+        start = offset + 32
+        end = start + length * 32
+        if end > len(data):
+            raise ValueError
+        return [
+            _checksum_ethereum_address(
+                f"0x{data[start + index * 32 + 12:start + (index + 1) * 32].hex()}",
+                f"Ethereum RPC {name} entry {index}",
+            )
+            for index in range(length)
+        ]
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Ethereum RPC returned an invalid {name}") from exc
+
+
+def read_run_roster_state(env_values: dict[str, str]) -> dict[str, Any]:
+    """Read the immutable DeviceRegistry run-roster commitment."""
+    rpc_url = env_values.get("RPC_URL", "http://anvil:8545").strip()
+    registry_address = _checksum_ethereum_address(
+        env_values.get("REGISTRY_ADDRESS", "").strip(),
+        "registry_address",
+    )
+
+    def call(signature: str) -> Any:
+        return _ethereum_rpc(
+            rpc_url,
+            "eth_call",
+            [
+                {
+                    "to": registry_address,
+                    "data": f"0x{_ethereum_function_selector(signature)}",
+                },
+                "latest",
+            ],
+        )
+
+    committed = bool(_rpc_quantity(call("runRosterCommitted()"), "run-roster committed flag"))
+    if not committed:
+        return {
+            "address": registry_address,
+            "committed": False,
+            "frozen": False,
+            "digest": None,
+            "worker_count": 0,
+            "registered_worker_count": 0,
+            "roster": [],
+        }
+
+    digest = str(call("runRosterDigest()")).lower()
+    if not re.fullmatch(r"0x[a-f0-9]{64}", digest):
+        raise RuntimeError("Ethereum RPC returned an invalid run-roster digest")
+    roster = _decode_rpc_address_array(call("getRunRoster()"), "run roster")
+    worker_count = _rpc_quantity(call("runRosterSize()"), "run-roster size")
+    registered_worker_count = _rpc_quantity(
+        call("registeredRunMemberCount()"),
+        "registered run-member count",
+    )
+    frozen = bool(_rpc_quantity(call("runRosterFrozen()"), "run-roster frozen flag"))
+    if worker_count != len(roster) or registered_worker_count > worker_count:
+        raise RuntimeError("DeviceRegistry returned an inconsistent run-roster state")
+    return {
+        "address": registry_address,
+        "committed": True,
+        "frozen": frozen,
+        "digest": digest,
+        "worker_count": worker_count,
+        "registered_worker_count": registered_worker_count,
+        "roster": roster,
+    }
+
+
+def commit_run_roster(addresses: list[str]) -> dict[str, Any]:
+    """Commit the exact selected worker identities before any worker starts."""
+    from eth_utils import keccak
+
+    roster = _normalize_run_roster(addresses)
+    runtime_values = verified_setup_contract_env_values()
+    rpc_url = os.environ.get("RPC_URL", "").strip() or runtime_values.get("RPC_URL", "").strip()
+    if not rpc_url:
+        raise RuntimeError("RPC_URL is not configured for DeviceRegistry")
+    registry_address = _checksum_ethereum_address(
+        runtime_values.get("REGISTRY_ADDRESS", "").strip(),
+        "registry_address",
+    )
+    private_key = (
+        os.environ.get("ETH_WALLET_PRIVATE_KEY", "").strip()
+        or runtime_values.get("ETH_WALLET_PRIVATE_KEY", "").strip()
+        or runtime_values.get("W0_PRIVATE_KEY", "").strip()
+    )
+    if not re.fullmatch(r"0x[a-fA-F0-9]{64}", private_key):
+        raise RuntimeError("ETH_WALLET_PRIVATE_KEY is missing or invalid")
+    owner_address = _ethereum_account_address(private_key)
+    contract_owner = _rpc_address(
+        _ethereum_rpc(
+            rpc_url,
+            "eth_call",
+            [
+                {"to": registry_address, "data": f"0x{DEVICE_REGISTRY_OWNER_SELECTOR}"},
+                "latest",
+            ],
+        ),
+        "DeviceRegistry owner",
+    )
+    if contract_owner.lower() != owner_address.lower():
+        raise RuntimeError("ETH_WALLET_PRIVATE_KEY does not belong to the DeviceRegistry owner")
+
+    bootstrap_aggregator = read_current_aggregator(
+        {**runtime_values, "RPC_URL": rpc_url}
+    ).get("address")
+    if (
+        not bootstrap_aggregator
+        or bootstrap_aggregator.lower() != roster[0].lower()
+    ):
+        raise RuntimeError(
+            "the first committed run-roster member must be the on-chain "
+            "bootstrap aggregator W0"
+        )
+
+    encoded_arguments = _encode_address_array_argument(roster)
+    roster_digest = f"0x{keccak(encoded_arguments).hex()}"
+    before = read_run_roster_state({**runtime_values, "RPC_URL": rpc_url})
+    if before["committed"]:
+        if (
+            before["digest"] != roster_digest
+            or [address.lower() for address in before["roster"]]
+            != [address.lower() for address in roster]
+        ):
+            raise RuntimeError(
+                "DeviceRegistry already contains a different immutable run roster; "
+                "reset the run first"
+            )
+        return {
+            **before,
+            "owner": owner_address,
+            "transaction_hash": None,
+            "block_number": None,
+            "gas_used": 0,
+            "idempotent": True,
+        }
+
+    call_data = (
+        f"0x{_ethereum_function_selector('commitRunRoster(address[])')}"
+        f"{encoded_arguments.hex()}"
+    )
+    chain_id = _rpc_quantity(_ethereum_rpc(rpc_url, "eth_chainId", []), "chain ID")
+    if phala_runtime_mode():
+        expected_chain_id = str(
+            os.environ.get("DYNAMIC_WORKER_EXPECTED_CHAIN_ID", "")
+        ).strip()
+        if not expected_chain_id.isdigit() or chain_id != int(expected_chain_id):
+            raise RuntimeError(
+                "live RPC chain ID does not match DYNAMIC_WORKER_EXPECTED_CHAIN_ID"
+            )
+    nonce = _rpc_quantity(
+        _ethereum_rpc(rpc_url, "eth_getTransactionCount", [owner_address, "pending"]),
+        "transaction count",
+    )
+    gas_price = _rpc_quantity(_ethereum_rpc(rpc_url, "eth_gasPrice", []), "gas price")
+    transaction_call = {
+        "from": owner_address,
+        "to": registry_address,
+        "data": call_data,
+        "value": "0x0",
+    }
+    estimated_gas = _rpc_quantity(
+        _ethereum_rpc(rpc_url, "eth_estimateGas", [transaction_call]),
+        "gas estimate",
+    )
+    transaction = {
+        "chainId": chain_id,
+        "nonce": nonce,
+        "to": registry_address,
+        "value": 0,
+        "data": call_data,
+        "gas": max(21_000, (estimated_gas * 120 + 99) // 100),
+        "gasPrice": gas_price,
+    }
+    transaction_hash = str(
+        _ethereum_rpc(
+            rpc_url,
+            "eth_sendRawTransaction",
+            [_sign_ethereum_transaction(transaction, private_key)],
+        )
+    )
+    if not re.fullmatch(r"0x[a-fA-F0-9]{64}", transaction_hash):
+        raise RuntimeError("Ethereum RPC returned an invalid transaction hash")
+
+    deadline = time.monotonic() + RUN_ROSTER_TRANSACTION_TIMEOUT_SECONDS
+    receipt: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        candidate = _ethereum_rpc(rpc_url, "eth_getTransactionReceipt", [transaction_hash])
+        if candidate is not None:
+            if not isinstance(candidate, dict):
+                raise RuntimeError("Ethereum RPC returned an invalid transaction receipt")
+            receipt = candidate
+            break
+        time.sleep(0.25)
+    if receipt is None:
+        raise RuntimeError("timed out waiting for the run-roster commitment transaction")
+    if _rpc_quantity(receipt.get("status"), "transaction status") != 1:
+        raise RuntimeError("DeviceRegistry run-roster commitment transaction reverted")
+
+    observed = read_run_roster_state({**runtime_values, "RPC_URL": rpc_url})
+    if (
+        not observed["committed"]
+        or observed["digest"] != roster_digest
+        or [address.lower() for address in observed["roster"]]
+        != [address.lower() for address in roster]
+    ):
+        raise RuntimeError("DeviceRegistry state does not match the confirmed run-roster transaction")
+    return {
+        **observed,
+        "owner": owner_address,
+        "transaction_hash": transaction_hash,
+        "block_number": _rpc_quantity(receipt.get("blockNumber"), "block number"),
+        "gas_used": _rpc_quantity(receipt.get("gasUsed"), "gas used"),
+        "idempotent": False,
+    }
+
+
 def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
     if (
         isinstance(client_limit, bool)
@@ -1359,10 +1856,12 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
             f"client_limit must be an integer between 1 and {MAX_DYNAMIC_WORKERS}"
         )
 
-    deadline_value = os.environ.get(
-        "MODEL_SUBMISSION_DEADLINE_MS",
-        str(DEFAULT_MODEL_SUBMISSION_DEADLINE_MS),
-    ).strip()
+    runtime_values = verified_setup_contract_env_values()
+    deadline_value = (
+        os.environ.get("MODEL_SUBMISSION_DEADLINE_MS", "").strip()
+        or runtime_values.get("MODEL_SUBMISSION_DEADLINE_MS", "").strip()
+        or str(DEFAULT_MODEL_SUBMISSION_DEADLINE_MS)
+    )
     try:
         deadline_ms = int(deadline_value)
     except ValueError as exc:
@@ -1375,7 +1874,6 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
             "MODEL_SUBMISSION_DEADLINE_MS exceeds the AggregationPolicy maximum"
         )
 
-    runtime_values = runtime_contract_env_values()
     raw_policy_address = runtime_values.get("AGGREGATION_POLICY_ADDRESS", "").strip()
     try:
         policy_address = _checksum_ethereum_address(
@@ -1384,17 +1882,19 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
         )
     except RuntimeError as exc:
         raise RuntimeError(
-            "aggregation_policy_address is missing or invalid in /runtime/contracts.json"
+            "GMStorage returned a missing or invalid aggregation policy address"
         ) from exc
     if policy_address.lower() == "0x" + "0" * 40:
-        raise RuntimeError(
-            "aggregation_policy_address is missing or invalid in /runtime/contracts.json"
-        )
+        raise RuntimeError("GMStorage returned an unconfigured aggregation policy address")
 
     rpc_url = os.environ.get("RPC_URL", "").strip() or runtime_values.get("RPC_URL", "").strip()
     if not rpc_url:
         raise RuntimeError("RPC_URL is not configured for AggregationPolicy")
-    private_key = os.environ.get("ETH_WALLET_PRIVATE_KEY", "").strip()
+    private_key = (
+        os.environ.get("ETH_WALLET_PRIVATE_KEY", "").strip()
+        or runtime_values.get("ETH_WALLET_PRIVATE_KEY", "").strip()
+        or runtime_values.get("W0_PRIVATE_KEY", "").strip()
+    )
     if not re.fullmatch(r"0x[a-fA-F0-9]{64}", private_key):
         raise RuntimeError("ETH_WALLET_PRIVATE_KEY is missing or invalid")
 
@@ -1538,6 +2038,37 @@ def read_chain_round(env_values: dict[str, str]) -> int | None:
         "jsonrpc": "2.0",
         "method": "eth_call",
         "params": [{"to": gm_storage_address, "data": "0x9f8743f7"}, "latest"],
+        "id": 1,
+    }
+    response = _post_json(rpc_url, payload)
+    result = (response or {}).get("result")
+    if not isinstance(result, str) or result in {"", "0x"}:
+        return None
+    try:
+        return int(result, 16)
+    except ValueError:
+        return None
+
+
+def read_chain_completed_round_count(env_values: dict[str, str]) -> int | None:
+    """Return the number of successfully finalized rounds.
+
+    The on-chain round number also advances when a training round is aborted,
+    so it cannot be used to decide whether the requested number of successful
+    training rounds has completed.
+    """
+    rpc_url = env_values.get("RPC_URL", "http://anvil:8545").strip()
+    gm_storage_address = env_values.get("GM_STORAGE_ADDRESS", "").strip()
+    if not re.fullmatch(r"0x[a-fA-F0-9]{40}", gm_storage_address):
+        return None
+
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "eth_call",
+        "params": [
+            {"to": gm_storage_address, "data": "0x1ecb4dcc"},
+            "latest",
+        ],
         "id": 1,
     }
     response = _post_json(rpc_url, payload)
@@ -1791,6 +2322,11 @@ def write_runtime_mfs_marker(path: str, value: dict[str, Any]) -> dict[str, Any]
 
 
 def publish_bootstrap_recipient_declaration(addresses: list[str]) -> dict[str, Any]:
+    """Publish the exact training roster consumed by the round-0 worker.
+
+    This MFS document is transport/readiness metadata only. The immutable
+    DeviceRegistry commitment is the participant authority.
+    """
     if not addresses:
         raise ValueError("at least one bootstrap recipient address is required")
 
@@ -1803,22 +2339,56 @@ def publish_bootstrap_recipient_declaration(addresses: list[str]) -> dict[str, A
     if len(set(normalized)) != len(normalized):
         raise ValueError("bootstrap recipient addresses must be unique")
 
-    admission_marker = read_runtime_mfs_marker("/runtime/admission-ready.json")
-    if admission_marker.get("status") != "admission-ready":
-        raise RuntimeError("runtime is not ready to admit the declared workers")
-    chain_id = str(admission_marker.get("chain_id", "")).strip()
-    if not chain_id.isdigit():
-        raise RuntimeError("runtime admission marker has an invalid chain_id")
+    run_roster = read_run_roster_state(runtime_contract_env_values())
+    if not run_roster["committed"]:
+        raise RuntimeError("DeviceRegistry run roster is not committed")
+    if [address.lower() for address in run_roster["roster"]] != normalized:
+        raise RuntimeError(
+            "bootstrap declaration does not match the committed DeviceRegistry run roster"
+        )
 
+    runtime_values = runtime_contract_env_values()
+    rpc_url = runtime_values.get("RPC_URL", "").strip()
+    if not rpc_url:
+        raise RuntimeError("RPC_URL is not configured for the bootstrap declaration")
+    chain_id = _rpc_quantity(_ethereum_rpc(rpc_url, "eth_chainId", []), "chain ID")
+    registry_address = _checksum_ethereum_address(
+        runtime_values.get("REGISTRY_ADDRESS", "").strip(),
+        "registry_address",
+    )
+    expected_worker_image_digest = str(
+        _ethereum_rpc(
+            rpc_url,
+            "eth_call",
+            [
+                {
+                    "to": registry_address,
+                    "data": f"0x{_ethereum_function_selector('expectedWorkerImageDigest()')}",
+                },
+                "latest",
+            ],
+        )
+    ).lower()
+    if not re.fullmatch(r"0x[a-f0-9]{64}", expected_worker_image_digest):
+        raise RuntimeError("DeviceRegistry returned an invalid expected worker image digest")
+
+    canonical_roster = json.dumps(
+        normalized,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
     declaration = {
         "status": "declared",
-        "chain_id": chain_id,
-        "registry_address": admission_marker.get("registry_address"),
-        "expected_worker_image_digest": admission_marker.get(
-            "expected_worker_image_digest"
-        ),
+        "chain_id": str(chain_id),
+        "registry_address": registry_address,
+        "expected_worker_image_digest": expected_worker_image_digest,
         "recipients": normalized,
         "worker_count": len(normalized),
+        "bootstrap_worker": normalized[0],
+        "roster_sha256": hashlib.sha256(canonical_roster).hexdigest(),
+        "onchain_roster_digest": run_roster["digest"],
+        "security_authority": "DeviceRegistry.runRosterDigest",
+        "purpose": "round-0 readiness transport for the immutable on-chain run roster",
         "timestamp": datetime.now(UTC).isoformat(),
     }
     return write_runtime_mfs_marker(
@@ -1835,11 +2405,6 @@ async def wait_for_runtime_admission_ready(
     last_error: Exception | None = None
     while asyncio.get_running_loop().time() < deadline:
         state = await inspect_docker_container(container_id, "smart-contracts")
-        if not state["running"]:
-            raise RuntimeError(
-                "smart-contracts stopped before publishing the worker-admission marker: "
-                f"{state}"
-            )
         try:
             marker = await asyncio.to_thread(
                 read_runtime_mfs_marker,
@@ -1862,6 +2427,17 @@ async def wait_for_runtime_admission_ready(
             RuntimeError,
         ) as exc:
             last_error = exc
+        if not state["running"]:
+            if state["status"] == "exited" and state["exit_code"] == 0:
+                raise RuntimeError(
+                    "smart-contracts exited successfully without a valid "
+                    f"worker-admission marker. Last error: {last_error}"
+                )
+            else:
+                raise RuntimeError(
+                    "smart-contracts stopped before publishing the worker-admission marker: "
+                    f"{state}"
+                )
         await asyncio.sleep(2)
     raise RuntimeError(
         "Timed out waiting for smart-contract worker admission readiness. "
@@ -1876,11 +2452,6 @@ async def wait_for_local_runtime_admission_ready(
     last_error: Exception | None = None
     while asyncio.get_running_loop().time() < deadline:
         state = await inspect_service("smart-contracts")
-        if not state["running"]:
-            raise RuntimeError(
-                "smart-contracts stopped before publishing the worker-admission marker: "
-                f"{state}"
-            )
         try:
             marker = await asyncio.to_thread(
                 read_runtime_mfs_marker,
@@ -1903,6 +2474,17 @@ async def wait_for_local_runtime_admission_ready(
             RuntimeError,
         ) as exc:
             last_error = exc
+        if not state["running"]:
+            if state["status"] == "exited" and state["exit_code"] == 0:
+                raise RuntimeError(
+                    "smart-contracts exited successfully without a valid "
+                    f"worker-admission marker. Last error: {last_error}"
+                )
+            else:
+                raise RuntimeError(
+                    "smart-contracts stopped before publishing the worker-admission marker: "
+                    f"{state}"
+                )
         await asyncio.sleep(2)
     raise RuntimeError(
         "Timed out waiting for local smart-contract worker admission readiness. "
@@ -1924,6 +2506,54 @@ def runtime_admission_is_ready() -> bool:
         RuntimeError,
     ):
         return False
+
+
+def training_lifecycle_phase(
+    *,
+    contracts_ready: bool,
+    worker_count: int,
+    current_round: int | None,
+    completed_round_count: int | None = None,
+    target_completed_round_count: int | None = None,
+    run_roster_committed: bool | None = False,
+) -> str:
+    """Derive the visible lifecycle without consulting a contract `ready.json`.
+
+    Round 0 belongs to W0's encryption bootstrap. Federated training starts only
+    after that on-chain round has advanced.
+    """
+    if not contracts_ready:
+        return "contracts"
+    if run_roster_committed is False:
+        return "setup"
+    if (
+        target_completed_round_count is not None
+        and target_completed_round_count > 0
+        and completed_round_count is not None
+        and completed_round_count >= target_completed_round_count
+    ):
+        return "completed"
+    if current_round is None or current_round <= 0:
+        return "bootstrap"
+    return "training"
+
+
+def training_target_completed_round_count(config: dict[str, Any] | None = None) -> int:
+    """Return successful completions required: bootstrap plus training rounds."""
+    selected = config or read_training_config()
+    return max(1, int(selected["rounds"])) + 1
+
+
+def training_phase_allows_setup(status: dict[str, Any]) -> bool:
+    return str(status.get("training_phase") or "") == "setup"
+
+
+def training_phase_allows_exact_start_retry(status: dict[str, Any]) -> bool:
+    """Allow only an exact retry of a roster that is already immutable on-chain."""
+    return (
+        str(status.get("training_phase") or "") == "bootstrap"
+        and bool((status.get("run_roster") or {}).get("committed"))
+    )
 
 
 async def wait_for_docker_container_ready(container_id: str, service_name: str, timeout_seconds: int) -> dict[str, Any]:
@@ -2004,20 +2634,41 @@ async def collect_runtime_status() -> dict[str, Any]:
     ipfs_ready = probe_ipfs_ready(env_values)
     chain_contracts_ready = probe_contract_deployment(env_values) if anvil_ready else False
     current_round = read_chain_round(env_values) if chain_contracts_ready else None
+    completed_round_count = (
+        read_chain_completed_round_count(env_values)
+        if chain_contracts_ready
+        else None
+    )
+    try:
+        run_roster_state = (
+            read_run_roster_state(env_values)
+            if chain_contracts_ready
+            else {"committed": False, "frozen": False, "digest": None, "roster": []}
+        )
+    except RuntimeError:
+        run_roster_state = {"committed": None, "frozen": None, "digest": None, "roster": []}
     current_aggregator = read_current_aggregator(env_values) if chain_contracts_ready else {"address": None, "vm": None}
 
     contract_completed_successfully = contract_state["status"] == "exited" and contract_state["exit_code"] == 0
     contract_failed = contract_state["status"] == "exited" and contract_state["exit_code"] not in {None, 0}
     contract_running = contract_state["running"]
     contract_admission_ready = (
-        contract_running
-        and chain_contracts_ready
+        chain_contracts_ready
         and runtime_admission_is_ready()
     )
-    contract_initialized = contract_completed_successfully or contract_admission_ready
-    training_started = contract_initialized and bool(
-        running_workers or agent_state["running"] or zk_inference_state["running"]
+    # The MFS admission marker is an initial deployment hand-off only. Once the
+    # process has exited successfully, deployed bytecode is the durable source
+    # of truth; deleting mutable MFS metadata must not roll the lifecycle back.
+    contract_initialized = contract_completed_successfully and chain_contracts_ready
+    training_phase = training_lifecycle_phase(
+        contracts_ready=contract_initialized,
+        worker_count=len(running_workers),
+        current_round=current_round,
+        completed_round_count=completed_round_count,
+        target_completed_round_count=training_target_completed_round_count(),
+        run_roster_committed=run_roster_state["committed"],
     )
+    training_started = training_phase in {"training", "completed"}
 
     return {
         "contract_initialized": contract_initialized,
@@ -2029,7 +2680,13 @@ async def collect_runtime_status() -> dict[str, Any]:
         "chain_contracts_ready": chain_contracts_ready,
         "contract_completed_successfully": contract_completed_successfully,
         "contract_failed": contract_failed,
+        "training_phase": training_phase,
+        "bootstrap_in_progress": training_phase == "bootstrap",
+        "bootstrap_completed": training_phase in {"training", "completed"},
+        "training_completed": training_phase == "completed",
         "current_round": current_round,
+        "completed_round_count": completed_round_count,
+        "run_roster": run_roster_state,
         "current_aggregator_address": current_aggregator["address"],
         "current_aggregator_vm": current_aggregator["vm"],
         "running_workers": running_workers,
@@ -2175,10 +2832,20 @@ async def initialize_contract_stack() -> dict[str, Any]:
         restart_prometheus_result = await restart_phala_container("prometheus", "http://prometheus:9090/-/ready")
 
         start_result = await run_subprocess([docker_bin, "start", container_id], cwd=Path("/app"), check=True)
-        contract_state = await wait_for_runtime_admission_ready(
+        admission_state = await wait_for_runtime_admission_ready(
             container_id,
             CONTRACT_TIMEOUT_SECONDS,
         )
+        exit_state = await wait_for_docker_container_exit_success(
+            container_id,
+            "smart-contracts",
+            CONTRACT_TIMEOUT_SECONDS,
+        )
+        contract_state = {
+            **exit_state,
+            "phase": "deployed",
+            "admission_marker": admission_state["admission_marker"],
+        }
         return {
             "contract_state": contract_state,
             "status": await phala_runtime_status(),
@@ -2205,7 +2872,18 @@ async def initialize_contract_stack() -> dict[str, Any]:
             check=True,
         )
     )
-    contract_state = await wait_for_local_runtime_admission_ready(CONTRACT_TIMEOUT_SECONDS)
+    admission_state = await wait_for_local_runtime_admission_ready(
+        CONTRACT_TIMEOUT_SECONDS
+    )
+    exit_state = await wait_for_service_exit_success(
+        "smart-contracts",
+        CONTRACT_TIMEOUT_SECONDS,
+    )
+    contract_state = {
+        **exit_state,
+        "phase": "deployed",
+        "admission_marker": admission_state["admission_marker"],
+    }
     return {
         "contract_state": contract_state,
         "status": await collect_runtime_status(),
@@ -2213,7 +2891,11 @@ async def initialize_contract_stack() -> dict[str, Any]:
     }
 
 
-async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
+async def start_training_services(
+    config: dict[str, int],
+    *,
+    resume_committed_roster: bool = False,
+) -> dict[str, Any]:
     available_workers = _available_worker_services()
     if not available_workers:
         raise RuntimeError("No active VM-* worker services are defined in compose.yml.")
@@ -2224,9 +2906,33 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
 
     selected_workers = available_workers[: config["worker_count"]]
     inactive_workers = available_workers[config["worker_count"] :]
+    selected_addresses = local_worker_addresses(selected_workers)
 
-    logs = await reset_services(["agent", "zk-inference", *available_workers])
+    # A stale worker must not win the registration race after the irreversible
+    # roster transaction. On an exact bootstrap retry, however, selected TEEs
+    # may already have registered and must be preserved with their action keys.
+    reset_targets = ["agent", "zk-inference", *inactive_workers]
+    if not resume_committed_roster:
+        reset_targets.extend(selected_workers)
+    logs = await reset_services(reset_targets)
     logs.extend(await reset_observability_state())
+
+    if resume_committed_roster:
+        aggregation_policy = {"resumed": True, "transaction_hash": None}
+    else:
+        aggregation_policy = await asyncio.to_thread(
+            configure_default_aggregation_policy,
+            config["client_limit"],
+        )
+    run_roster_commitment = await asyncio.to_thread(
+        commit_run_roster,
+        selected_addresses,
+    )
+    worker_environment = os.environ.copy()
+    worker_environment["ROUND"] = str(
+        worker_runtime_training_config(config)["rounds"]
+    )
+
     base_services = [
         "anvil",
         "ipfs",
@@ -2267,19 +2973,18 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
     )
     await asyncio.to_thread(
         publish_bootstrap_recipient_declaration,
-        local_worker_addresses(selected_workers),
+        selected_addresses,
     )
+    worker_up_arguments = ["up"]
+    if not resume_committed_roster:
+        worker_up_arguments.append("--build")
+    worker_up_arguments.extend(["--no-deps", "-d", *selected_workers])
     logs.append(
         await run_subprocess(
-            compose_command(
-                "up",
-                "--build",
-                "--no-deps",
-                "-d",
-                *selected_workers,
-            ),
+            compose_command(*worker_up_arguments),
             cwd=WORKSPACE_ROOT,
             check=True,
+            env=worker_environment,
         )
     )
     logs.append(
@@ -2295,12 +3000,12 @@ async def start_training_services(config: dict[str, int]) -> dict[str, Any]:
             check=True,
         )
     )
-    if inactive_workers:
-        logs.extend(await reset_services(inactive_workers))
-
     return {
         "selected_workers": selected_workers,
         "inactive_workers": inactive_workers,
+        "aggregation_policy": aggregation_policy,
+        "run_roster_commitment": run_roster_commitment,
+        "resumed_committed_roster": resume_committed_roster,
         "status": await collect_runtime_status(),
         "logs": logs[-4:],
     }
@@ -2345,7 +3050,18 @@ async def reset_training_services() -> dict[str, Any]:
             check=True,
         )
     )
-    contract_state = await wait_for_service_exit_success("smart-contracts", CONTRACT_TIMEOUT_SECONDS)
+    admission_state = await wait_for_local_runtime_admission_ready(
+        CONTRACT_TIMEOUT_SECONDS
+    )
+    exit_state = await wait_for_service_exit_success(
+        "smart-contracts",
+        CONTRACT_TIMEOUT_SECONDS,
+    )
+    contract_state = {
+        **exit_state,
+        "phase": "deployed",
+        "admission_marker": admission_state["admission_marker"],
+    }
     return {
         "contract_state": contract_state,
         "status": await collect_runtime_status(),
@@ -2424,30 +3140,84 @@ async def metrics() -> Response:
 async def phala_runtime_status() -> dict[str, Any]:
     worker_status = await asyncio.to_thread(phala_worker_controller().status)
     deployed = worker_status["deployed_worker_count"]
-    contract_initialized = environment_flag("PHALA_CONTRACTS_READY", default=True)
+    try:
+        contract_container_id = await phala_container_id("smart-contracts")
+        contract_state = await inspect_docker_container(
+            contract_container_id,
+            "smart-contracts",
+        )
+    except Exception:
+        contract_state = missing_service_state("smart-contracts")
+    env_values = runtime_contract_env_values()
+    anvil_ready = probe_anvil_ready(env_values)
+    chain_contracts_ready = (
+        probe_contract_deployment(env_values) if anvil_ready else False
+    )
+    contract_admission_ready = (
+        chain_contracts_ready and runtime_admission_is_ready()
+    )
+    contract_completed_successfully = (
+        contract_state["status"] == "exited"
+        and contract_state["exit_code"] == 0
+    )
+    contract_failed = (
+        contract_state["status"] == "exited"
+        and contract_state["exit_code"] not in {None, 0}
+    )
+    # Do not make later status/recovery depend on a mutable MFS marker.
+    contract_initialized = contract_completed_successfully and chain_contracts_ready
+    current_round = read_chain_round(env_values) if chain_contracts_ready else None
+    completed_round_count = (
+        read_chain_completed_round_count(env_values)
+        if chain_contracts_ready
+        else None
+    )
+    try:
+        run_roster_state = (
+            read_run_roster_state(env_values)
+            if chain_contracts_ready
+            else {"committed": False, "frozen": False, "digest": None, "roster": []}
+        )
+    except RuntimeError:
+        run_roster_state = {"committed": None, "frozen": None, "digest": None, "roster": []}
+    current_aggregator = (
+        read_current_aggregator(env_values)
+        if chain_contracts_ready
+        else {"address": None, "vm": None}
+    )
+    training_phase = training_lifecycle_phase(
+        contracts_ready=contract_initialized,
+        worker_count=deployed,
+        current_round=current_round,
+        completed_round_count=completed_round_count,
+        target_completed_round_count=training_target_completed_round_count(),
+        run_roster_committed=run_roster_state["committed"],
+    )
     agent_available = environment_flag("PHALA_AGENT_AVAILABLE")
     return {
         "contract_initialized": contract_initialized,
-        "contract_running": False,
-        "training_started": contract_initialized and deployed > 0,
+        "contract_running": contract_state["running"],
+        "contract_admission_ready": contract_admission_ready,
+        "training_started": training_phase in {"training", "completed"},
+        "training_phase": training_phase,
+        "bootstrap_in_progress": training_phase == "bootstrap",
+        "bootstrap_completed": training_phase in {"training", "completed"},
+        "training_completed": training_phase == "completed",
         "agent_running": agent_available,
-        "base_runtime_ready": True,
-        "chain_contracts_ready": contract_initialized,
-        "contract_completed_successfully": contract_initialized,
-        "contract_failed": False,
-        "current_round": None,
-        "current_aggregator_address": None,
-        "current_aggregator_vm": None,
+        "base_runtime_ready": anvil_ready and probe_ipfs_ready(env_values),
+        "chain_contracts_ready": chain_contracts_ready,
+        "contract_completed_successfully": contract_completed_successfully,
+        "contract_failed": contract_failed,
+        "current_round": current_round,
+        "completed_round_count": completed_round_count,
+        "run_roster": run_roster_state,
+        "current_aggregator_address": current_aggregator["address"],
+        "current_aggregator_vm": current_aggregator["vm"],
         "running_workers": [worker["worker"] for worker in worker_status["workers"]],
         "services": {
             "anvil": {"service": "anvil", "status": "running", "running": True},
             "ipfs": {"service": "ipfs", "status": "running", "running": True},
-            "smart-contracts": {
-                "service": "smart-contracts",
-                "status": "exited" if contract_initialized else "starting",
-                "running": False,
-                "exit_code": 0 if contract_initialized else None,
-            },
+            "smart-contracts": contract_state,
             "agent": {
                 "service": "agent",
                 "status": "external" if agent_available else "not-deployed",
@@ -2458,6 +3228,24 @@ async def phala_runtime_status() -> dict[str, Any]:
         },
         "phala_workers": worker_status,
     }
+
+
+async def current_training_runtime_status() -> dict[str, Any]:
+    if phala_runtime_mode():
+        return await phala_runtime_status()
+    return await collect_runtime_status()
+
+
+def require_training_setup_phase(status: dict[str, Any]) -> None:
+    phase = str(status.get("training_phase") or "unknown")
+    if phase != "setup":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Training configuration and roster changes are allowed only "
+                f"during setup; current phase is {phase}. Reset the run first."
+            ),
+        )
 
 
 @app.get("/api/phala/workers")
@@ -2479,14 +3267,21 @@ async def scale_phala_workers(request: Request, payload: dict[str, Any]) -> dict
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="worker_count must be an integer") from exc
     async with operation_lock:
+        status = await current_training_runtime_status()
+        require_training_setup_phase(status)
+        if worker_count != 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "A non-empty worker roster can only be created atomically "
+                    "through Start Training."
+                ),
+            )
         try:
-            status = await asyncio.to_thread(phala_worker_controller().scale, worker_count)
-            if worker_count > 0:
-                await asyncio.to_thread(
-                    publish_bootstrap_recipient_declaration,
-                    [worker["account_address"] for worker in status["workers"]],
-                )
-            return status
+            return await asyncio.to_thread(
+                phala_worker_controller().scale,
+                worker_count,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
@@ -2499,6 +3294,8 @@ async def destroy_phala_workers(request: Request) -> dict[str, Any]:
     if operation_lock.locked():
         raise HTTPException(status_code=409, detail="Another control operation is already running.")
     async with operation_lock:
+        status = await current_training_runtime_status()
+        require_training_setup_phase(status)
         try:
             return await asyncio.to_thread(phala_worker_controller().scale, 0)
         except Exception as exc:
@@ -2598,13 +3395,26 @@ async def get_training_config() -> dict[str, Any]:
 
 
 @app.post("/api/training/config")
-async def update_training_config(payload: dict[str, Any]) -> dict[str, Any]:
-    try:
-        normalized = normalize_training_config(payload)
-        config = write_training_config(normalized)
-        return {"ok": True, "config": config}
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+async def update_training_config(
+    request: Request,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if operation_lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail="Another control operation is already running.",
+        )
+    async with operation_lock:
+        if phala_runtime_mode():
+            require_control_admin(request)
+        status = await current_training_runtime_status()
+        require_training_setup_phase(status)
+        try:
+            normalized = normalize_training_config(payload)
+            config = write_training_config(normalized)
+            return {"ok": True, "config": config}
+        except (TypeError, ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/training/start")
@@ -2613,26 +3423,88 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
         raise HTTPException(status_code=409, detail="Another control operation is already running.")
 
     async with operation_lock:
+        if phala_runtime_mode():
+            require_control_admin(request)
+        status = await current_training_runtime_status()
+        resume_committed_roster = training_phase_allows_exact_start_retry(status)
+        if not training_phase_allows_setup(status) and not resume_committed_roster:
+            require_training_setup_phase(status)
         try:
             normalized = normalize_training_config(payload)
+            if resume_committed_roster:
+                persisted = read_training_config()
+                fields = ("rounds", "epoch", "worker_count", "client_limit")
+                if any(int(persisted[field]) != int(normalized[field]) for field in fields):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "An immutable run roster is already committed. Retry Start Training "
+                            "with the exact saved training configuration, or reset the run."
+                        ),
+                    )
+            else:
+                write_training_config(normalized)
             if phala_runtime_mode():
-                require_control_admin(request)
-                worker_config = phala_worker_training_config(normalized)
+                worker_config = worker_runtime_training_config(normalized)
                 worker_controller = phala_worker_controller()
                 await asyncio.to_thread(
                     worker_controller.preflight_scale,
                     normalized["worker_count"],
                     worker_config,
                 )
-                aggregation_policy = await asyncio.to_thread(
-                    configure_default_aggregation_policy,
-                    normalized["client_limit"],
+                selected_addresses = await asyncio.to_thread(
+                    worker_controller.selected_account_addresses,
+                    normalized["worker_count"],
+                )
+                if not resume_committed_roster:
+                    current_workers = await asyncio.to_thread(worker_controller.status)
+                    deployed_before_commit = current_workers.get("deployed_worker_count")
+                    if (
+                        isinstance(deployed_before_commit, bool)
+                        or not isinstance(deployed_before_commit, int)
+                    ):
+                        raise RuntimeError("Phala returned an invalid deployed worker count")
+                    if deployed_before_commit != 0:
+                        raise RuntimeError(
+                            "Phala already has deployed workers before roster commitment. "
+                            "Reset them before starting a new run."
+                        )
+                    aggregation_policy = await asyncio.to_thread(
+                        configure_default_aggregation_policy,
+                        normalized["client_limit"],
+                    )
+                else:
+                    aggregation_policy = {"resumed": True, "transaction_hash": None}
+                run_roster_commitment = await asyncio.to_thread(
+                    commit_run_roster,
+                    selected_addresses,
                 )
                 worker_status = await asyncio.to_thread(
                     worker_controller.scale,
                     normalized["worker_count"],
                     worker_config,
                 )
+                if (
+                    worker_status.get("deployed_worker_count")
+                    != normalized["worker_count"]
+                    or len(worker_status.get("workers") or [])
+                    != normalized["worker_count"]
+                ):
+                    raise RuntimeError(
+                        "Phala did not return the exact requested worker set; "
+                        "the round-0 roster was not published"
+                    )
+                deployed_addresses = [
+                    str(worker.get("account_address", "")).lower()
+                    for worker in worker_status["workers"]
+                ]
+                if deployed_addresses != [
+                    address.lower() for address in selected_addresses
+                ]:
+                    raise RuntimeError(
+                        "Phala returned a different worker identity set than the "
+                        "committed DeviceRegistry run roster"
+                    )
                 await asyncio.to_thread(
                     publish_bootstrap_recipient_declaration,
                     [
@@ -2640,7 +3512,6 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                         for worker in worker_status["workers"]
                     ],
                 )
-                write_training_config(normalized)
                 reset_runtime_telemetry()
                 return {
                     "ok": True,
@@ -2650,10 +3521,17 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                     "status": await phala_runtime_status(),
                     "phala_workers": worker_status,
                     "aggregation_policy": aggregation_policy,
+                    "run_roster_commitment": run_roster_commitment,
+                    "resumed_committed_roster": resume_committed_roster,
                     "logs": [],
                 }
-            saved_config = write_training_config(normalized)
-            result = await start_training_services(normalized)
+            saved_config = read_training_config()
+            result = await start_training_services(
+                normalized,
+                resume_committed_roster=resume_committed_roster,
+            )
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return {"ok": True, "config": saved_config, **result}

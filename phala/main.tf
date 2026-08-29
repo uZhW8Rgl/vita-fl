@@ -115,10 +115,8 @@ locals {
     w0_account_address                       = var.account_address
     w1_account_address                       = coalesce(var.runtime_w1_account_address, var.account_address)
     worker_account_addresses                 = join(",", local.worker_account_addresses)
-    initial_gm_signer_address                = coalesce(var.initial_gm_signer_address, var.account_address)
     blockchain_provider                      = var.blockchain_provider
     initial_gm_cid                           = var.initial_gm_cid
-    initial_gm_sig_cid                       = var.initial_gm_sig_cid
     eth_eur_price                            = var.eth_eur_price
     eth_usd_price                            = var.eth_usd_price
     exchange_rate_source                     = var.exchange_rate_source
@@ -165,12 +163,7 @@ locals {
     deploy_tdx_v4_dcap                       = var.deploy_tdx_v4_dcap
     verify_tdx_quote_onchain                 = var.verify_tdx_quote_onchain
     aggregator_timeout_report_percent        = var.aggregator_timeout_report_percent
-    bootstrap_min_recipients                 = var.bootstrap_min_recipients
-    bootstrap_registration_settle_seconds    = var.bootstrap_registration_settle_seconds
-    bootstrap_registration_timeout_seconds   = var.bootstrap_registration_timeout_seconds
-    bootstrap_registration_poll_seconds      = var.bootstrap_registration_poll_seconds
     worker_image                             = var.worker_image
-    keep_alive                               = var.keep_alive
     pccs_quote_path                          = var.pccs_quote_path
     tdx_quote_path                           = var.tdx_quote_path
     tdx_reference_quote_path                 = var.tdx_reference_quote_path
@@ -270,7 +263,6 @@ resource "phala_app" "contract_runtime" {
   docker_compose = local.contracts_compose_content
   env = merge({
     ETH_WALLET_PRIVATE_KEY                  = var.eth_wallet_private_key != "" ? var.eth_wallet_private_key : var.private_key
-    INITIAL_GM_SIGNING_KEY                  = var.initial_gm_signing_key
     DYNAMIC_WORKER_INVENTORY                = var.dynamic_worker_inventory
     TRAINING_WORKER_POLICY_APP_COMPOSE_B64  = base64encode(local.training_worker_policy_app_compose)
     INFERENCE_WORKER_POLICY_APP_COMPOSE_B64 = base64encode(local.inference_worker_policy_app_compose)

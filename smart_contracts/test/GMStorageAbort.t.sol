@@ -78,9 +78,7 @@ contract GMStorageAbortTest is ActionKeyTest {
         registry.setAuthorized(failedAggregator, true);
         selection = new AbortAggregatorSelectionStub();
         selection.setAggregator(completedAggregator);
-        gmStorage = new GMStorage(
-            address(registry), address(selection), "initial-model", "initial-signature", completedAggregator
-        );
+        gmStorage = new GMStorage(address(registry), address(selection), "initial-model");
         aggregationPolicy = new AggregationPolicy(address(gmStorage));
         aggregationPolicy.configureDefaultPolicy(1, 3600);
         gmStorage.setAggregationPolicyAddress(address(aggregationPolicy));
@@ -216,7 +214,7 @@ contract GMStorageAbortTest is ActionKeyTest {
         assertEq(gmStorage.getRound(), 2);
         assertCompletedArtifactsActive();
         assertEq(gmStorage.getBackupGlobalModel(), "initial-model");
-        assertEq(gmStorage.getBackupGlobalModelSignature(), "initial-signature");
+        assertEq(gmStorage.getBackupGlobalModelSignature(), "");
         assertEq(gmStorage.getBackupGlobalModelKeyBundle(), "");
         assertEq(gmStorage.getLastRoundsAggregator(), completedAggregator);
         assertTrue(gmStorage.roundAborted(1));

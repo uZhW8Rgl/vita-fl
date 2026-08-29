@@ -23,27 +23,6 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 KUBO_API_URL=${KUBO_API_URL:-http://ipfs:5001}
 IPFS_PROVIDER=${IPFS_PROVIDER:-kubo}
 
-materialize_runtime_key() {
-    local env_name=$1
-    local output_path=$2
-    local mode=$3
-    local value=${!env_name:-}
-
-    if [ -z "$value" ]; then
-        return 0
-    fi
-
-    mkdir -p "$(dirname "$output_path")"
-    value=${value//\\n/$'\n'}
-    (umask 077; printf '%s\n' "$value" >"$output_path")
-    chmod "$mode" "$output_path"
-}
-
-if [ -n "${INITIAL_GM_SIGNING_KEY:-}" ]; then
-    export INITIAL_GM_SIGNING_KEY_PATH=/run/dfl-secrets/initial-gm-signing-key.pem
-    materialize_runtime_key INITIAL_GM_SIGNING_KEY "$INITIAL_GM_SIGNING_KEY_PATH" 600
-fi
-
 using_local_runtime_services() {
     [[ "$rpc_url" == "http://anvil:8545" || "$rpc_url" == "http://127.0.0.1:8545" ]] && \
     [[ "$KUBO_API_URL" == "http://ipfs:5001" || "$KUBO_API_URL" == "http://127.0.0.1:5001" ]]
@@ -96,61 +75,6 @@ clear_runtime_bootstrap_markers() {
         echo "Clearing stale runtime marker from Kubo MFS: /runtime/${marker}"
         curl --connect-timeout 5 --max-time 15 -sSf -X POST \
             "${KUBO_API_URL}/api/v0/files/rm?arg=/runtime/${marker}&force=true" >/dev/null || true
-    done
-}
-
-wait_for_bootstrap_recipient_declaration() {
-    local required=${BOOTSTRAP_REQUIRE_RECIPIENT_DECLARATION:-0}
-    case "${required,,}" in
-        1|true|yes) ;;
-        *) return 0 ;;
-    esac
-
-    if [ "$IPFS_PROVIDER" != "kubo" ]; then
-        echo "Bootstrap recipient declarations require IPFS_PROVIDER=kubo."
-        return 1
-    fi
-
-    local declaration_path=${BOOTSTRAP_RECIPIENT_DECLARATION_PATH:-/tmp/bootstrap-recipients.json}
-    local timeout_seconds=${BOOTSTRAP_DECLARATION_TIMEOUT_SECONDS:-0}
-    local poll_seconds=${BOOTSTRAP_REGISTRATION_POLL_SECONDS:-2}
-    local started_at
-    local temporary_path
-    started_at=$(date +%s)
-    temporary_path="${declaration_path}.tmp"
-    mkdir -p "$(dirname "$declaration_path")"
-
-    echo "Waiting for the Control API recipient declaration at /runtime/bootstrap-recipients.json."
-    while true; do
-        if curl --connect-timeout 5 --max-time 15 -sSf -X POST \
-            "${KUBO_API_URL}/api/v0/files/read?arg=/runtime/bootstrap-recipients.json" \
-            -o "$temporary_path" 2>/dev/null &&
-            jq -e --arg chain_id "$CHAIN_ID" '
-                .status == "declared"
-                and (.chain_id | tostring) == $chain_id
-                and (.recipients | type == "array" and length > 0)
-                and all(.recipients[];
-                    type == "string"
-                    and test("^0x[0-9a-fA-F]{40}$")
-                )
-                and (
-                    [.recipients[] | ascii_downcase] as $addresses
-                    | ($addresses | unique | length) == ($addresses | length)
-                )
-            ' "$temporary_path" >/dev/null 2>&1; then
-            mv "$temporary_path" "$declaration_path"
-            export BOOTSTRAP_RECIPIENT_DECLARATION_PATH="$declaration_path"
-            echo "Accepted bootstrap declaration for $(jq '.recipients | length' "$declaration_path") worker(s)."
-            return 0
-        fi
-        rm -f "$temporary_path"
-
-        if [ "$timeout_seconds" -gt 0 ] &&
-            [ $(($(date +%s) - started_at)) -ge "$timeout_seconds" ]; then
-            echo "Timed out waiting for /runtime/bootstrap-recipients.json."
-            return 1
-        fi
-        sleep "$poll_seconds"
     done
 }
 
@@ -280,26 +204,6 @@ EOF
         -F "file=@${manifest_file}" \
         "${KUBO_API_URL}/api/v0/files/write?arg=/runtime/contracts.json&create=true&truncate=true&parents=true" >/dev/null
     rm -f "$manifest_file"
-}
-
-publish_runtime_ready_marker() {
-    if [ "$IPFS_PROVIDER" != "kubo" ]; then
-        return 0
-    fi
-
-    local ready_file
-    ready_file=$(mktemp)
-    cat >"$ready_file" <<EOF
-{"status":"ready","chain_id":"$CHAIN_ID","rpc_url":"$rpc_url","timestamp":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
-EOF
-
-    echo "Publishing runtime ready marker to Kubo MFS: /runtime/ready.json"
-    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
-        "${KUBO_API_URL}/api/v0/files/mkdir?arg=/runtime&parents=true" >/dev/null || true
-    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
-        -F "file=@${ready_file}" \
-        "${KUBO_API_URL}/api/v0/files/write?arg=/runtime/ready.json&create=true&truncate=true&parents=true" >/dev/null
-    rm -f "$ready_file"
 }
 
 publish_runtime_admission_ready_marker() {
@@ -670,123 +574,24 @@ prepare_local_initial_gm() {
     fi
 
     if [ "$IPFS_PROVIDER" = "pinata" ]; then
-        echo "IPFS_PROVIDER=pinata: expecting INITIAL_GM_CID and INITIAL_GM_SIG_CID from the environment"
+        echo "IPFS_PROVIDER=pinata: expecting INITIAL_GM_CID from the environment"
         return 0
     fi
 
     local dataset_name=${DATASET_NAME:-mnist}
     local model_path=${INITIAL_GM_MODEL_PATH:-../data/initial_gm/${dataset_name}/aggregated.bin}
-    local signing_key_path=${INITIAL_GM_SIGNING_KEY_PATH:-../data/initial_gm/private_key.pem}
-    local signature_path=${INITIAL_GM_SIGNATURE_PATH:-/tmp/initial-gm.sig}
 
     if [ ! -f "$model_path" ]; then
         echo "Missing initial GM model file: $model_path"
         exit 1
     fi
-    if [ ! -f "$signing_key_path" ]; then
-        echo "Missing initial GM signing key: $signing_key_path"
-        exit 1
-    fi
 
-    echo "Signing and importing the initial GM into the local IPFS node"
-    openssl dgst -sha256 -sign "$signing_key_path" -out "$signature_path" "$model_path"
+    echo "Importing the unsigned plaintext initial GM into the local IPFS node"
 
     export INITIAL_GM_CID
-    export INITIAL_GM_SIG_CID
     INITIAL_GM_CID=$(add_file_to_kubo "$model_path")
-    INITIAL_GM_SIG_CID=$(add_file_to_kubo "$signature_path")
 
     echo "Local initial GM CID: $INITIAL_GM_CID"
-    echo "Local initial GM signature CID: $INITIAL_GM_SIG_CID"
-}
-
-prepare_encrypted_initial_gm() {
-    if ! using_local_runtime_services; then
-        return 0
-    fi
-
-    if [ "$IPFS_PROVIDER" = "pinata" ]; then
-        echo "Encrypted bootstrap initialization is not implemented for IPFS_PROVIDER=pinata"
-        echo "Use IPFS_PROVIDER=kubo or add an equivalent Pinata upload-and-initialize path"
-        exit 1
-    fi
-
-    local dataset_name=${DATASET_NAME:-mnist}
-    local model_path=${INITIAL_GM_MODEL_PATH:-../data/initial_gm/${dataset_name}/aggregated.bin}
-    local signing_key_path=${INITIAL_GM_SIGNING_KEY_PATH:-../data/initial_gm/private_key.pem}
-    local signature_path=${INITIAL_GM_SIGNATURE_PATH:-/tmp/initial-gm.sig}
-    local out_dir=/tmp/bootstrap-encrypted-gm
-    local minimum_recipients=${BOOTSTRAP_MIN_RECIPIENTS:-1}
-    local registration_settle_seconds=${BOOTSTRAP_REGISTRATION_SETTLE_SECONDS:-0}
-    local registration_timeout_seconds=${BOOTSTRAP_REGISTRATION_TIMEOUT_SECONDS:-900}
-    local registration_poll_seconds=${BOOTSTRAP_REGISTRATION_POLL_SECONDS:-2}
-    local required_recipients_args=()
-    if [ -n "${BOOTSTRAP_RECIPIENT_DECLARATION_PATH:-}" ]; then
-        required_recipients_args=(
-            --required-recipients-file "$BOOTSTRAP_RECIPIENT_DECLARATION_PATH"
-        )
-    fi
-
-    if [ ! -f "$model_path" ]; then
-        echo "Missing initial GM model file for encrypted bootstrap: $model_path"
-        exit 1
-    fi
-    if [ ! -f "$signature_path" ]; then
-        echo "Missing initial GM signature file for encrypted bootstrap: $signature_path"
-        exit 1
-    fi
-    if [ ! -f "$signing_key_path" ]; then
-        echo "Missing initial GM signing key for encrypted bootstrap: $signing_key_path"
-        exit 1
-    fi
-
-    echo "Waiting for live DeviceRegistry recipients and generating encrypted initial GM bootstrap bundle"
-    local bootstrap_json
-    bootstrap_json=$(node ./bootstrap_encrypted_gm.mjs \
-        --model "$model_path" \
-        --signature "$signature_path" \
-        --private-key "$signing_key_path" \
-        --out-dir "$out_dir" \
-        --rpc-url "$rpc_url" \
-        --registry-address "$DEVICE_REGISTRY_ADDRESS" \
-        --minimum-recipients "$minimum_recipients" \
-        --registration-settle-seconds "$registration_settle_seconds" \
-        --registration-timeout-seconds "$registration_timeout_seconds" \
-        --registration-poll-seconds "$registration_poll_seconds" \
-        "${required_recipients_args[@]}" \
-        --round 0)
-
-    local bundle_path
-    local bundle_signature_path
-    local key_bundle_path
-    local recipient_count
-    local publisher_public_key_der_hex
-    bundle_path=$(printf '%s' "$bootstrap_json" | jq -re '.bundlePath')
-    bundle_signature_path=$(printf '%s' "$bootstrap_json" | jq -re '.bundleSignaturePath')
-    key_bundle_path=$(printf '%s' "$bootstrap_json" | jq -re '.keyBundlePath')
-    recipient_count=$(printf '%s' "$bootstrap_json" | jq -re '.recipientCount')
-    publisher_public_key_der_hex=$(
-        printf '%s' "$bootstrap_json" |
-            jq -re '.publisherPublicKeyDerHex | select(test("^[0-9a-f]+$") and ((length % 2) == 0))'
-    )
-
-    echo "Encrypted bootstrap recipients from live DeviceRegistry state: $recipient_count"
-
-    local encrypted_model_cid
-    local encrypted_sig_cid
-    local encrypted_key_cid
-    encrypted_model_cid=$(add_file_to_kubo "$bundle_path")
-    encrypted_sig_cid=$(add_file_to_kubo "$bundle_signature_path")
-    encrypted_key_cid=$(add_file_to_kubo "$key_bundle_path")
-
-    echo "Encrypted initial GM bundle CID: $encrypted_model_cid"
-    echo "Encrypted initial GM signature CID: $encrypted_sig_cid"
-    echo "Encrypted initial GM key bundle CID: $encrypted_key_cid"
-
-    cast send --rpc-url $rpc_url --private-key $ETH_WALLET_PRIVATE_KEY \
-        $GMSTORAGE "initializeEncryptedBootstrap(string,string,string,bytes)" \
-        "$encrypted_model_cid" "$encrypted_sig_cid" "$encrypted_key_cid" \
-        "0x${publisher_public_key_der_hex}"
 }
 
 prepare_local_initial_gm
@@ -1432,33 +1237,23 @@ echo "Authorization Status:"
 # [ "$(cast call --rpc-url $rpc_url $DEVICE_REGISTRY_ADDRESS "isAuthorized(address)" $ADDRESS_18)" = "0x$(printf '%063d1')" ] && echo $ADDRESS_18: yes || echo $ADDRESS_18: no
 # [ "$(cast call --rpc-url $rpc_url $DEVICE_REGISTRY_ADDRESS "isAuthorized(address)" $ADDRESS_19)" = "0x$(printf '%063d1')" ] && echo $ADDRESS_19: yes || echo $ADDRESS_19: no
 
-if [ "$IPFS_PROVIDER" = "kubo" ] && [ -n "${INITIAL_GM_CID:-}" ] && [ -n "${INITIAL_GM_SIG_CID:-}" ]; then
-    echo "Copying the initial GM artifacts into IPFS MFS via ${KUBO_API_URL}"
+if [ "$IPFS_PROVIDER" = "kubo" ] && [ -n "${INITIAL_GM_CID:-}" ]; then
+    echo "Copying the unsigned plaintext initial GM into IPFS MFS via ${KUBO_API_URL}"
     curl --connect-timeout 5 --max-time 15 -sSf -X POST \
         "${KUBO_API_URL}/api/v0/files/rm?arg=/start&force=true" >/dev/null || true
     curl --connect-timeout 5 --max-time 15 -sSf -X POST \
         "${KUBO_API_URL}/api/v0/files/rm?arg=/start.sig&force=true" >/dev/null || true
     curl --connect-timeout 5 --max-time 15 -sSf -X POST \
         "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start&parents=true"
-    curl --connect-timeout 5 --max-time 15 -sSf -X POST \
-        "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_SIG_CID}&arg=/start.sig&parents=true"
 fi
 
-# Worker admission opens only after the contracts, DCAP verifier and workload
-# image policy above have all been configured.
+# Publish the deployment hand-off only after the contracts, DCAP verifier and
+# workload policy are configured. Registration remains closed until the Control
+# API owner-commits the exact Start Training roster.
 publish_runtime_contract_manifest
 publish_runtime_admission_ready_marker
-wait_for_bootstrap_recipient_declaration
-prepare_encrypted_initial_gm
-publish_runtime_ready_marker
 
-KEEP_ALIVE=${KEEP_ALIVE:-0}
-if [ "$KEEP_ALIVE" = "1" ]; then
-    echo "KEEP_ALIVE=1: keeping container running"
-    tail -f /dev/null
-fi
-
-echo "starter_docker.sh completed; exiting because KEEP_ALIVE=${KEEP_ALIVE}"
+echo "starter_docker.sh completed; roster commitment is pending and W0 owns round-zero finalization"
 exit 0
 
 ### Signature und public key registration

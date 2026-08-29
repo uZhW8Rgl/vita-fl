@@ -56,7 +56,11 @@ that key against Worker 0's current `DeviceRegistry` record, reads the current
 GMStorage CIDs, downloads and decrypts the encrypted IPFS bundle, verifies the
 aggregator signatures, and constructs the canonical manifest from that
 verified state. A later tool call refreshes the model again, so it observes the
-then-current on-chain model.
+then-current on-chain model. The compose-bound `EXPECTED_GM_STORAGE_ADDRESS`,
+`EXPECTED_DEVICE_REGISTRY_ADDRESS`, `EXPECTED_RUNTIME_RPC_URL`, and
+`EXPECTED_CHAIN_ID` values are the recovery trust root. A readable
+`/runtime/contracts.json` is checked against them, but missing mutable MFS
+metadata does not block model loading after a valid Worker 0 restart.
 
 For an explicit local-development run, point the service at a fixture key file:
 

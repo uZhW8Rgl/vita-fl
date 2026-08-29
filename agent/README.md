@@ -124,8 +124,10 @@ Fetch and verify only the on-chain model bundle:
 `agent/Dockerfile` now packages only the agent/runtime logic.
 `zk_inference/Dockerfile` packages the proof pipeline separately.
 
-In `compose.yml`, `zk-inference` runs as its own container and `agent` starts
-after `VM-0`, `VM-1`, and `VM-2` have completed successfully.
+In `compose.yml`, `zk-inference` runs as its own container. The Control API
+starts the selected workers, `zk-inference`, and `agent` after **Start Training**;
+the agent waits for the first finalized encrypted model rather than waiting for
+all worker containers to exit.
 The agent still runs this command by default:
 
 ```bash
@@ -193,7 +195,7 @@ The model cache is stored in the repository folder `./ollama-data`, so it surviv
 Start the complete chat agent with:
 
 ```bash
-KEEP_ALIVE=0 docker compose up --build agent ui
+docker compose up --build agent ui
 ```
 
 Then open:

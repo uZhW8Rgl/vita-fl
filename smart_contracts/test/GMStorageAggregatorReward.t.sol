@@ -86,8 +86,7 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         registry.setPublicKey(replacementAggregator, bytes("replacement-publisher-public-key"));
         selection = new AggregatorSelectionStub();
         selection.setAggregator(aggregator);
-        gmStorage =
-            new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
+        gmStorage = new GMStorage(address(registry), address(selection), "initial-model");
         aggregationPolicy = new AggregationPolicy(address(gmStorage));
         aggregationPolicy.configureDefaultPolicy(1, 3600);
         gmStorage.setAggregationPolicyAddress(address(aggregationPolicy));
@@ -204,36 +203,34 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         assertEq(gmStorage.getContribution(aggregator), 1);
     }
 
-    function testEncryptedBootstrapIsOneShotAndDoesNotFinalizeRound() public {
-        gmStorage.initializeEncryptedBootstrap(
-            "bootstrap-model", "bootstrap-signature", "bootstrap-key-bundle", bytes("bootstrap-publisher-key")
-        );
-
-        assertEq(gmStorage.getGlobalModel(), "bootstrap-model");
-        assertEq(gmStorage.getGlobalModelSignature(), "bootstrap-signature");
-        assertEq(gmStorage.getGlobalModelKeyBundle(), "bootstrap-key-bundle");
+    function testDeploymentKeepsUnsignedPlaintextInitialModelAsCidAnchor() public {
+        assertEq(gmStorage.initialModelCid(), "initial-model");
+        assertEq(gmStorage.getGlobalModel(), "initial-model");
+        assertEq(gmStorage.getBackupGlobalModel(), "initial-model");
+        assertEq(gmStorage.getGlobalModelSignature(), "");
+        assertEq(gmStorage.getBackupGlobalModelSignature(), "");
+        assertEq(gmStorage.getGlobalModelKeyBundle(), "");
+        assertEq(gmStorage.getBackupGlobalModelKeyBundle(), "");
+        assertEq(gmStorage.getLastRoundsAggregator(), address(0));
         assertEq(gmStorage.getCompletedRoundCount(), 0);
         assertFalse(gmStorage.globalModelPublished(0));
-        assertEq(gmStorage.bootstrapAuthority(), address(0));
 
-        vm.expectRevert(bytes("Caller is not bootstrap authority"));
-        gmStorage.initializeEncryptedBootstrap(
-            "replacement", "replacement-signature", "replacement-key-bundle", bytes("replacement-publisher-key")
+        (bool legacyBootstrapSucceeded,) = address(gmStorage).call(
+            abi.encodeWithSignature(
+                "initializeEncryptedBootstrap(string,string,string,bytes)",
+                "replacement",
+                "replacement-signature",
+                "replacement-key-bundle",
+                bytes("replacement-publisher-key")
+            )
         );
-    }
+        assertFalse(legacyBootstrapSucceeded);
 
-    function testOnlyDeploymentAuthorityCanInitializeEncryptedBootstrap() public {
-        vm.expectRevert(bytes("Caller is not bootstrap authority"));
-        vm.prank(aggregator);
-        gmStorage.initializeEncryptedBootstrap(
-            "bootstrap-model", "bootstrap-signature", "bootstrap-key-bundle", bytes("bootstrap-publisher-key")
-        );
+        vm.expectRevert(bytes("Initial model CID is empty"));
+        new GMStorage(address(registry), address(selection), "");
     }
 
     function testAtomicFinalizationPromotesPublisherKeyAndFinalizedBundle() public {
-        gmStorage.initializeEncryptedBootstrap(
-            "bootstrap-model", "bootstrap-signature", "bootstrap-key-bundle", bytes("bootstrap-publisher-key")
-        );
         _finalizeCurrentRound(aggregator, "round-zero");
 
         (
@@ -262,35 +259,16 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         assertEq(finalizedPublisherKey, bytes("publisher-public-key"));
     }
 
-    function testRoundZeroAbortRetainsBootstrapBundleAndNextRoundCanFinalize() public {
-        gmStorage.initializeEncryptedBootstrap(
-            "bootstrap-model", "bootstrap-signature", "bootstrap-key-bundle", bytes("bootstrap-publisher-key")
-        );
+    function testRoundZeroCannotBeAbortedOrSkipped() public {
+        vm.expectRevert(bytes("Bootstrap round cannot be aborted"));
         vm.prank(address(selection));
         gmStorage.abortRound(aggregator);
 
-        assertEq(gmStorage.getRound(), 1);
-        assertTrue(gmStorage.roundAborted(0));
-        assertEq(gmStorage.getGlobalModel(), "bootstrap-model");
-        assertEq(gmStorage.activeModelPublisherPublicKey(), bytes("bootstrap-publisher-key"));
-
-        selection.setAggregator(replacementAggregator);
-        selection.setSelectionRound(1);
-        vm.prank(replacementAggregator);
-        gmStorage.openModelSubmissions(1);
-        _recordSignedModelSubmission(
-            gmStorage,
-            replacementAggregator,
-            replacementAggregator,
-            worker,
-            1,
-            keccak256("replacement-worker-model")
-        );
-        _finalizeCurrentRound(replacementAggregator, "replacement-round");
-
-        assertEq(gmStorage.getGlobalModel(), "model-replacement-round");
-        assertEq(gmStorage.getLastRoundsAggregator(), replacementAggregator);
-        assertEq(gmStorage.activeModelPublisherPublicKey(), bytes("replacement-publisher-public-key"));
+        assertEq(gmStorage.getRound(), 0);
+        assertFalse(gmStorage.roundAborted(0));
+        assertEq(gmStorage.getGlobalModel(), "initial-model");
+        assertEq(gmStorage.getGlobalModelSignature(), "");
+        assertEq(gmStorage.getGlobalModelKeyBundle(), "");
     }
 
     function testNonBootstrapRoundRequiresConfiguredMinimum() public {
@@ -316,8 +294,7 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
     }
 
     function testAggregationPolicyPointerRejectsAccountsAndWrongLedgerBinding() public {
-        GMStorage otherStorage =
-            new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
+        GMStorage otherStorage = new GMStorage(address(registry), address(selection), "initial-model");
 
         vm.expectRevert(bytes("aggregation policy has no code"));
         otherStorage.setAggregationPolicyAddress(makeAddr("not-a-contract"));

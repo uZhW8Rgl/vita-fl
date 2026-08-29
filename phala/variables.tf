@@ -688,12 +688,6 @@ variable "runtime_w1_account_address" {
   default     = null
 }
 
-variable "initial_gm_signer_address" {
-  description = "Optional initial GM signer address injected into the contract-runtime compose."
-  type        = string
-  default     = null
-}
-
 variable "blockchain_provider" {
   description = "Blockchain provider selector injected into the contract-runtime compose."
   type        = string
@@ -709,12 +703,6 @@ variable "eth_wallet_private_key" {
 
 variable "initial_gm_cid" {
   description = "Initial global model CID injected into the contract-runtime compose."
-  type        = string
-  default     = ""
-}
-
-variable "initial_gm_sig_cid" {
-  description = "Initial global model signature CID injected into the contract-runtime compose."
   type        = string
   default     = ""
 }
@@ -899,12 +887,6 @@ variable "rsa_public_key" {
   sensitive   = true
 }
 
-variable "initial_gm_signing_key" {
-  description = "Initial global-model signing key supplied from the selected Phala environment file and encrypted before delivery."
-  type        = string
-  sensitive   = true
-}
-
 variable "train_images_src" {
   description = "Path inside the container to the training images dataset."
   type        = string
@@ -999,56 +981,6 @@ variable "aggregator_timeout_report_percent" {
   description = "Threshold percentage for aggregator timeout reporting."
   type        = string
   default     = "50"
-}
-
-variable "bootstrap_min_recipients" {
-  description = "Minimum number of live DCAP-registered worker keys required before the initial encrypted model is published."
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = var.bootstrap_min_recipients >= 1 && var.bootstrap_min_recipients <= 500 && floor(var.bootstrap_min_recipients) == var.bootstrap_min_recipients
-    error_message = "bootstrap_min_recipients must be an integer between 1 and 500."
-  }
-}
-
-variable "bootstrap_registration_settle_seconds" {
-  description = "Quiet period after the last DeviceRegistry membership change before the live bootstrap recipient set is finalized."
-  type        = number
-  default     = 30
-
-  validation {
-    condition     = var.bootstrap_registration_settle_seconds >= 0 && floor(var.bootstrap_registration_settle_seconds) == var.bootstrap_registration_settle_seconds
-    error_message = "bootstrap_registration_settle_seconds must be a non-negative integer."
-  }
-}
-
-variable "bootstrap_registration_timeout_seconds" {
-  description = "Maximum time the contract runtime waits for live DCAP-registered bootstrap recipients."
-  type        = number
-  default     = 1800
-
-  validation {
-    condition     = var.bootstrap_registration_timeout_seconds >= 60 && floor(var.bootstrap_registration_timeout_seconds) == var.bootstrap_registration_timeout_seconds
-    error_message = "bootstrap_registration_timeout_seconds must be an integer of at least 60 seconds."
-  }
-}
-
-variable "bootstrap_registration_poll_seconds" {
-  description = "Polling interval while the contract runtime waits for live DeviceRegistry recipients."
-  type        = number
-  default     = 2
-
-  validation {
-    condition     = var.bootstrap_registration_poll_seconds >= 1 && floor(var.bootstrap_registration_poll_seconds) == var.bootstrap_registration_poll_seconds
-    error_message = "bootstrap_registration_poll_seconds must be a positive integer."
-  }
-}
-
-variable "keep_alive" {
-  description = "Whether the contract-runtime initialization container should stay alive after completion."
-  type        = string
-  default     = "0"
 }
 
 variable "pccs_quote_path" {

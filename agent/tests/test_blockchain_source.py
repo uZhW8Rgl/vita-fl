@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives import hashes, serialization
@@ -231,6 +232,7 @@ class HybridRAggregationEvidenceTests(unittest.TestCase):
         payload = json.dumps(
             {
                 "version": 2,
+                "round": 3,
                 "model_b64": base64.b64encode(b"model").decode(),
                 "signature_b64": base64.b64encode(b"signature").decode(),
                 "aggregation_evidence_b64": base64.b64encode(evidence).decode(),
@@ -275,13 +277,99 @@ class HybridRAggregationEvidenceTests(unittest.TestCase):
             encoding="utf-8",
         )
         return (
-            {"model_cid": "bafy-model"},
+            {"model_cid": "bafy-model", "finalized_model_round": 3},
             {
                 "private_key": private_key_path,
                 "encrypted_model": encrypted_model_path,
                 "key_bundle": key_bundle_path,
                 "plain_model": root / "model.bin",
                 "plain_signature": root / "model.bin.sig",
+            },
+            address,
+        )
+
+    @staticmethod
+    def _unsigned_encrypted_fixture(
+        root: Path,
+        *,
+        model_round: int,
+        signature_mode: str = "null",
+    ) -> tuple[dict[str, Any], dict[str, Path], str]:
+        address = "0x" + "34" * 20
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        private_key_path = root / "participant.pem"
+        private_key_path.write_bytes(
+            private_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        payload: dict[str, Any] = {
+            "version": 2,
+            "round": model_round,
+            "model_b64": base64.b64encode(b"public-bootstrap-model").decode(),
+            "aggregation_evidence_b64": None,
+            "aggregation_evidence_sha256": None,
+        }
+        if signature_mode == "null":
+            payload["signature_b64"] = None
+        elif signature_mode == "empty":
+            payload["signature_b64"] = ""
+        elif signature_mode != "absent":
+            raise AssertionError(f"unsupported signature mode: {signature_mode}")
+
+        key = bytes(range(32))
+        iv = bytes(range(12))
+        encrypted = AESGCM(key).encrypt(
+            iv,
+            json.dumps(payload, separators=(",", ":")).encode(),
+            None,
+        )
+        wrapped = private_key.public_key().encrypt(
+            key + iv,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None,
+            ),
+        )
+        encrypted_model_path = root / "bootstrap.enc"
+        key_bundle_path = root / "bootstrap.keys.json"
+        encrypted_model_path.write_text(
+            json.dumps(
+                {
+                    "ciphertext_b64": base64.b64encode(encrypted[:-16]).decode(),
+                    "auth_tag_b64": base64.b64encode(encrypted[-16:]).decode(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        key_bundle_path.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "round": model_round,
+                    "wrapped_keys_b64": {
+                        address: base64.b64encode(wrapped).decode(),
+                    },
+                    "aggregation_evidence_b64": None,
+                    "aggregation_evidence_sha256": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return (
+            {
+                "model_cid": "bafy-bootstrap-model",
+                "finalized_model_round": model_round,
+            },
+            {
+                "private_key": private_key_path,
+                "encrypted_model": encrypted_model_path,
+                "key_bundle": key_bundle_path,
+                "plain_model": root / "bootstrap.bin",
+                "plain_signature": root / "bootstrap.bin.sig",
             },
             address,
         )
@@ -339,6 +427,181 @@ class HybridRAggregationEvidenceTests(unittest.TestCase):
                     paths["plain_model"],
                     paths["plain_signature"],
                 )
+
+    def test_round_one_accepts_absent_or_empty_inner_plaintext_signature(self) -> None:
+        for signature_mode in ("absent", "null", "empty"):
+            with self.subTest(signature_mode=signature_mode), tempfile.TemporaryDirectory() as directory:
+                bundle, paths, address = self._unsigned_encrypted_fixture(
+                    Path(directory),
+                    model_round=1,
+                    signature_mode=signature_mode,
+                )
+                with patch.dict(
+                    "os.environ",
+                    {
+                        "ACCOUNT_ADDRESS": address,
+                        "RSA_PRIVATE_KEY_FILE": str(paths["private_key"]),
+                    },
+                    clear=False,
+                ):
+                    result = _decrypt_encrypted_bundle(
+                        bundle,
+                        paths["encrypted_model"],
+                        paths["key_bundle"],
+                        paths["plain_model"],
+                        paths["plain_signature"],
+                    )
+
+                self.assertEqual(result["round"], 1)
+                self.assertFalse(result["plaintext_signature_present"])
+                self.assertEqual(
+                    result["plaintext_signature_policy"],
+                    "unsigned-public-bootstrap",
+                )
+                self.assertEqual(paths["plain_signature"].read_bytes(), b"")
+
+    def test_later_round_rejects_missing_inner_plaintext_signature(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle, paths, address = self._unsigned_encrypted_fixture(
+                Path(directory),
+                model_round=2,
+            )
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "ACCOUNT_ADDRESS": address,
+                        "RSA_PRIVATE_KEY_FILE": str(paths["private_key"]),
+                    },
+                    clear=False,
+                ),
+                self.assertRaisesRegex(RuntimeError, "round 2 lacks its required"),
+            ):
+                _decrypt_encrypted_bundle(
+                    bundle,
+                    paths["encrypted_model"],
+                    paths["key_bundle"],
+                    paths["plain_model"],
+                    paths["plain_signature"],
+                )
+
+    def test_decryption_rejects_round_metadata_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle, paths, address = self._unsigned_encrypted_fixture(
+                Path(directory),
+                model_round=1,
+            )
+            bundle["finalized_model_round"] = 2
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "ACCOUNT_ADDRESS": address,
+                        "RSA_PRIVATE_KEY_FILE": str(paths["private_key"]),
+                    },
+                    clear=False,
+                ),
+                self.assertRaisesRegex(RuntimeError, "does not match the finalized"),
+            ):
+                _decrypt_encrypted_bundle(
+                    bundle,
+                    paths["encrypted_model"],
+                    paths["key_bundle"],
+                    paths["plain_model"],
+                    paths["plain_signature"],
+                )
+
+
+class BootstrapSignatureVerificationTests(unittest.TestCase):
+    def test_round_one_requires_outer_signature_but_skips_absent_inner_signature(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            encrypted_model = root / "model.enc"
+            encrypted_signature = root / "model.enc.sig"
+            model = root / "model.bin"
+            inner_signature = root / "model.bin.sig"
+            encrypted_model.write_bytes(b"encrypted")
+            encrypted_signature.write_bytes(b"outer-signature")
+            model.write_bytes(b"bootstrap")
+            inner_signature.write_bytes(b"")
+            bundle = {
+                "gm_storage_address": "0x" + "11" * 20,
+                "last_aggregator": "0x" + "44" * 20,
+                "publisher_public_key_der_hex": b"publisher-public-key".hex(),
+                "finalized_model_round": 1,
+            }
+            download = {
+                "encrypted_bundle": True,
+                "encrypted_model_path": str(encrypted_model),
+                "encrypted_signature_path": str(encrypted_signature),
+                "model_path": str(model),
+                "signature_path": str(inner_signature),
+                "model_round": 1,
+                "plaintext_signature_present": False,
+                "decryption": {
+                    "round": 1,
+                    "plaintext_signature_present": False,
+                },
+            }
+            with patch(
+                "agent.blockchain_source.verify_model_signature",
+                return_value={"ok": True},
+            ) as verify:
+                result = verify_download_with_registry(
+                    bundle,
+                    download,
+                    "http://rpc",
+                    "0x" + "22" * 20,
+                )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["model_round"], 1)
+            self.assertTrue(result["inner_model_signature"]["skipped"])
+            verify.assert_called_once_with(
+                encrypted_model,
+                encrypted_signature,
+                b"publisher-public-key",
+            )
+
+    def test_round_one_still_fails_when_outer_bundle_signature_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {
+                "encrypted_model_path": root / "model.enc",
+                "encrypted_signature_path": root / "model.enc.sig",
+                "model_path": root / "model.bin",
+                "signature_path": root / "model.bin.sig",
+            }
+            for key, file_path in paths.items():
+                file_path.write_bytes(b"" if key == "signature_path" else b"artifact")
+            bundle = {
+                "gm_storage_address": "0x" + "11" * 20,
+                "last_aggregator": "0x" + "44" * 20,
+                "publisher_public_key_der_hex": b"publisher-public-key".hex(),
+                "finalized_model_round": 1,
+            }
+            download = {
+                "encrypted_bundle": True,
+                **{key: str(value) for key, value in paths.items()},
+                "model_round": 1,
+                "plaintext_signature_present": False,
+                "decryption": {
+                    "round": 1,
+                    "plaintext_signature_present": False,
+                },
+            }
+            with patch(
+                "agent.blockchain_source.verify_model_signature",
+                return_value={"ok": False, "error": "invalid outer signature"},
+            ):
+                result = verify_download_with_registry(
+                    bundle,
+                    download,
+                    "http://rpc",
+                    "0x" + "22" * 20,
+                )
+
+            self.assertFalse(result["ok"])
 
 
 if __name__ == "__main__":

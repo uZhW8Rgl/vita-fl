@@ -50,6 +50,17 @@ const loadPublicKeyFromDerHex = (publicKeyDerHex) => {
     const der = Buffer.from(normalizeHex(publicKeyDerHex), "hex");
     return crypto.createPublicKey({ key: der, format: "der", type: "spki" });
 };
+const requirePositiveModelRound = (value, label) => {
+    const round = Number(value);
+    if (!Number.isSafeInteger(round) || round <= 0) {
+        throw new Error(`${label} is invalid: ${value}.`);
+    }
+    return round;
+};
+export const verifyEncryptedGlobalModelBundleSignature = ({ encryptedBundleBytes, encryptedSignatureBytes, publisherPublicKeyDerHex, }) => crypto.verify("RSA-SHA256", requireBytes(encryptedBundleBytes, "encrypted global-model bundle"), {
+    key: loadPublicKeyFromDerHex(publisherPublicKeyDerHex),
+    padding: crypto.constants.RSA_PKCS1_PADDING,
+}, requireBytes(encryptedSignatureBytes, "encrypted global-model bundle signature"));
 export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signaturePath, aggregationEvidencePath, encryptedBundlePath, encryptedSignaturePath, keyBundlePath, recipients, round, signingPrivateKey, }) => {
     if (!Array.isArray(recipients)) {
         throw new Error("Recipients for GM encryption must be provided as an array.");
@@ -78,12 +89,25 @@ export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signatureP
             .update(aggregationEvidenceBytes)
             .digest("hex");
     }
+    if (recipients.length === 0) {
+        throw new Error("GM encryption requires at least one recipient with a registered key.");
+    }
+    if (!Number.isSafeInteger(round) || round <= 0) {
+        throw new Error(`Encrypted global-model round is invalid: ${round}.`);
+    }
+    if (signatureBytes.length === 0 && round !== 1) {
+        throw new Error("Only the public bootstrap promoted to model round 1 may omit the plaintext model signature.");
+    }
     const payload = Buffer.from(JSON.stringify({
         version: 2,
         round,
         generated_at: new Date().toISOString(),
         model_b64: modelBytes.toString("base64"),
-        signature_b64: signatureBytes.toString("base64"),
+        // Only the public bootstrap model promoted to round 1 has no origin signature.
+        // Learned global models continue to carry the aggregator's plaintext
+        // signature, while every encrypted bundle (including bootstrap) is
+        // authenticated separately below.
+        signature_b64: signatureBytes.length > 0 ? signatureBytes.toString("base64") : null,
         aggregation_evidence_b64: aggregationEvidenceBytes?.toString("base64") ?? null,
         aggregation_evidence_sha256: aggregationEvidenceHash,
     }), "utf8");
@@ -145,9 +169,15 @@ export const buildEncryptedGlobalModelArtifacts = async ({ modelPath, signatureP
         }),
     };
 };
-export const decryptEncryptedGlobalModelArtifacts = async ({ encryptedBundlePath, keyBundlePath, ownAddress, outModelPath, outSignaturePath, outAggregationEvidencePath, decryptionPrivateKey, }) => {
+export const decryptEncryptedGlobalModelArtifacts = async ({ encryptedBundlePath, keyBundlePath, ownAddress, outModelPath, outSignaturePath, outAggregationEvidencePath, decryptionPrivateKey, expectedModelRound, }) => {
     const bundleDocument = JSON.parse(await fs.readFile(encryptedBundlePath, "utf8"));
     const keyBundleDocument = JSON.parse(await fs.readFile(keyBundlePath, "utf8"));
+    const finalizedModelRound = requirePositiveModelRound(expectedModelRound, "Finalized on-chain model round");
+    const keyBundleRound = requirePositiveModelRound(keyBundleDocument?.round, "Encrypted global-model key-bundle round");
+    if (keyBundleRound !== finalizedModelRound) {
+        throw new Error(`Encrypted global-model key-bundle round ${keyBundleRound} does not match `
+            + `finalized on-chain model round ${finalizedModelRound}.`);
+    }
     const normalizedAddress = String(ownAddress || "").toLowerCase();
     const wrapped = keyBundleDocument?.wrapped_keys_b64?.[normalizedAddress];
     if (!wrapped) {
@@ -170,8 +200,29 @@ export const decryptEncryptedGlobalModelArtifacts = async ({ encryptedBundlePath
         decipher.final(),
     ]);
     const payload = JSON.parse(plaintext.toString("utf8"));
+    const payloadRound = requirePositiveModelRound(payload?.round, "Encrypted global-model payload round");
+    if (payloadRound !== keyBundleRound) {
+        throw new Error(`Encrypted global-model payload round ${payloadRound} does not match `
+            + `key-bundle round ${keyBundleRound}.`);
+    }
     const modelBytes = toBufferFromBase64(payload.model_b64, "plaintext model");
-    const signatureBytes = toBufferFromBase64(payload.signature_b64, "plaintext signature");
+    let signatureBytes;
+    let plaintextSignaturePresent;
+    if (payload.signature_b64 === null || payload.signature_b64 === undefined) {
+        signatureBytes = Buffer.alloc(0);
+        plaintextSignaturePresent = false;
+    }
+    else if (typeof payload.signature_b64 === "string") {
+        signatureBytes = toBufferFromBase64(payload.signature_b64, "plaintext signature");
+        plaintextSignaturePresent = signatureBytes.length > 0;
+    }
+    else {
+        throw new Error("Encrypted GM plaintext signature field is invalid.");
+    }
+    if (!plaintextSignaturePresent && payloadRound !== 1) {
+        throw new Error(`Encrypted global model round ${payloadRound} lacks its required `
+            + "plaintext model signature.");
+    }
     await fs.writeFile(outModelPath, modelBytes);
     await fs.writeFile(outSignaturePath, signatureBytes);
     let aggregationEvidence = null;
@@ -213,6 +264,7 @@ export const decryptEncryptedGlobalModelArtifacts = async ({ encryptedBundlePath
             : null,
         aggregationEvidence,
         aggregationEvidenceHash,
-        round: Number(keyBundleDocument?.round ?? 0),
+        plaintextSignaturePresent,
+        round: payloadRound,
     };
 };

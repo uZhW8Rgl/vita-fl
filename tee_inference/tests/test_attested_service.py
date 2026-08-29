@@ -46,24 +46,25 @@ class ModelAuthorizationTests(unittest.TestCase):
         "EXPECTED_RUNTIME_RPC_URL": "http://rpc",
     }
 
-    def test_contract_manifest_retries_transient_gateway_failure(self) -> None:
+    def test_missing_contract_manifest_is_an_optional_handoff(self) -> None:
+        with patch(
+            "tee_inference.service.model_source.urllib.request.urlopen",
+            side_effect=urllib.error.URLError("MFS metadata was lost"),
+        ) as urlopen:
+            manifest = _contracts_manifest("https://runtime-5001.example")
+        self.assertIsNone(manifest)
+        self.assertEqual(urlopen.call_count, 1)
+
+    def test_malformed_present_contract_manifest_fails_closed(self) -> None:
         response = MagicMock()
         response.__enter__.return_value = response
-        response.read.return_value = json.dumps(
-            {"gm_storage_address": "0x" + "11" * 20, "registry_address": "0x" + "22" * 20}
-        ).encode()
-        env = {"RUNTIME_MANIFEST_TIMEOUT_SECONDS": "5", "RUNTIME_MANIFEST_RETRY_SECONDS": "0.1"}
-        with (
-            patch.dict("os.environ", env, clear=False),
-            patch(
-                "tee_inference.service.model_source.urllib.request.urlopen",
-                side_effect=[urllib.error.URLError("temporary TLS EOF"), response],
-            ) as urlopen,
-            patch("tee_inference.service.model_source.time.sleep"),
+        response.read.return_value = b"not-json"
+        with patch(
+            "tee_inference.service.model_source.urllib.request.urlopen",
+            return_value=response,
         ):
-            manifest = _contracts_manifest("https://runtime-5001.example")
-        self.assertEqual(manifest["gm_storage_address"], "0x" + "11" * 20)
-        self.assertEqual(urlopen.call_count, 2)
+            with self.assertRaisesRegex(RuntimeError, "not valid JSON"):
+                _contracts_manifest("https://runtime-5001.example")
 
     def test_accepts_manifest_and_rpc_matching_measured_trust_root(self) -> None:
         contracts = {
@@ -183,6 +184,44 @@ class ModelAuthorizationTests(unittest.TestCase):
         authorize.assert_not_called()
         read_bundle.assert_not_called()
 
+    def test_provision_uses_measured_contracts_when_manifest_is_missing(self) -> None:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        env = {
+            "RPC_URL": "http://rpc",
+            "KUBO_API": "http://ipfs",
+            "ACCOUNT_ADDRESS": "0x" + "22" * 20,
+            "RSA_PRIVATE_KEY": private_pem(key),
+            **self.TRUST_ROOT_ENV,
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.dict("os.environ", env, clear=False),
+            patch(
+                "tee_inference.service.model_source._contracts_manifest",
+                return_value=None,
+            ),
+            patch(
+                "tee_inference.service.model_source.rpc_call",
+                return_value=hex(31337),
+            ),
+            patch(
+                "tee_inference.service.model_source._assert_w0_authorized",
+            ) as authorize,
+            patch(
+                "tee_inference.service.model_source.read_current_bundle_from_contract",
+                side_effect=RuntimeError("stop after trust-root recovery"),
+            ) as read_bundle,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "stop after trust-root recovery"):
+                provision_latest_model(Path(directory))
+
+        authorize.assert_called_once()
+        read_bundle.assert_called_once_with(
+            "http://rpc",
+            self.GM_STORAGE,
+            self.REGISTRY,
+        )
+
     def test_rejects_w0_private_key_not_matching_registry(self) -> None:
         registered = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         supplied = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -234,7 +273,11 @@ class ModelAuthorizationTests(unittest.TestCase):
             patch.dict("os.environ", env, clear=False),
             patch(
                 "tee_inference.service.model_source._contracts_manifest",
-                return_value={"gm_storage_address": "0x" + "11" * 20, "registry_address": "0x" + "33" * 20},
+                return_value={
+                    "gm_storage_address": "0x" + "11" * 20,
+                    "registry_address": "0x" + "33" * 20,
+                    "chain_id": "31337",
+                },
             ),
             patch("tee_inference.service.model_source._assert_w0_authorized"),
             patch(
@@ -277,7 +320,11 @@ class ModelAuthorizationTests(unittest.TestCase):
                 patch.dict("os.environ", env, clear=False),
                 patch(
                     "tee_inference.service.model_source._contracts_manifest",
-                    return_value={"gm_storage_address": "0x" + "11" * 20, "registry_address": "0x" + "33" * 20},
+                    return_value={
+                        "gm_storage_address": "0x" + "11" * 20,
+                        "registry_address": "0x" + "33" * 20,
+                        "chain_id": "31337",
+                    },
                 ),
                 patch("tee_inference.service.model_source._assert_w0_authorized"),
                 patch(

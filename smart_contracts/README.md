@@ -80,28 +80,44 @@ It performs:
 5. upload of PCCS collateral and configuration of the worker-image and
    role-specific worker policies,
 6. publication of `/runtime/contracts.json` and
-   `/runtime/admission-ready.json`,
-7. waiting for live DCAP-authorized participant public keys, and
-8. encryption, upload, and registration of the initial global model for those
-   recipients before publishing `/runtime/ready.json`.
+   `/runtime/admission-ready.json`, followed by a normal container exit.
 
-This split is required because worker RSA keys are generated inside their
-respective TEEs and become usable bootstrap recipients only after successful
-DCAP registration. `BOOTSTRAP_MIN_RECIPIENTS` selects the minimum live
-recipient count (default `1`); the registration timeout, polling interval, and
-optional settling window are controlled by
-`BOOTSTRAP_REGISTRATION_TIMEOUT_SECONDS`,
-`BOOTSTRAP_REGISTRATION_POLL_SECONDS`, and
-`BOOTSTRAP_REGISTRATION_SETTLE_SECONDS`. The bootstrap derives recipients
-exclusively from current `DeviceRegistry` state; it does not accept a
-provisioned initial worker public key.
+Deployment stores only the content-addressed CID of the public plaintext
+initial model. It neither signs nor encrypts that model and does not wait for a
+recipient declaration or publish `/runtime/ready.json`. After the selected
+workers have completed DCAP registration, W0 obtains their TEE-generated public
+keys and finalizes bootstrap round 0 through the same authorized aggregation
+path used for later model publications. Round 0 cannot be aborted into a
+replacement-aggregator round; a failed W0 bootstrap therefore remains pending
+until W0 completes it or the run is restarted.
+
+## Exact Run Admission
+
+Contract deployment leaves worker admission closed. At **Start Training**, the
+Control API uses the `DeviceRegistry` owner key to call `commitRunRoster` once
+with the exact ordered participant addresses; the first address must be the
+already configured bootstrap aggregator W0. The contract stores both the order
+and `keccak256(abi.encode(roster))`. Only those logical participants may then
+submit a DCAP-bound registration. The final required registration sets
+`runRosterFrozen`, after which deregistration, action-key rotation, public-key
+replacement, membership changes and admission-policy changes all fail closed.
+
+The ordered on-chain roster and `runRosterDigest` are the run authority.
+`/runtime/bootstrap-recipients.json` is only a first-start readiness transport:
+W0 compares it with the commitment before creating its protected public-key snapshot,
+then performs restart recovery from the immutable on-chain roster and verifies
+every snapshotted RSA key byte-for-byte against `DeviceRegistry`. Aggregator
+selection and every later global-model encryption consequently use the same
+frozen participant set rather than a mutable off-chain registry view.
 
 ## Logical Participants and TEE Action Keys
 
-The contracts distinguish a logical participant address `W` from a
-process-scoped TEE action address `A`. Contribution scores, selection and model
-metadata continue to use `W`; participant protocol transactions must come from
-the currently registered `A`.
+The contracts distinguish a logical participant address `W` from an
+application-bound TEE action address `A`. Contribution scores, selection and
+model metadata continue to use `W`; participant protocol transactions must come
+from the currently registered `A`. Restarting the same measured application
+deterministically derives the same action address, while a different measured
+application or derivation context cannot reuse that registration.
 
 During registration, `DeviceRegistry` requires all three statements:
 
@@ -154,14 +170,19 @@ stated participant bound and TDX/dstack assumptions; it is not an independent
 mathematical proof or an unrestricted guarantee against arbitrary Byzantine
 participation.
 
-For the local Docker flow, `IPFS_PROVIDER` controls the bootstrap mode. With `IPFS_PROVIDER=kubo`, the deployment script signs `data/initial_gm/<dataset>/aggregated.bin`, imports model and signature into the local Kubo node, and writes those resulting CIDs into `GMStorage`. The dataset is selected through `DATASET_NAME` and defaults to `mnist`. With `IPFS_PROVIDER=pinata`, the script does not touch Kubo during initialization and instead expects `INITIAL_GM_CID` and `INITIAL_GM_SIG_CID` to already point to Pinata-hosted content.
+For the local Docker flow, `IPFS_PROVIDER` controls how the initial model CID is supplied. With `IPFS_PROVIDER=kubo`, the deployment script imports the unsigned plaintext `data/initial_gm/<dataset>/aggregated.bin` into the local Kubo node and writes its CID into `GMStorage`. The dataset is selected through `DATASET_NAME` and defaults to `mnist`. With `IPFS_PROVIDER=pinata`, the script does not touch Kubo during initialization and expects `INITIAL_GM_CID` to point to the already hosted plaintext model.
 
 The tested local entry point is:
 
 ```bash
 docker compose -f compose.yml down --volumes --remove-orphans
-KEEP_ALIVE=0 docker compose -f compose.yml up --build --force-recreate
+docker compose -f compose.yml up --build --force-recreate
 ```
+
+This command brings up the base runtime and completes contract deployment; it
+does not preselect or start worker identities. Continue in the browser UI's
+**Training Setup** tab and use **Start Training** to commit the exact roster and
+launch the selected workers.
 
 ## RTMR3 Workload Policy
 

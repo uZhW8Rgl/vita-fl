@@ -81,10 +81,11 @@ contract AggregatorSelection {
     );
     event RoundAborted(uint256 indexed round, address indexed failedAggregator, address indexed newAggregator);
 
-    constructor() {
+    constructor(address initialAggregator) {
+        require(initialAggregator != address(0), "Initial aggregator is zero");
         owner = msg.sender;
         system_state = "TRAINING";
-        current_aggregator = msg.sender;
+        current_aggregator = initialAggregator;
         broker_endpoint = "test_endpoint";
         time_to_aggregate = 0;
         time_to_select = 0;

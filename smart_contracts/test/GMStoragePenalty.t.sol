@@ -83,8 +83,7 @@ contract GMStoragePenaltyTest is ActionKeyTest {
         selection = new PenaltyAggregatorSelectionStub();
         selection.setAggregator(aggregator);
 
-        gmStorage =
-            new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
+        gmStorage = new GMStorage(address(registry), address(selection), "initial-model");
         aggregationPolicy = new AggregationPolicy(address(gmStorage));
         aggregationPolicy.configureDefaultPolicy(1, 3600);
         gmStorage.setAggregationPolicyAddress(address(aggregationPolicy));

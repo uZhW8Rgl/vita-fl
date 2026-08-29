@@ -6,9 +6,8 @@ import hashlib
 import json
 import os
 import re
-import sys
-import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -26,40 +25,37 @@ from tee_inference.protocol.v1 import LABELS, encode_deterministic
 _EVM_ADDRESS = re.compile(r"0x[0-9a-fA-F]{40}")
 
 
-def _contracts_manifest(kubo_api: str) -> dict[str, str]:
+def _contracts_manifest(kubo_api: str) -> dict[str, str] | None:
+    """Read optional MFS discovery metadata without making it a trust root."""
+
     url = kubo_api.rstrip("/") + "/api/v0/files/read?" + urllib.parse.urlencode({"arg": "/runtime/contracts.json"})
-    timeout_seconds = max(1, int(os.environ.get("RUNTIME_MANIFEST_TIMEOUT_SECONDS", "600")))
-    retry_seconds = max(0.1, float(os.environ.get("RUNTIME_MANIFEST_RETRY_SECONDS", "2")))
-    deadline = time.monotonic() + timeout_seconds
-    attempt = 0
-    last_error: Exception | None = None
+    try:
+        request = urllib.request.Request(url, method="POST")
+        with urllib.request.urlopen(request, timeout=5) as response:
+            value = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return None
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("runtime contracts manifest is not valid JSON") from exc
 
-    # Phala gateway routes can briefly terminate TLS while a CVM or its Kubo
-    # service is starting. Match the DFL worker's readiness behaviour instead
-    # of making container startup depend on a single gateway request.
-    while time.monotonic() < deadline:
-        attempt += 1
-        try:
-            request = urllib.request.Request(url, method="POST")
-            with urllib.request.urlopen(request, timeout=30) as response:
-                value = json.loads(response.read().decode("utf-8"))
-            manifest = {str(key): str(item) for key, item in value.items()}
-            if manifest.get("gm_storage_address") or manifest.get("GM_STORAGE_ADDRESS") or manifest.get("gmStorage"):
-                return manifest
-            last_error = RuntimeError("runtime contracts manifest does not contain GMStorage")
-        except Exception as exc:
-            last_error = exc
-        if attempt == 1 or attempt % 15 == 0:
-            print(
-                f"Waiting for contract-runtime manifest (attempt {attempt}): {last_error}",
-                file=sys.stderr,
-                flush=True,
-            )
-        time.sleep(min(retry_seconds, max(0.0, deadline - time.monotonic())))
-
-    raise RuntimeError(
-        f"Timed out after {timeout_seconds}s waiting for /runtime/contracts.json via {kubo_api}: {last_error}"
-    ) from last_error
+    if not isinstance(value, dict):
+        raise RuntimeError("runtime contracts manifest is not a JSON object")
+    manifest = {str(key): str(item) for key, item in value.items()}
+    gm_storage = (
+        manifest.get("gm_storage_address")
+        or manifest.get("GM_STORAGE_ADDRESS")
+        or manifest.get("gmStorage")
+    )
+    registry = (
+        manifest.get("registry_address")
+        or manifest.get("REGISTRY_ADDRESS")
+        or manifest.get("deviceRegistry")
+    )
+    if not gm_storage or not registry:
+        raise RuntimeError(
+            "runtime contracts manifest does not contain GMStorage and DeviceRegistry"
+        )
+    return manifest
 
 
 def _required_expected_address(name: str) -> str:
@@ -195,7 +191,23 @@ def provision_latest_model(target: Path) -> tuple[Path, bytes, dict[str, str]]:
     if not re.fullmatch(r"0x[a-f0-9]{40}", address):
         raise RuntimeError("ACCOUNT_ADDRESS must be a lowercase EVM address")
     contracts = _contracts_manifest(kubo_api)
+    manifest_present = contracts is not None
+    if contracts is None:
+        contracts = {
+            "gm_storage_address": _required_expected_address(
+                "EXPECTED_GM_STORAGE_ADDRESS"
+            ),
+            "registry_address": _required_expected_address(
+                "EXPECTED_DEVICE_REGISTRY_ADDRESS"
+            ),
+        }
     gm_storage, registry, chain_id = _verified_contract_trust_root(rpc_url, contracts)
+    if manifest_present:
+        manifest_chain_id = str(contracts.get("chain_id", "")).strip()
+        if not manifest_chain_id.isdigit() or int(manifest_chain_id) != chain_id:
+            raise RuntimeError(
+                "runtime contracts manifest chain_id does not match the verified runtime chain"
+            )
     _assert_w0_authorized(
         rpc_url,
         registry,

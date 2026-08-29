@@ -7,10 +7,8 @@ import test from "node:test";
 
 
 const script = readFileSync(new URL("../starter_docker.sh", import.meta.url), "utf8");
-const encryptedBootstrapScript = readFileSync(
-  new URL("../bootstrap_encrypted_gm.mjs", import.meta.url),
-  "utf8",
-);
+const deployScript = readFileSync(new URL("../script/Deploy.s.sol", import.meta.url), "utf8");
+const gmStorageContract = readFileSync(new URL("../src/core/GMStorage.sol", import.meta.url), "utf8");
 const phalaMain = readFileSync(new URL("../../phala/main.tf", import.meta.url), "utf8");
 const contractsComposeTemplate = readFileSync(
   new URL("../../phala/dstack-compose.contracts.phala.tftpl", import.meta.url),
@@ -167,7 +165,7 @@ test("address validation rejects a multi-line value", () => {
   assert.match(result.stdout, /Invalid MEDICAL_SIGNER_REGISTRY_ADDRESS address/);
 });
 
-test("runtime publishes admission metadata before bootstrap and readiness afterward", () => {
+test("deployment publishes admission metadata and leaves round-zero finalization to W0", () => {
   const imagePolicy = script.lastIndexOf("setExpectedWorkerImageDigest(bytes32)");
   const rolePolicies = script.lastIndexOf("\nprovision_worker_policy_hashes\n");
   const contracts = script.lastIndexOf("\npublish_runtime_contract_manifest\n");
@@ -180,16 +178,26 @@ test("runtime publishes admission metadata before bootstrap and readiness afterw
   assert.notEqual(rolePolicies, -1);
   assert.notEqual(contracts, -1);
   assert.notEqual(admission, -1);
-  assert.notEqual(declaration, -1);
-  assert.notEqual(bootstrap, -1);
-  assert.notEqual(ready, -1);
+  assert.equal(declaration, -1);
+  assert.equal(bootstrap, -1);
+  assert.equal(ready, -1);
+  assert.doesNotMatch(script, /tail -f \/dev\/null|KEEP_ALIVE=1/);
   assert.ok(imagePolicy < contracts, "worker image policy must precede admission");
   assert.ok(imagePolicy < rolePolicies, "image policy must precede role-policy provisioning");
   assert.ok(rolePolicies < contracts, "role-policy provisioning must precede admission");
   assert.ok(contracts < admission, "contract manifest must precede admission marker");
-  assert.ok(admission < declaration, "admission marker must precede recipient declaration");
-  assert.ok(declaration < bootstrap, "recipient declaration must precede encrypted bootstrap");
-  assert.ok(bootstrap < ready, "ready marker must follow encrypted bootstrap");
+});
+
+test("deployment pins an unsigned plaintext initial model and only commits its CID", () => {
+  const initialModelFunction = shellFunction("prepare_local_initial_gm");
+
+  assert.match(initialModelFunction, /INITIAL_GM_CID=\$\(add_file_to_kubo/);
+  assert.doesNotMatch(initialModelFunction, /openssl|INITIAL_GM_SIG|SIGNING_KEY|signature/i);
+  assert.match(deployScript, /vm\.envString\("INITIAL_GM_CID"\)/);
+  assert.match(deployScript, /vm\.envAddress\("W0_ACCOUNT_ADDRESS"\)/);
+  assert.match(deployScript, /new AggregatorSelection\(\s*initialAggregator\s*\)/);
+  assert.doesNotMatch(deployScript, /INITIAL_GM_SIG_CID|INITIAL_GM_SIGNER_ADDRESS/);
+  assert.doesNotMatch(gmStorageContract, /function initializeEncryptedBootstrap|bootstrapAuthority/);
 });
 
 test("worker policies are pre-rendered from the dynamic worker template", () => {
@@ -279,25 +287,4 @@ test("stale bootstrap markers are all cleared before deployment", () => {
   assert.ok(result.stderr.includes("arg=/runtime/admission-ready.json"));
   assert.ok(result.stderr.includes("arg=/runtime/bootstrap-recipients.json"));
   assert.ok(result.stderr.includes("arg=/runtime/ready.json"));
-});
-
-test("encrypted bootstrap uses only live DeviceRegistry recipients", () => {
-  assert.doesNotMatch(encryptedBootstrapScript, /DYNAMIC_WORKER_INVENTORY/);
-  assert.doesNotMatch(encryptedBootstrapScript, /--bootstrap-address/);
-  assert.doesNotMatch(encryptedBootstrapScript, /--bootstrap-public-key/);
-  assert.doesNotMatch(script, /INITIAL_BOOTSTRAP_RECIPIENT/);
-  assert.match(encryptedBootstrapScript, /waitForBootstrapRecipients/);
-  assert.match(encryptedBootstrapScript, /loadRecipientsFromRegistry/);
-  assert.match(encryptedBootstrapScript, /--required-recipients-file/);
-});
-
-test("bootstrap wait settings are forwarded with safe defaults", () => {
-  const bootstrapFunction = shellFunction("prepare_encrypted_initial_gm");
-
-  assert.match(bootstrapFunction, /BOOTSTRAP_MIN_RECIPIENTS:-1/);
-  assert.match(bootstrapFunction, /BOOTSTRAP_REGISTRATION_SETTLE_SECONDS:-0/);
-  assert.match(bootstrapFunction, /BOOTSTRAP_REGISTRATION_TIMEOUT_SECONDS:-900/);
-  assert.match(bootstrapFunction, /BOOTSTRAP_REGISTRATION_POLL_SECONDS:-2/);
-  assert.match(bootstrapFunction, /--minimum-recipients/);
-  assert.match(bootstrapFunction, /--registration-settle-seconds/);
 });

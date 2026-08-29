@@ -53,6 +53,9 @@ contract DeviceRegistryAttestationBindingTest is Test {
         registry.setTdxV4Attestation(address(verifier));
         registry.setExpectedWorkerImageDigest(imageDigest);
         registry.setWorkerPolicyHashAllowed(registry.workerPolicyHash(appCompose), true);
+        address[] memory roster = new address[](1);
+        roster[0] = worker;
+        registry.commitRunRoster(roster);
     }
 
     function testDerivesImageAndComposeIdentityOnChain() public view {
@@ -84,6 +87,50 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertEq(registry.actionKeyForParticipant(worker), actionKey);
         assertEq(registry.participantForActionKey(actionKey), worker);
         assertEq(registry.resolveAuthorizedParticipant(actionKey), worker);
+        assertTrue(registry.runRosterFrozen());
+        assertEq(registry.registeredRunMemberCount(), 1);
+    }
+
+    function testRegistrationRequiresOwnerCommittedExactRunRoster() public {
+        DeviceRegistry fresh = new DeviceRegistry(keccak256("fresh deployment"));
+        fresh.setTdxV4Attestation(address(verifier));
+        fresh.setExpectedWorkerImageDigest(imageDigest);
+        fresh.setWorkerPolicyHashAllowed(fresh.workerPolicyHash(appCompose), true);
+
+        vm.expectRevert(bytes("run roster not committed"));
+        _reportData(fresh, appCompose, publicKey);
+
+        address[] memory roster = new address[](1);
+        roster[0] = worker;
+        vm.prank(attacker);
+        vm.expectRevert(bytes("not owner"));
+        fresh.commitRunRoster(roster);
+
+        fresh.commitRunRoster(roster);
+        assertTrue(fresh.runRosterCommitted());
+        assertEq(fresh.runRosterDigest(), keccak256(abi.encode(roster)));
+        assertEq(fresh.getRunRoster(), roster);
+        vm.expectRevert(bytes("run roster already committed"));
+        fresh.commitRunRoster(roster);
+    }
+
+    function testRosterCommitRejectsDuplicateAndUnselectedParticipant() public {
+        DeviceRegistry duplicateRegistry = new DeviceRegistry(keccak256("duplicate roster"));
+        address[] memory duplicate = new address[](2);
+        duplicate[0] = worker;
+        duplicate[1] = worker;
+        vm.expectRevert(bytes("run roster contains duplicate"));
+        duplicateRegistry.commitRunRoster(duplicate);
+
+        DeviceRegistry selectedRegistry = new DeviceRegistry(keccak256("selected roster"));
+        selectedRegistry.setTdxV4Attestation(address(verifier));
+        selectedRegistry.setExpectedWorkerImageDigest(imageDigest);
+        selectedRegistry.setWorkerPolicyHashAllowed(selectedRegistry.workerPolicyHash(appCompose), true);
+        address[] memory roster = new address[](1);
+        roster[0] = attacker;
+        selectedRegistry.commitRunRoster(roster);
+        vm.expectRevert(bytes("participant not in committed run roster"));
+        _reportData(selectedRegistry, appCompose, publicKey);
     }
 
     function testVariableEnvironmentValuesDoNotChangeWorkerPolicy() public view {
@@ -142,37 +189,44 @@ contract DeviceRegistryAttestationBindingTest is Test {
         bytes memory inferenceRole = _appCompose(
             "worker-0", _digestPinnedImage(IMAGE_HEX), "ROUND: \\\"1\\\"\\n      TEE_INFERENCE_ENABLED: \\\"1\\\"\\n"
         );
-        bytes32 inferencePolicy = registry.workerPolicyHash(inferenceRole);
-        assertTrue(inferencePolicy != registry.workerPolicyHash(appCompose));
-        registry.setWorkerPolicyHashAllowed(inferencePolicy, true);
-        assertEq(registry.allowedWorkerPolicyHashCount(), 2);
+        DeviceRegistry multiPolicyRegistry = new DeviceRegistry(keccak256("multi-policy deployment"));
+        multiPolicyRegistry.setTdxV4Attestation(address(verifier));
+        multiPolicyRegistry.setExpectedWorkerImageDigest(imageDigest);
+        bytes32 inferencePolicy = multiPolicyRegistry.workerPolicyHash(inferenceRole);
+        assertTrue(inferencePolicy != multiPolicyRegistry.workerPolicyHash(appCompose));
+        multiPolicyRegistry.setWorkerPolicyHashAllowed(multiPolicyRegistry.workerPolicyHash(appCompose), true);
+        multiPolicyRegistry.setWorkerPolicyHashAllowed(inferencePolicy, true);
+        address[] memory roster = new address[](1);
+        roster[0] = worker;
+        multiPolicyRegistry.commitRunRoster(roster);
+        assertEq(multiPolicyRegistry.allowedWorkerPolicyHashCount(), 2);
 
-        bytes memory reportData = _reportData(registry, inferenceRole, publicKey);
+        bytes memory reportData = _reportData(multiPolicyRegistry, inferenceRole, publicKey);
         vm.prank(actionKey);
-        _register(registry, reportData, inferenceRole, publicKey);
-        assertTrue(registry.isAuthorized(worker));
-        assertEq(registry.registeredWorkerPolicyHashes(worker), inferencePolicy);
+        _register(multiPolicyRegistry, reportData, inferenceRole, publicKey);
+        assertTrue(multiPolicyRegistry.isAuthorized(worker));
+        assertEq(multiPolicyRegistry.registeredWorkerPolicyHashes(worker), inferencePolicy);
     }
 
-    function testPolicyRemovalImmediatelyRevokesRegisteredWorker() public {
+    function testAdmissionPolicyCannotChangeAfterRosterCommit() public {
         bytes32 policyHash = registry.workerPolicyHash(appCompose);
-        bytes memory reportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(actionKey);
-        _register(registry, reportData, appCompose, publicKey);
-        assertTrue(registry.isAuthorized(worker));
-
+        bytes32 nextImageDigest = sha256("next worker image");
+        vm.expectRevert(bytes("run admission policy is immutable"));
         registry.setWorkerPolicyHashAllowed(policyHash, false);
-        assertFalse(registry.isAuthorized(worker));
-        assertEq(registry.allowedWorkerPolicyHashCount(), 0);
-
-        vm.expectRevert(bytes("device already registered"));
-        _reportData(registry, appCompose, publicKey);
+        vm.expectRevert(bytes("run admission policy is immutable"));
+        registry.setExpectedWorkerImageDigest(nextImageDigest);
+        MockTdxV4Attestation replacementVerifier = new MockTdxV4Attestation();
+        vm.expectRevert(bytes("run admission policy is immutable"));
+        registry.setTdxV4Attestation(address(replacementVerifier));
     }
 
     function testWorkerPolicySetIsFailClosed() public {
         DeviceRegistry unconfigured = new DeviceRegistry(keccak256("policy-less deployment"));
         unconfigured.setTdxV4Attestation(address(verifier));
         unconfigured.setExpectedWorkerImageDigest(imageDigest);
+        address[] memory roster = new address[](1);
+        roster[0] = worker;
+        unconfigured.commitRunRoster(roster);
 
         vm.expectRevert(bytes("worker policy set not configured"));
         _reportData(unconfigured, appCompose, publicKey);
@@ -311,6 +365,9 @@ contract DeviceRegistryAttestationBindingTest is Test {
     function testImagePolicyIsFailClosed() public {
         DeviceRegistry unconfigured = new DeviceRegistry(keccak256("unconfigured deployment"));
         unconfigured.setTdxV4Attestation(address(verifier));
+        address[] memory roster = new address[](1);
+        roster[0] = worker;
+        unconfigured.commitRunRoster(roster);
 
         vm.expectRevert(bytes("worker image policy not configured"));
         _reportData(unconfigured, appCompose, publicKey);
@@ -320,17 +377,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
         );
     }
 
-    function testImageRotationRevokesExistingRegistration() public {
-        bytes memory reportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(actionKey);
-        _register(registry, reportData, appCompose, publicKey);
-        assertTrue(registry.isAuthorized(worker));
-
-        registry.setExpectedWorkerImageDigest(sha256("next worker image"));
-        assertFalse(registry.isAuthorized(worker));
-    }
-
-    function testRegisteredDeviceCanDeregisterOnlyItself() public {
+    function testFrozenRunMemberCannotDeregisterOrBeDeauthorized() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
         vm.prank(actionKey);
         _register(registry, reportData, appCompose, publicKey);
@@ -340,44 +387,12 @@ contract DeviceRegistryAttestationBindingTest is Test {
         registry.deregisterDevice();
         assertTrue(registry.isAuthorized(worker));
 
+        vm.expectRevert(bytes("run roster is immutable"));
         vm.prank(actionKey);
         registry.deregisterDevice();
-
-        assertFalse(registry.isAuthorized(worker));
-        assertEq(registry.registeredComposeHashes(worker), bytes32(0));
-        assertEq(registry.registeredImageDigests(worker), bytes32(0));
-        assertEq(registry.registeredWorkerPolicyHashes(worker), bytes32(0));
-        assertEq(registry.registrationNonces(worker), 1);
-        assertEq(registry.actionKeyForParticipant(worker), address(0));
-        assertEq(registry.participantForActionKey(actionKey), address(0));
-
-        (bool authorized, string memory publicIp, string memory brokerIp, bytes memory storedKey) =
-            registry.getDevice(worker);
-        assertFalse(authorized);
-        assertEq(bytes(publicIp).length, 0);
-        assertEq(bytes(brokerIp).length, 0);
-        assertEq(storedKey.length, 0);
-        assertEq(registry.getAuthorizedDevices().length, 0);
-    }
-
-    function testDeregisteredDeviceCanRegisterAgainWithoutQuoteReplay() public {
-        bytes memory firstReportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(actionKey);
-        _register(registry, firstReportData, appCompose, publicKey);
-
-        vm.prank(actionKey);
-        registry.deregisterDevice();
-
-        _expectRegisterRevert(
-            bytes("quote report data mismatch"), registry, firstReportData, appCompose, publicKey, actionKey
-        );
-
-        bytes memory freshReportData = _reportData(registry, appCompose, publicKey);
-        vm.prank(actionKey);
-        _register(registry, freshReportData, appCompose, publicKey);
-
         assertTrue(registry.isAuthorized(worker));
-        assertEq(registry.registrationNonces(worker), 2);
+        vm.expectRevert(bytes("run roster is immutable"));
+        registry.deauthorizeAddress(worker);
         address[] memory authorizedDevices = registry.getAuthorizedDevices();
         assertEq(authorizedDevices.length, 1);
         assertEq(authorizedDevices[0], worker);
@@ -386,10 +401,16 @@ contract DeviceRegistryAttestationBindingTest is Test {
     function testRejectsMalformedVerifierOutput() public {
         MalformedTdxV4Attestation malformed = new MalformedTdxV4Attestation();
         malformed.setOutput(hex"00");
-        registry.setTdxV4Attestation(address(malformed));
+        DeviceRegistry malformedRegistry = new DeviceRegistry(keccak256("malformed verifier deployment"));
+        malformedRegistry.setTdxV4Attestation(address(malformed));
+        malformedRegistry.setExpectedWorkerImageDigest(imageDigest);
+        malformedRegistry.setWorkerPolicyHashAllowed(malformedRegistry.workerPolicyHash(appCompose), true);
+        address[] memory roster = new address[](1);
+        roster[0] = worker;
+        malformedRegistry.commitRunRoster(roster);
 
         _expectRegisterRevert(
-            bytes("invalid attestation report data"), registry, hex"00", appCompose, publicKey, actionKey
+            bytes("invalid attestation report data"), malformedRegistry, hex"00", appCompose, publicKey, actionKey
         );
     }
 
@@ -397,20 +418,24 @@ contract DeviceRegistryAttestationBindingTest is Test {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
         MalformedTdxV4Attestation malformed = new MalformedTdxV4Attestation();
         malformed.setOutput(abi.encodePacked(bytes1(0), new bytes(48), reportData, bytes6(0)));
-        registry.setTdxV4Attestation(address(malformed));
+        DeviceRegistry malformedRegistry = new DeviceRegistry(keccak256("legacy verifier deployment"));
+        malformedRegistry.setTdxV4Attestation(address(malformed));
+        malformedRegistry.setExpectedWorkerImageDigest(imageDigest);
+        malformedRegistry.setWorkerPolicyHashAllowed(malformedRegistry.workerPolicyHash(appCompose), true);
+        address[] memory roster = new address[](1);
+        roster[0] = worker;
+        malformedRegistry.commitRunRoster(roster);
+        reportData = _reportData(malformedRegistry, appCompose, publicKey);
 
         _expectRegisterRevert(
-            bytes("invalid attestation report data"), registry, reportData, appCompose, publicKey, actionKey
+            bytes("invalid attestation report data"), malformedRegistry, reportData, appCompose, publicKey, actionKey
         );
     }
 
-    function testVerifierRotationInvalidatesPreparedReportData() public {
-        bytes memory reportData = _reportData(registry, appCompose, publicKey);
-        registry.setTdxV4Attestation(address(new MockTdxV4Attestation()));
-
-        _expectRegisterRevert(
-            bytes("quote report data mismatch"), registry, reportData, appCompose, publicKey, actionKey
-        );
+    function testVerifierCannotRotateAfterRosterCommit() public {
+        MockTdxV4Attestation replacementVerifier = new MockTdxV4Attestation();
+        vm.expectRevert(bytes("run admission policy is immutable"));
+        registry.setTdxV4Attestation(address(replacementVerifier));
     }
 
     function testReportDataPreparationRequiresPublicKey() public {
@@ -478,23 +503,14 @@ contract DeviceRegistryAttestationBindingTest is Test {
         registry.deregisterDevice();
     }
 
-    function testActionKeyRotationRejectsStaleParticipantAuthorization() public {
+    function testFrozenRosterRejectsActionKeyRotation() public {
         address nextActionKey = makeAddr("next-worker-action-key");
-        bytes32 staleDigest = registry.enrollmentDigest(worker, nextActionKey, appCompose);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(workerPrivateKey, staleDigest);
-        bytes memory staleAuthorization = abi.encodePacked(r, s, v);
-
         bytes memory firstReportData = _reportData(registry, appCompose, publicKey);
         _register(registry, firstReportData, appCompose, publicKey);
+        vm.expectRevert(bytes("run roster is immutable"));
         vm.prank(actionKey);
         registry.deregisterDevice();
-        actionKey = nextActionKey;
-
-        bytes memory freshReportData =
-            registry.registrationReportData(worker, nextActionKey, PUBLIC_IP, BROKER_IP, publicKey, appCompose);
-        vm.expectRevert(bytes("invalid participant authorization"));
-        _registerWithAuthorization(registry, freshReportData, appCompose, publicKey, nextActionKey, staleAuthorization);
-        assertEq(registry.actionKeys(worker), address(0));
+        assertEq(registry.actionKeys(worker), actionKey);
         assertEq(registry.participantForActionKey(nextActionKey), address(0));
     }
 

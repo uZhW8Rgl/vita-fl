@@ -115,6 +115,7 @@ import os
 import re
 import shlex
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -145,32 +146,42 @@ if any(missing(value) for value in expected_contracts.values()) or missing(expec
         "Compose-measured EXPECTED_* contract addresses and EXPECTED_CHAIN_ID are required"
     )
 
+# The Compose-measured RPC endpoint and EXPECTED_* addresses are the durable
+# recovery configuration. MFS documents are an optional deployment hand-off;
+# losing them must not prevent an otherwise valid worker from rebooting and
+# reconciling its deterministic on-chain registration.
+if not rpc_url:
+    raise SystemExit("Compose-measured RPC_URL is required")
+for env_name, expected_address in expected_contracts.items():
+    configured_address = contracts[env_name]
+    if missing(configured_address):
+        contracts[env_name] = expected_address
+        os.environ[env_name] = expected_address
+
 kubo_api = (os.environ.get("KUBO_API") or "").rstrip("/")
 admission_ready = None
 manifest = None
 if kubo_api:
-    manifest_deadline = time.time() + 600
-
-    def read_mfs_json(path, validator):
+    def read_optional_mfs_json(path, validator):
         url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote(path, safe="")
-        while time.time() < manifest_deadline:
-            try:
-                request = urllib.request.Request(url, method="POST")
-                with urllib.request.urlopen(request, timeout=5) as response:
-                    value = json.loads(response.read().decode("utf-8"))
-                if validator(value):
-                    return value
-            except Exception:
-                pass
-            time.sleep(2)
-        raise SystemExit(f"Timed out waiting for valid runtime data via {url}")
+        try:
+            request = urllib.request.Request(url, method="POST")
+            with urllib.request.urlopen(request, timeout=5) as response:
+                value = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return None
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"Optional runtime MFS document is invalid JSON: {path}") from exc
+        if not isinstance(value, dict) or not validator(value):
+            raise SystemExit(f"Optional runtime MFS document failed validation: {path}")
+        return value
 
-    print("Waiting for contract runtime admission marker ...", flush=True)
-    admission_ready = read_mfs_json(
+    print("Checking optional contract-runtime MFS hand-off ...", flush=True)
+    admission_ready = read_optional_mfs_json(
         "/runtime/admission-ready.json",
         lambda value: value.get("status") == "admission-ready",
     )
-    manifest = read_mfs_json(
+    manifest = read_optional_mfs_json(
         "/runtime/contracts.json",
         lambda value: all(
             not missing(value.get(key))
@@ -183,32 +194,25 @@ if kubo_api:
         ),
     )
 
-    for env_name, manifest_key in (
-        ("REGISTRY_ADDRESS", "registry_address"),
-        ("AGGREGATOR_ADDRESS", "aggregator_address"),
-        ("GM_STORAGE_ADDRESS", "gm_storage_address"),
-        ("MEDICAL_SIGNER_REGISTRY_ADDRESS", "medical_signer_registry_address"),
-    ):
-        discovered = str(manifest.get(manifest_key, "")).strip()
-        if discovered.lower() != expected_contracts[env_name].lower():
+    if admission_ready is not None:
+        admission_registry = str(admission_ready.get("registry_address", "")).strip()
+        if admission_registry.lower() != expected_contracts["REGISTRY_ADDRESS"].lower():
             raise SystemExit(
-                f"{manifest_key} from runtime manifest does not match measured {env_name} policy"
+                "registry_address from runtime admission marker does not match measured REGISTRY_ADDRESS policy"
             )
 
-    rpc_url = rpc_url if not missing(rpc_url) else str(manifest.get("rpc_url", "")).strip()
-    for env_name, manifest_key in (
-        ("REGISTRY_ADDRESS", "registry_address"),
-        ("AGGREGATOR_ADDRESS", "aggregator_address"),
-        ("GM_STORAGE_ADDRESS", "gm_storage_address"),
-        ("MEDICAL_SIGNER_REGISTRY_ADDRESS", "medical_signer_registry_address"),
-    ):
-        if missing(contracts[env_name]):
-            resolved = str(manifest.get(manifest_key, "")).strip()
-            if resolved:
-                contracts[env_name] = resolved
-                os.environ[env_name] = resolved
-    if rpc_url:
-        os.environ["RPC_URL"] = rpc_url
+    if manifest is not None:
+        for env_name, manifest_key in (
+            ("REGISTRY_ADDRESS", "registry_address"),
+            ("AGGREGATOR_ADDRESS", "aggregator_address"),
+            ("GM_STORAGE_ADDRESS", "gm_storage_address"),
+            ("MEDICAL_SIGNER_REGISTRY_ADDRESS", "medical_signer_registry_address"),
+        ):
+            discovered = str(manifest.get(manifest_key, "")).strip()
+            if discovered.lower() != expected_contracts[env_name].lower():
+                raise SystemExit(
+                    f"{manifest_key} from runtime manifest does not match measured {env_name} policy"
+                )
 
 if not rpc_url or not all(contracts.values()):
     raise SystemExit("Runtime RPC URL or contract addresses are missing")

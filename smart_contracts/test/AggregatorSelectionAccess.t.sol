@@ -96,16 +96,19 @@ contract AggregatorSelectionAccessTest is ActionKeyTest {
         registry.setAuthorized(reporterOne, true);
         registry.setAuthorized(reporterTwo, true);
 
-        selection = new AggregatorSelection();
-        selection.setCurrentAggregator(aggregator);
-        gmStorage =
-            new GMStorage(address(registry), address(selection), "initial-model", "initial-signature", aggregator);
+        selection = new AggregatorSelection(aggregator);
+        gmStorage = new GMStorage(address(registry), address(selection), "initial-model");
         selection.setGMStorageAddress(address(gmStorage));
         aggregationPolicy = new AggregationPolicy(address(gmStorage));
         aggregationPolicy.configureDefaultPolicy(1, 3600);
         gmStorage.setAggregationPolicyAddress(address(aggregationPolicy));
         vm.prank(aggregator);
         gmStorage.openModelSubmissions(0);
+    }
+
+    function testConstructorRejectsZeroInitialAggregator() public {
+        vm.expectRevert(bytes("Initial aggregator is zero"));
+        new AggregatorSelection(address(0));
     }
 
     function publishAndCompleteRound(address publisher, string memory suffix) private {
@@ -179,16 +182,14 @@ contract AggregatorSelectionAccessTest is ActionKeyTest {
         assertEq(selection.lastSelectionRound(), 0);
     }
 
-    function testAbortedRoundAloneIsNotACompletedRound() public {
+    function testBootstrapRoundCannotBeAbortedOrSkipped() public {
+        vm.expectRevert(bytes("Bootstrap round cannot be aborted"));
         vm.prank(address(selection));
         gmStorage.abortRound(aggregator);
 
-        vm.expectRevert(bytes("Previous GMStorage round not completed"));
-        vm.prank(aggregator);
-        selection.triggerAggregatorSelection();
-
-        assertEq(gmStorage.getRound(), 1);
+        assertEq(gmStorage.getRound(), 0);
         assertFalse(gmStorage.roundCompleted(0));
+        assertFalse(gmStorage.roundAborted(0));
         assertEq(selection.lastSelectionRound(), 0);
     }
 
@@ -398,36 +399,23 @@ contract AggregatorSelectionAccessTest is ActionKeyTest {
         assertEq(selection.timeoutReportCount(0, aggregator), 1);
     }
 
-    function testTimeoutSelectionAdvancesAndConsumesSelectionRoundMarker() public {
+    function testBootstrapTimeoutQuorumCannotSelectReplacement() public {
         vm.prank(reporterOne);
         selection.reportAggregatorTimeout(0, aggregator);
+
+        vm.expectRevert(bytes("Bootstrap round cannot be aborted"));
         vm.prank(reporterTwo);
         selection.reportAggregatorTimeout(0, aggregator);
 
-        address replacement = selection.getCurrentAggregator();
-        assertTrue(replacement != aggregator);
-        assertEq(gmStorage.getRound(), 1);
+        assertEq(selection.getCurrentAggregator(), aggregator);
+        assertEq(gmStorage.getRound(), 0);
         assertEq(gmStorage.getCompletedRoundCount(), 0);
-        assertTrue(selection.roundAborted(0));
-        assertEq(selection.timeoutReportCount(0, aggregator), 2);
+        assertFalse(selection.roundAborted(0));
+        assertEq(selection.timeoutReportCount(0, aggregator), 1);
         assertEq(selection.timeoutEligibleReporterCount(0, aggregator), 3);
         assertEq(selection.timeoutRequiredReportCount(0, aggregator), 2);
-        assertEq(selection.lastSelectionRound(), 1);
+        assertEq(selection.lastSelectionRound(), 0);
         assertFalse(gmStorage.roundCompleted(0));
-        assertTrue(gmStorage.penaltyApplied(0, aggregator, keccak256(bytes("aggregator_timeout_consensus"))));
-
-        vm.expectRevert(bytes("GMStorage round not advanced"));
-        vm.prank(replacement);
-        selection.triggerAggregatorSelection();
-
-        vm.prank(replacement);
-        gmStorage.openModelSubmissions(1);
-        _recordSignedModelSubmission(gmStorage, replacement, replacement, aggregator, 1, keccak256("worker-round-one"));
-        publishAndCompleteRound(replacement, "round-one");
-        vm.prank(replacement);
-        selection.triggerAggregatorSelection();
-
-        assertEq(gmStorage.getRound(), 2);
-        assertEq(selection.lastSelectionRound(), 2);
+        assertFalse(gmStorage.penaltyApplied(0, aggregator, keccak256(bytes("aggregator_timeout_consensus"))));
     }
 }

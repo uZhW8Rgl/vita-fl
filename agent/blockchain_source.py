@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import json
 import os
@@ -366,8 +367,23 @@ def _load_private_key_from_env() -> tuple[Any, str]:
     )
 
 
+def _positive_model_round(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise RuntimeError(f"{label} contains an invalid model round.")
+    return value
+
+
+def _strict_base64(value: Any, label: str) -> bytes:
+    if not isinstance(value, str):
+        raise RuntimeError(f"{label} is not a base64 string.")
+    try:
+        return base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise RuntimeError(f"{label} is not valid base64.") from exc
+
+
 def _decrypt_encrypted_bundle(
-    bundle: dict[str, str],
+    bundle: dict[str, Any],
     encrypted_model_path: Path,
     key_bundle_path: Path,
     plain_model_path: Path,
@@ -381,9 +397,18 @@ def _decrypt_encrypted_bundle(
 
     bundle_doc = json.loads(encrypted_model_path.read_text(encoding="utf-8"))
     key_bundle_doc = json.loads(key_bundle_path.read_text(encoding="utf-8"))
-    key_bundle_round = key_bundle_doc.get("round")
-    if isinstance(key_bundle_round, bool) or not isinstance(key_bundle_round, int) or key_bundle_round < 0:
-        raise RuntimeError("Encrypted global model key bundle contains an invalid round.")
+    finalized_model_round = _positive_model_round(
+        bundle.get("finalized_model_round"),
+        "Finalized on-chain model bundle",
+    )
+    key_bundle_round = _positive_model_round(
+        key_bundle_doc.get("round"),
+        "Encrypted global model key bundle",
+    )
+    if key_bundle_round != finalized_model_round:
+        raise RuntimeError(
+            "Encrypted global model key-bundle round does not match the finalized on-chain round."
+        )
     wrapped_keys = key_bundle_doc.get("wrapped_keys_b64", {})
     wrapped_key_b64 = wrapped_keys.get(own_address)
     if not isinstance(wrapped_key_b64, str) or not wrapped_key_b64:
@@ -404,8 +429,32 @@ def _decrypt_encrypted_bundle(
     auth_tag = base64.b64decode(bundle_doc["auth_tag_b64"])
     plaintext = aesgcm.decrypt(iv, ciphertext + auth_tag, None)
     payload = json.loads(plaintext.decode("utf-8"))
-    plain_model_path.write_bytes(base64.b64decode(payload["model_b64"]))
-    plain_signature_path.write_bytes(base64.b64decode(payload["signature_b64"]))
+    payload_round = _positive_model_round(
+        payload.get("round"),
+        "Encrypted global model payload",
+    )
+    if payload_round != key_bundle_round:
+        raise RuntimeError(
+            "Encrypted global model payload round does not match the public key bundle."
+        )
+    plain_model_path.write_bytes(
+        _strict_base64(payload.get("model_b64"), "Encrypted global model payload model")
+    )
+
+    signature_value = payload.get("signature_b64")
+    if signature_value is None or signature_value == "":
+        signature_bytes = b""
+    else:
+        signature_bytes = _strict_base64(
+            signature_value,
+            "Encrypted global model payload plaintext signature",
+        )
+    plaintext_signature_present = bool(signature_bytes)
+    if not plaintext_signature_present and payload_round != 1:
+        raise RuntimeError(
+            f"Encrypted global model round {payload_round} lacks its required plaintext model signature."
+        )
+    plain_signature_path.write_bytes(signature_bytes)
     evidence_path: Path | None = None
     evidence_hash: str | None = None
     encrypted_evidence_b64 = payload.get("aggregation_evidence_b64")
@@ -463,7 +512,14 @@ def _decrypt_encrypted_bundle(
         )
     return {
         "encrypted": True,
-        "round": key_bundle_round,
+        "round": payload_round,
+        "finalized_model_round": finalized_model_round,
+        "plaintext_signature_present": plaintext_signature_present,
+        "plaintext_signature_policy": (
+            "unsigned-public-bootstrap"
+            if not plaintext_signature_present
+            else "aggregator-signed-model"
+        ),
         "recipient_address": own_address,
         "private_key_source": private_key_source,
         "plain_model_path": str(plain_model_path),
@@ -474,7 +530,7 @@ def _decrypt_encrypted_bundle(
 
 
 def fetch_onchain_bundle(
-    bundle: dict[str, str],
+    bundle: dict[str, Any],
     out_dir: Path,
     ipfs_api_url: str = DEFAULT_IPFS_API_URL,
 ) -> dict[str, Any]:
@@ -506,6 +562,17 @@ def fetch_onchain_bundle(
         plain_model_path,
         plain_signature_path,
     )
+    model_round = _positive_model_round(
+        decrypt_metadata.get("round"),
+        "Decrypted global model metadata",
+    )
+    plaintext_signature_present = decrypt_metadata.get(
+        "plaintext_signature_present"
+    )
+    if not isinstance(plaintext_signature_present, bool):
+        raise RuntimeError(
+            "Decrypted global model metadata lacks plaintext-signature presence."
+        )
     manifest_path = out_dir / "onchain_bundle.json"
     manifest = {
         "source": "GMStorage",
@@ -515,6 +582,8 @@ def fetch_onchain_bundle(
             "signature_path": str(plain_signature_path),
             "model_size": plain_model_path.stat().st_size,
             "signature_size": plain_signature_path.stat().st_size,
+            "model_round": model_round,
+            "plaintext_signature_present": plaintext_signature_present,
             "encrypted_bundle": encrypted_bundle,
             "encrypted_model_path": str(model_path),
             "encrypted_model_size": model_path.stat().st_size,
@@ -568,18 +637,78 @@ def verify_download_with_registry(
     public_key_der = bytes.fromhex(public_key_hex)
     encrypted_bundle = bool(download.get("encrypted_bundle"))
     if encrypted_bundle:
+        finalized_model_round = _positive_model_round(
+            bundle.get("finalized_model_round"),
+            "Finalized on-chain model bundle",
+        )
+        download_model_round = _positive_model_round(
+            download.get("model_round"),
+            "Downloaded global model metadata",
+        )
+        decryption = download.get("decryption")
+        if not isinstance(decryption, dict):
+            raise RuntimeError("Encrypted model download has no decryption metadata.")
+        decrypted_model_round = _positive_model_round(
+            decryption.get("round"),
+            "Decrypted global model metadata",
+        )
+        if not (
+            finalized_model_round
+            == download_model_round
+            == decrypted_model_round
+        ):
+            raise RuntimeError(
+                "Finalized, downloaded, and decrypted global-model rounds do not match."
+            )
+        plaintext_signature_present = download.get(
+            "plaintext_signature_present"
+        )
+        if not isinstance(plaintext_signature_present, bool):
+            raise RuntimeError(
+                "Downloaded global model metadata lacks plaintext-signature presence."
+            )
+        if decryption.get("plaintext_signature_present") is not plaintext_signature_present:
+            raise RuntimeError(
+                "Downloaded and decrypted plaintext-signature metadata do not match."
+            )
+        signature_path = Path(download["signature_path"])
+        signature_file_present = signature_path.exists() and signature_path.stat().st_size > 0
+        if signature_file_present != plaintext_signature_present:
+            raise RuntimeError(
+                "Plaintext-signature metadata does not match the downloaded signature file."
+            )
+        if not plaintext_signature_present and finalized_model_round != 1:
+            raise RuntimeError(
+                f"Encrypted global model round {finalized_model_round} lacks its required plaintext model signature."
+            )
+
         outer_verification = verify_model_signature(
             Path(download["encrypted_model_path"]),
             Path(download["encrypted_signature_path"]),
             public_key_der,
         )
-        inner_verification = verify_model_signature(
-            Path(download["model_path"]),
-            Path(download["signature_path"]),
-            public_key_der,
-        )
+        if plaintext_signature_present:
+            inner_verification = verify_model_signature(
+                Path(download["model_path"]),
+                signature_path,
+                public_key_der,
+            )
+            inner_ok = bool(inner_verification["ok"])
+        else:
+            inner_verification = {
+                "ok": None,
+                "required": False,
+                "present": False,
+                "skipped": True,
+                "reason": "model round 1 is the unsigned public bootstrap plaintext",
+                "model_path": str(download["model_path"]),
+                "signature_path": str(signature_path),
+                "signature_size": 0,
+            }
+            inner_ok = True
         verification = {
-            "ok": outer_verification["ok"] and inner_verification["ok"],
+            "ok": bool(outer_verification["ok"]) and inner_ok,
+            "model_round": finalized_model_round,
             "outer_bundle_signature": outer_verification,
             "inner_model_signature": inner_verification,
         }

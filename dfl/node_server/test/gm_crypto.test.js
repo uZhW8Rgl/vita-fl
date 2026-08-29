@@ -10,6 +10,7 @@ import {
     buildEncryptedGlobalModelArtifacts,
     decryptEncryptedGlobalModelArtifacts,
     deriveOutputBundleHash,
+    verifyEncryptedGlobalModelBundleSignature,
 } from '../dist/gm_crypto.js';
 
 test('output bundle hash uses domain-separated length framing for every artifact', () => {
@@ -144,6 +145,7 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
             outSignaturePath,
             outAggregationEvidencePath,
             decryptionPrivateKey: privateKey,
+            expectedModelRound: 7,
         });
 
         assert.equal(result.round, 7);
@@ -227,6 +229,7 @@ test('gm crypto rejects decryption for participants without a wrapped key', asyn
                 outModelPath: path.join(tempDir, 'out.bin'),
                 outSignaturePath: path.join(tempDir, 'out.bin.sig'),
                 decryptionPrivateKey: privateKey,
+                expectedModelRound: 1,
             }),
             /No wrapped GM round key found/,
         );
@@ -235,7 +238,7 @@ test('gm crypto rejects decryption for participants without a wrapped key', asyn
     }
 });
 
-test('gm crypto allows empty recipient sets for bootstrap rounds', async () => {
+test('gm crypto rejects empty recipient sets, including bootstrap', async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gm-crypto-empty-'));
     const modelPath = path.join(tempDir, 'aggregated.bin');
     const signaturePath = path.join(tempDir, 'aggregated.bin.sig');
@@ -249,20 +252,183 @@ test('gm crypto allows empty recipient sets for bootstrap rounds', async () => {
     await fs.writeFile(signaturePath, Buffer.from('bootstrap-signature', 'utf8'));
 
     try {
-        const artifacts = await buildEncryptedGlobalModelArtifacts({
+        await assert.rejects(
+            buildEncryptedGlobalModelArtifacts({
+                modelPath,
+                signaturePath,
+                encryptedBundlePath,
+                encryptedSignaturePath,
+                keyBundlePath,
+                recipients: [],
+                round: 0,
+                signingPrivateKey: privateKey,
+            }),
+            /at least one recipient/,
+        );
+    } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('unsigned bootstrap model is protected by the W0 encrypted-bundle signature', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gm-crypto-bootstrap-'));
+    const modelPath = path.join(tempDir, 'aggregated.bin');
+    const signaturePath = path.join(tempDir, 'aggregated.bin.sig');
+    const encryptedBundlePath = path.join(tempDir, 'aggregated.bundle.enc');
+    const encryptedSignaturePath = path.join(tempDir, 'aggregated.bundle.enc.sig');
+    const keyBundlePath = path.join(tempDir, 'aggregated.bundle.keys.json');
+    const outModelPath = path.join(tempDir, 'gm.bin');
+    const outSignaturePath = path.join(tempDir, 'gm.bin.sig');
+    const recipientAddress = '0x1234567890abcdef1234567890abcdef12345678';
+    const { publicKey, privateKey } = crypto.generateKeyPairSync(
+        'rsa',
+        { modulusLength: 2048 },
+    );
+    const publicKeyDerHex = publicKey
+        .export({ format: 'der', type: 'spki' })
+        .toString('hex');
+    const modelBytes = Buffer.from('public-unsigned-bootstrap-model', 'utf8');
+    await fs.writeFile(modelPath, modelBytes);
+    await fs.writeFile(signaturePath, Buffer.alloc(0));
+
+    try {
+        await buildEncryptedGlobalModelArtifacts({
             modelPath,
             signaturePath,
             encryptedBundlePath,
             encryptedSignaturePath,
             keyBundlePath,
-            recipients: [],
-            round: 0,
+            recipients: [{
+                address: recipientAddress,
+                publicKeyDerHex: `0x${publicKeyDerHex}`,
+            }],
+            round: 1,
+            signingPrivateKey: privateKey,
+        });
+        assert.equal(
+            verifyEncryptedGlobalModelBundleSignature({
+                encryptedBundleBytes: await fs.readFile(encryptedBundlePath),
+                encryptedSignatureBytes: await fs.readFile(encryptedSignaturePath),
+                publisherPublicKeyDerHex: `0x${publicKeyDerHex}`,
+            }),
+            true,
+        );
+
+        const result = await decryptEncryptedGlobalModelArtifacts({
+            encryptedBundlePath,
+            keyBundlePath,
+            ownAddress: recipientAddress,
+            outModelPath,
+            outSignaturePath,
+            decryptionPrivateKey: privateKey,
+            expectedModelRound: 1,
+        });
+        assert.equal(result.round, 1);
+        assert.equal(result.plaintextSignaturePresent, false);
+        assert.deepEqual(await fs.readFile(outModelPath), modelBytes);
+        assert.equal((await fs.readFile(outSignaturePath)).length, 0);
+    } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('decryption binds payload and key-bundle rounds to the finalized on-chain round', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gm-crypto-round-binding-'));
+    const modelPath = path.join(tempDir, 'aggregated.bin');
+    const signaturePath = path.join(tempDir, 'aggregated.bin.sig');
+    const encryptedBundlePath = path.join(tempDir, 'aggregated.bundle.enc');
+    const encryptedSignaturePath = path.join(tempDir, 'aggregated.bundle.enc.sig');
+    const keyBundlePath = path.join(tempDir, 'aggregated.bundle.keys.json');
+    const outModelPath = path.join(tempDir, 'gm.bin');
+    const outSignaturePath = path.join(tempDir, 'gm.bin.sig');
+    const recipientAddress = '0x1234567890abcdef1234567890abcdef12345678';
+    const { publicKey, privateKey } = crypto.generateKeyPairSync(
+        'rsa',
+        { modulusLength: 2048 },
+    );
+    const publicKeyDerHex = `0x${publicKey
+        .export({ format: 'der', type: 'spki' })
+        .toString('hex')}`;
+    await fs.writeFile(modelPath, Buffer.from('round-bound-model', 'utf8'));
+    await fs.writeFile(signaturePath, Buffer.from('model-signature', 'utf8'));
+
+    try {
+        await buildEncryptedGlobalModelArtifacts({
+            modelPath,
+            signaturePath,
+            encryptedBundlePath,
+            encryptedSignaturePath,
+            keyBundlePath,
+            recipients: [{ address: recipientAddress, publicKeyDerHex }],
+            round: 1,
             signingPrivateKey: privateKey,
         });
 
-        assert.equal(artifacts.recipients, 0);
+        await assert.rejects(
+            decryptEncryptedGlobalModelArtifacts({
+                encryptedBundlePath,
+                keyBundlePath,
+                ownAddress: recipientAddress,
+                outModelPath,
+                outSignaturePath,
+                decryptionPrivateKey: privateKey,
+                expectedModelRound: 2,
+            }),
+            /key-bundle round 1 does not match finalized on-chain model round 2/,
+        );
+
         const keyBundle = JSON.parse(await fs.readFile(keyBundlePath, 'utf8'));
-        assert.deepEqual(keyBundle.wrapped_keys_b64, {});
+        keyBundle.round = 2;
+        await fs.writeFile(keyBundlePath, JSON.stringify(keyBundle));
+        await assert.rejects(
+            decryptEncryptedGlobalModelArtifacts({
+                encryptedBundlePath,
+                keyBundlePath,
+                ownAddress: recipientAddress,
+                outModelPath,
+                outSignaturePath,
+                decryptionPrivateKey: privateKey,
+                expectedModelRound: 2,
+            }),
+            /payload round 1 does not match key-bundle round 2/,
+        );
+    } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('empty plaintext signatures are rejected outside bootstrap model round 1', async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gm-crypto-unsigned-learned-'));
+    const modelPath = path.join(tempDir, 'aggregated.bin');
+    const signaturePath = path.join(tempDir, 'aggregated.bin.sig');
+    const encryptedBundlePath = path.join(tempDir, 'aggregated.bundle.enc');
+    const encryptedSignaturePath = path.join(tempDir, 'aggregated.bundle.enc.sig');
+    const keyBundlePath = path.join(tempDir, 'aggregated.bundle.keys.json');
+    const recipientAddress = '0x1234567890abcdef1234567890abcdef12345678';
+    const { publicKey, privateKey } = crypto.generateKeyPairSync(
+        'rsa',
+        { modulusLength: 2048 },
+    );
+    const publicKeyDerHex = `0x${publicKey
+        .export({ format: 'der', type: 'spki' })
+        .toString('hex')}`;
+    await fs.writeFile(modelPath, Buffer.from('unsigned-learned-model', 'utf8'));
+    await fs.writeFile(signaturePath, Buffer.alloc(0));
+
+    try {
+        await assert.rejects(
+            buildEncryptedGlobalModelArtifacts({
+                modelPath,
+                signaturePath,
+                encryptedBundlePath,
+                encryptedSignaturePath,
+                keyBundlePath,
+                recipients: [{ address: recipientAddress, publicKeyDerHex }],
+                round: 2,
+                signingPrivateKey: privateKey,
+            }),
+            /Only the public bootstrap promoted to model round 1/,
+        );
     } finally {
         await fs.rm(tempDir, { recursive: true, force: true });
     }

@@ -6,21 +6,28 @@ import FormData from "form-data";
 
 import {
   getActiveModelBundle,
-  getAuthorizedDevices,
+  getCommittedRunRosterState,
   createAggregationStatement,
   finalizeRoundWithAggregation,
   getDevicePublicKey,
   getRound,
   isGlobalModelPublished,
+  isRoundCompleted,
 } from "./bc_client.js";
 import {
   buildEncryptedGlobalModelArtifacts,
   decryptEncryptedGlobalModelArtifacts,
+  verifyEncryptedGlobalModelBundleSignature,
 } from "./gm_crypto.js";
 import {
   HYBRID_R_V1_HASH,
   HYBRID_R_VALIDATION_DATA_V1_HASH,
 } from "./protocol_digest.js";
+import {
+  normalizeBootstrapPublicKey,
+  type FrozenBootstrapRecipient,
+} from "./bootstrap_snapshot.js";
+import { isExplicitlyFinalizedSourceRound } from "./finalization_recovery.js";
 
 export const pinFile = async (filePath: string) => {
     try {
@@ -188,6 +195,11 @@ export const pinFile = async (filePath: string) => {
   export const updateGM = async (
     expectedModelRound: number,
     participantPrivateKey: KeyObject,
+    {
+      frozenBootstrapRecipients,
+    }: {
+      frozenBootstrapRecipients?: FrozenBootstrapRecipient[];
+    } = {},
   ) => {
     const modelPath = "./data/results_iid/aggregated.bin";
     const sigPath = "./data/results_iid/aggregated.bin.sig";
@@ -196,19 +208,22 @@ export const pinFile = async (filePath: string) => {
     }
     const intendedSourceRound = expectedModelRound - 1;
     const sourceRound = Number(await getRound());
-    if (
-      sourceRound >= expectedModelRound
-      && await isGlobalModelPublished(intendedSourceRound)
-    ) {
-      console.log(
-        `Aggregation round ${intendedSourceRound} is already atomically finalized; ` +
-        "skipping duplicate artifact publication.",
-      );
-      return {
-        sourceRound: intendedSourceRound,
-        expectedModelRound,
-        reconciled: true,
-      };
+    if (sourceRound >= expectedModelRound) {
+      const [published, completed] = await Promise.all([
+        isGlobalModelPublished(intendedSourceRound),
+        isRoundCompleted(intendedSourceRound),
+      ]);
+      if (isExplicitlyFinalizedSourceRound({ published, completed })) {
+        console.log(
+          `Aggregation round ${intendedSourceRound} is already atomically finalized; ` +
+          "skipping duplicate artifact publication.",
+        );
+        return {
+          sourceRound: intendedSourceRound,
+          expectedModelRound,
+          reconciled: true,
+        };
+      }
     }
     if (!Number.isSafeInteger(sourceRound) || sourceRound < 0 || sourceRound + 1 !== expectedModelRound) {
       throw new Error(
@@ -217,14 +232,71 @@ export const pinFile = async (filePath: string) => {
     }
     const round = expectedModelRound;
 
-    const recipients = [];
-    for (const address of await getAuthorizedDevices()) {
-      const publicKeyDerHex = await getDevicePublicKey(address);
-      if (!publicKeyDerHex || publicKeyDerHex === "0x") {
-        console.warn(`Skipping GM encryption recipient without RSA key: ${address}`);
-        continue;
+    let recipients: FrozenBootstrapRecipient[];
+    if (frozenBootstrapRecipients !== undefined) {
+      if (intendedSourceRound !== 0) {
+        throw new Error(
+          "Frozen bootstrap recipients may only be used to publish model round 1.",
+        );
       }
-      recipients.push({ address, publicKeyDerHex });
+      if (
+        !Array.isArray(frozenBootstrapRecipients)
+        || frozenBootstrapRecipients.length === 0
+      ) {
+        throw new Error("Round-0 GM encryption requires frozen recipients.");
+      }
+      recipients = frozenBootstrapRecipients.map((entry, index) => {
+        const address = String(entry?.address || "").trim().toLowerCase();
+        if (!/^0x[0-9a-f]{40}$/.test(address)) {
+          throw new Error(
+            `Invalid frozen bootstrap recipient address at index ${index}: ${entry?.address}`,
+          );
+        }
+        return {
+          address,
+          publicKeyDerHex: normalizeBootstrapPublicKey(
+            entry?.publicKeyDerHex,
+            `frozen bootstrap recipient ${address} RSA public key`,
+          ),
+        };
+      });
+      if (new Set(recipients.map(({ address }) => address)).size !== recipients.length) {
+        throw new Error("Frozen bootstrap recipient addresses must be unique.");
+      }
+    } else {
+      const rosterState = await getCommittedRunRosterState();
+      if (!rosterState.committed || !rosterState.frozen) {
+        throw new Error(
+          "GM encryption requires the immutable committed run roster to be frozen.",
+        );
+      }
+      const committedAddresses = Array.from(rosterState.roster || []).map(
+        (address) => String(address || "").trim().toLowerCase(),
+      );
+      if (
+        committedAddresses.length === 0
+        || Number(rosterState.registeredWorkerCount) !== committedAddresses.length
+      ) {
+        throw new Error(
+          "GM encryption requires every committed run-roster member to be registered.",
+        );
+      }
+      if (new Set(committedAddresses).size !== committedAddresses.length) {
+        throw new Error("Committed GM encryption recipients must be unique.");
+      }
+      recipients = [];
+      for (const address of committedAddresses) {
+        if (!/^0x[0-9a-f]{40}$/.test(address)) {
+          throw new Error(
+            `Invalid committed GM encryption recipient address: ${address}`,
+          );
+        }
+        const publicKeyDerHex = normalizeBootstrapPublicKey(
+          await getDevicePublicKey(address),
+          `committed GM encryption recipient ${address} RSA public key`,
+        );
+        recipients.push({ address, publicKeyDerHex });
+      }
     }
     const {
       bundlePath,
@@ -287,13 +359,18 @@ export const pinFile = async (filePath: string) => {
       statementSignature: aggregationStatement.statementSignature,
     });
     const observedRound = Number(await getRound());
+    const [published, completed] = await Promise.all([
+      isGlobalModelPublished(sourceRound),
+      isRoundCompleted(sourceRound),
+    ]);
     if (
       observedRound !== expectedModelRound
-      || !(await isGlobalModelPublished(sourceRound))
+      || !isExplicitlyFinalizedSourceRound({ published, completed })
     ) {
       throw new Error(
         `Atomic aggregation finalization was not observable: expected round ` +
-        `${expectedModelRound}, got ${observedRound}.`,
+        `${expectedModelRound}, got ${observedRound}; ` +
+        `published=${published}, completed=${completed}.`,
       );
     }
     console.log(
@@ -323,6 +400,7 @@ export const pinFile = async (filePath: string) => {
     const modelCid = String(activeModel.modelCid || "");
     const sigCid = String(activeModel.sigCid || "");
     const keyBundleCid = String(activeModel.keyBundleCid || "");
+    const finalizedModelRound = Number(activeModel.modelRound);
     if (!modelCid) {
       throw new Error("Missing encrypted global model bundle CID on-chain.");
     }
@@ -331,6 +409,11 @@ export const pinFile = async (filePath: string) => {
     }
     if (!keyBundleCid) {
       throw new Error("Missing encrypted global model key bundle CID on-chain.");
+    }
+    if (!Number.isSafeInteger(finalizedModelRound) || finalizedModelRound <= 0) {
+      throw new Error(
+        `Invalid finalized global-model round on-chain: ${activeModel.modelRound}`,
+      );
     }
     console.log("Model CID:", modelCid);
     console.log("Sig CID:", sigCid);
@@ -342,10 +425,20 @@ export const pinFile = async (filePath: string) => {
       keyBundlePath,
       receivedAggregationEvidencePath,
     } = encryptedBundlePaths();
-    fs.writeFileSync(bundlePath, await fetchIPFSBytes(modelCid));
+    const encryptedBundleBytes = await fetchIPFSBytes(modelCid);
+    fs.writeFileSync(bundlePath, encryptedBundleBytes);
     console.log(`Encrypted GM bundle written to ${bundlePath}`);
-    fs.writeFileSync(bundleSignaturePath, await fetchIPFSBytes(sigCid));
+    const encryptedSignatureBytes = await fetchIPFSBytes(sigCid);
+    fs.writeFileSync(bundleSignaturePath, encryptedSignatureBytes);
     console.log(`Encrypted GM bundle signature written to ${bundleSignaturePath}`);
+    if (!verifyEncryptedGlobalModelBundleSignature({
+      encryptedBundleBytes,
+      encryptedSignatureBytes,
+      publisherPublicKeyDerHex: activeModel.publisherPublicKeyDerHex,
+    })) {
+      throw new Error("Encrypted global-model bundle signature verification failed.");
+    }
+    console.log("Encrypted global-model bundle signature verified.");
     fs.writeFileSync(keyBundlePath, await fetchIPFSBytes(keyBundleCid));
     console.log(`Encrypted GM key bundle written to ${keyBundlePath}`);
     const decrypted = await decryptEncryptedGlobalModelArtifacts({
@@ -356,6 +449,7 @@ export const pinFile = async (filePath: string) => {
       outSignaturePath: "./data/gm.bin.sig",
       outAggregationEvidencePath: receivedAggregationEvidencePath,
       decryptionPrivateKey: participantPrivateKey,
+      expectedModelRound: finalizedModelRound,
     });
     if (decrypted.round > 1 && !decrypted.aggregationEvidence) {
       throw new Error(
@@ -392,6 +486,8 @@ export const pinFile = async (filePath: string) => {
       keyBundleCid,
       publisher: activeModel.publisher,
       publisherPublicKeyDerHex: activeModel.publisherPublicKeyDerHex,
+      modelRound: finalizedModelRound,
+      plaintextSignaturePresent: decrypted.plaintextSignaturePresent,
       aggregationEvidence: decrypted.aggregationEvidence,
       aggregationEvidenceHash: decrypted.aggregationEvidenceHash,
     };
