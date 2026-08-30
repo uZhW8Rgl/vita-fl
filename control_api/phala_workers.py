@@ -8,7 +8,9 @@ import re
 import subprocess
 import sys
 import threading
+import urllib.error
 import urllib.parse
+import urllib.request
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Protocol
@@ -21,6 +23,14 @@ PRIVATE_KEY_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 PRIVATE_KEY_IN_TEXT_RE = re.compile(r"0x[0-9a-fA-F]{64}")
 PEM_IN_TEXT_RE = re.compile(r"-----BEGIN [^-]+-----.*?-----END [^-]+-----", re.DOTALL)
 PHALA_API_KEY_IN_TEXT_RE = re.compile(r"phak_[A-Za-z0-9_-]+")
+DEFAULT_PHALA_CLOUD_API_PREFIX = "https://cloud-api.phala.com/api/v1"
+DEFAULT_PHALA_API_VERSION = "2026-01-21"
+WORKER_QUOTA_REQUIREMENTS = {
+    "vm_slots": 1,
+    "vcpu": 1,
+    "memory_mb": 2_048,
+    "disk_gb": 20,
+}
 
 
 class WorkerConfigurationError(ValueError):
@@ -29,6 +39,10 @@ class WorkerConfigurationError(ValueError):
 
 class WorkerProvisioningError(RuntimeError):
     """Terraform could not establish the requested worker set."""
+
+
+class WorkerCapacityError(WorkerProvisioningError):
+    """Phala has insufficient workspace quota for the requested worker set."""
 
 
 def redact_terraform_output(value: str) -> str:
@@ -126,7 +140,119 @@ class WorkerTerraformRunner(Protocol):
 
     def apply(self, workers: dict[str, dict[str, Any]]) -> dict[str, Any]: ...
 
+    def reconcile(self) -> dict[str, Any]: ...
+
     def status(self) -> dict[str, Any]: ...
+
+
+class WorkerCapacityGuard(Protocol):
+    def ensure_capacity(self, additional_workers: int) -> None: ...
+
+
+class PhalaWorkspaceQuotaGuard:
+    """Fail closed before an immutable roster exceeds workspace capacity."""
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        api_prefix: str = DEFAULT_PHALA_CLOUD_API_PREFIX,
+        api_version: str = DEFAULT_PHALA_API_VERSION,
+        timeout_seconds: float = 20.0,
+    ) -> None:
+        if not api_key.strip():
+            raise WorkerConfigurationError("Phala Cloud API key must not be empty")
+        parsed_prefix = urllib.parse.urlsplit(api_prefix.rstrip("/"))
+        if parsed_prefix.scheme not in {"http", "https"} or not parsed_prefix.netloc:
+            raise WorkerConfigurationError("PHALA_CLOUD_API_PREFIX must be an HTTP(S) URL")
+        if timeout_seconds <= 0:
+            raise WorkerConfigurationError("Phala quota timeout must be positive")
+        self.api_key = api_key
+        self.api_prefix = urllib.parse.urlunsplit(parsed_prefix).rstrip("/")
+        self.api_version = api_version
+        self.timeout_seconds = timeout_seconds
+
+    def _request_json(self, path: str) -> dict[str, Any]:
+        request = urllib.request.Request(
+            f"{self.api_prefix}{path}",
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "vita-fl-control-api/1",
+                "X-API-Key": self.api_key,
+                "X-Phala-Version": self.api_version,
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as exc:
+            raise WorkerProvisioningError(
+                f"Phala workspace quota request failed with HTTP {exc.code}"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise WorkerProvisioningError("Phala workspace quota request failed") from exc
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise WorkerProvisioningError(
+                "Phala workspace quota response is not valid JSON"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise WorkerProvisioningError(
+                "Phala workspace quota response has an invalid shape"
+            )
+        return payload
+
+    @staticmethod
+    def _remaining_capacity(payload: dict[str, Any], resource: str) -> int | None:
+        quotas = payload.get("quotas")
+        quota = quotas.get(resource) if isinstance(quotas, dict) else None
+        remaining = quota.get("remaining") if isinstance(quota, dict) else None
+        if isinstance(remaining, bool) or not isinstance(remaining, int) or remaining < -1:
+            raise WorkerProvisioningError(
+                f"Phala workspace quota response has invalid {resource}.remaining"
+            )
+        return None if remaining == -1 else remaining
+
+    def ensure_capacity(self, additional_workers: int) -> None:
+        if (
+            isinstance(additional_workers, bool)
+            or not isinstance(additional_workers, int)
+            or additional_workers < 0
+        ):
+            raise WorkerConfigurationError(
+                "additional_workers must be a non-negative integer"
+            )
+        if additional_workers == 0:
+            return
+
+        current_user = self._request_json("/auth/me")
+        workspace = current_user.get("workspace")
+        workspace_slug = workspace.get("slug") if isinstance(workspace, dict) else None
+        if not isinstance(workspace_slug, str) or not workspace_slug.strip():
+            raise WorkerProvisioningError(
+                "Phala current-user response does not contain a workspace slug"
+            )
+        encoded_slug = urllib.parse.quote(workspace_slug.strip(), safe="")
+        quota_payload = self._request_json(f"/workspaces/{encoded_slug}/quotas")
+
+        shortages: list[str] = []
+        maximum_additional = additional_workers
+        for resource, per_worker in WORKER_QUOTA_REQUIREMENTS.items():
+            remaining = self._remaining_capacity(quota_payload, resource)
+            required = additional_workers * per_worker
+            if remaining is None:
+                continue
+            maximum_additional = min(maximum_additional, remaining // per_worker)
+            if remaining < required:
+                shortages.append(f"{resource}: need {required}, remaining {remaining}")
+        if shortages:
+            raise WorkerCapacityError(
+                "Phala workspace quota can create at most "
+                f"{maximum_additional} additional workers, but {additional_workers} are required "
+                f"({'; '.join(shortages)})"
+            )
 
 
 def dynamic_worker_inventory_json_from_environment(
@@ -326,6 +452,28 @@ class SubprocessTerraformRunner:
         )
         return self.status()
 
+    def reconcile(self) -> dict[str, Any]:
+        """Refresh local state from Phala without changing cloud resources."""
+
+        if not self.state_path.is_file():
+            return {}
+        if not self.tfvars_path.is_file():
+            raise WorkerProvisioningError(
+                "Terraform worker state exists without its variable file; "
+                "refusing to trust potentially stale worker outputs"
+            )
+        self._run("init", "-input=false", "-no-color")
+        self._run(
+            "apply",
+            "-refresh-only",
+            "-input=false",
+            "-auto-approve",
+            "-no-color",
+            f"-state={self.state_path}",
+            f"-var-file={self.tfvars_path}",
+        )
+        return self.status()
+
     def status(self) -> dict[str, Any]:
         if not self.state_path.is_file():
             return {}
@@ -344,26 +492,33 @@ class PhalaWorkerController:
         self,
         inventory: tuple[WorkerIdentity, ...],
         runner: WorkerTerraformRunner,
+        *,
+        capacity_guard: WorkerCapacityGuard | None = None,
     ) -> None:
         if not inventory:
             raise WorkerConfigurationError("worker inventory is empty")
         self.inventory = inventory
         self.runner = runner
+        self.capacity_guard = capacity_guard
         self._lock = threading.Lock()
 
     @property
     def maximum(self) -> int:
         return len(self.inventory)
 
-    def _validated_training_request(
-        self,
-        worker_count: int,
-        training_config: dict[str, int] | None,
-    ) -> dict[str, int] | None:
+    def _validate_worker_count(self, worker_count: int) -> None:
         if isinstance(worker_count, bool) or not isinstance(worker_count, int):
             raise WorkerConfigurationError("worker_count must be an integer")
         if not 0 <= worker_count <= self.maximum:
             raise WorkerConfigurationError(f"worker_count must be between 0 and {self.maximum}")
+
+    def _validated_training_request(
+        self,
+        worker_count: int,
+        training_config: dict[str, int] | None,
+        deployments: dict[str, Any] | None = None,
+    ) -> dict[str, int] | None:
+        self._validate_worker_count(worker_count)
         if training_config is None:
             return None
         configured = self.runner.current_training_config()
@@ -371,7 +526,7 @@ class PhalaWorkerController:
             "rounds": int(training_config.get("rounds", configured.get("rounds", 1))),
             "epoch": int(training_config.get("epoch", configured.get("epoch", 1))),
         }
-        current = self.runner.status()
+        current = self.runner.status() if deployments is None else deployments
         if current and requested != configured:
             raise WorkerConfigurationError(
                 "training configuration cannot mutate an attested worker compose; "
@@ -385,7 +540,19 @@ class PhalaWorkerController:
         training_config: dict[str, int] | None = None,
     ) -> None:
         with self._lock:
-            self._validated_training_request(worker_count, training_config)
+            self._validate_worker_count(worker_count)
+            # Start Training is the authoritative reconciliation boundary. This
+            # removes cloud-deleted CVMs from Terraform state without turning
+            # frequent UI status polling into repeated Phala API refreshes.
+            deployments = self.runner.reconcile()
+            self._validated_training_request(
+                worker_count,
+                training_config,
+                deployments,
+            )
+            additional_workers = max(0, worker_count - len(deployments))
+            if additional_workers and self.capacity_guard is not None:
+                self.capacity_guard.ensure_capacity(additional_workers)
 
     def selected_account_addresses(self, worker_count: int) -> list[str]:
         """Return the exact ordered identities that a subsequent scale will use."""
@@ -398,7 +565,13 @@ class PhalaWorkerController:
 
     def scale(self, worker_count: int, training_config: dict[str, int] | None = None) -> dict[str, Any]:
         with self._lock:
-            requested = self._validated_training_request(worker_count, training_config)
+            self._validate_worker_count(worker_count)
+            current = self.runner.status()
+            requested = self._validated_training_request(
+                worker_count,
+                training_config,
+                current,
+            )
             selected = {
                 identity.key: identity.terraform_value()
                 for identity in self.inventory[:worker_count]
@@ -568,4 +741,19 @@ def controller_from_environment() -> PhalaWorkerController:
         state_dir=state_dir,
         terraform_bin=os.environ.get("TERRAFORM_BIN", "terraform"),
     )
-    return PhalaWorkerController(inventory, runner)
+    capacity_guard = PhalaWorkspaceQuotaGuard(
+        required["PHALA_CLOUD_API_KEY"],
+        api_prefix=os.environ.get(
+            "PHALA_CLOUD_API_PREFIX",
+            DEFAULT_PHALA_CLOUD_API_PREFIX,
+        ),
+        api_version=os.environ.get(
+            "PHALA_CLOUD_API_VERSION",
+            DEFAULT_PHALA_API_VERSION,
+        ),
+    )
+    return PhalaWorkerController(
+        inventory,
+        runner,
+        capacity_guard=capacity_guard,
+    )

@@ -25,6 +25,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
 
+from control_api.phala_workers import WorkerCapacityError
+
 WORKSPACE_ROOT = Path(os.environ.get("TRAINING_WORKSPACE_ROOT", "/workspace")).resolve()
 
 
@@ -118,7 +120,7 @@ _telemetry_records: list[dict[str, Any]] = []
 _telemetry_nonces: dict[str, int] = {}
 TELEMETRY_MAX_RECORDS = 20_000
 TELEMETRY_MAX_AGE_MS = 10 * 60 * 1000
-MAX_DYNAMIC_WORKERS = 500
+MAX_DYNAMIC_WORKERS = 6
 DEFAULT_MODEL_SUBMISSION_DEADLINE_MS = 20_000
 MAX_AGGREGATION_SUBMISSION_WINDOW_SECONDS = 7 * 24 * 60 * 60
 AGGREGATION_POLICY_TRANSACTION_TIMEOUT_SECONDS = 60
@@ -963,7 +965,10 @@ def read_training_config(
 
 def normalize_training_config(payload: dict[str, Any]) -> dict[str, int]:
     current = read_training_config()
-    max_worker_count = max(2, int(current["max_worker_count"]) or 2)
+    max_worker_count = min(
+        MAX_DYNAMIC_WORKERS,
+        max(2, int(current["max_worker_count"]) or 2),
+    )
 
     rounds = max(1, _safe_int(payload.get("rounds"), int(current["rounds"])))
     epoch = max(1, _safe_int(payload.get("epoch"), int(current["epoch"])))
@@ -3532,6 +3537,8 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
             )
         except HTTPException:
             raise
+        except WorkerCapacityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return {"ok": True, "config": saved_config, **result}

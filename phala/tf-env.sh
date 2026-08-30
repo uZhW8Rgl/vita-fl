@@ -165,7 +165,7 @@ build_additional_workers_var() {
 build_dynamic_worker_inventory() {
   local maximum
   maximum=$(read_env_value "MAX_DYNAMIC_WORKERS")
-  maximum="${maximum:-500}"
+  maximum="${maximum:-6}"
   if ! [[ "${maximum}" =~ ^[0-9]+$ ]] || [ "${maximum}" -lt 1 ] || [ "${maximum}" -gt 500 ]; then
     echo "MAX_DYNAMIC_WORKERS must be an integer between 1 and 500" >&2
     exit 1

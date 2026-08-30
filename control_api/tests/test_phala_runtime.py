@@ -9,7 +9,7 @@ from control_api import server
 
 
 class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
-    def test_runtime_training_config_exposes_500_slots_with_safe_initial_selection(self) -> None:
+    def test_runtime_training_config_caps_selection_at_six_workers(self) -> None:
         with (
             patch.object(server, "phala_runtime_mode", return_value=True),
             patch.dict(
@@ -28,9 +28,9 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(config["worker_count"], 3)
-        self.assertEqual(config["max_worker_count"], 500)
+        self.assertEqual(config["max_worker_count"], 6)
         self.assertEqual(config["available_workers"][0], "worker0")
-        self.assertEqual(config["available_workers"][-1], "worker499")
+        self.assertEqual(config["available_workers"][-1], "worker5")
 
     def test_user_rounds_exclude_bootstrap_round(self) -> None:
         config = {"rounds": 3, "epoch": 2, "worker_count": 4, "client_limit": 3}
@@ -87,8 +87,9 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(config["rounds"], 9)
         self.assertEqual(config["epoch"], 4)
-        self.assertEqual(config["worker_count"], 7)
+        self.assertEqual(config["worker_count"], 6)
         self.assertEqual(config["client_limit"], 5)
+        self.assertEqual(config["max_worker_count"], 6)
 
     def test_training_config_requires_an_aggregator_and_at_least_one_client(self) -> None:
         current = {
@@ -593,6 +594,43 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             2,
             {**normalized, "rounds": 4},
         )
+
+    async def test_training_start_returns_capacity_conflict_before_roster_commit(self) -> None:
+        normalized = {
+            "rounds": 3,
+            "epoch": 2,
+            "worker_count": 25,
+            "client_limit": 24,
+        }
+        controller = Mock()
+        controller.preflight_scale.side_effect = server.WorkerCapacityError(
+            "Phala workspace quota can create at most 0 additional workers, "
+            "but 16 are required"
+        )
+
+        with (
+            patch.object(server, "phala_runtime_mode", return_value=True),
+            patch.object(server, "require_control_admin"),
+            patch.object(server, "normalize_training_config", return_value=normalized),
+            patch.object(server, "write_training_config"),
+            patch.object(server, "phala_worker_controller", return_value=controller),
+            patch.object(server, "configure_default_aggregation_policy") as configure_policy,
+            patch.object(server, "commit_run_roster") as commit_roster,
+            patch.object(
+                server,
+                "current_training_runtime_status",
+                new=AsyncMock(return_value={"training_phase": "setup"}),
+            ),
+        ):
+            with self.assertRaises(server.HTTPException) as raised:
+                await server.start_training(Mock(), normalized)
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertIn("at most 0 additional workers", raised.exception.detail)
+        controller.selected_account_addresses.assert_not_called()
+        configure_policy.assert_not_called()
+        commit_roster.assert_not_called()
+        controller.scale.assert_not_called()
 
     async def test_training_start_rejects_preexisting_phala_workers_before_commit(self) -> None:
         normalized = {

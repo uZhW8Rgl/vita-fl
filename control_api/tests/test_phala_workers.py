@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from control_api.phala_workers import (
+    PhalaWorkspaceQuotaGuard,
     PhalaWorkerController,
+    SubprocessTerraformRunner,
+    WorkerCapacityError,
     WorkerConfigurationError,
     WorkerDeploymentConfig,
+    WorkerProvisioningError,
     controller_from_environment,
     dynamic_worker_inventory_json_from_environment,
     load_worker_inventory,
@@ -33,6 +40,8 @@ class FakeRunner:
     def __init__(self) -> None:
         self.workers: dict[str, dict[str, object]] = {}
         self.training_config: dict[str, int] = {}
+        self.reconciled_workers: dict[str, dict[str, object]] | None = None
+        self.reconcile_calls = 0
 
     def configure(self, training_config: dict[str, int]) -> None:
         self.training_config = dict(training_config)
@@ -51,13 +60,36 @@ class FakeRunner:
         }
         return self.workers
 
+    def reconcile(self) -> dict[str, object]:
+        self.reconcile_calls += 1
+        if self.reconciled_workers is not None:
+            self.workers = dict(self.reconciled_workers)
+            self.reconciled_workers = None
+        return self.workers
+
     def status(self) -> dict[str, object]:
         return self.workers
 
 
-def controller(count: int = 3) -> tuple[PhalaWorkerController, FakeRunner]:
+class FakeCapacityGuard:
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    def ensure_capacity(self, additional_workers: int) -> None:
+        self.calls.append(additional_workers)
+
+
+def controller(
+    count: int = 3,
+    *,
+    capacity_guard: FakeCapacityGuard | None = None,
+) -> tuple[PhalaWorkerController, FakeRunner]:
     runner = FakeRunner()
-    instance = PhalaWorkerController(load_worker_inventory(inventory_json(count)), runner)
+    instance = PhalaWorkerController(
+        load_worker_inventory(inventory_json(count)),
+        runner,
+        capacity_guard=capacity_guard,
+    )
     return instance, runner
 
 
@@ -100,6 +132,7 @@ class WorkerInventoryTests(unittest.TestCase):
         self.assertEqual(values["dfl_pos_weight_cap"], "8")
         self.assertEqual(values["os_image"], "dstack-dev-0.5.9")
         self.assertEqual(values["node_id"], 18)
+        self.assertIsInstance(instance.capacity_guard, PhalaWorkspaceQuotaGuard)
 
     def test_deployment_tfvars_include_the_measured_contract_trust_root(self) -> None:
         config = WorkerDeploymentConfig(
@@ -259,6 +292,25 @@ class WorkerInventoryTests(unittest.TestCase):
 
         self.assertEqual(runner.training_config, initial)
 
+    def test_preflight_reconciles_cloud_deleted_workers_before_config_validation(self) -> None:
+        instance, runner = controller()
+        runner.training_config = {"rounds": 2, "epoch": 1}
+        runner.workers = {
+            "worker0": {
+                "app_id": "stale-app",
+                "primary_cvm_id": "stale-cvm",
+                "status": "running",
+            }
+        }
+        runner.reconciled_workers = {}
+
+        instance.preflight_scale(2, {"rounds": 3, "epoch": 2})
+        result = instance.scale(2, {"rounds": 3, "epoch": 2})
+
+        self.assertEqual(runner.reconcile_calls, 1)
+        self.assertEqual(result["deployed_worker_count"], 2)
+        self.assertEqual(runner.training_config, {"rounds": 3, "epoch": 2})
+
     def test_preflight_rejects_attested_compose_mutation_without_apply(self) -> None:
         instance, runner = controller()
         initial = {"rounds": 2, "epoch": 1}
@@ -270,6 +322,40 @@ class WorkerInventoryTests(unittest.TestCase):
 
         self.assertEqual(runner.workers, deployments)
         self.assertEqual(runner.training_config, initial)
+
+    def test_preflight_checks_only_capacity_for_additional_workers(self) -> None:
+        capacity_guard = FakeCapacityGuard()
+        instance, runner = controller(25, capacity_guard=capacity_guard)
+        runner.training_config = {"rounds": 2, "epoch": 1}
+        runner.workers = {
+            f"worker{slot}": {
+                "app_id": f"existing-app-{slot}",
+                "primary_cvm_id": f"existing-cvm-{slot}",
+                "status": "running",
+            }
+            for slot in range(9)
+        }
+
+        instance.preflight_scale(25, {"rounds": 2, "epoch": 1})
+
+        self.assertEqual(capacity_guard.calls, [16])
+
+    def test_preflight_skips_quota_request_without_additional_workers(self) -> None:
+        capacity_guard = FakeCapacityGuard()
+        instance, runner = controller(2, capacity_guard=capacity_guard)
+        runner.training_config = {"rounds": 2, "epoch": 1}
+        runner.workers = {
+            f"worker{slot}": {
+                "app_id": f"existing-app-{slot}",
+                "primary_cvm_id": f"existing-cvm-{slot}",
+                "status": "running",
+            }
+            for slot in range(2)
+        }
+
+        instance.preflight_scale(2, {"rounds": 2, "epoch": 1})
+
+        self.assertEqual(capacity_guard.calls, [])
 
     def test_on_chain_client_limit_does_not_mutate_worker_compose(self) -> None:
         instance, runner = controller()
@@ -328,7 +414,197 @@ class WorkerInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkerConfigurationError, "between 0 and 2"):
             instance.scale(3)
         self.assertEqual(runner.workers, {})
+        self.assertEqual(runner.reconcile_calls, 0)
 
+
+class PhalaWorkspaceQuotaGuardTests(unittest.TestCase):
+    @staticmethod
+    def quota_payload(
+        *,
+        vm_slots: object,
+        vcpu: object,
+        memory_mb: object,
+        disk_gb: object,
+    ) -> dict[str, object]:
+        return {
+            "team_slug": "test-team",
+            "quotas": {
+                "vm_slots": {"remaining": vm_slots},
+                "vcpu": {"remaining": vcpu},
+                "memory_mb": {"remaining": memory_mb},
+                "disk_gb": {"remaining": disk_gb},
+            },
+        }
+
+    @staticmethod
+    def guard() -> PhalaWorkspaceQuotaGuard:
+        return PhalaWorkspaceQuotaGuard(
+            "phak_test",
+            api_prefix="https://cloud-api.example/api/v1",
+        )
+
+    def test_exact_workspace_capacity_is_accepted(self) -> None:
+        instance = self.guard()
+        quota = self.quota_payload(
+            vm_slots=3,
+            vcpu=3,
+            memory_mb=3 * 2_048,
+            disk_gb=3 * 20,
+        )
+
+        with mock.patch.object(
+            instance,
+            "_request_json",
+            side_effect=[{"workspace": {"slug": "team/name"}}, quota],
+        ) as request_json:
+            instance.ensure_capacity(3)
+
+        self.assertEqual(
+            [call.args for call in request_json.call_args_list],
+            [("/auth/me",), ("/workspaces/team%2Fname/quotas",)],
+        )
+
+    def test_unlimited_minus_one_capacity_is_accepted(self) -> None:
+        instance = self.guard()
+        quota = self.quota_payload(
+            vm_slots=-1,
+            vcpu=-1,
+            memory_mb=-1,
+            disk_gb=-1,
+        )
+
+        with mock.patch.object(
+            instance,
+            "_request_json",
+            side_effect=[{"workspace": {"slug": "enterprise"}}, quota],
+        ):
+            instance.ensure_capacity(500)
+
+    def test_partial_deployment_capacity_shortage_fails_before_apply(self) -> None:
+        instance = self.guard()
+        quota = self.quota_payload(
+            vm_slots=0,
+            vcpu=4,
+            memory_mb=8_192,
+            disk_gb=0,
+        )
+
+        with mock.patch.object(
+            instance,
+            "_request_json",
+            side_effect=[{"workspace": {"slug": "level-one"}}, quota],
+        ):
+            with self.assertRaisesRegex(
+                WorkerCapacityError,
+                r"at most 0 additional workers, but 16 are required.*vm_slots.*disk_gb",
+            ):
+                instance.ensure_capacity(16)
+
+    def test_malformed_quota_values_fail_closed(self) -> None:
+        for invalid in (True, -2, "8", None):
+            with self.subTest(invalid=invalid):
+                instance = self.guard()
+                quota = self.quota_payload(
+                    vm_slots=invalid,
+                    vcpu=8,
+                    memory_mb=16_384,
+                    disk_gb=160,
+                )
+                with mock.patch.object(
+                    instance,
+                    "_request_json",
+                    side_effect=[{"workspace": {"slug": "test"}}, quota],
+                ):
+                    with self.assertRaisesRegex(
+                        WorkerProvisioningError,
+                        "invalid vm_slots.remaining",
+                    ):
+                        instance.ensure_capacity(1)
+
+    def test_missing_workspace_slug_fails_closed(self) -> None:
+        instance = self.guard()
+
+        with mock.patch.object(
+            instance,
+            "_request_json",
+            return_value={"workspace": {"tier": "LEVEL_1"}},
+        ):
+            with self.assertRaisesRegex(WorkerProvisioningError, "workspace slug"):
+                instance.ensure_capacity(1)
+
+    def test_zero_additional_workers_does_not_call_phala(self) -> None:
+        instance = self.guard()
+
+        with mock.patch.object(instance, "_request_json") as request_json:
+            instance.ensure_capacity(0)
+
+        request_json.assert_not_called()
+
+
+class TerraformReconciliationTests(unittest.TestCase):
+    def runner(self, state_dir: Path) -> SubprocessTerraformRunner:
+        config = WorkerDeploymentConfig(
+            phala_cloud_api_key="phak_test",
+            worker_image="ghcr.io/example/worker@sha256:" + "11" * 32,
+            rpc_url="https://rpc.example",
+            kubo_api_url="https://kubo.example",
+            kubo_gateway_url="https://gateway.example",
+            telemetry_url="https://telemetry.example",
+            expected_device_registry_address="0x" + "11" * 20,
+            expected_aggregator_address="0x" + "22" * 20,
+            expected_gm_storage_address="0x" + "33" * 20,
+            expected_medical_signer_registry_address="0x" + "44" * 20,
+            expected_chain_id=31337,
+        )
+        return SubprocessTerraformRunner(
+            config,
+            module_dir=state_dir / "module",
+            state_dir=state_dir,
+        )
+
+    def test_reconcile_uses_refresh_only_before_reading_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            state_dir = Path(temporary_directory)
+            instance = self.runner(state_dir)
+            instance.state_path.write_text("{}", encoding="utf-8")
+            instance.tfvars_path.write_text("{}", encoding="utf-8")
+            completed = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=json.dumps({"workers": {"value": {}}}),
+                stderr="",
+            )
+
+            with mock.patch.object(instance, "_run", return_value=completed) as run:
+                result = instance.reconcile()
+
+            self.assertEqual(result, {})
+            self.assertEqual(run.call_args_list[0].args, ("init", "-input=false", "-no-color"))
+            refresh_arguments = run.call_args_list[1].args
+            self.assertEqual(refresh_arguments[0], "apply")
+            self.assertIn("-refresh-only", refresh_arguments)
+            self.assertIn(f"-state={instance.state_path}", refresh_arguments)
+            self.assertIn(f"-var-file={instance.tfvars_path}", refresh_arguments)
+            self.assertEqual(run.call_args_list[2].args[0:2], ("output", "-json"))
+
+    def test_reconcile_without_state_is_a_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            instance = self.runner(Path(temporary_directory))
+
+            with mock.patch.object(instance, "_run") as run:
+                result = instance.reconcile()
+
+            self.assertEqual(result, {})
+            run.assert_not_called()
+
+    def test_reconcile_fails_closed_when_tfvars_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            state_dir = Path(temporary_directory)
+            instance = self.runner(state_dir)
+            instance.state_path.write_text("{}", encoding="utf-8")
+
+            with self.assertRaisesRegex(WorkerProvisioningError, "without its variable file"):
+                instance.reconcile()
 
 if __name__ == "__main__":
     unittest.main()

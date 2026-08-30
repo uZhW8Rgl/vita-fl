@@ -332,7 +332,7 @@ def update_env_file(env_path: Path, accounts: list[tuple[str, str]], worker_coun
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare local DFL worker configuration for larger experiments.")
-    parser.add_argument("--workers", type=int, default=25, help="Total number of worker services/accounts/keys")
+    parser.add_argument("--workers", type=int, default=6, help="Total number of worker services/accounts/keys")
     parser.add_argument("--keys-dir", type=Path, default=Path("data/rsa_keys"))
     parser.add_argument("--compose", type=Path, default=Path("compose.yml"))
     parser.add_argument("--env", type=Path, default=Path(".env"))

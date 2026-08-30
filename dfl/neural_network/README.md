@@ -70,7 +70,9 @@ Create worker shards from the official `chestmnist.npz` bundle with:
 .venv/bin/python scripts/generate_chestmnist_training_splits.py
 ```
 
-The generator creates 25 signed IID shards by default, removes obsolete higher-numbered shards, and writes the task-wide label-count metadata.
+The generator creates six signed IID shards by default, each containing 13,078
+of the 78,468 training samples. It removes obsolete higher-numbered shards and
+writes the task-wide label-count metadata.
 
 The generator also creates a signed `CHESTMNIST-VAL-V1` reference artifact
 from the official validation split. Images that duplicate a training image or

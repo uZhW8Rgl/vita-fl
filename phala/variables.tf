@@ -308,7 +308,7 @@ variable "dynamic_worker_inventory_chunks" {
 variable "max_dynamic_workers" {
   description = "Maximum number of fixed worker identities exposed to the Phala control API."
   type        = number
-  default     = 500
+  default     = 6
 
   validation {
     condition     = var.max_dynamic_workers >= 1 && var.max_dynamic_workers <= 500
@@ -319,7 +319,7 @@ variable "max_dynamic_workers" {
 variable "initial_dynamic_worker_count" {
   description = "Initially selected worker count in the Control API; the UI may select any count up to max_dynamic_workers."
   type        = number
-  default     = 3
+  default     = 6
 
   validation {
     condition     = var.initial_dynamic_worker_count >= 1 && var.initial_dynamic_worker_count <= 500
@@ -330,7 +330,7 @@ variable "initial_dynamic_worker_count" {
 variable "anvil_account_count" {
   description = "Number of deterministic development accounts funded by the embedded Anvil runtime."
   type        = number
-  default     = 500
+  default     = 6
 
   validation {
     condition     = var.anvil_account_count >= 1 && var.anvil_account_count <= 500
@@ -347,7 +347,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:4a8c0f82a92b8b308fb678fdabdd860419928c05d52fae45e480160e9f527044"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:df3c237de8690c6b418b9d421542bf604d32d20c5596512b2c664132fe1e9597"
 
   validation {
     condition = (
@@ -671,7 +671,7 @@ variable "worker_image" {
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eb73c75a51f02b1ed30babda32c3d02c2d1bc3a425dc35a40f9b5e2a70ee19a3"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d9032aa71bc5a8e297a5a87e7e7ecd122cc8e8d0360e049dadf523cd88e51de8"
 }
 
 variable "zk_inference_image" {

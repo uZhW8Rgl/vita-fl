@@ -1383,6 +1383,58 @@ async function verifyDownloadedGlobalModelSignature({ publicKeyDerHex, modelPath
         return false;
     }
 }
+async function prepareAggregatorParentModel(currentRound, expectedState) {
+    if (currentRound <= 0) {
+        return null;
+    }
+    console.log(`Fetching and authenticating the active global model for aggregation round ${currentRound} ...`);
+    await runtimeEvent("aggregator.fetch_parent_global_model.started", {
+        role: "aggregator",
+        round: currentRound,
+    });
+    const fetchedGlobalModel = await runOperation("aggregator.fetch_parent_global_model", { role: "aggregator", round: currentRound }, () => getCurrentModel(activeParticipantKey.privateKey));
+    const currentGlobalModel = await assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel);
+    if (Number(currentGlobalModel.modelRound) !== currentRound) {
+        throw new Error(`Active global-model round ${currentGlobalModel.modelRound} does not match `
+            + `aggregation round ${currentRound}.`);
+    }
+    if (!currentGlobalModel.plaintextSignaturePresent) {
+        if (Number(currentGlobalModel.modelRound) !== 1) {
+            throw new Error(`Encrypted global model round ${currentGlobalModel.modelRound} `
+                + 'has no plaintext aggregator signature.');
+        }
+        console.log('Bootstrap parent model has no origin signature; its encrypted bundle '
+            + 'was authenticated with the registered W0 participant key.');
+    }
+    else {
+        const sigOk = await verifyDownloadedGlobalModelSignature({
+            publicKeyDerHex: currentGlobalModel.publisherPublicKeyDerHex,
+            modelPath: "./data/gm.bin",
+            sigPath: "./data/gm.bin.sig",
+        });
+        if (!sigOk) {
+            throw new Error("Global parent-model signature verification failed.");
+        }
+        console.log("Global parent-model signature verification successful.");
+    }
+    const [latestState, latestRound] = await Promise.all([
+        getCurrentState(),
+        getRound(),
+    ]);
+    if (latestState["0"] !== expectedState
+        || Number(latestRound) !== currentRound
+        || !sameAddress(latestState["1"], process.env.ACCOUNT_ADDRESS)) {
+        throw new Error(`${expectedState} context changed while preparing the aggregator parent model for round ${currentRound}.`);
+    }
+    await runtimeEvent("aggregator.fetch_parent_global_model.finished", {
+        role: "aggregator",
+        round: currentRound,
+        model_round: Number(currentGlobalModel.modelRound),
+        model_cid: currentGlobalModel.modelCid,
+        publisher: currentGlobalModel.publisher,
+    });
+    return currentGlobalModel;
+}
 function isMissingRoundKeyError(error) {
     const message = error?.message || String(error || "");
     return message.includes("No wrapped GM round key found");
@@ -1522,6 +1574,21 @@ const stateMachine = async () => {
                     await runtimeEvent("state.training.aggregator", { role: "aggregator" });
                     const currentRound = Number(await getRound());
                     console.log("Round %d.", currentRound);
+                    if (currentRound > 0) {
+                        try {
+                            await prepareAggregatorParentModel(currentRound, "TRAINING");
+                        }
+                        catch (error) {
+                            console.error("Aggregator parent-model preparation failed; keeping submissions closed:", error);
+                            await runtimeEvent("aggregator.fetch_parent_global_model.failed", {
+                                role: "aggregator",
+                                round: currentRound,
+                                error: error?.message || String(error),
+                            });
+                            await sleep(2000);
+                            continue;
+                        }
+                    }
                     const openedPolicy = await openModelSubmissions(currentRound);
                     console.log("Round aggregation policy opened.", {
                         round: currentRound,
@@ -1771,6 +1838,9 @@ const stateMachine = async () => {
                     await runtimeEvent("aggregator.aggregation.started", { role: "aggregator" });
                     try {
                         const currentRound = Number(await getRound());
+                        if (currentRound > 0) {
+                            await prepareAggregatorParentModel(currentRound, "AGGREGATING");
+                        }
                         const aggregationPolicy = await getRoundAggregationPolicy(currentRound);
                         if (!aggregationPolicy.opened || !aggregationPolicy.closed) {
                             throw new Error(`Round ${currentRound} aggregation inputs are not immutably closed.`);

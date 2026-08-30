@@ -765,7 +765,7 @@
             </div>
             <div class="runtime-state">
               <div class="runtime-state-label">Dynamic workers</div>
-              <div class="runtime-state-value" id="runtime-workers">0 / 20</div>
+              <div class="runtime-state-value" id="runtime-workers">0 / 6</div>
             </div>
             <div class="runtime-state">
               <div class="runtime-state-label">Agent service</div>
@@ -828,7 +828,7 @@
                     <div class="training-item-label">Workers</div>
                     <div class="training-stepper">
                       <button class="training-step-btn" data-training-field="worker_count" data-training-delta="-1" type="button">-</button>
-                      <input class="training-step-value" id="training-worker-count" data-training-input="worker_count" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="2">
+                      <input class="training-step-value" id="training-worker-count" data-training-input="worker_count" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="6">
                       <button class="training-step-btn" data-training-field="worker_count" data-training-delta="1" type="button">+</button>
                     </div>
                   </div>
@@ -836,7 +836,7 @@
                     <div class="training-item-label">Client Limit</div>
                     <div class="training-stepper">
                       <button class="training-step-btn" data-training-field="client_limit" data-training-delta="-1" type="button">-</button>
-                      <input class="training-step-value" id="training-client-limit" data-training-input="client_limit" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="1">
+                      <input class="training-step-value" id="training-client-limit" data-training-input="client_limit" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="5">
                       <button class="training-step-btn" data-training-field="client_limit" data-training-delta="1" type="button">+</button>
                     </div>
                   </div>
@@ -1018,9 +1018,9 @@
     let trainingConfig = {
       rounds: 5,
       epoch: 1,
-      worker_count: 2,
-      client_limit: 1,
-      max_worker_count: 2,
+      worker_count: 6,
+      client_limit: 5,
+      max_worker_count: 6,
       available_workers: []
     };
     let serverTrainingConfig = { ...trainingConfig };

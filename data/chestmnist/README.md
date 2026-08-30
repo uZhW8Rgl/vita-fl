@@ -24,7 +24,7 @@ The fixtures are DICOM-aligned synthetic provenance records, not claims that the
 
 ```bash
 python scripts/generate_chestmnist_signer_fixtures.py --force
-PYTHONPATH=. python scripts/generate_chestmnist_training_splits.py --workers 25
+PYTHONPATH=. python scripts/generate_chestmnist_training_splits.py --workers 6
 ```
 
 The validation artifact is derived only from the official `val_images` and `val_labels` arrays. Images
@@ -35,7 +35,7 @@ retaining the first validation occurrence. Its signed global sample identifiers 
 11,212 signed validation samples. The scalar split identifier is `CHESTMNIST-VAL-V1` and is included
 in both the image and annotation signature preimages.
 
-To regenerate only this artifact without rewriting the 25 training shards or the test split:
+To regenerate only this artifact without rewriting the six training shards or the test split:
 
 ```bash
 PYTHONPATH=. python scripts/generate_chestmnist_training_splits.py --validation-only

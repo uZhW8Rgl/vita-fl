@@ -10,7 +10,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SHARD_DIR = REPO_ROOT / "data" / "chestmnist" / "training_data"
 TRAINING_SAMPLE_COUNT = 78_468
-WORKER_COUNT = 25
+WORKER_COUNT = 6
 REQUIRED_FIELDS = {
     "images",
     "labels",
@@ -37,7 +37,7 @@ class ChestMnistTrainingShardTests(unittest.TestCase):
         actual_indices: list[int] = []
         actual_shards: list[list[int]] = []
         for worker_id, path in enumerate(paths):
-            expected_size = 3_139 if worker_id < 18 else 3_138
+            expected_size = TRAINING_SAMPLE_COUNT // WORKER_COUNT
             with np.load(path, allow_pickle=False) as bundle:
                 self.assertEqual(set(bundle.files), REQUIRED_FIELDS)
                 self.assertEqual(int(bundle["images"].shape[0]), expected_size)
@@ -60,7 +60,7 @@ class ChestMnistTrainingShardTests(unittest.TestCase):
         random.Random(42).shuffle(expected_indices)
         offset = 0
         for worker_id, actual_shard in enumerate(actual_shards):
-            expected_size = 3_139 if worker_id < 18 else 3_138
+            expected_size = TRAINING_SAMPLE_COUNT // WORKER_COUNT
             self.assertEqual(actual_shard, expected_indices[offset : offset + expected_size])
             offset += expected_size
 

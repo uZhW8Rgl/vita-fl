@@ -87,6 +87,18 @@ case "$DATASET_NAME" in
     ;;
 esac
 
+# Runtime model files are derived state.  They must never survive an image
+# build or a container restart because their shape and round may belong to an
+# older training configuration.  The immutable bootstrap source lives outside
+# this directory and is copied back immediately below.
+rm -f \
+  /dfl/node_server/data/backup.bin \
+  /dfl/node_server/data/gm.bin \
+  /dfl/node_server/data/gm.bin.sig \
+  /dfl/node_server/data/gm.hybrid-r.json \
+  /dfl/node_server/data/lm.bin \
+  /dfl/node_server/data/lm.bin.enc \
+  /dfl/node_server/data/random_start.bin
 cp "${BOOTSTRAP_MODEL_SRC}" /dfl/node_server/data/random_start.bin
 
 "${PYTHON_BIN}" /dfl/neural_network/start_service.py 2> >(grep -v "Could not initialize NNPACK" >&2) &

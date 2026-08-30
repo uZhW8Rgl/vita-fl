@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 START_SCRIPT = ROOT / "dfl" / "start_node_neural_network.sh"
 HEALTHCHECK = ROOT / "dfl" / "container_healthcheck.sh"
 DOCKERFILE = ROOT / "dfl" / "Dockerfile"
+DOCKERIGNORE = ROOT / ".dockerignore"
 NODE_SERVER_SOURCE = ROOT / "dfl" / "node_server" / "src" / "server.ts"
 NODE_SERVER_DIST = ROOT / "dfl" / "node_server" / "dist" / "server.js"
 
@@ -132,6 +133,34 @@ class CombinedWorkerScriptTests(unittest.TestCase):
             'cp "${VALIDATION_DATA_SRC}" /dfl/node_server/data/validation-data.npz',
             script,
         )
+
+    def test_stale_runtime_models_are_not_packaged_and_are_cleared_before_bootstrap(self) -> None:
+        script = START_SCRIPT.read_text(encoding="utf-8")
+        dockerignore = DOCKERIGNORE.read_text(encoding="utf-8").splitlines()
+        runtime_artifacts = (
+            "backup.bin",
+            "gm.bin",
+            "gm.bin.sig",
+            "gm.hybrid-r.json",
+            "lm.bin",
+            "lm.bin.enc",
+            "random_start.bin",
+        )
+
+        cleanup_start = script.index("# Runtime model files are derived state.")
+        bootstrap_copy = script.index(
+            'cp "${BOOTSTRAP_MODEL_SRC}" /dfl/node_server/data/random_start.bin'
+        )
+        cleanup = script[cleanup_start:bootstrap_copy]
+        self.assertLess(cleanup_start, bootstrap_copy)
+        self.assertNotIn("/dfl/initial_gm", cleanup)
+
+        for artifact in runtime_artifacts:
+            with self.subTest(artifact=artifact):
+                runtime_path = f"/dfl/node_server/data/{artifact}"
+                build_path = f"dfl/node_server/data/{artifact}"
+                self.assertIn(runtime_path, cleanup)
+                self.assertIn(build_path, dockerignore)
 
     def test_completed_training_exits_once_and_cleanup_releases_services(self) -> None:
         script = START_SCRIPT.read_text(encoding="utf-8")

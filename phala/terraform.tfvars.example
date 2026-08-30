@@ -22,12 +22,12 @@
 # contracts_os_image = "dstack-dev-0.5.9"
 # contracts_replicas = 1
 # contracts_wait_for_ready = true
-# max_dynamic_workers = 500
-# initial_dynamic_worker_count = 3
-# anvil_account_count = 500
+# max_dynamic_workers = 6
+# initial_dynamic_worker_count = 6
+# anvil_account_count = 6
 # Owner-controlled AggregationPolicy defaults applied by the Control API before
 # worker scaling. These are deliberately absent from Worker Compose.
-# client_limit = "2"
+# client_limit = "5"
 # model_submission_deadline_ms = "20000"
 # eth_eur_price = "3000"
 # eth_usd_price = ""
@@ -37,8 +37,8 @@
 # reference_gas_price_source = ""
 # reference_gas_price_timestamp_utc = ""
 # worker_image     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:2f28735250cc1c955d7f711f6218fdcbfa6cdacbd5642730bb324ba68e5858e0"
-# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eb73c75a51f02b1ed30babda32c3d02c2d1bc3a425dc35a40f9b5e2a70ee19a3"
-# control_api_image = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:4a8c0f82a92b8b308fb678fdabdd860419928c05d52fae45e480160e9f527044"
+# smart_contracts_image = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d9032aa71bc5a8e297a5a87e7e7ecd122cc8e8d0360e049dadf523cd88e51de8"
+# control_api_image = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:df3c237de8690c6b418b9d421542bf604d32d20c5596512b2c664132fe1e9597"
 # ui_image = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:cfa6bf74771b4b16e3bf928ff9f3d7066e924ec728875dbc05cda9e312389a22"
 # ui_basic_auth_username = "operator"
 # ui_basic_auth_password = "replace-with-at-least-16-characters"

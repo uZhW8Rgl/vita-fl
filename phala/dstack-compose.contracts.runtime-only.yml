@@ -24,7 +24,7 @@ services:
       retries: 24
 
   rpc-proxy:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eb73c75a51f02b1ed30babda32c3d02c2d1bc3a425dc35a40f9b5e2a70ee19a3
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d9032aa71bc5a8e297a5a87e7e7ecd122cc8e8d0360e049dadf523cd88e51de8
     restart: unless-stopped
     read_only: true
     cap_drop: ["ALL"]
@@ -59,7 +59,7 @@ services:
       retries: 24
 
   smart-contracts:
-    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:eb73c75a51f02b1ed30babda32c3d02c2d1bc3a425dc35a40f9b5e2a70ee19a3
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d9032aa71bc5a8e297a5a87e7e7ecd122cc8e8d0360e049dadf523cd88e51de8
     restart: "no"
     depends_on:
       anvil:
@@ -73,7 +73,7 @@ services:
       IPFS_PROVIDER: kubo
       # Supply these through Phala's encrypted environment.
       ETH_WALLET_PRIVATE_KEY: "${ETH_WALLET_PRIVATE_KEY}"
-      CLIENT_LIMIT: "2"
+      CLIENT_LIMIT: "5"
       MODEL_SUBMISSION_DEADLINE_MS: "20000"
       PCCS_FMSPC: "20A06F000000"
       PCCS_FETCH: "1"

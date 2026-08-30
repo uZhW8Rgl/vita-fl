@@ -236,15 +236,28 @@ def shape_numel(shape: tuple[int, ...]) -> int:
     return count
 
 
-def _read_tensor(blob: bytes, offset: int, shape: tuple[int, ...]) -> tuple[torch.Tensor, int]:
+def _read_tensor(
+    blob: bytes,
+    offset: int,
+    shape: tuple[int, ...],
+    *,
+    source: str,
+    tensor_name: str,
+) -> tuple[torch.Tensor, int]:
     count = shape_numel(shape)
     byte_count = count * 8
     chunk = blob[offset : offset + byte_count]
     if len(chunk) != byte_count:
         raise ValueError("Unexpected end of model file")
     values = torch.tensor(struct.unpack("<" + "d" * count, chunk), dtype=torch.float64)
-    if not torch.isfinite(values).all():
-        raise ValueError("Model file contains a non-finite parameter")
+    finite = torch.isfinite(values)
+    if not finite.all():
+        flat_index = int(torch.nonzero(~finite, as_tuple=False)[0].item())
+        value = values[flat_index].item()
+        raise ValueError(
+            f"{source} contains a non-finite parameter in tensor "
+            f"{tensor_name} at flat index {flat_index}: {value}"
+        )
     return values.reshape(shape).contiguous(), offset + byte_count
 
 
@@ -253,7 +266,13 @@ def model_from_bytes(blob: bytes, source: str = "<memory>") -> FederatedCNN:
     offset = 0
     state = {}
     for name, shape in MODEL_LAYOUT:
-        tensor, offset = _read_tensor(blob, offset, shape)
+        tensor, offset = _read_tensor(
+            blob,
+            offset,
+            shape,
+            source=source,
+            tensor_name=name,
+        )
         state[name] = tensor
     if offset != len(blob):
         raise ValueError(f"{source} contains {len(blob) - offset} trailing bytes")

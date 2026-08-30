@@ -274,7 +274,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--workers",
         type=int,
-        default=25,
+        default=6,
         help="Number of worker splits to create",
     )
     parser.add_argument(
