@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from control_api import server
@@ -36,10 +37,59 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         config = {"rounds": 3, "epoch": 2, "worker_count": 4, "client_limit": 3}
 
         translated = server.worker_runtime_training_config(config)
+        translated_again = server.worker_runtime_training_config(translated)
 
         self.assertEqual(translated["rounds"], 4)
+        self.assertEqual(translated["requested_training_rounds"], 3)
+        self.assertEqual(translated["bootstrap_completion_count"], 1)
+        self.assertEqual(translated["worker_target_completed_round_count"], 4)
+        self.assertEqual(translated_again, translated)
         self.assertEqual(translated["epoch"], 2)
         self.assertEqual(config["rounds"], 3)
+
+    def test_requested_rounds_key_wins_over_legacy_round_value(self) -> None:
+        with (
+            patch.object(server, "phala_runtime_mode", return_value=True),
+            patch.object(
+                server,
+                "read_env_values",
+                return_value={
+                    "REQUESTED_TRAINING_ROUNDS": "24",
+                    "ROUND": "25",
+                    "EPOCH": "2",
+                    "WORKER_COUNT": "6",
+                    "CLIENT_LIMIT": "5",
+                },
+            ),
+            patch.dict(server.os.environ, {"MAX_DYNAMIC_WORKERS": "6"}, clear=False),
+        ):
+            config = server.read_training_config(Path("/runtime/training.env"))
+
+        self.assertEqual(config["rounds"], 24)
+        self.assertEqual(config["requested_training_rounds"], 24)
+        self.assertEqual(config["worker_target_completed_round_count"], 25)
+
+    def test_training_config_persists_requested_rounds_separately(self) -> None:
+        config = {
+            "rounds": 24,
+            "epoch": 2,
+            "worker_count": 6,
+            "client_limit": 5,
+        }
+        with TemporaryDirectory() as directory:
+            env_file = Path(directory) / "training.env"
+            env_file.write_text("ROUND=99\nEPOCH=1\n", encoding="utf-8")
+            with (
+                patch.object(server, "phala_runtime_mode", return_value=True),
+                patch.dict(server.os.environ, {"MAX_DYNAMIC_WORKERS": "6"}, clear=False),
+            ):
+                persisted = server.write_training_config(config, env_file)
+            values = server.read_env_values(env_file)
+
+        self.assertEqual(values["REQUESTED_TRAINING_ROUNDS"], "24")
+        self.assertEqual(values["ROUND"], "24")
+        self.assertEqual(persisted["rounds"], 24)
+        self.assertEqual(persisted["worker_target_completed_round_count"], 25)
 
     def test_completed_round_count_uses_successful_completion_selector(self) -> None:
         env_values = {
@@ -57,6 +107,27 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         payload = post_json.call_args.args[1]
         self.assertEqual(payload["method"], "eth_call")
         self.assertEqual(payload["params"][0]["data"], "0x1ecb4dcc")
+
+    async def test_metrics_export_distinguishes_attempts_and_successful_rounds(self) -> None:
+        with (
+            patch.object(server, "runtime_contract_env_values", return_value={}),
+            patch.object(server, "read_chain_round", return_value=36),
+            patch.object(server, "read_chain_completed_round_count", return_value=1),
+            patch.object(server, "read_current_aggregator", return_value={"vm": "VM-0"}),
+            patch.object(server, "read_training_config", return_value={"rounds": 24}),
+            patch.object(server, "_telemetry_snapshot", return_value=[]),
+            patch.object(server, "read_evaluation_summary_records", return_value=[]),
+            patch.object(server, "read_transaction_cost_records", return_value=[]),
+            patch.object(server, "phala_runtime_mode", return_value=True),
+        ):
+            response = await server.metrics()
+
+        rendered = response.body.decode("utf-8")
+        self.assertIn("dfl_protocol_round 36", rendered)
+        self.assertIn("dfl_completed_round_count 1", rendered)
+        self.assertIn("dfl_successful_training_rounds 0", rendered)
+        self.assertIn("dfl_aborted_round_attempts 35", rendered)
+        self.assertIn("dfl_target_training_rounds 24", rendered)
 
     def test_phala_training_config_prefers_persisted_selection(self) -> None:
         with (
@@ -586,14 +657,9 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             ["preflight", "select", "policy", "commit", "scale", "publish"],
         )
         self.assertEqual(result["aggregation_policy"]["transaction_hash"], "0x" + "22" * 32)
-        controller.preflight_scale.assert_called_once_with(
-            2,
-            {**normalized, "rounds": 4},
-        )
-        controller.scale.assert_called_once_with(
-            2,
-            {**normalized, "rounds": 4},
-        )
+        worker_config = server.worker_runtime_training_config(normalized)
+        controller.preflight_scale.assert_called_once_with(2, worker_config)
+        controller.scale.assert_called_once_with(2, worker_config)
 
     async def test_training_start_returns_capacity_conflict_before_roster_commit(self) -> None:
         normalized = {

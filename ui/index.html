@@ -809,7 +809,7 @@
               <div class="training-metric">
                 <div class="training-grid">
                   <div class="training-item">
-                    <div class="training-item-label">Rounds</div>
+                    <div class="training-item-label">Federated Rounds</div>
                     <div class="training-stepper">
                       <button class="training-step-btn" data-training-field="rounds" data-training-delta="-1" type="button">-</button>
                       <input class="training-step-value" id="training-rounds" data-training-input="rounds" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="1">
@@ -1017,6 +1017,9 @@
     };
     let trainingConfig = {
       rounds: 5,
+      requested_training_rounds: 5,
+      bootstrap_completion_count: 1,
+      worker_target_completed_round_count: 6,
       epoch: 1,
       worker_count: 6,
       client_limit: 5,
@@ -1263,7 +1266,18 @@
       };
       nextConfig.worker_count = clampTrainingField("worker_count", nextConfig.worker_count, nextConfig);
       nextConfig.client_limit = clampTrainingField("client_limit", nextConfig.client_limit, nextConfig);
+      nextConfig.requested_training_rounds = nextConfig.rounds;
+      nextConfig.bootstrap_completion_count = 1;
+      nextConfig.worker_target_completed_round_count = nextConfig.rounds + 1;
       return nextConfig;
+    }
+
+    function completedFederatedRounds() {
+      const completed = Number(workflowState.completed_round_count);
+      if (!Number.isFinite(completed)) {
+        return null;
+      }
+      return Math.max(0, completed - 1);
     }
 
     function applyServerTrainingConfig(config, options = {}) {
@@ -1303,6 +1317,11 @@
 
     function setTrainingConfigValue(field, value, options = {}) {
       trainingConfig[field] = clampTrainingField(field, value);
+      if (field === "rounds") {
+        trainingConfig.requested_training_rounds = trainingConfig.rounds;
+        trainingConfig.bootstrap_completion_count = 1;
+        trainingConfig.worker_target_completed_round_count = trainingConfig.rounds + 1;
+      }
       if (field === "worker_count") {
         trainingConfig.client_limit = clampTrainingField("client_limit", trainingConfig.client_limit);
       }
@@ -1366,9 +1385,10 @@
           : "Status: Training is live. Waiting for the agent chat backend.";
       }
       if (currentMode === "training") {
-        const currentRound = Number(workflowState.current_round);
-        return Number.isFinite(currentRound)
-          ? `Status: Dynamic Phala training workers are running in on-chain round ${currentRound}.`
+        const currentAttempt = Number(workflowState.current_round);
+        const completed = completedFederatedRounds();
+        return Number.isFinite(currentAttempt)
+          ? `Status: Training is running. ${completed ?? 0} / ${trainingConfig.rounds} federated rounds completed; current protocol attempt ${currentAttempt}.`
           : "Status: Dynamic Phala training workers are running.";
       }
       if (currentMode === "transparency") {
@@ -1398,13 +1418,14 @@
         const deployedWorkers = Number(workflowState.phala_workers?.deployed_worker_count || workflowState.running_workers?.length || 0);
         trainingNoteEl.textContent = `${deployedWorkers} selected workers are deployed. W0 is waiting for their on-chain registrations and will encrypt the public initial model for the exact roster. Resume Start safely retries an interrupted deployment without changing that roster.`;
       } else if (trainingPhase() === "training") {
-        trainingNoteEl.textContent = `Round-0 bootstrap is complete. Federated training is active at on-chain round ${workflowState.current_round}.`;
+        const completed = completedFederatedRounds();
+        trainingNoteEl.textContent = `Round-0 bootstrap is complete. ${completed ?? 0} / ${trainingConfig.rounds} federated rounds are complete; the current on-chain protocol attempt is ${workflowState.current_round}.`;
       } else if (trainingPhase() === "completed") {
-        trainingNoteEl.textContent = `Training completed at on-chain round ${workflowState.current_round}. The finalized model remains available for inference; reset before starting another run.`;
+        trainingNoteEl.textContent = `${trainingConfig.rounds} / ${trainingConfig.rounds} federated rounds completed. The finalized model remains available for inference; reset before starting another run.`;
       } else if (trainingDraftDirty) {
-        trainingNoteEl.textContent = `Draft kept locally. Start Training will use rounds=${trainingConfig.rounds}, epoch=${trainingConfig.epoch}, workers=${trainingConfig.worker_count}, client limit=${trainingConfig.client_limit}.`;
+        trainingNoteEl.textContent = `Draft kept locally. Start Training will run ${trainingConfig.rounds} federated rounds after one bootstrap completion (${trainingConfig.worker_target_completed_round_count} successful completions in total), with epoch=${trainingConfig.epoch}, workers=${trainingConfig.worker_count}, and client limit=${trainingConfig.client_limit}.`;
       } else {
-        trainingNoteEl.textContent = `Available Phala worker slots: ${trainingConfig.max_worker_count}. Client limit is capped to selected workers minus the active aggregator.`;
+        trainingNoteEl.textContent = `${trainingConfig.rounds} federated rounds are selected. Round 0 is a separate bootstrap, so workers stop after ${trainingConfig.worker_target_completed_round_count} successful completions. Available Phala worker slots: ${trainingConfig.max_worker_count}.`;
       }
       setTrainingControlsDisabled(
         !trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady(),

@@ -3,7 +3,7 @@
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getCommittedRunRosterState, getDevicePublicKey, getDeviceActionKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, isGlobalModelPublished, isRoundCompleted, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
+import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getCommittedRunRosterState, getDevicePublicKey, getDeviceActionKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, isGlobalModelPublished, isRoundCompleted, isRoundAborted, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
 import { getCurrentModel, getFileFromIPFS, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
 import { loadParticipantKey, materializeParticipantPrivateKey, PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH, } from "./participant_key.js";
@@ -19,6 +19,7 @@ import { emitTelemetryEvent } from "./telemetry.js";
 import { buildRoundZeroBootstrapSnapshot, createCommittedRunRosterBinding, frozenRecipientsForCommittedRoster, normalizeBootstrapPublicKey, normalizeRunRosterDigest, requireFrozenRecipientKeysMatchRegistry, } from "./bootstrap_snapshot.js";
 import { reconcileFetchedGlobalModel } from "./model_bundle.js";
 import { isExplicitlyFinalizedSourceRound } from "./finalization_recovery.js";
+import { requireAbortedAggregatorAttemptGap, skippedAggregatorAttemptRounds, } from "./parent_model_round.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const deviceID = process.env.DEVICE_ID;
@@ -27,6 +28,10 @@ let aggregatorServerRunning = false;
 let modelUploadServer;
 let modelUploadQueue = Promise.resolve();
 const activeModelUploadHandlers = new Set();
+// A round marked aborted cannot later become a successful finalized round.
+// Cache only positive confirmations so repeated parent preparation (TRAINING
+// and AGGREGATING) does not re-read the full immutable abort gap each time.
+const verifiedAbortedAttemptRounds = new Set();
 const pythonServiceUrl = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
 const modelUploadPort = Number(process.env.MODEL_UPLOAD_PORT || 8001);
 const maxModelUploadBytes = Number(process.env.MODEL_UPLOAD_MAX_BYTES || 25 * 1024 * 1024);
@@ -1394,12 +1399,34 @@ async function prepareAggregatorParentModel(currentRound, expectedState) {
     });
     const fetchedGlobalModel = await runOperation("aggregator.fetch_parent_global_model", { role: "aggregator", round: currentRound }, () => getCurrentModel(activeParticipantKey.privateKey));
     const currentGlobalModel = await assertFetchedGlobalModelIsStillCurrent(fetchedGlobalModel);
-    if (Number(currentGlobalModel.modelRound) !== currentRound) {
-        throw new Error(`Active global-model round ${currentGlobalModel.modelRound} does not match `
-            + `aggregation round ${currentRound}.`);
+    const modelRound = Number(currentGlobalModel.modelRound);
+    const skippedAttemptRounds = skippedAggregatorAttemptRounds({
+        modelRound,
+        currentRound,
+    });
+    if (skippedAttemptRounds.length > 0) {
+        const abortedAttemptRounds = [];
+        for (const round of skippedAttemptRounds) {
+            if (verifiedAbortedAttemptRounds.has(round)) {
+                abortedAttemptRounds.push(round);
+                continue;
+            }
+            if (await isRoundAborted(round)) {
+                verifiedAbortedAttemptRounds.add(round);
+                abortedAttemptRounds.push(round);
+            }
+        }
+        requireAbortedAggregatorAttemptGap({
+            modelRound,
+            currentRound,
+            abortedAttemptRounds,
+        });
+        console.log(`Using finalized global-model round ${modelRound} as the parent for `
+            + `aggregation round ${currentRound}; intervening contract attempt `
+            + `round(s) ${skippedAttemptRounds.join(", ")} were aborted.`);
     }
     if (!currentGlobalModel.plaintextSignaturePresent) {
-        if (Number(currentGlobalModel.modelRound) !== 1) {
+        if (modelRound !== 1) {
             throw new Error(`Encrypted global model round ${currentGlobalModel.modelRound} `
                 + 'has no plaintext aggregator signature.');
         }
@@ -1429,7 +1456,7 @@ async function prepareAggregatorParentModel(currentRound, expectedState) {
     await runtimeEvent("aggregator.fetch_parent_global_model.finished", {
         role: "aggregator",
         round: currentRound,
-        model_round: Number(currentGlobalModel.modelRound),
+        model_round: modelRound,
         model_cid: currentGlobalModel.modelCid,
         publisher: currentGlobalModel.publisher,
     });

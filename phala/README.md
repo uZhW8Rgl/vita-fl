@@ -86,10 +86,13 @@ immutable after attested registration. Changing measured worker configuration
 such as `EPOCH` or `ROUND` requires the fresh reset path instead of an in-place
 app update.
 
-The round count shown in the UI is the number of actual federated client
-training rounds. Contract round 0 is a bootstrap-only model rollover, so the
-worker receives an absolute target round equal to the requested count plus
-one.
+The **Federated Rounds** count shown in the UI is the number of actual client
+training rounds. Contract round 0 is a bootstrap-only model rollover. The
+Control API persists the user selection separately as
+`REQUESTED_TRAINING_ROUNDS`; legacy `ROUND` mirrors that same user-facing
+value. A worker receives a successful-completion target equal to the requested
+count plus one. This target is not the raw on-chain attempt number, which can
+advance during timeout recovery without completing a training round.
 
 Immediately before the Control API scales the selected workers for a training
 start, it validates the measured Registry, AggregatorSelection, GMStorage, RPC
@@ -294,7 +297,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:2f28735250cc1c955d7f711f6218fdcbfa6cdacbd5642730bb324ba68e5858e0
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:98ce74bcee923ca73dae9ae4780e91dc1e2ba6c12ef47973a76f5533cb24b3b4
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
@@ -302,7 +305,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:2f28735250cc1c955d7f711f6218fdc
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:d9032aa71bc5a8e297a5a87e7e7ecd122cc8e8d0360e049dadf523cd88e51de8
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:6cc436a7ddeb0edb06708d0292529f48fcdc6df55c22a9c8f9238cb12c4063b4
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.

@@ -51,7 +51,15 @@ EVALUATION_SUMMARY_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "global_model_
 TRANSACTION_COST_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "transaction_costs.csv"
 CONTROL_API_STARTED_AT_UNIX_MS = int(time.time() * 1000)
 CONTROL_RUNTIME_MODE = os.environ.get("CONTROL_RUNTIME_MODE", "local").strip().lower()
-TRAINING_CONFIG_KEYS = ("ROUND", "EPOCH", "WORKER_COUNT", "CLIENT_LIMIT")
+REQUESTED_TRAINING_ROUNDS_ENV_KEY = "REQUESTED_TRAINING_ROUNDS"
+BOOTSTRAP_COMPLETION_COUNT = 1
+TRAINING_CONFIG_KEYS = (
+    REQUESTED_TRAINING_ROUNDS_ENV_KEY,
+    "ROUND",
+    "EPOCH",
+    "WORKER_COUNT",
+    "CLIENT_LIMIT",
+)
 CONTRACT_TIMEOUT_SECONDS = 600
 OBSERVABILITY_VOLUME_NAMES = (
     "grafana-data",
@@ -753,6 +761,91 @@ def append_evaluation_metrics(
             )
 
 
+def append_round_progress_metrics(
+    payload_lines: list[str],
+    *,
+    protocol_round: int | None,
+    completed_round_count: int | None,
+    target_training_rounds: int,
+) -> None:
+    """Expose successful progress separately from timeout-driven round advances.
+
+    ``GMStorage.currentRound`` advances after both successful finalization and an
+    aborted attempt. ``completedRoundCount`` advances only after successful
+    finalization and includes the round-zero bootstrap. Their difference is
+    therefore the number of aborted attempts in the current run.
+    """
+    protocol_round_value = (
+        max(0, int(protocol_round)) if protocol_round is not None else None
+    )
+    completed_round_value = (
+        max(0, int(completed_round_count))
+        if completed_round_count is not None
+        else None
+    )
+    successful_training_rounds = (
+        max(0, completed_round_value - 1)
+        if completed_round_value is not None
+        else None
+    )
+    aborted_round_attempts = (
+        max(0, protocol_round_value - completed_round_value)
+        if protocol_round_value is not None and completed_round_value is not None
+        else None
+    )
+    target_training_rounds_value = max(1, int(target_training_rounds))
+
+    metrics = (
+        (
+            "dfl_protocol_round",
+            "Current on-chain protocol attempt index; it advances after successful and aborted attempts.",
+            protocol_round_value,
+        ),
+        (
+            "dfl_completed_round_count",
+            "Successfully finalized on-chain rounds, including the round-zero bootstrap.",
+            completed_round_value,
+        ),
+        (
+            "dfl_successful_training_rounds",
+            "Successfully finalized federated training rounds, excluding the round-zero bootstrap.",
+            successful_training_rounds,
+        ),
+        (
+            "dfl_aborted_round_attempts",
+            "Protocol attempts that advanced without successfully finalizing a round.",
+            aborted_round_attempts,
+        ),
+        (
+            "dfl_target_training_rounds",
+            "User-selected number of federated training rounds, excluding the bootstrap.",
+            target_training_rounds_value,
+        ),
+    )
+    for metric_name, help_text, value in metrics:
+        payload_lines.extend(
+            [
+                f"# HELP {metric_name} {help_text}",
+                f"# TYPE {metric_name} gauge",
+            ]
+        )
+        if value is not None:
+            payload_lines.append(f"{metric_name} {value}")
+        payload_lines.append("")
+
+    # Retain the former metric for external dashboards while making its attempt
+    # semantics explicit. The bundled dashboard uses dfl_protocol_round.
+    payload_lines.extend(
+        [
+            "# HELP dfl_current_round Deprecated alias for dfl_protocol_round; this is not a successful-round count.",
+            "# TYPE dfl_current_round gauge",
+        ]
+    )
+    if protocol_round_value is not None:
+        payload_lines.append(f"dfl_current_round {protocol_round_value}")
+    payload_lines.append("")
+
+
 def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict[str, str]]) -> None:
     totals: dict[str, dict[str, float]] = {}
     worker_totals: dict[tuple[str, str, str], dict[str, float]] = {}
@@ -894,6 +987,33 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
             payload_lines.append(f"{metric_name}{{{labels}}} {values[field]}")
 
 
+def training_config_with_round_plan(config: dict[str, Any]) -> dict[str, Any]:
+    """Attach unambiguous public and worker round-count semantics.
+
+    ``rounds`` remains the backwards-compatible UI/API field and always means
+    federated client-training rounds. The worker stop condition counts the
+    successful round-0 bootstrap as well, so its target is one completion
+    larger. Keeping the requested value in a dedicated field also makes the
+    worker translation idempotent if a decorated config is passed twice.
+    """
+    requested = max(
+        1,
+        _safe_int(
+            config.get("requested_training_rounds", config.get("rounds")),
+            1,
+        ),
+    )
+    return {
+        **config,
+        "rounds": requested,
+        "requested_training_rounds": requested,
+        "bootstrap_completion_count": BOOTSTRAP_COMPLETION_COUNT,
+        "worker_target_completed_round_count": (
+            requested + BOOTSTRAP_COMPLETION_COUNT
+        ),
+    }
+
+
 def read_training_config(
     env_file: Path = TRAINING_ENV_FILE, compose_file: Path = TRAINING_COMPOSE_FILE
 ) -> dict[str, Any]:
@@ -927,10 +1047,16 @@ def read_training_config(
                 max(1, worker_count - 1),
             ),
         )
-        return {
+        return training_config_with_round_plan({
             "rounds": max(
                 1,
-                _safe_int(values.get("ROUND") or os.environ.get("ROUND"), 5),
+                _safe_int(
+                    values.get(REQUESTED_TRAINING_ROUNDS_ENV_KEY)
+                    or values.get("ROUND")
+                    or os.environ.get(REQUESTED_TRAINING_ROUNDS_ENV_KEY)
+                    or os.environ.get("ROUND"),
+                    5,
+                ),
             ),
             "epoch": max(
                 1,
@@ -940,7 +1066,7 @@ def read_training_config(
             "client_limit": client_limit,
             "max_worker_count": maximum,
             "available_workers": [f"worker{slot}" for slot in range(maximum)],
-        }
+        })
 
     available_workers = _available_worker_services(compose_file)
     max_worker_count = len(available_workers)
@@ -953,14 +1079,21 @@ def read_training_config(
     max_client_limit = max(1, worker_count - 1)
     client_limit = max(1, min(_safe_int(values.get("CLIENT_LIMIT"), max_client_limit), max_client_limit))
 
-    return {
-        "rounds": max(1, _safe_int(values.get("ROUND"), 5)),
+    return training_config_with_round_plan({
+        "rounds": max(
+            1,
+            _safe_int(
+                values.get(REQUESTED_TRAINING_ROUNDS_ENV_KEY)
+                or values.get("ROUND"),
+                5,
+            ),
+        ),
         "epoch": max(1, _safe_int(values.get("EPOCH"), 1)),
         "worker_count": worker_count,
         "client_limit": client_limit,
         "max_worker_count": max_worker_count,
         "available_workers": available_workers,
-    }
+    })
 
 
 def normalize_training_config(payload: dict[str, Any]) -> dict[str, int]:
@@ -985,12 +1118,19 @@ def normalize_training_config(payload: dict[str, Any]) -> dict[str, int]:
 
 
 def worker_runtime_training_config(config: dict[str, int]) -> dict[str, int]:
-    """Translate user-visible training rounds to the worker's absolute target round.
+    """Translate requested federated rounds to the worker completion target.
 
-    Contract round 0 only republishes the bootstrap model; it is not a federated
-    client-training round. Therefore N requested training rounds end at round N+1.
+    Contract round 0 only republishes the bootstrap model. The worker's
+    ``ROUND`` input is therefore a successful-completion target, not the raw
+    on-chain attempt number. The explicit requested-round field keeps this
+    conversion idempotent and prevents a second caller from adding bootstrap
+    twice.
     """
-    return {**config, "rounds": config["rounds"] + 1}
+    planned = training_config_with_round_plan(config)
+    return {
+        **planned,
+        "rounds": int(planned["worker_target_completed_round_count"]),
+    }
 
 
 def write_training_config(config: dict[str, int], env_file: Path = TRAINING_ENV_FILE) -> dict[str, Any]:
@@ -999,6 +1139,7 @@ def write_training_config(config: dict[str, int], env_file: Path = TRAINING_ENV_
     seen: set[str] = set()
 
     value_map = {
+        REQUESTED_TRAINING_ROUNDS_ENV_KEY: str(config["rounds"]),
         "ROUND": str(config["rounds"]),
         "EPOCH": str(config["epoch"]),
         "WORKER_COUNT": str(config["worker_count"]),
@@ -2546,7 +2687,8 @@ def training_lifecycle_phase(
 def training_target_completed_round_count(config: dict[str, Any] | None = None) -> int:
     """Return successful completions required: bootstrap plus training rounds."""
     selected = config or read_training_config()
-    return max(1, int(selected["rounds"])) + 1
+    planned = training_config_with_round_plan(selected)
+    return int(planned["worker_target_completed_round_count"])
 
 
 def training_phase_allows_setup(status: dict[str, Any]) -> bool:
@@ -3096,22 +3238,28 @@ async def ingest_telemetry(body: dict[str, Any]) -> dict[str, bool]:
 async def metrics() -> Response:
     env_values = runtime_contract_env_values()
     current_round = read_chain_round(env_values)
+    completed_round_count = read_chain_completed_round_count(env_values)
     current_aggregator = read_current_aggregator(env_values)
+    training_config = read_training_config()
     telemetry_records = _telemetry_snapshot()
     evaluation_records = read_evaluation_summary_records() + telemetry_evaluation_records(telemetry_records)
     transaction_cost_records = read_transaction_cost_records() + telemetry_transaction_cost_records(telemetry_records)
-    round_value = current_round if current_round is not None else 0
     aggregator_vm = current_aggregator["vm"] or "unknown"
-    payload_lines = [
-        "# HELP dfl_current_round Current DFL round read directly from the GMStorage smart contract.",
-        "# TYPE dfl_current_round gauge",
-        f"dfl_current_round {round_value}",
-        "",
-        "# HELP dfl_current_aggregator Current DFL aggregator selected on-chain.",
-        "# TYPE dfl_current_aggregator gauge",
-        f'dfl_current_aggregator{{aggregator_vm="{aggregator_vm}"}} 1',
-        "",
-    ]
+    payload_lines: list[str] = []
+    append_round_progress_metrics(
+        payload_lines,
+        protocol_round=current_round,
+        completed_round_count=completed_round_count,
+        target_training_rounds=int(training_config["rounds"]),
+    )
+    payload_lines.extend(
+        [
+            "# HELP dfl_current_aggregator Current DFL aggregator selected on-chain.",
+            "# TYPE dfl_current_aggregator gauge",
+            f'dfl_current_aggregator{{aggregator_vm="{aggregator_vm}"}} 1',
+            "",
+        ]
+    )
     runtime_totals = telemetry_run_totals(telemetry_records) if phala_runtime_mode() else None
     append_evaluation_metrics(payload_lines, evaluation_records, runtime_totals)
     append_transaction_cost_metrics(payload_lines, transaction_cost_records)

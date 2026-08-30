@@ -448,6 +448,12 @@ export const isRoundCompleted = async (sourceRound) => {
         .call();
     return Boolean(completed);
 };
+export const isRoundAborted = async (sourceRound) => {
+    const aborted = await getGMStorageContract().methods
+        .roundAborted(sourceRound)
+        .call();
+    return Boolean(aborted);
+};
 export const createAggregationStatement = async ({ sourceRound, modelCid, signatureCid, keyBundleCid, outputModelHash, outputBundleHash, }) => {
     const policy = await getRoundAggregationPolicy(sourceRound);
     if (!policy.opened || !policy.closed) {

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import os
 import time
 import unittest
 import zipfile
+from pathlib import Path
 from unittest.mock import patch
 
 from eth_account import Account
@@ -138,6 +140,88 @@ class SignedTelemetryTests(unittest.TestCase):
             ]
         )
         self.assertEqual(exported[0]["gasUsed"], "21000")
+
+    def test_round_progress_metrics_separate_successes_from_aborted_attempts(self) -> None:
+        metrics: list[str] = []
+
+        server.append_round_progress_metrics(
+            metrics,
+            protocol_round=36,
+            completed_round_count=1,
+            target_training_rounds=24,
+        )
+
+        rendered = "\n".join(metrics)
+        self.assertIn("dfl_protocol_round 36", rendered)
+        self.assertIn("dfl_completed_round_count 1", rendered)
+        self.assertIn("dfl_successful_training_rounds 0", rendered)
+        self.assertIn("dfl_aborted_round_attempts 35", rendered)
+        self.assertIn("dfl_target_training_rounds 24", rendered)
+        self.assertIn("dfl_current_round 36", rendered)
+
+    def test_round_progress_metrics_exclude_bootstrap_from_training_progress(self) -> None:
+        metrics: list[str] = []
+
+        server.append_round_progress_metrics(
+            metrics,
+            protocol_round=8,
+            completed_round_count=6,
+            target_training_rounds=24,
+        )
+
+        rendered = "\n".join(metrics)
+        self.assertIn("dfl_successful_training_rounds 5", rendered)
+        self.assertIn("dfl_aborted_round_attempts 2", rendered)
+
+    def test_round_progress_metrics_do_not_turn_unavailable_chain_state_into_zero(self) -> None:
+        metrics: list[str] = []
+
+        server.append_round_progress_metrics(
+            metrics,
+            protocol_round=None,
+            completed_round_count=None,
+            target_training_rounds=24,
+        )
+
+        samples = [line for line in metrics if line and not line.startswith("#")]
+        self.assertEqual(samples, ["dfl_target_training_rounds 24"])
+
+    def test_training_dashboard_uses_unambiguous_round_progress_metrics(self) -> None:
+        dashboard_path = (
+            Path(__file__).resolve().parents[2]
+            / "observability"
+            / "grafana"
+            / "dashboards"
+            / "dfl-training-overview.json"
+        )
+        dashboard = json.loads(dashboard_path.read_text(encoding="utf-8"))
+        panels = {panel["title"]: panel for panel in dashboard["panels"]}
+
+        expected_queries = {
+            "Successful Training Rounds": "dfl_successful_training_rounds",
+            "Target Training Rounds": "dfl_target_training_rounds",
+            "Aborted Round Attempts": "dfl_aborted_round_attempts",
+            "Protocol Attempt Index": "dfl_protocol_round",
+            "Completed Rounds incl. Bootstrap": "dfl_completed_round_count",
+        }
+        for title, query in expected_queries.items():
+            self.assertEqual(panels[title]["targets"][0]["expr"], query)
+            self.assertEqual(
+                panels[title]["fieldConfig"]["defaults"]["noValue"],
+                "Not available",
+            )
+
+        self.assertNotIn("Current Round", panels)
+        self.assertEqual(
+            panels["Latest Global Accuracy"]["fieldConfig"]["defaults"]["noValue"],
+            "No successful aggregation yet",
+        )
+        self.assertIn("empty table", panels["Successful Round Summary"]["description"])
+        summary_renames = panels["Successful Round Summary"]["transformations"][1]["options"]["renameByName"]
+        self.assertEqual(
+            summary_renames["round"],
+            "Global Model Round (Protocol)",
+        )
 
     def test_cost_wei_is_exported_without_float_rounding(self) -> None:
         normalized = server.transaction_cost_with_gwei(

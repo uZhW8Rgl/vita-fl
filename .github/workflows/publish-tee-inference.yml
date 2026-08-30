@@ -113,5 +113,7 @@ jobs:
           echo "Image tag:" >> "$GITHUB_STEP_SUMMARY"
           echo "\`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag || 'tee' }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Digest-pinned reference for Phala/dstack:" >> "$GITHUB_STEP_SUMMARY"
+          echo "Digest-pinned reference for standalone TEE-inference deployments:" >> "$GITHUB_STEP_SUMMARY"
           echo "\`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "The combined Phala Worker 0 deployment uses the digest-pinned DFL worker image instead." >> "$GITHUB_STEP_SUMMARY"

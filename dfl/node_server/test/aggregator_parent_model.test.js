@@ -26,9 +26,11 @@ test("aggregator authenticates the active parent model fail-closed", () => {
   );
   assert.match(
     helper,
-    /Number\(currentGlobalModel\.modelRound\) !== currentRound/,
+    /skippedAggregatorAttemptRounds\(\{/,
   );
-  assert.match(helper, /Number\(currentGlobalModel\.modelRound\) !== 1/);
+  assert.match(helper, /isRoundAborted\(round\)/);
+  assert.match(helper, /requireAbortedAggregatorAttemptGap\(\{/);
+  assert.match(helper, /modelRound !== 1/);
   assert.match(helper, /verifyDownloadedGlobalModelSignature\(\{/);
   assert.match(helper, /latestState\["0"\] !== expectedState/);
   assert.match(helper, /Number\(latestRound\) !== currentRound/);

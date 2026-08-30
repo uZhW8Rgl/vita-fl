@@ -532,6 +532,13 @@ export const isRoundCompleted = async (sourceRound) => {
     return Boolean(completed);
 };
 
+export const isRoundAborted = async (sourceRound) => {
+    const aborted = await getGMStorageContract().methods
+        .roundAborted(sourceRound)
+        .call();
+    return Boolean(aborted);
+};
+
 export const createAggregationStatement = async ({
     sourceRound,
     modelCid,
