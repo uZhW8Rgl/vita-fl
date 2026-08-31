@@ -175,8 +175,9 @@ class CombinedWorkerComposeTests(unittest.TestCase):
             )
             self.assertTrue(any('"8080:8080"' in body for body in conditional_bodies))
             self.assertTrue(
-                any("SELLO_SERVICE_SIGNING_SEED" in body for body in conditional_bodies)
+                any('SELLO_SERVICE_KEY_PROVIDER: "dstack"' in body for body in conditional_bodies)
             )
+            self.assertNotIn("SELLO_SERVICE_SIGNING_SEED", template)
             self.assertIn('- "8001:8001"', template)
             self.assertIn(
                 'TEE_INFERENCE_ENABLED: "${inference_enabled ? 1 : 0}"',
@@ -265,7 +266,7 @@ class CombinedWorkerComposeTests(unittest.TestCase):
         self.assertRegex(
             dynamic_module,
             r"var\.workers\[each\.key\]\.device_id == 0 \? "
-            r"\{\s*SELLO_SERVICE_SIGNING_SEED",
+            r"\{\s*SELLO_TOKEN_ISSUER_PUBLIC_KEY",
         )
 
     def test_policy_reference_and_live_workers_share_exact_runtime_rpc_url(self) -> None:

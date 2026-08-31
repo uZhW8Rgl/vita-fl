@@ -101,6 +101,12 @@ test("unsafe outer admin inputs and duplicate fields are rejected", () => {
         })),
         /unsafe outer environment key/,
     );
+    assert.throws(
+        () => deriveWorkerPolicyIdentity(manifest({
+            allowed_envs: ["SELLO_SERVICE_SIGNING_SEED"],
+        })),
+        /unsafe outer environment key/,
+    );
     const duplicate = `{"docker_compose_file":${JSON.stringify(dockerCompose)},`
         + '"manifest_version":2,"manifest_version":2,"runner":"docker-compose"}';
     assert.throws(

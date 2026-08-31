@@ -1061,6 +1061,7 @@ export const isDeviceRegistrationCurrent = async (
     publicIp,
     brokerIp,
     publicKeyBytesHex,
+    selloReceiptKey,
     canonicalAppCompose
 ) => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
@@ -1072,6 +1073,7 @@ export const isDeviceRegistrationCurrent = async (
             publicIp,
             brokerIp,
             publicKeyBytesHex,
+            selloReceiptKey,
             canonicalAppCompose
         )
         .call());
@@ -1083,6 +1085,7 @@ export const getDeviceRegistrationReportData = async (
     publicIp,
     brokerIp,
     publicKeyBytesHex,
+    selloReceiptKey,
     canonicalAppCompose
 ) => {
     if (!device_registry_address) {
@@ -1096,6 +1099,7 @@ export const getDeviceRegistrationReportData = async (
         publicIp,
         brokerIp,
         publicKeyBytesHex,
+        selloReceiptKey,
         canonicalAppCompose
     ).call();
     if (typeof reportData !== "string" || !/^0x[0-9a-fA-F]{128}$/.test(reportData)) {
@@ -1112,7 +1116,8 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     actionKey,
     publicIp,
     brokerIp,
-    publicKeyBytesHex
+    publicKeyBytesHex,
+    selloReceiptKey,
 ) => {
     if (!device_registry_address) {
         throw new Error("REGISTRY_ADDRESS is required for TDX device registration");
@@ -1130,6 +1135,7 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     const enrollmentDigest = await contract.methods.enrollmentDigest(
         address,
         actionKey,
+        selloReceiptKey,
         canonicalAppCompose,
     ).call();
     const participantAuthorization = signRawDigest(
@@ -1146,6 +1152,7 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
         publicIp,
         brokerIp,
         publicKeyBytesHex,
+        selloReceiptKey,
         participantAuthorization,
     );
     const calldata = registration.encodeABI();
@@ -1229,7 +1236,7 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (
     try {
         const rawTransaction = await signer.signTransaction(tx);
         const receipt = await web3.eth.sendSignedTransaction(rawTransaction);
-        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
+        logTransactionCost("worker", "rtmr3_registration", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }

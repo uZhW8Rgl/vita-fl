@@ -25,13 +25,14 @@ contract DeviceRegistry {
 
     uint256 private constant REPORT_DATA_LENGTH = 64;
 
-    bytes32 public constant REGISTRATION_REPORT_DATA_DOMAIN = keccak256("MasterThesis.DeviceRegistry.registration.v5");
+    bytes32 public constant REGISTRATION_REPORT_DATA_DOMAIN = keccak256("MasterThesis.DeviceRegistry.registration.v6");
     bytes32 public constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-    bytes32 public constant ENROLLMENT_TYPEHASH =
-        keccak256("Enrollment(address participant,address actionKey,bytes32 composeHash,uint256 nonce)");
+    bytes32 public constant ENROLLMENT_TYPEHASH = keccak256(
+        "Enrollment(address participant,address actionKey,bytes32 composeHash,bytes32 selloReceiptKey,uint256 nonce)"
+    );
     bytes32 private constant EIP712_NAME_HASH = keccak256("VITA-FL DeviceRegistry");
-    bytes32 private constant EIP712_VERSION_HASH = keccak256("5");
+    bytes32 private constant EIP712_VERSION_HASH = keccak256("6");
 
     address public owner;
     bytes32 public immutable deploymentId;
@@ -43,6 +44,7 @@ contract DeviceRegistry {
     mapping(address => bytes32) public registeredComposeHashes;
     mapping(address => bytes32) public registeredImageDigests;
     mapping(address => bytes32) public registeredWorkerPolicyHashes;
+    mapping(address => bytes32) public selloReceiptKeys;
     mapping(address => address) public actionKeyForParticipant;
     mapping(address => address) public participantForActionKey;
     mapping(bytes32 => bool) public allowedWorkerPolicyHashes;
@@ -66,6 +68,7 @@ contract DeviceRegistry {
     event WorkerPolicyHashPermissionUpdated(bytes32 indexed workerPolicyHash, bool allowed);
     event DeviceWorkerPolicyRegistered(address indexed device, bytes32 indexed workerPolicyHash);
     event DeviceActionKeyRegistered(address indexed device, address indexed actionKey);
+    event DeviceSelloReceiptKeyRegistered(address indexed device, bytes32 indexed selloReceiptKey);
     event RunRosterCommitted(bytes32 indexed rosterDigest, uint256 workerCount, address indexed bootstrapWorker);
     event RunRosterFrozen(bytes32 indexed rosterDigest, uint256 workerCount);
 
@@ -183,12 +186,14 @@ contract DeviceRegistry {
         string memory _public_ip,
         string memory _msg_broker_ip,
         bytes memory _public_key,
+        bytes32 selloReceiptKey,
         bytes memory canonicalAppCompose
     ) external view returns (bool) {
         (bytes32 composeHash, bytes32 imageDigest, bytes32 policyHash) = _workloadIdentity(canonicalAppCompose);
         return isAuthorized(_address) && actionKeyForParticipant[_address] == _actionKey
             && participantForActionKey[_actionKey] == _address && registeredComposeHashes[_address] == composeHash
             && registeredImageDigests[_address] == imageDigest && registeredWorkerPolicyHashes[_address] == policyHash
+            && selloReceiptKeys[_address] == selloReceiptKey
             && keccak256(bytes(devices[_address].public_ip)) == keccak256(bytes(_public_ip))
             && keccak256(bytes(devices[_address].msg_broker_ip)) == keccak256(bytes(_msg_broker_ip))
             && keccak256(devices[_address].public_key) == keccak256(_public_key);
@@ -221,6 +226,23 @@ contract DeviceRegistry {
             devices[_address].msg_broker_ip,
             devices[_address].public_key
         );
+    }
+
+    /// @notice Resolves the admission-attested Sello receiver endpoint and receipt key.
+    /// @dev The receiver is fixed to the bootstrap worker (roster[0]). Resolution
+    ///      deliberately reverts until the complete roster is frozen and W0 remains
+    ///      authorized, so callers cannot silently fall back to an unbound key.
+    function getSelloReceiver(address participant)
+        external
+        view
+        returns (bool authorized, string memory publicIp, bytes32 selloReceiptKey)
+    {
+        require(runRosterFrozen, "run roster not frozen");
+        require(committedRunRoster.length != 0 && participant == committedRunRoster[0], "not bootstrap worker");
+        require(isAuthorized(participant), "bootstrap worker not authorized");
+        selloReceiptKey = selloReceiptKeys[participant];
+        require(selloReceiptKey != bytes32(0), "sello receiver key unavailable");
+        return (true, devices[participant].public_ip, selloReceiptKey);
     }
 
     /// @notice Resolves a transaction signer to its current logical participant.
@@ -277,6 +299,7 @@ contract DeviceRegistry {
         string memory _public_ip,
         string memory _msg_broker_ip,
         bytes memory _public_key,
+        bytes32 selloReceiptKey,
         bytes memory participantAuthorization
     ) public {
         require(actionKey == msg.sender, "sender/action key mismatch");
@@ -285,12 +308,13 @@ contract DeviceRegistry {
         // Image and role policy are derived from the exact app_compose preimage on-chain.
         // The complete preimage is then hashed independently for REPORTDATA and RTMR3 replay.
         (bytes32 composeHash, bytes32 workerImageDigest, bytes32 policyHash) = _workloadIdentity(canonicalAppCompose);
-        _requireRegistrationPreparation(_address, _public_key, workerImageDigest, policyHash);
+        _requireRegistrationPreparation(_address, _public_key, workerImageDigest, policyHash, selloReceiptKey);
 
         uint256 nonce = registrationNonces[_address];
         require(actionKey != address(0), "invalid action key");
         require(
-            _enrollmentDigest(_address, actionKey, composeHash, nonce).recover(participantAuthorization) == _address,
+            _enrollmentDigest(_address, actionKey, composeHash, selloReceiptKey, nonce)
+                    .recover(participantAuthorization) == _address,
             "invalid participant authorization"
         );
         address assignedParticipant = participantForActionKey[actionKey];
@@ -304,6 +328,7 @@ contract DeviceRegistry {
             composeHash,
             workerImageDigest,
             policyHash,
+            selloReceiptKey,
             nonce
         );
         bytes memory output =
@@ -314,12 +339,16 @@ contract DeviceRegistry {
         registeredComposeHashes[_address] = composeHash;
         registeredImageDigests[_address] = workerImageDigest;
         registeredWorkerPolicyHashes[_address] = policyHash;
+        selloReceiptKeys[_address] = selloReceiptKey;
         actionKeyForParticipant[_address] = actionKey;
         participantForActionKey[actionKey] = _address;
         _registerVerifiedDevice(_address, _public_ip, _msg_broker_ip, _public_key);
         emit DeviceRegistered(_address, nonce, composeHash);
         emit DeviceWorkerPolicyRegistered(_address, policyHash);
         emit DeviceActionKeyRegistered(_address, actionKey);
+        if (selloReceiptKey != bytes32(0)) {
+            emit DeviceSelloReceiptKeyRegistered(_address, selloReceiptKey);
+        }
     }
 
     /// @notice Returns the exact 64 bytes that the TEE must place into TDREPORT.REPORTDATA.
@@ -329,12 +358,13 @@ contract DeviceRegistry {
         string memory _public_ip,
         string memory _msg_broker_ip,
         bytes memory _public_key,
+        bytes32 selloReceiptKey,
         bytes memory canonicalAppCompose
     ) public view returns (bytes memory) {
         require(actionKey != address(0), "invalid action key");
         require(!knownDevice[_address], "device already registered");
         (bytes32 composeHash, bytes32 workerImageDigest, bytes32 policyHash) = _workloadIdentity(canonicalAppCompose);
-        _requireRegistrationPreparation(_address, _public_key, workerImageDigest, policyHash);
+        _requireRegistrationPreparation(_address, _public_key, workerImageDigest, policyHash, selloReceiptKey);
         uint256 nonce = registrationNonces[_address];
         bytes32 binding = _registrationBinding(
             _address,
@@ -345,6 +375,7 @@ contract DeviceRegistry {
             composeHash,
             workerImageDigest,
             policyHash,
+            selloReceiptKey,
             nonce
         );
         return abi.encodePacked(binding, bytes32(nonce));
@@ -358,20 +389,27 @@ contract DeviceRegistry {
 
     /// @notice Digest signed by the logical participant to delegate registration
     ///         and subsequent protocol authority to one TEE-derived action key.
-    function enrollmentDigest(address participant, address actionKey, bytes memory canonicalAppCompose)
-        public
-        view
-        returns (bytes32)
-    {
-        return _enrollmentDigest(participant, actionKey, sha256(canonicalAppCompose), registrationNonces[participant]);
+    function enrollmentDigest(
+        address participant,
+        address actionKey,
+        bytes32 selloReceiptKey,
+        bytes memory canonicalAppCompose
+    ) public view returns (bytes32) {
+        return _enrollmentDigest(
+            participant, actionKey, sha256(canonicalAppCompose), selloReceiptKey, registrationNonces[participant]
+        );
     }
 
-    function _enrollmentDigest(address participant, address actionKey, bytes32 composeHash, uint256 nonce)
-        internal
-        view
-        returns (bytes32)
-    {
-        bytes32 structHash = keccak256(abi.encode(ENROLLMENT_TYPEHASH, participant, actionKey, composeHash, nonce));
+    function _enrollmentDigest(
+        address participant,
+        address actionKey,
+        bytes32 composeHash,
+        bytes32 selloReceiptKey,
+        uint256 nonce
+    ) internal view returns (bytes32) {
+        bytes32 structHash = keccak256(
+            abi.encode(ENROLLMENT_TYPEHASH, participant, actionKey, composeHash, selloReceiptKey, nonce)
+        );
         return keccak256(abi.encodePacked(hex"1901", domainSeparator(), structHash));
     }
 
@@ -405,6 +443,7 @@ contract DeviceRegistry {
         bytes32 composeHash,
         bytes32 workerImageDigest,
         bytes32 policyHash,
+        bytes32 selloReceiptKey,
         uint256 nonce
     ) internal view returns (bytes32) {
         return keccak256(
@@ -422,6 +461,7 @@ contract DeviceRegistry {
                 composeHash,
                 workerImageDigest,
                 policyHash,
+                selloReceiptKey,
                 nonce
             )
         );
@@ -431,12 +471,18 @@ contract DeviceRegistry {
         address _address,
         bytes memory _public_key,
         bytes32 workerImageDigest,
-        bytes32 policyHash
+        bytes32 policyHash,
+        bytes32 selloReceiptKey
     ) internal view {
         require(_address != address(0), "invalid device address");
         require(runRosterCommitted, "run roster not committed");
         require(committedRunMembers[_address], "participant not in committed run roster");
         require(!runRosterFrozen, "run roster registration is closed");
+        if (_address == committedRunRoster[0]) {
+            require(selloReceiptKey != bytes32(0), "bootstrap sello receiver key required");
+        } else {
+            require(selloReceiptKey == bytes32(0), "non-bootstrap sello receiver key forbidden");
+        }
         require(_public_key.length != 0, "public key required");
         require(expectedWorkerImageDigest != bytes32(0), "worker image policy not configured");
         require(workerImageDigest == expectedWorkerImageDigest, "worker image digest mismatch");
@@ -489,6 +535,7 @@ contract DeviceRegistry {
         delete registeredComposeHashes[_address];
         delete registeredImageDigests[_address];
         delete registeredWorkerPolicyHashes[_address];
+        delete selloReceiptKeys[_address];
         delete actionKeyForParticipant[_address];
         delete participantForActionKey[actionKey];
         knownDevice[_address] = false;

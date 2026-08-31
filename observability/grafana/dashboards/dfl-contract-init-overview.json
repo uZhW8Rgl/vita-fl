@@ -71,8 +71,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "decimals": 6,
-          "unit": "ether"
+          "decimals": 0,
+          "unit": "none"
         },
         "overrides": []
       },
@@ -101,11 +101,11 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "dfl_contract_init_cost_eth_total",
+          "expr": "dfl_transaction_count_total{scope=\"smart_contracts_init\"}",
           "refId": "A"
         }
       ],
-      "title": "Contract Init Transaction Fee (ETH)",
+      "title": "Contract Init Transactions",
       "type": "stat"
     },
     {
@@ -115,8 +115,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "decimals": 2,
-          "unit": "currencyEUR"
+          "decimals": 0,
+          "unit": "none"
         },
         "overrides": []
       },
@@ -145,11 +145,11 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "dfl_contract_init_cost_eur_total",
+          "expr": "dfl_contract_init_gas_used_total / dfl_transaction_count_total{scope=\"smart_contracts_init\"}",
           "refId": "A"
         }
       ],
-      "title": "Contract Init EUR Scenario Value",
+      "title": "Mean Gas per Init Transaction",
       "type": "stat"
     },
     {

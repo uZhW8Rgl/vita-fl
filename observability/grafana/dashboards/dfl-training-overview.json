@@ -569,8 +569,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "decimals": 2,
-          "unit": "suffix:Gwei"
+          "decimals": 0,
+          "unit": "none"
         },
         "overrides": []
       },
@@ -601,11 +601,11 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "dfl_worker_cost_gwei_total",
+          "expr": "dfl_worker_registration_gas_used_total",
           "refId": "A"
         }
       ],
-      "title": "Worker Transaction Fee (Gwei)",
+      "title": "RTMR3 Registration Gas",
       "type": "stat"
     },
     {
@@ -615,8 +615,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "decimals": 6,
-          "unit": "ether"
+          "decimals": 0,
+          "unit": "none"
         },
         "overrides": []
       },
@@ -647,11 +647,11 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "dfl_worker_cost_eth_total",
+          "expr": "dfl_worker_registration_receipt_gap",
           "refId": "A"
         }
       ],
-      "title": "Worker Transaction Fee (ETH)",
+      "title": "Missing RTMR3 Receipt Records (must be 0)",
       "type": "stat"
     },
     {
@@ -661,8 +661,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "decimals": 2,
-          "unit": "currencyEUR"
+          "decimals": 0,
+          "unit": "none"
         },
         "overrides": []
       },
@@ -693,11 +693,11 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "dfl_worker_cost_eur_total",
+          "expr": "dfl_contract_init_gas_used_total",
           "refId": "A"
         }
       ],
-      "title": "Worker EUR Scenario Value",
+      "title": "Contract Initialization Gas",
       "type": "stat"
     },
     {
@@ -884,8 +884,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "decimals": 2,
-          "unit": "suffix:Gwei"
+          "decimals": 0,
+          "unit": "none"
         },
         "overrides": []
       },
@@ -914,14 +914,14 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "dfl_worker_cost_gwei_by_worker",
+          "expr": "dfl_worker_registration_gas_used_by_worker",
           "format": "table",
           "instant": true,
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Transaction Fee (Gwei) by Worker",
+      "title": "RTMR3 Registration Gas by Worker",
       "transformations": [
         {
           "id": "labelsToFields",
@@ -945,7 +945,7 @@
               "Value": 1
             },
             "renameByName": {
-              "Value": "Transaction Fee (Gwei)",
+              "Value": "Registration Gas",
               "worker": "Worker"
             }
           }
@@ -960,8 +960,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "decimals": 6,
-          "unit": "ether"
+          "decimals": 0,
+          "unit": "none"
         },
         "overrides": []
       },
@@ -990,14 +990,14 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "dfl_worker_cost_eth_by_worker",
+          "expr": "dfl_worker_registration_transaction_count_by_worker",
           "format": "table",
           "instant": true,
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Transaction Fee (ETH) by Worker",
+      "title": "RTMR3 Registration Receipts by Worker",
       "transformations": [
         {
           "id": "labelsToFields",
@@ -1021,7 +1021,7 @@
               "Value": 1
             },
             "renameByName": {
-              "Value": "Transaction Fee (ETH)",
+              "Value": "Registration Receipts",
               "worker": "Worker"
             }
           }
@@ -1036,8 +1036,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "decimals": 2,
-          "unit": "currencyEUR"
+          "decimals": 0,
+          "unit": "none"
         },
         "overrides": []
       },
@@ -1066,14 +1066,14 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "dfl_worker_cost_eur_by_worker",
+          "expr": "dfl_worker_gas_used_by_worker - dfl_worker_registration_gas_used_by_worker",
           "format": "table",
           "instant": true,
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "EUR Scenario Value by Worker",
+      "title": "Non-registration Gas by Worker",
       "transformations": [
         {
           "id": "labelsToFields",
@@ -1097,7 +1097,7 @@
               "Value": 1
             },
             "renameByName": {
-              "Value": "EUR Scenario Value",
+              "Value": "Non-registration Gas",
               "worker": "Worker"
             }
           }

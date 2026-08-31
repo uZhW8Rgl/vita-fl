@@ -73,7 +73,6 @@ resource "phala_app" "worker" {
       PRIVATE_KEY = var.workers[each.key].private_key
     },
     var.workers[each.key].device_id == 0 ? {
-      SELLO_SERVICE_SIGNING_SEED    = var.sello_tee_service_signing_seed
       SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
     } : {},
   )

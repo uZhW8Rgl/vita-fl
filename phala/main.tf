@@ -270,7 +270,6 @@ resource "phala_app" "contract_runtime" {
     }, var.dynamic_worker_inventory_chunks, var.enable_phala_control_api ? {
     PHALA_CLOUD_API_KEY            = var.phala_cloud_api_key
     CONTROL_ADMIN_TOKEN            = var.control_admin_token
-    SELLO_TEE_SERVICE_SIGNING_SEED = var.sello_tee_service_signing_seed
     SELLO_TOKEN_ISSUER_PUBLIC_KEY  = var.sello_token_issuer_public_key
     } : {}, var.enable_phala_ui ? {
     UI_BASIC_AUTH_USERNAME = var.ui_basic_auth_username
@@ -363,8 +362,7 @@ resource "phala_app" "dfl_worker" {
     sello_scitt_url                          = var.sello_scitt_url
   })
   env = {
-    PRIVATE_KEY                   = var.private_key
-    SELLO_SERVICE_SIGNING_SEED    = var.sello_tee_service_signing_seed
+    PRIVATE_KEY                    = var.private_key
     SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
   }
   size = var.worker_size

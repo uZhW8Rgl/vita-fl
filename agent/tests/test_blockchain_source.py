@@ -17,7 +17,9 @@ from agent.blockchain_source import (
     _decrypt_encrypted_bundle,
     decode_device_record,
     decode_finalized_model_bundle,
+    decode_sello_receiver_record,
     read_device_record,
+    read_sello_receiver,
     read_current_bundle_from_contract,
     verify_download_with_registry,
 )
@@ -88,6 +90,22 @@ def _encoded_device(
         _word(1 if authorized else 0)
         + b"".join(_word(offset) for offset in offsets)
         + b"".join(dynamic_values)
+    )
+    return "0x" + encoded.hex()
+
+
+def _encoded_sello_receiver(
+    *,
+    authorized: bool = True,
+    public_ip: str = "https://worker0-8080.example",
+    receipt_key: bytes = bytes.fromhex("55" * 32),
+) -> str:
+    endpoint = _dynamic_string(public_ip)
+    encoded = (
+        _word(1 if authorized else 0)
+        + _word(3 * 32)
+        + receipt_key
+        + endpoint
     )
     return "0x" + encoded.hex()
 
@@ -202,6 +220,46 @@ class FinalizedModelBundleTests(unittest.TestCase):
     def test_rejects_unauthorized_device_endpoint(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "not authorized"):
             decode_device_record(_encoded_device(authorized=False))
+
+    def test_decodes_atomic_sello_receiver_endpoint_and_key(self) -> None:
+        record = decode_sello_receiver_record(_encoded_sello_receiver())
+
+        self.assertTrue(record["authorized"])
+        self.assertEqual(record["public_ip"], "https://worker0-8080.example")
+        self.assertEqual(record["sello_receipt_key"], bytes.fromhex("55" * 32))
+
+    def test_reads_sello_receiver_with_one_atomic_call(self) -> None:
+        registry = "0x" + "22" * 20
+        participant = "0x" + "44" * 20
+        with (
+            patch("agent.blockchain_source.rpc_call", return_value=_encoded_sello_receiver()) as rpc,
+            patch(
+                "agent.blockchain_source.function_selector",
+                return_value="0x12345678",
+            ),
+        ):
+            record = read_sello_receiver("https://rpc.example", registry, participant)
+
+        self.assertEqual(record["sello_receipt_key"], bytes.fromhex("55" * 32))
+        rpc.assert_called_once_with(
+            "https://rpc.example",
+            "eth_call",
+            [
+                {
+                    "to": registry,
+                    "data": "0x12345678" + participant[2:].lower().rjust(64, "0"),
+                },
+                "latest",
+            ],
+        )
+
+    def test_sello_receiver_rejects_missing_authority_endpoint_or_key(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "not authorized"):
+            decode_sello_receiver_record(_encoded_sello_receiver(authorized=False))
+        with self.assertRaisesRegex(RuntimeError, "no registered endpoint"):
+            decode_sello_receiver_record(_encoded_sello_receiver(public_ip=""))
+        with self.assertRaisesRegex(RuntimeError, "no registered receipt key"):
+            decode_sello_receiver_record(_encoded_sello_receiver(receipt_key=bytes(32)))
 
 
 class HybridRAggregationEvidenceTests(unittest.TestCase):

@@ -83,14 +83,17 @@ class TeeInferenceEndpointTests(unittest.TestCase):
         with (
             patch.dict("os.environ", environment, clear=False),
             patch(
-                "agent.blockchain_source.read_device_record",
-                return_value={"public_ip": "https://worker0-8080.example"},
-            ) as read_device,
+                "agent.blockchain_source.read_sello_receiver",
+                return_value={
+                    "public_ip": "https://worker0-8080.example",
+                    "sello_receipt_key": bytes.fromhex("55" * 32),
+                },
+            ) as read_receiver,
         ):
             endpoint = resolve_tee_inference_url()
 
         self.assertEqual(endpoint, "https://worker0-8080.example")
-        read_device.assert_called_once_with(
+        read_receiver.assert_called_once_with(
             "https://runtime-8545.example",
             DEVICE_REGISTRY_ADDRESS,
             "0x" + "44" * 20,
@@ -106,8 +109,11 @@ class TeeInferenceEndpointTests(unittest.TestCase):
         with (
             patch.dict("os.environ", environment, clear=False),
             patch(
-                "agent.blockchain_source.read_device_record",
-                return_value={"public_ip": "http://worker0.example"},
+                "agent.blockchain_source.read_sello_receiver",
+                return_value={
+                    "public_ip": "http://worker0.example",
+                    "sello_receipt_key": bytes.fromhex("55" * 32),
+                },
             ),
             self.assertRaisesRegex(TeeInferenceVerificationError, "HTTPS"),
         ):

@@ -264,6 +264,7 @@ class SelloOwner:
         expected_action: str,
         action_input: bytes,
         action_output: bytes,
+        trusted_service_key: VerifyKey | bytes | None = None,
     ) -> VerifiedReceipt:
         tagged = _loads_canonical_cbor(envelope, "receipt")
         if not isinstance(tagged, cbor2.CBORTag) or tagged.tag != COSE_SIGN1_TAG:
@@ -276,7 +277,13 @@ class SelloOwner:
         headers = _loads_canonical_cbor(protected, "protected header")
         if headers.get(1) != COSE_ALG_EDDSA or headers.get(SELLO_VERSION_LABEL) != SELLO_VERSION:
             raise ReceiptVerificationError("receipt protected profile is unsupported")
-        service_key = self.service_keys.get(expected_service)
+        service_key = (
+            trusted_service_key
+            if isinstance(trusted_service_key, VerifyKey)
+            else VerifyKey(trusted_service_key)
+            if trusted_service_key is not None
+            else self.service_keys.get(expected_service)
+        )
         if service_key is None:
             raise ReceiptVerificationError("receiver service is absent from the trusted registry")
         kid = hashlib.sha256(bytes(service_key)).digest()[:16]

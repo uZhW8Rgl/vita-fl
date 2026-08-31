@@ -125,7 +125,6 @@ class WorkerDeploymentConfig:
     msg_broker_ip: str = "127.0.0.1"
     sello_required: bool = False
     sello_scitt_url: str = ""
-    sello_tee_service_signing_seed: str = ""
     sello_token_issuer_public_key: str = ""
 
     def terraform_values(self) -> dict[str, Any]:
@@ -723,10 +722,6 @@ def controller_from_environment() -> PhalaWorkerController:
         sello_required=os.environ.get("DYNAMIC_WORKER_SELLO_REQUIRED", "0").lower()
         in {"1", "true", "yes"},
         sello_scitt_url=os.environ.get("DYNAMIC_WORKER_SELLO_SCITT_URL", ""),
-        sello_tee_service_signing_seed=os.environ.get(
-            "DYNAMIC_WORKER_SELLO_TEE_SERVICE_SIGNING_SEED",
-            "",
-        ),
         sello_token_issuer_public_key=os.environ.get(
             "DYNAMIC_WORKER_SELLO_TOKEN_ISSUER_PUBLIC_KEY",
             "",

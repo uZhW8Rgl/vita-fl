@@ -873,26 +873,26 @@ export const getDeviceActionKey = async (address) => {
     const contract = new web3.eth.Contract(abi, device_registry_address);
     return String(await contract.methods.actionKeys(address).call());
 };
-export const isDeviceRegistrationCurrent = async (address, actionKey, publicIp, brokerIp, publicKeyBytesHex, canonicalAppCompose) => {
+export const isDeviceRegistrationCurrent = async (address, actionKey, publicIp, brokerIp, publicKeyBytesHex, selloReceiptKey, canonicalAppCompose) => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
     return Boolean(await contract.methods
-        .isDeviceRegistrationCurrent(address, actionKey, publicIp, brokerIp, publicKeyBytesHex, canonicalAppCompose)
+        .isDeviceRegistrationCurrent(address, actionKey, publicIp, brokerIp, publicKeyBytesHex, selloReceiptKey, canonicalAppCompose)
         .call());
 };
-export const getDeviceRegistrationReportData = async (address, actionKey, publicIp, brokerIp, publicKeyBytesHex, canonicalAppCompose) => {
+export const getDeviceRegistrationReportData = async (address, actionKey, publicIp, brokerIp, publicKeyBytesHex, selloReceiptKey, canonicalAppCompose) => {
     if (!device_registry_address) {
         throw new Error("REGISTRY_ADDRESS is required for TDX device registration");
     }
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
-    const reportData = await contract.methods.registrationReportData(address, actionKey, publicIp, brokerIp, publicKeyBytesHex, canonicalAppCompose).call();
+    const reportData = await contract.methods.registrationReportData(address, actionKey, publicIp, brokerIp, publicKeyBytesHex, selloReceiptKey, canonicalAppCompose).call();
     if (typeof reportData !== "string" || !/^0x[0-9a-fA-F]{128}$/.test(reportData)) {
         throw new Error("DeviceRegistry returned invalid registration REPORTDATA");
     }
     return reportData;
 };
-export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3EventLog, canonicalAppCompose, address, actionKey, publicIp, brokerIp, publicKeyBytesHex) => {
+export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3EventLog, canonicalAppCompose, address, actionKey, publicIp, brokerIp, publicKeyBytesHex, selloReceiptKey) => {
     if (!device_registry_address) {
         throw new Error("REGISTRY_ADDRESS is required for TDX device registration");
     }
@@ -906,10 +906,10 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3Ev
     if (signer.address.toLowerCase() !== String(actionKey || "").toLowerCase()) {
         throw new Error(`Live TEE action key ${signer.address} does not match requested action key ${actionKey}`);
     }
-    const enrollmentDigest = await contract.methods.enrollmentDigest(address, actionKey, canonicalAppCompose).call();
+    const enrollmentDigest = await contract.methods.enrollmentDigest(address, actionKey, selloReceiptKey, canonicalAppCompose).call();
     const participantAuthorization = signRawDigest(enrollmentDigest, bootstrapPrivateKey);
     const gasPrice = await web3.eth.getGasPrice();
-    const registration = contract.methods.registerDeviceWithAttestedAppCompose(quoteHex, rtmr3EventLog, canonicalAppCompose, address, actionKey, publicIp, brokerIp, publicKeyBytesHex, participantAuthorization);
+    const registration = contract.methods.registerDeviceWithAttestedAppCompose(quoteHex, rtmr3EventLog, canonicalAppCompose, address, actionKey, publicIp, brokerIp, publicKeyBytesHex, selloReceiptKey, participantAuthorization);
     const calldata = registration.encodeABI();
     const hexByteLength = (value) => {
         if (typeof value !== "string" || !/^0x[0-9a-fA-F]*$/.test(value) || value.length % 2 !== 0) {
@@ -990,7 +990,7 @@ export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3Ev
     try {
         const rawTransaction = await signer.signTransaction(tx);
         const receipt = await web3.eth.sendSignedTransaction(rawTransaction);
-        logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
+        logTransactionCost("worker", "rtmr3_registration", receipt, gasPrice);
         console.log("Transaction receipt: ", receipt);
         return receipt;
     }

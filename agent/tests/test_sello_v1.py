@@ -68,6 +68,25 @@ class SelloV1Tests(unittest.TestCase):
                 action_output=b'{"ok":true}',
             )
 
+    def test_explicit_admission_bound_key_overrides_static_service_registry(self) -> None:
+        owner = SelloOwner(
+            SigningKey(bytes.fromhex("22" * 32)),
+            bytes.fromhex("33" * 32),
+            {"tee-inference": SigningKey(bytes.fromhex("44" * 32)).verify_key},
+            subject="master-thesis-agent",
+            log_urls=["https://scitt.example"],
+        )
+        verified = owner.verify(
+            self.emit(),
+            self.token,
+            expected_service="tee-inference",
+            expected_action="fetch_latest_verified_tee_model_bundle",
+            action_input=b"{}",
+            action_output=b'{"ok":true}',
+            trusted_service_key=bytes(self.receiver_key.verify_key),
+        )
+        self.assertEqual(verified.kid, self.receiver.kid)
+
     def test_all_six_public_tool_actions_round_trip(self) -> None:
         actions = (
             "fetch_latest_verified_tee_model_bundle",

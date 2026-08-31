@@ -176,12 +176,6 @@ variable "sello_scitt_url" {
   default = ""
 }
 
-variable "sello_tee_service_signing_seed" {
-  type      = string
-  sensitive = true
-  default   = ""
-}
-
 variable "sello_token_issuer_public_key" {
   type      = string
   sensitive = true

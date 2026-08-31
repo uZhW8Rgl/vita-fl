@@ -252,8 +252,6 @@ configure_phala_agent() {
     TF_VAR_sello_owner_hpke_private_key=$(require_env_value "SELLO_OWNER_HPKE_PRIVATE_KEY")
     export TF_VAR_sello_token_issuer_public_key
     TF_VAR_sello_token_issuer_public_key=$(require_env_value "SELLO_TOKEN_ISSUER_PUBLIC_KEY")
-    export TF_VAR_sello_tee_service_signing_seed
-    TF_VAR_sello_tee_service_signing_seed=$(require_env_value "SELLO_TEE_SERVICE_SIGNING_SEED")
     export TF_VAR_sello_zk_service_signing_seed
     TF_VAR_sello_zk_service_signing_seed=$(require_env_value "SELLO_ZK_SERVICE_SIGNING_SEED")
     export TF_VAR_sello_service_registry

@@ -127,6 +127,17 @@ contract AppComposePolicyV2Test is Test {
             )
         );
 
+        vm.expectRevert(bytes("unsafe outer environment key"));
+        policy.identity(
+            bytes(
+                string.concat(
+                    '{"allowed_envs":["SELLO_SERVICE_SIGNING_SEED"],"docker_compose_file":"',
+                    _escapedCompose(),
+                    '","manifest_version":2,"runner":"docker-compose"}'
+                )
+            )
+        );
+
         vm.expectRevert(bytes("outer app compose field duplicated"));
         policy.identity(
             bytes(

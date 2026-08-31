@@ -116,16 +116,16 @@ AggregationPolicy reached through the compose-measured GMStorage contract.
 `EPOCH` and `ROUND` remain measured worker inputs.
 
 The Training Setup view can export the current evaluation and transaction-cost
-data as a ZIP archive of CSV tables. In Phala mode, the Control API merges the
-signed in-memory worker telemetry with CSV artifacts from the shared evaluation
-volume. The export includes exact gas-used and Wei totals, receipt-implied Gwei
-and ETH fees, and explicitly configured EUR or USD estimates. Optional
-Mainnet-reference estimates remain in separate fields; the corresponding gas
-price, exchange rates, source identifiers, and UTC observation times are passed
-from the selected Phala environment file. Configure them through
-`ETH_EUR_PRICE`, optional `ETH_USD_PRICE`, `EXCHANGE_RATE_SOURCE`,
-`EXCHANGE_RATE_TIMESTAMP_UTC`, and the analogous `REFERENCE_*` gas-price
-variables shown in `.env.phala.anvil.example`.
+data as a ZIP archive of CSV tables. In Phala mode, non-transaction runtime
+events remain signed in-memory telemetry, while every accepted receipt-derived
+worker transaction is synchronously persisted in the shared evaluation volume
+and de-duplicated by transaction hash. A new run clears that store before, not
+after, worker deployment. RTMR3 registration uses its own operation label, so
+Grafana exposes registration gas for every worker and a receipt-gap indicator
+that must remain zero against the configured run roster. The dashboards and
+evaluation reports surface gas as the sole resource accounting unit. Raw
+receipt fields remain in the export for auditability but are not presented as
+public-network prices.
 
 If you already keep the deployment values in repository-root env files, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
 
@@ -297,7 +297,7 @@ In this scaffold those values are wired into `resource "phala_app" "contract_run
 2. Copy the digest-pinned worker image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:98ce74bcee923ca73dae9ae4780e91dc1e2ba6c12ef47973a76f5533cb24b3b4
+ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:578e7fe9c5426c2ed92119a26bee4be54b664e93e6aa71bd91bf9af4fdb1b7b4
 ```
 
 3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
@@ -305,7 +305,7 @@ ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:98ce74bcee923ca73dae9ae4780e91d
 5. Copy the digest-pinned runtime image reference from the workflow summary:
 
 ```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:6cc436a7ddeb0edb06708d0292529f48fcdc6df55c22a9c8f9238cb12c4063b4
+ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b09465bb1c1dbd54b7ad527e1ec66c9c74463f600ea86e53fa65673501a394f0
 ```
 
 6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
@@ -515,7 +515,7 @@ digest-pinned references in `.env.phala.anvil`:
 
 ```dotenv
 ENABLE_PHALA_AGENT=true
-AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:337df28644a1db406cd34963cd0007e46266b3146333a911a6e3b76715ed96d3
+AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:78df895d7aa2637488da069e76a80f6d44842969e301d06e5cae0ce0fb8863ae
 TRANSPARENCY_LOG_IMAGE=ghcr.io/uzhw8rgl/master-thesis-transparency-log@sha256:4c6789921d5ff89e546c65c435bc19d479acc8248715dff3f5b1536e2c8af723
 ENABLE_OLLAMA=true
 OLLAMA_MODEL=qwen3:1.7b
@@ -530,7 +530,8 @@ Set `TEE_INFERENCE_URL_OVERRIDE` only to deliberately bypass that discovery for
 diagnostics.
 
 For receiver-attested confidential receipts on all six public MCP tools,
-generate the Sello key material once and add its output to `.env.phala.anvil`:
+generate the owner, issuer, and ZK-receiver key material once and add its
+output to `.env.phala.anvil`:
 
 ```bash
 python phala/generate_sello_env.py --scitt-url https://CONTRACT_APP_ID-8000s.dstack-REGION.phala.network
@@ -540,10 +541,16 @@ The trailing `s` selects dstack-gateway TLS passthrough, so Worker 0 and the
 separate ZK-inference CVM connect directly to SCITT-CCF's own TLS listener
 without an HTTP proxy.
 
-With `ENABLE_SELLO_RECEIPTS=true`, Terraform gives each inference receiver only
-its own signing seed and the token-issuer public key. The agent receives the
-owner token/HPKE private material and a public registry for both receivers. Each
-receiver registers its signed, owner-encrypted receipt directly with SCITT and
-releases the tool response only after verifying the inclusion receipt. Set
+With `ENABLE_SELLO_RECEIPTS=true`, the ZK receiver continues to receive its own
+operator-generated signing seed and remains in the owner's static service
+registry. Worker 0 does not receive a TEE-receiver seed. Its measured compose
+fixes `SELLO_SERVICE_KEY_PROVIDER=dstack`, and the receiver derives its
+domain-separated Ed25519 key inside the active dstack CVM. The token-issuer
+public key is the only Sello key material provisioned to Worker 0. The agent
+resolves the TEE receiver key through Worker 0's attested DeviceRegistry
+enrollment rather than through `SELLO_SERVICE_REGISTRY`.
+
+Each receiver registers its signed, owner-encrypted receipt directly with SCITT
+and releases the tool response only after verifying the inclusion receipt. Set
 `SELLO_SCITT_URL` to the contract-runtime app's public `-8000s` TLS-passthrough
 URL so both inference receivers can reach SCITT-CCF directly.

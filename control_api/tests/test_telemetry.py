@@ -8,6 +8,7 @@ import time
 import unittest
 import zipfile
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from eth_account import Account
@@ -140,6 +141,56 @@ class SignedTelemetryTests(unittest.TestCase):
             ]
         )
         self.assertEqual(exported[0]["gasUsed"], "21000")
+
+    def test_registration_gas_is_reported_explicitly_by_worker(self) -> None:
+        metrics: list[str] = []
+        server.append_transaction_cost_metrics(
+            metrics,
+            [
+                {
+                    "scope": "worker",
+                    "operation": "rtmr3_registration",
+                    "transactionHash": "0x" + "ab" * 32,
+                    "gasUsed": "78275279",
+                    "account": self.account.address,
+                    "deviceId": "0",
+                }
+            ],
+            expected_worker_count=2,
+        )
+
+        rendered = "\n".join(metrics)
+        self.assertIn("dfl_worker_registration_gas_used_total 78275279.0", rendered)
+        self.assertIn("dfl_worker_registration_transaction_count 1.0", rendered)
+        self.assertIn("dfl_worker_registration_gas_used_by_worker", rendered)
+        self.assertIn('worker="VM-0"', rendered)
+        self.assertIn("dfl_worker_registration_expected_count 2", rendered)
+        self.assertIn("dfl_worker_registration_receipt_gap 1", rendered)
+
+    def test_signed_transaction_cost_is_persisted_by_transaction_hash(self) -> None:
+        payload = self.payload()
+        payload["event"] = "worker.transaction_cost"
+        payload["attributes"] = {
+            "scope": "worker",
+            "operation": "rtmr3_registration",
+            "transactionHash": "0x" + "cd" * 32,
+            "gasUsed": "78275279",
+            "account": self.account.address.lower(),
+            "deviceId": "0",
+        }
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "worker_transaction_costs.csv"
+            with (
+                patch.dict(os.environ, {"DYNAMIC_WORKER_INVENTORY": self.inventory}),
+                patch.object(server, "WORKER_TRANSACTION_COST_CSV", path),
+            ):
+                server._record_telemetry(payload, self.signature(payload))
+                records = server.read_transaction_cost_records(path)
+                self.assertEqual(records[0]["transactionHash"], "0x" + "cd" * 32)
+                self.assertEqual(records[0]["operation"], "rtmr3_registration")
+                self.assertFalse(server.telemetry_transaction_cost_records(server._telemetry_snapshot()))
+                server.reset_runtime_telemetry()
+                self.assertFalse(path.exists())
 
     def test_round_progress_metrics_separate_successes_from_aborted_attempts(self) -> None:
         metrics: list[str] = []

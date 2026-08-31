@@ -220,7 +220,6 @@ class WorkerInventoryTests(unittest.TestCase):
             expected_chain_id=31337,
             sello_required=True,
             sello_scitt_url="https://scitt.example",
-            sello_tee_service_signing_seed="secret-service-seed",
             sello_token_issuer_public_key="issuer-public-key",
         )
 
@@ -228,7 +227,7 @@ class WorkerInventoryTests(unittest.TestCase):
 
         self.assertTrue(values["sello_required"])
         self.assertEqual(values["sello_scitt_url"], "https://scitt.example")
-        self.assertEqual(values["sello_tee_service_signing_seed"], "secret-service-seed")
+        self.assertNotIn("sello_tee_service_signing_seed", values)
 
     def test_terraform_diagnostics_are_redacted(self) -> None:
         private_key = "0x" + "ab" * 32

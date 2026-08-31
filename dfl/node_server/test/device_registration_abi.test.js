@@ -56,6 +56,7 @@ test("registration ABIs bind the logical participant to its TEE action key", () 
         { name: "_public_ip", type: "string" },
         { name: "_msg_broker_ip", type: "string" },
         { name: "_public_key", type: "bytes" },
+        { name: "selloReceiptKey", type: "bytes32" },
         { name: "canonicalAppCompose", type: "bytes" },
     ];
     assert.deepEqual(
@@ -70,6 +71,7 @@ test("registration ABIs bind the logical participant to its TEE action key", () 
             { name: "_public_ip", type: "string" },
             { name: "_msg_broker_ip", type: "string" },
             { name: "_public_key", type: "bytes" },
+            { name: "selloReceiptKey", type: "bytes32" },
             { name: "canonicalAppCompose", type: "bytes" },
         ],
     );
@@ -78,6 +80,7 @@ test("registration ABIs bind the logical participant to its TEE action key", () 
         [
             { name: "participant", type: "address" },
             { name: "actionKey", type: "address" },
+            { name: "selloReceiptKey", type: "bytes32" },
             { name: "canonicalAppCompose", type: "bytes" },
         ],
     );
@@ -92,12 +95,36 @@ test("registration ABIs bind the logical participant to its TEE action key", () 
             { name: "_public_ip", type: "string" },
             { name: "_msg_broker_ip", type: "string" },
             { name: "_public_key", type: "bytes" },
+            { name: "selloReceiptKey", type: "bytes32" },
             { name: "participantAuthorization", type: "bytes" },
         ],
     );
     assert.deepEqual(
         functionInputs(registryAbi, "actionKeys"),
         [{ name: "participant", type: "address" }],
+    );
+    assert.deepEqual(
+        functionInputs(registryAbi, "getSelloReceiver"),
+        [{ name: "participant", type: "address" }],
+    );
+    assert.deepEqual(
+        functionOutputs(registryAbi, "getSelloReceiver"),
+        [
+            { name: "authorized", type: "bool" },
+            { name: "publicIp", type: "string" },
+            { name: "selloReceiptKey", type: "bytes32" },
+        ],
+    );
+    assert.deepEqual(
+        functionInputs(registryAbi, "selloReceiptKeys"),
+        [{ name: "", type: "address" }],
+    );
+    assert.deepEqual(
+        eventInputs(registryAbi, "DeviceSelloReceiptKeyRegistered"),
+        [
+            { name: "device", type: "address", indexed: true },
+            { name: "selloReceiptKey", type: "bytes32", indexed: true },
+        ],
     );
 });
 

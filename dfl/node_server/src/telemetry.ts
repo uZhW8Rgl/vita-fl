@@ -6,6 +6,8 @@ const telemetryUrl = String(process.env.DFL_TELEMETRY_URL || "").replace(/\/+$/,
 const privateKey = String(process.env.PRIVATE_KEY || "");
 const accountAddress = String(process.env.ACCOUNT_ADDRESS || "").toLowerCase();
 const deviceId = String(process.env.DEVICE_ID || "");
+const deliveryAttempts = 5;
+const requestTimeoutMs = 3000;
 
 function canonicalValue(value) {
     if (Array.isArray(value)) return value.map(canonicalValue);
@@ -35,21 +37,44 @@ export async function emitTelemetryEvent(event, attributes = {}) {
     };
     const canonicalPayload = JSON.stringify(canonicalValue(payload));
     const signature = sign(canonicalPayload, privateKey).signature;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000);
-    try {
-        const response = await fetch(endpointUrl(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ payload, signature }),
-            signal: controller.signal,
-        });
-        if (!response.ok) {
-            console.warn(`Telemetry event ${event} was rejected with HTTP ${response.status}.`);
+    const envelope = JSON.stringify({ payload, signature });
+    for (let attempt = 1; attempt <= deliveryAttempts; attempt += 1) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+        try {
+            const response = await fetch(endpointUrl(), {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: envelope,
+                signal: controller.signal,
+            });
+            if (response.ok) return;
+            const responseBody = await response.text();
+            if (response.status === 400 && responseBody.includes("telemetry nonce was already used")) {
+                // The first request was committed but its response was lost.
+                return;
+            }
+            if (response.status < 500) {
+                console.warn(`Telemetry event ${event} was rejected with HTTP ${response.status}.`);
+                return;
+            }
+            if (attempt === deliveryAttempts) {
+                console.warn(
+                    `Telemetry event ${event} failed after ${deliveryAttempts} attempts with HTTP ${response.status}.`,
+                );
+            }
+        } catch (error) {
+            if (attempt === deliveryAttempts) {
+                console.warn(
+                    `Telemetry event ${event} could not be delivered after ${deliveryAttempts} attempts:`,
+                    error?.message || String(error),
+                );
+            }
+        } finally {
+            clearTimeout(timeout);
         }
-    } catch (error) {
-        console.warn(`Telemetry event ${event} could not be delivered:`, error?.message || String(error));
-    } finally {
-        clearTimeout(timeout);
+        if (attempt < deliveryAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, Math.min(250 * (2 ** (attempt - 1)), 2000)));
+        }
     }
 }

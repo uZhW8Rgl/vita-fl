@@ -8,6 +8,7 @@ from typing import Mapping
 
 from nacl.signing import SigningKey, VerifyKey
 
+from .dstack_key import tee_sello_signing_seed
 from .sello_v1 import ReceiptVerificationError, SelloOwner, SelloReceiver, b64url_decode, b64url_encode
 
 RECEIPT_HEADER = "X-Sello-Receipt"
@@ -30,6 +31,24 @@ def receiver_from_environment(service_id: str) -> SelloReceiver | None:
     seed = os.environ.get("SELLO_SERVICE_SIGNING_SEED", "")
     issuer = os.environ.get("SELLO_TOKEN_ISSUER_PUBLIC_KEY", "")
     required = os.environ.get("SELLO_REQUIRED", "0").lower() in {"1", "true", "yes"}
+    if service_id == "tee-inference":
+        if not issuer:
+            if required:
+                raise RuntimeError("Sello token issuer key is required but not configured")
+            return None
+        phala = os.environ.get("DOCKER", "").lower() == "phala"
+        provider = os.environ.get("SELLO_SERVICE_KEY_PROVIDER", "dstack" if phala else "env").lower()
+        if provider == "env" and not seed:
+            if required:
+                raise RuntimeError("Local Sello receiver key root is required but not configured")
+            return None
+        local_root = _key_bytes(seed, "SELLO_SERVICE_SIGNING_SEED") if provider == "env" else None
+        derived_seed = tee_sello_signing_seed(os.environ, local_root=local_root)
+        return SelloReceiver(
+            service_id,
+            derived_seed,
+            _key_bytes(issuer, "SELLO_TOKEN_ISSUER_PUBLIC_KEY"),
+        )
     if not seed or not issuer:
         if required:
             raise RuntimeError("Sello receiver keys are required but not configured")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -23,17 +24,80 @@ class ReceiverCall:
     service: str
     token: str
     action_input: bytes
+    trusted_service_key: bytes | None = None
+    receiver_origin: str | None = None
 
     @property
     def headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"}
 
 
-def begin_receiver_call(action: str, service: str, action_input: bytes) -> ReceiverCall | None:
+def _origin_only_url(value: str, name: str) -> str:
+    parts = urllib.parse.urlsplit(value.strip())
+    if (
+        parts.scheme != "https"
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+        or parts.path not in {"", "/"}
+    ):
+        raise RuntimeError(f"{name} must be an origin-only HTTPS URL")
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc.lower(), "", "", ""))
+
+
+def _registered_tee_receiver() -> tuple[str, bytes]:
+    try:
+        from .blockchain_source import read_sello_receiver
+    except ImportError:
+        from blockchain_source import read_sello_receiver
+
+    rpc_url = (os.environ.get("EXPECTED_RUNTIME_RPC_URL") or os.environ.get("RPC_URL") or "").strip()
+    registry_address = (
+        os.environ.get("EXPECTED_DEVICE_REGISTRY_ADDRESS")
+        or os.environ.get("REGISTRY_ADDRESS")
+        or ""
+    ).strip()
+    participant_address = (
+        os.environ.get("TEE_INFERENCE_PARTICIPANT_ADDRESS")
+        or os.environ.get("ACCOUNT_ADDRESS")
+        or ""
+    ).strip()
+    if not rpc_url or not registry_address or not participant_address:
+        raise RuntimeError("TEE Sello verification requires RPC, DeviceRegistry, and participant configuration")
+    record = read_sello_receiver(rpc_url, registry_address, participant_address)
+    return _origin_only_url(str(record["public_ip"]), "registered TEE receiver endpoint"), bytes(
+        record["sello_receipt_key"]
+    )
+
+
+def begin_receiver_call(
+    action: str,
+    service: str,
+    action_input: bytes,
+    *,
+    receiver_base_url: str | None = None,
+) -> ReceiverCall | None:
     owner = owner_from_environment()
     if owner is None:
         return None
-    return ReceiverCall(action=action, service=service, token=owner.token(), action_input=action_input)
+    trusted_service_key = None
+    receiver_origin = None
+    if service == "tee-inference":
+        if not receiver_base_url:
+            raise RuntimeError("TEE Sello verification requires the receiver URL before the call")
+        receiver_origin, trusted_service_key = _registered_tee_receiver()
+        if _origin_only_url(receiver_base_url, "TEE receiver endpoint") != receiver_origin:
+            raise RuntimeError("TEE receiver endpoint does not match its admission-bound DeviceRegistry record")
+    return ReceiverCall(
+        action=action,
+        service=service,
+        token=owner.token(),
+        action_input=action_input,
+        trusted_service_key=trusted_service_key,
+        receiver_origin=receiver_origin,
+    )
 
 
 def complete_receiver_call(
@@ -50,6 +114,11 @@ def complete_receiver_call(
     owner = owner_from_environment()
     if owner is None:
         raise RuntimeError("Sello owner configuration disappeared during a receiver call")
+    if call.receiver_origin is not None:
+        if not receiver_base_url:
+            raise RuntimeError("TEE receiver URL disappeared during a Sello-verified call")
+        if _origin_only_url(receiver_base_url, "TEE receiver endpoint") != call.receiver_origin:
+            raise RuntimeError("TEE receiver endpoint changed during a Sello-verified call")
     header = response_headers.get(RECEIPT_HEADER)
     envelope = decode_receipt_header(header)
     verified = owner.verify(
@@ -59,6 +128,7 @@ def complete_receiver_call(
         expected_action=call.action,
         action_input=call.action_input,
         action_output=response_body,
+        trusted_service_key=call.trusted_service_key,
     )
     expected_status = "success" if status_code < 400 else "error"
     if verified.body.get("result-status") != expected_status:

@@ -117,6 +117,7 @@ def function_selector(signature: str) -> str:
             "getLastRoundsAggregator()": "0x95f17aed",
             "getFinalizedModelBundle()": "0xfd419631",
             "getDevice(address)": "0x00d55318",
+            "getSelloReceiver(address)": "0xc045219d",
             "devices(address)": "0xe7b4cac6",
         }
         if signature not in selectors:
@@ -239,6 +240,40 @@ def decode_device_public_key(hex_data: str) -> bytes:
     return bytes(decode_device_record(hex_data)["public_key_der"])
 
 
+def decode_sello_receiver_record(hex_data: str) -> dict[str, Any]:
+    """Decode DeviceRegistry.getSelloReceiver(address) without trusting extra fields.
+
+    The contract getter returns one atomic snapshot containing the authorization
+    decision, HTTPS endpoint, and the 32-byte receipt verification key.  Keeping
+    these values in one call prevents the agent from pairing a key from one
+    registration with an endpoint from another.
+    """
+
+    data = bytes.fromhex(hex_data.removeprefix("0x"))
+    head_size = 3 * 32
+    if len(data) < head_size:
+        raise RuntimeError(f"Cannot decode Sello receiver tuple from short result: {hex_data}")
+    authorized_word = _read_word(data, 0)
+    if authorized_word not in {0, 1}:
+        raise RuntimeError("Sello receiver tuple contains a non-canonical authorization flag.")
+    if authorized_word != 1:
+        raise RuntimeError("Sello receiver is not authorized in DeviceRegistry.")
+    try:
+        public_ip = _decode_dynamic_bytes(data, 1, minimum_offset=head_size).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("Sello receiver tuple contains a non-UTF-8 endpoint.") from exc
+    if not public_ip:
+        raise RuntimeError("Authorized Sello receiver has no registered endpoint.")
+    sello_receipt_key = bytes(data[2 * 32 : 3 * 32])
+    if sello_receipt_key == b"\x00" * 32:
+        raise RuntimeError("Authorized Sello receiver has no registered receipt key.")
+    return {
+        "authorized": True,
+        "public_ip": public_ip,
+        "sello_receipt_key": sello_receipt_key,
+    }
+
+
 def encode_address_arg(address: str) -> str:
     if not re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
         raise RuntimeError(f"Invalid address argument: {address!r}")
@@ -290,6 +325,30 @@ def read_device_record(
         ],
     )
     return decode_device_record(result)
+
+
+def read_sello_receiver(
+    rpc_url: str,
+    registry_address: str,
+    participant_address: str,
+) -> dict[str, Any]:
+    if not re.fullmatch(r"0x[a-fA-F0-9]{40}", registry_address):
+        raise RuntimeError(f"Invalid REGISTRY_ADDRESS: {registry_address!r}")
+    if not re.fullmatch(r"0x[a-fA-F0-9]{40}", participant_address):
+        raise RuntimeError(f"Invalid Sello receiver participant address: {participant_address!r}")
+    result = rpc_call(
+        rpc_url,
+        "eth_call",
+        [
+            {
+                "to": registry_address,
+                "data": function_selector("getSelloReceiver(address)")
+                + encode_address_arg(participant_address),
+            },
+            "latest",
+        ],
+    )
+    return decode_sello_receiver_record(result)
 
 
 def validate_contract_addresses(gm_storage_address: str, registry_address: str | None = None) -> None:

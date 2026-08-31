@@ -3,7 +3,7 @@ services:
     # Replace the digest after running the "Publish DFL Worker Image" workflow.
     # The digest-pinned image reference is what becomes part of the measured
     # Phala/dstack application configuration.
-    image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:98ce74bcee923ca73dae9ae4780e91dc1e2ba6c12ef47973a76f5533cb24b3b4
+    image: ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:578e7fe9c5426c2ed92119a26bee4be54b664e93e6aa71bd91bf9af4fdb1b7b4
     restart: unless-stopped
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
@@ -85,7 +85,7 @@ services:
       TEE_JOB_DIR: /tmp/tee-inference/jobs
       CHESTMNIST_TEST_DATA: /dfl/config/chestmnist/test_data/test-data.npz
       SELLO_REQUIRED: "1"
-      SELLO_SERVICE_SIGNING_SEED: "${SELLO_SERVICE_SIGNING_SEED}"
+      SELLO_SERVICE_KEY_PROVIDER: "dstack"
       SELLO_TOKEN_ISSUER_PUBLIC_KEY: "${SELLO_TOKEN_ISSUER_PUBLIC_KEY}"
       SCITT_URL: "REPLACE_WITH_SCITT_TLS_URL"
       SCITT_DEVELOPMENT: "1"

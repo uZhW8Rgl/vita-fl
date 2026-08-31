@@ -8,6 +8,7 @@ import { getCurrentModel, getFileFromIPFS, updateGM } from "./ipfs.js";
 import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
 import { loadParticipantKey, materializeParticipantPrivateKey, PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH, } from "./participant_key.js";
 import { loadParticipantActionSigner, } from "./action_key.js";
+import { loadSelloReceiptPublicKey } from "./sello_key.js";
 import { HYBRID_R_V1_HASH } from "./protocol_digest.js";
 import { dstackHttpsEndpoint } from "./runtime_endpoints.js";
 import fs from 'fs/promises';
@@ -39,6 +40,7 @@ const participantPrivateKeyRuntimePath = process.env.PARTICIPANT_PRIVATE_KEY_RUN
     PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH;
 let activeParticipantKey;
 let activeParticipantActionSigner;
+let activeSelloReceiptPublicKey;
 let localTdxRegistrationDone = false;
 const timingConfig = deriveTimingConfig(process.env);
 const gmUpdateTimeoutMs = timingConfig.gmUpdateTimeoutMs;
@@ -438,6 +440,14 @@ function ownModelUploadEndpoint(appId) {
 }
 function teeInferenceEnabled() {
     return /^(?:1|true|yes)$/i.test(String(process.env.TEE_INFERENCE_ENABLED || '').trim());
+}
+function currentSelloReceiptKey() {
+    if (!teeInferenceEnabled())
+        return ZERO_BYTES32;
+    if (!Buffer.isBuffer(activeSelloReceiptPublicKey) || activeSelloReceiptPublicKey.length !== 32) {
+        throw new Error("TEE inference is enabled but its app-bound Sello receipt key is unavailable.");
+    }
+    return `0x${activeSelloReceiptPublicKey.toString("hex")}`;
 }
 function ownTeeInferenceEndpoint(appId) {
     return dstackHttpsEndpoint({
@@ -1209,14 +1219,14 @@ async function receivedWorkerModelFiles() {
     }
     return files.sort((a, b) => a.name.localeCompare(b.name));
 }
-async function hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, canonicalAppCompose) {
+async function hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, selloReceiptKey, canonicalAppCompose) {
     const accountAddress = process.env.ACCOUNT_ADDRESS;
     if (!accountAddress)
         return false;
     const registeredActionKey = await getDeviceActionKey(accountAddress);
     if (/^0x0{40}$/i.test(registeredActionKey))
         return false;
-    const current = await isDeviceRegistrationCurrent(accountAddress, activeParticipantActionSigner?.address, publicIp, brokerIp, publicKey, canonicalAppCompose);
+    const current = await isDeviceRegistrationCurrent(accountAddress, activeParticipantActionSigner?.address, publicIp, brokerIp, publicKey, selloReceiptKey, canonicalAppCompose);
     if (current)
         return true;
     throw new Error("Participant already has a different on-chain device registration; "
@@ -1243,15 +1253,16 @@ async function registerWithLocalTdxMock() {
     }), 'utf8');
     const canonicalAppComposeHex = `0x${canonicalAppCompose.toString('hex')}`;
     const publicKey = rsaPublicKeyDerHex();
+    const selloReceiptKey = currentSelloReceiptKey();
     const publicIp = process.env.PUBLIC_IP || '';
     const brokerIp = process.env.MSG_BROKER_IP || '';
-    if (await hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, canonicalAppComposeHex)) {
+    if (await hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, selloReceiptKey, canonicalAppComposeHex)) {
         console.log('Device already has a bound registration for the current RSA key; reusing it.');
         return;
     }
-    const reportData = await getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey, canonicalAppComposeHex);
+    const reportData = await getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey, selloReceiptKey, canonicalAppComposeHex);
     console.warn('Registering through the LOCAL-ONLY mock TDX verifier; this is not a hardware attestation.');
-    await registerDeviceWithTeeQuoteAndRtmr3Events(reportData, [{ eventType: 0x08000001, eventName: 'compose-hash', eventPayload: `0x${'00'.repeat(32)}` }], canonicalAppComposeHex, process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey);
+    await registerDeviceWithTeeQuoteAndRtmr3Events(reportData, [{ eventType: 0x08000001, eventName: 'compose-hash', eventPayload: `0x${'00'.repeat(32)}` }], canonicalAppComposeHex, process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey, selloReceiptKey);
     console.log('Device registered with bound local mock REPORTDATA.');
 }
 function decodeEventBytes(rawValue) {
@@ -1554,19 +1565,20 @@ const stateMachine = async () => {
     const trainingWasCompleteAtStartup = completedRoundsAtStartup >= targetRound();
     if (process.env.DOCKER === "phala") {
         const publicKey = rsaPublicKeyDerHex();
+        const selloReceiptKey = currentSelloReceiptKey();
         const liveIdentity = await currentPhalaIdentity();
         const publicIp = teeInferenceEnabled()
             ? ownTeeInferenceEndpoint(liveIdentity.appId)
             : process.env.PUBLIC_IP || "";
         const brokerIp = process.env.MSG_BROKER_IP || "";
-        if (await hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, liveIdentity.canonicalAppCompose)) {
+        if (await hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, selloReceiptKey, liveIdentity.canonicalAppCompose)) {
             console.log('Device already has a bound registration for the current RSA key; reusing it.');
         }
         else {
             console.log("Fetching TDX Quote ...");
-            const { quoteHex, rtmr3EventLog, canonicalAppCompose } = await fetchLivePhalaQuote(async (identity) => getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey, identity.canonicalAppCompose));
+            const { quoteHex, rtmr3EventLog, canonicalAppCompose } = await fetchLivePhalaQuote(async (identity) => getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey, selloReceiptKey, identity.canonicalAppCompose));
             console.log(`Registering with live Phala TDX quote, canonical app_compose and ${rtmr3EventLog.length} RTMR3 events ...`);
-            await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventLog, canonicalAppCompose, process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey);
+            await registerDeviceWithTeeQuoteAndRtmr3Events(quoteHex, rtmr3EventLog, canonicalAppCompose, process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey, selloReceiptKey);
             console.log("Device registered with onchain TDX quote and RTMR3 event replay verification.");
         }
     }
@@ -2444,6 +2456,18 @@ async function runService() {
             logicalParticipant: process.env.ACCOUNT_ADDRESS,
         });
         await fundParticipantActionKey();
+        if (teeInferenceEnabled()) {
+            activeSelloReceiptPublicKey = await loadSelloReceiptPublicKey();
+            console.log("TEE Sello receipt key initialized and will be bound by DCAP admission.", {
+                publicKeySha256: crypto
+                    .createHash("sha256")
+                    .update(activeSelloReceiptPublicKey)
+                    .digest("hex"),
+            });
+        }
+        else {
+            activeSelloReceiptPublicKey = undefined;
+        }
         activeParticipantKey = await loadParticipantKey();
         await materializeParticipantPrivateKey(activeParticipantKey);
         console.log("Participant RSA key initialized inside the application TEE.", {
@@ -2469,6 +2493,7 @@ async function runService() {
         }
         activeParticipantActionSigner?.destroy();
         activeParticipantActionSigner = undefined;
+        activeSelloReceiptPublicKey = undefined;
         activeParticipantKey = undefined;
         if (retainParticipantPrivateKeyForInference) {
             console.log("Retaining the runtime participant private key for the co-located TEE inference receiver.");
@@ -2497,6 +2522,7 @@ async function shutdown(signal) {
     finally {
         activeParticipantActionSigner?.destroy();
         activeParticipantActionSigner = undefined;
+        activeSelloReceiptPublicKey = undefined;
         activeParticipantKey = undefined;
         if (teeInferenceEnabled()) {
             console.log("Leaving runtime participant-key cleanup to the combined-service supervisor.");

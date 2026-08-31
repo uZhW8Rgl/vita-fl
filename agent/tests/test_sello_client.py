@@ -21,14 +21,33 @@ class SelloClientTests(unittest.TestCase):
             "SELLO_REQUIRED": "1",
             "SELLO_TOKEN_ISSUER_SIGNING_SEED": b64url_encode(bytes(issuer)),
             "SELLO_OWNER_HPKE_PRIVATE_KEY": b64url_encode(bytes.fromhex("43" * 32)),
-            "SELLO_SERVICE_REGISTRY": json.dumps({"tee-inference": b64url_encode(bytes(service.verify_key))}),
+            "SELLO_SERVICE_REGISTRY": json.dumps({"zk-inference": b64url_encode(bytes.fromhex("44" * 32))}),
             "SELLO_LOG_URLS": "https://scitt.example",
+            "EXPECTED_RUNTIME_RPC_URL": "https://runtime-8545.example",
+            "EXPECTED_DEVICE_REGISTRY_ADDRESS": "0x" + "11" * 20,
+            "TEE_INFERENCE_PARTICIPANT_ADDRESS": "0x" + "12" * 20,
         }
         action_input = b'{"index":0}'
         action_output = b'{"ok":true}'
-        with patch.dict(os.environ, environment, clear=False):
-            call = begin_receiver_call("generate_random_tee_chestmnist_image", "tee-inference", action_input)
+        with (
+            patch.dict(os.environ, environment, clear=False),
+            patch(
+                "agent.blockchain_source.read_sello_receiver",
+                return_value={
+                    "authorized": True,
+                    "public_ip": "https://worker0-8080.example",
+                    "sello_receipt_key": bytes(service.verify_key),
+                },
+            ) as read_receiver,
+        ):
+            call = begin_receiver_call(
+                "generate_random_tee_chestmnist_image",
+                "tee-inference",
+                action_input,
+                receiver_base_url="https://worker0-8080.example",
+            )
             self.assertIsNotNone(call)
+            self.assertEqual(call.trusted_service_key, bytes(service.verify_key))
             receiver = SelloReceiver("tee-inference", service, issuer.verify_key)
             envelope = receiver.issue(
                 call.token,
@@ -55,11 +74,44 @@ class SelloClientTests(unittest.TestCase):
                     },
                     action_output,
                     200,
+                    receiver_base_url="https://worker0-8080.example",
                     publication_bundle=b"receiver-published-bundle",
                 )
+        read_receiver.assert_called_once()
         verify_log.assert_called_once_with(envelope, b"receiver-published-bundle")
         self.assertEqual(result["transaction_id"], "2.1")
         self.assertEqual(result["transparency_record_id"], "record-1")
+
+    def test_tee_call_rejects_endpoint_not_paired_with_registry_key(self) -> None:
+        issuer = SigningKey(bytes.fromhex("51" * 32))
+        environment = {
+            "SELLO_REQUIRED": "1",
+            "SELLO_TOKEN_ISSUER_SIGNING_SEED": b64url_encode(bytes(issuer)),
+            "SELLO_OWNER_HPKE_PRIVATE_KEY": b64url_encode(bytes.fromhex("52" * 32)),
+            "SELLO_SERVICE_REGISTRY": json.dumps({"zk-inference": b64url_encode(bytes.fromhex("53" * 32))}),
+            "SELLO_LOG_URLS": "https://scitt.example",
+            "EXPECTED_RUNTIME_RPC_URL": "https://runtime-8545.example",
+            "EXPECTED_DEVICE_REGISTRY_ADDRESS": "0x" + "11" * 20,
+            "TEE_INFERENCE_PARTICIPANT_ADDRESS": "0x" + "12" * 20,
+        }
+        with (
+            patch.dict(os.environ, environment, clear=False),
+            patch(
+                "agent.blockchain_source.read_sello_receiver",
+                return_value={
+                    "authorized": True,
+                    "public_ip": "https://registered.example",
+                    "sello_receipt_key": bytes.fromhex("54" * 32),
+                },
+            ),
+            self.assertRaisesRegex(RuntimeError, "does not match"),
+        ):
+            begin_receiver_call(
+                "run_and_verify_tee_inference",
+                "tee-inference",
+                b"input",
+                receiver_base_url="https://other.example",
+            )
 
 
 if __name__ == "__main__":

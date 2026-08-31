@@ -1,0 +1,73 @@
+{
+  "skill": "run_and_verify_tee_inference",
+  "stage": "verified-and-transparency-logged",
+  "ok": true,
+  "endpoint": "https://f243e6c910016de83e347f1526df1efa7cad8250-8080.dstack-pha-prod9.phala.network",
+  "job_id": "8e96d0955427a60ca8bbd6165cf5ecd9",
+  "sample_index": 19963,
+  "ground_truth": [],
+  "predicted_labels": [],
+  "probabilities": {
+    "atelectasis": 0.2685356939383946,
+    "cardiomegaly": 0.0407862753053486,
+    "effusion": 0.19605545022173304,
+    "infiltration": 0.3045771838988074,
+    "mass": 0.1701454916258561,
+    "nodule": 0.21498840097368246,
+    "pneumonia": 0.036273214707348865,
+    "pneumothorax": 0.12909983259809646,
+    "consolidation": 0.15154966982551407,
+    "edema": 0.09309002770403062,
+    "emphysema": 0.030600693757967156,
+    "fibrosis": 0.016842128869874528,
+    "pleural": 0.04761379434667641,
+    "hernia": 0.0004544341481369349
+  },
+  "evidence_path": "/tmp/tee-inference/8e96d0955427a60ca8bbd6165cf5ecd9/evidence.cbor",
+  "verification": {
+    "verification_scope": "air-signature-reportdata-rtmr3-compose-image-contract-endpoint-trust-root-policy",
+    "dcap_collateral_verified": false,
+    "manifest_sha256": "f5ca912a892bb3723fc736ee7270d9f9c092b0fcfed76accbc9b2cd58425f53d",
+    "model_id": "master-thesis/chestmnist-dfl",
+    "model_version": "round-25",
+    "image_reference": "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:578e7fe9c5426c2ed92119a26bee4be54b664e93e6aa71bd91bf9af4fdb1b7b4",
+    "quote_sha256": "250047376aa4e7d637799d396df989508a2747ac2d6955974a60515266b8ccc9",
+    "quote_bytes": 5010,
+    "reportdata": "691d37cdc95f353b087a0d74e46e8935fdb239864efac7567b3cd6f4c2f7633f9546681e3fde261441aec993e2a5ce46c2a53f056c8166afd38bf3106e6ddd1b",
+    "rtmr3": "1fc64e53a7a711f1118dd7fdd3c87b3ab786333d5aecd71927c72f5b42108e9763bcdf1bda60a66c18ca2903ea2adb51",
+    "rtmr3_event_count": 10,
+    "air_sequence": 1,
+    "duration_microseconds": 5218,
+    "bundle_sha256": "c18f32c9fe9de26c5b280a20f49a15656f1b54fe640eaa98fea49d2ca32fec82"
+  },
+  "transparency_log": {
+    "status": "registered-and-receipt-verified",
+    "service_url": "https://transparency-log:8000",
+    "development_tls": true,
+    "content_type": "application/vnd.master-thesis.tee-inference-evidence+cbor",
+    "transaction_id": "2.20",
+    "evidence_sha256": "c18f32c9fe9de26c5b280a20f49a15656f1b54fe640eaa98fea49d2ca32fec82",
+    "signed_statement_sha256": "380783498255072209359fee270a9e436b73faa89fbae6d946d91fd02abce98e",
+    "transparent_statement_sha256": "7d8e5426520c90ef5d850222a9c2b128f4f3a376e2a3cc5cdef44cb37b281629",
+    "transparent_statement_bytes": 37088,
+    "transparent_statement_path": "/tmp/tee-inference/8e96d0955427a60ca8bbd6165cf5ecd9/transparent-statement.cose",
+    "receipts": [
+      {
+        "iss": "localhost:8000",
+        "iat": 1788093306,
+        "sigtxid": "2.21",
+        "regtxid": "2.20"
+      }
+    ]
+  },
+  "transparency_record_id": "4eae5e2130ef5de118acfffe6e7e7870c59a6d0dea576d516d6cb52559dbeb7c",
+  "tool_receipt": {
+    "status": "receiver-published-and-scitt-receipt-verified",
+    "action": "run_and_verify_tee_inference",
+    "receiver": "tee-inference",
+    "call_id": "8d7f27816a1555ba7db1b3fb67bf4e924607f8f69d63b044507c3227676c8a43",
+    "receiver_receipt_sha256": "831f0a24e641c388993996503110567597df04c455ffc8899b4fe13a754ac248",
+    "transaction_id": "2.18",
+    "transparency_record_id": "7e4af7bbd5cc40fb160f7d30ec3aae5afea55d7fa9ab7eb57afd51413de0c721"
+  }
+}

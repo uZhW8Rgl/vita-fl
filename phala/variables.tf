@@ -151,13 +151,6 @@ variable "sello_token_issuer_public_key" {
   default     = ""
 }
 
-variable "sello_tee_service_signing_seed" {
-  description = "Encrypted-env 32-byte Ed25519 seed held by the TEE inference receiver."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "sello_zk_service_signing_seed" {
   description = "Encrypted-env 32-byte Ed25519 seed held by the ZK inference receiver."
   type        = string
@@ -166,7 +159,7 @@ variable "sello_zk_service_signing_seed" {
 }
 
 variable "sello_service_registry" {
-  description = "JSON map from receiver service IDs to their base64url or hexadecimal Ed25519 public keys."
+  description = "JSON map for static non-TEE receiver public keys, currently the ZK inference receiver."
   type        = string
   default     = "{}"
 }
@@ -185,7 +178,7 @@ variable "sello_scitt_url" {
 variable "agent_image" {
   description = "Digest-pinned LLM/MCP agent image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:337df28644a1db406cd34963cd0007e46266b3146333a911a6e3b76715ed96d3"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:78df895d7aa2637488da069e76a80f6d44842969e301d06e5cae0ce0fb8863ae"
 
   validation {
     condition = (
@@ -347,7 +340,7 @@ variable "enable_phala_control_api" {
 variable "control_api_image" {
   description = "Digest-pinned Control API image containing the dynamic worker Terraform module."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:2329c655f5ff199359b7ee631ad7a4a78a4fef27083efd0642af156cbe87fcdd"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:92c8b24644084df308cda84c1d28bc2c2f1c8beb86ab9dc1e099733d19e8c350"
 
   validation {
     condition = (
@@ -387,7 +380,7 @@ variable "enable_phala_ui" {
 variable "ui_image" {
   description = "Digest-pinned browser UI image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:cfa6bf74771b4b16e3bf928ff9f3d7066e924ec728875dbc05cda9e312389a22"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:f01a75934d3e6c1b1aa784d1faa80a4f05b1e97264ca509bdd3255f66fe014a7"
 
   validation {
     condition = (
@@ -665,13 +658,13 @@ variable "ssh_public_key_path" {
 variable "worker_image" {
   description = "Digest-pinned DFL worker container image."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:98ce74bcee923ca73dae9ae4780e91dc1e2ba6c12ef47973a76f5533cb24b3b4"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:578e7fe9c5426c2ed92119a26bee4be54b664e93e6aa71bd91bf9af4fdb1b7b4"
 }
 
 variable "smart_contracts_image" {
   description = "Container image for the smart-contract initialization service."
   type        = string
-  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:6cc436a7ddeb0edb06708d0292529f48fcdc6df55c22a9c8f9238cb12c4063b4"
+  default     = "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b09465bb1c1dbd54b7ad527e1ec66c9c74463f600ea86e53fa65673501a394f0"
 }
 
 variable "zk_inference_image" {

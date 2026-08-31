@@ -39,6 +39,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
     string private constant IMAGE_HEX = "4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553";
     string private constant PUBLIC_IP = "https://worker.example";
     string private constant BROKER_IP = "tcp://worker.example:5555";
+    bytes32 private constant SELLO_RECEIPT_KEY = 0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff;
 
     function setUp() public {
         (worker, workerPrivateKey) = makeAddrAndKey("worker");
@@ -67,6 +68,28 @@ contract DeviceRegistryAttestationBindingTest is Test {
         );
     }
 
+    function testRegistrationAndEnrollmentDomainsAreVersionSix() public view {
+        assertEq(registry.REGISTRATION_REPORT_DATA_DOMAIN(), keccak256("MasterThesis.DeviceRegistry.registration.v6"));
+        assertEq(
+            registry.ENROLLMENT_TYPEHASH(),
+            keccak256(
+                "Enrollment(address participant,address actionKey,bytes32 composeHash,bytes32 selloReceiptKey,uint256 nonce)"
+            )
+        );
+        assertEq(
+            registry.domainSeparator(),
+            keccak256(
+                abi.encode(
+                    registry.EIP712_DOMAIN_TYPEHASH(),
+                    keccak256("VITA-FL DeviceRegistry"),
+                    keccak256("6"),
+                    block.chainid,
+                    address(registry)
+                )
+            )
+        );
+    }
+
     function testRegistersOnlyWithBoundAppComposeEvidence() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
         assertEq(reportData.length, 64);
@@ -86,9 +109,72 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertEq(registry.registrationNonces(worker), 1);
         assertEq(registry.actionKeyForParticipant(worker), actionKey);
         assertEq(registry.participantForActionKey(actionKey), worker);
+        assertEq(registry.selloReceiptKeys(worker), SELLO_RECEIPT_KEY);
         assertEq(registry.resolveAuthorizedParticipant(actionKey), worker);
         assertTrue(registry.runRosterFrozen());
         assertEq(registry.registeredRunMemberCount(), 1);
+
+        (bool receiverAuthorized, string memory receiverPublicIp, bytes32 receiverKey) =
+            registry.getSelloReceiver(worker);
+        assertTrue(receiverAuthorized);
+        assertEq(receiverPublicIp, PUBLIC_IP);
+        assertEq(receiverKey, SELLO_RECEIPT_KEY);
+    }
+
+    function testSelloReceiverResolutionFailsClosed() public {
+        vm.expectRevert(bytes("run roster not frozen"));
+        registry.getSelloReceiver(worker);
+
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        _register(registry, reportData, appCompose, publicKey);
+
+        vm.expectRevert(bytes("not bootstrap worker"));
+        registry.getSelloReceiver(attacker);
+    }
+
+    function testBootstrapWorkerRequiresSelloReceiptKeyAndOtherWorkersForbidIt() public {
+        DeviceRegistry roleRegistry = new DeviceRegistry(keccak256("role-bound sello deployment"));
+        roleRegistry.setTdxV4Attestation(address(verifier));
+        roleRegistry.setExpectedWorkerImageDigest(imageDigest);
+        roleRegistry.setWorkerPolicyHashAllowed(roleRegistry.workerPolicyHash(appCompose), true);
+        address[] memory roster = new address[](2);
+        roster[0] = worker;
+        roster[1] = attacker;
+        roleRegistry.commitRunRoster(roster);
+
+        vm.expectRevert(bytes("bootstrap sello receiver key required"));
+        roleRegistry.registrationReportData(worker, actionKey, PUBLIC_IP, BROKER_IP, publicKey, bytes32(0), appCompose);
+
+        address attackerActionKey = makeAddr("attacker-action-key");
+        bytes memory trainingOnlyReportData = roleRegistry.registrationReportData(
+            attacker, attackerActionKey, PUBLIC_IP, BROKER_IP, publicKey, bytes32(0), appCompose
+        );
+        assertEq(trainingOnlyReportData.length, 64);
+
+        vm.expectRevert(bytes("non-bootstrap sello receiver key forbidden"));
+        roleRegistry.registrationReportData(
+            attacker, attackerActionKey, PUBLIC_IP, BROKER_IP, publicKey, SELLO_RECEIPT_KEY, appCompose
+        );
+    }
+
+    function testDeregistrationDeletesSelloReceiptKeyBeforeRosterFreeze() public {
+        DeviceRegistry mutableRegistry = new DeviceRegistry(keccak256("mutable sello deployment"));
+        mutableRegistry.setTdxV4Attestation(address(verifier));
+        mutableRegistry.setExpectedWorkerImageDigest(imageDigest);
+        mutableRegistry.setWorkerPolicyHashAllowed(mutableRegistry.workerPolicyHash(appCompose), true);
+        address[] memory roster = new address[](2);
+        roster[0] = worker;
+        roster[1] = attacker;
+        mutableRegistry.commitRunRoster(roster);
+
+        bytes memory reportData = _reportData(mutableRegistry, appCompose, publicKey);
+        _register(mutableRegistry, reportData, appCompose, publicKey);
+        assertEq(mutableRegistry.selloReceiptKeys(worker), SELLO_RECEIPT_KEY);
+        assertFalse(mutableRegistry.runRosterFrozen());
+
+        vm.prank(actionKey);
+        mutableRegistry.deregisterDevice();
+        assertEq(mutableRegistry.selloReceiptKeys(worker), bytes32(0));
     }
 
     function testRegistrationRequiresOwnerCommittedExactRunRoster() public {
@@ -237,15 +323,24 @@ contract DeviceRegistryAttestationBindingTest is Test {
         vm.prank(actionKey);
         _register(registry, reportData, appCompose, publicKey);
 
-        assertTrue(registry.isDeviceRegistrationCurrent(worker, actionKey, PUBLIC_IP, BROKER_IP, publicKey, appCompose));
-        assertFalse(
+        assertTrue(
             registry.isDeviceRegistrationCurrent(
-                worker, actionKey, "https://replacement.example", BROKER_IP, publicKey, appCompose
+                worker, actionKey, PUBLIC_IP, BROKER_IP, publicKey, SELLO_RECEIPT_KEY, appCompose
             )
         );
         assertFalse(
             registry.isDeviceRegistrationCurrent(
-                worker, actionKey, PUBLIC_IP, "tcp://replacement.example:5555", publicKey, appCompose
+                worker, actionKey, "https://replacement.example", BROKER_IP, publicKey, SELLO_RECEIPT_KEY, appCompose
+            )
+        );
+        assertFalse(
+            registry.isDeviceRegistrationCurrent(
+                worker, actionKey, PUBLIC_IP, "tcp://replacement.example:5555", publicKey, SELLO_RECEIPT_KEY, appCompose
+            )
+        );
+        assertFalse(
+            registry.isDeviceRegistrationCurrent(
+                worker, actionKey, PUBLIC_IP, BROKER_IP, publicKey, bytes32(uint256(1)), appCompose
             )
         );
     }
@@ -445,7 +540,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
 
     function testEnrollmentRequiresLogicalParticipantSignature() public {
         bytes memory reportData = _reportData(registry, appCompose, publicKey);
-        bytes32 digest = registry.enrollmentDigest(worker, actionKey, appCompose);
+        bytes32 digest = registry.enrollmentDigest(worker, actionKey, SELLO_RECEIPT_KEY, appCompose);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(attackerPrivateKey, digest);
         bytes memory attackerAuthorization = abi.encodePacked(r, s, v);
 
@@ -516,19 +611,32 @@ contract DeviceRegistryAttestationBindingTest is Test {
 
     function testReportDataRejectsZeroActionKey() public {
         vm.expectRevert(bytes("invalid action key"));
-        registry.registrationReportData(worker, address(0), PUBLIC_IP, BROKER_IP, publicKey, appCompose);
+        registry.registrationReportData(
+            worker, address(0), PUBLIC_IP, BROKER_IP, publicKey, SELLO_RECEIPT_KEY, appCompose
+        );
     }
 
-    function testReportDataAndEnrollmentDigestBindActionKey() public view {
+    function testReportDataAndEnrollmentDigestBindActionAndSelloKeys() public view {
         address otherActionKey = address(0xA11CE);
-        bytes memory reportData =
-            registry.registrationReportData(worker, actionKey, PUBLIC_IP, BROKER_IP, publicKey, appCompose);
-        bytes memory otherReportData =
-            registry.registrationReportData(worker, otherActionKey, PUBLIC_IP, BROKER_IP, publicKey, appCompose);
-        assertTrue(keccak256(reportData) != keccak256(otherReportData));
+        bytes32 otherSelloReceiptKey = bytes32(uint256(1));
+        bytes memory reportData = registry.registrationReportData(
+            worker, actionKey, PUBLIC_IP, BROKER_IP, publicKey, SELLO_RECEIPT_KEY, appCompose
+        );
+        bytes memory otherActionReportData = registry.registrationReportData(
+            worker, otherActionKey, PUBLIC_IP, BROKER_IP, publicKey, SELLO_RECEIPT_KEY, appCompose
+        );
+        bytes memory otherSelloReportData = registry.registrationReportData(
+            worker, actionKey, PUBLIC_IP, BROKER_IP, publicKey, otherSelloReceiptKey, appCompose
+        );
+        assertTrue(keccak256(reportData) != keccak256(otherActionReportData));
+        assertTrue(keccak256(reportData) != keccak256(otherSelloReportData));
         assertTrue(
-            registry.enrollmentDigest(worker, actionKey, appCompose)
-                != registry.enrollmentDigest(worker, otherActionKey, appCompose)
+            registry.enrollmentDigest(worker, actionKey, SELLO_RECEIPT_KEY, appCompose)
+                != registry.enrollmentDigest(worker, otherActionKey, SELLO_RECEIPT_KEY, appCompose)
+        );
+        assertTrue(
+            registry.enrollmentDigest(worker, actionKey, SELLO_RECEIPT_KEY, appCompose)
+                != registry.enrollmentDigest(worker, actionKey, otherSelloReceiptKey, appCompose)
         );
     }
 
@@ -544,7 +652,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
         view
         returns (bytes memory)
     {
-        return target.registrationReportData(worker, actionKey, PUBLIC_IP, BROKER_IP, key, compose);
+        return target.registrationReportData(worker, actionKey, PUBLIC_IP, BROKER_IP, key, SELLO_RECEIPT_KEY, compose);
     }
 
     function _register(DeviceRegistry target, bytes memory quote, bytes memory compose, bytes memory key) private {
@@ -572,7 +680,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
     ) private {
         vm.prank(sender);
         target.registerDeviceWithAttestedAppCompose(
-            quote, _events(), compose, worker, actionKey, PUBLIC_IP, BROKER_IP, key, authorization
+            quote, _events(), compose, worker, actionKey, PUBLIC_IP, BROKER_IP, key, SELLO_RECEIPT_KEY, authorization
         );
     }
 
@@ -590,7 +698,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
     }
 
     function _participantAuthorization(DeviceRegistry target, bytes memory compose) private returns (bytes memory) {
-        bytes32 digest = target.enrollmentDigest(worker, actionKey, compose);
+        bytes32 digest = target.enrollmentDigest(worker, actionKey, SELLO_RECEIPT_KEY, compose);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(workerPrivateKey, digest);
         return abi.encodePacked(r, s, v);
     }

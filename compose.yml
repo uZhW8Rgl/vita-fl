@@ -337,7 +337,7 @@ services:
       RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key.pem
       AGENT_PORT: "8089"
       TEE_INFERENCE_URL: ${TEE_INFERENCE_URL:-https://181195df89a143ecaf3d38b2cf0fcb8a30310f07-8080.dstack-pha-prod9.phala.network}
-      TEE_INFERENCE_IMAGE_DIGEST: ${TEE_INFERENCE_IMAGE_DIGEST:-sha256:34bae2ce708d2c481bb6147a8d7a13711aac44bbadace52102f071545527dcd0}
+      TEE_INFERENCE_IMAGE_DIGEST: ${TEE_INFERENCE_IMAGE_DIGEST:-sha256:aafa7a1897fc5f6f8d3c15c6b0d54c739d26c30b5e0142c7f1423c3b8c706115}
       SCITT_URL: https://transparency-log:8000
       SCITT_DEVELOPMENT: "1"
       SCITT_SIGNER_DIR: /app/agent/state/scitt

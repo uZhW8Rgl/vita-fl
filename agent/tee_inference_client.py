@@ -41,7 +41,7 @@ DEFAULT_TEE_INFERENCE_URL = os.environ.get(
 ).rstrip("/")
 DEFAULT_TEE_IMAGE_DIGEST = os.environ.get(
     "TEE_INFERENCE_IMAGE_DIGEST",
-    "sha256:34bae2ce708d2c481bb6147a8d7a13711aac44bbadace52102f071545527dcd0",
+    "sha256:aafa7a1897fc5f6f8d3c15c6b0d54c739d26c30b5e0142c7f1423c3b8c706115",
 )
 DEFAULT_CHESTMNIST_TEST_DATA = os.environ.get(
     "CHESTMNIST_TEST_DATA",
@@ -74,9 +74,9 @@ def resolve_tee_inference_url(endpoint: str | None = None) -> str:
     configured = (endpoint or os.environ.get("TEE_INFERENCE_URL") or "").strip()
     if not configured:
         try:
-            from .blockchain_source import read_device_record
+            from .blockchain_source import read_sello_receiver
         except ImportError:
-            from blockchain_source import read_device_record
+            from blockchain_source import read_sello_receiver
 
         rpc_url = (
             os.environ.get("EXPECTED_RUNTIME_RPC_URL")
@@ -99,7 +99,7 @@ def resolve_tee_inference_url(endpoint: str | None = None) -> str:
             )
         try:
             configured = str(
-                read_device_record(
+                read_sello_receiver(
                     rpc_url,
                     registry_address,
                     participant_address,
@@ -164,7 +164,12 @@ def _json_request(
             from .sello_client import begin_receiver_call
         except ImportError:
             from sello_client import begin_receiver_call
-        receiver_call = begin_receiver_call(receipt_action, "tee-inference", data or b"")
+        receiver_call = begin_receiver_call(
+            receipt_action,
+            "tee-inference",
+            data or b"",
+            receiver_base_url=base_url,
+        )
         if receiver_call is not None:
             headers.update(receiver_call.headers)
     request = urllib.request.Request(
@@ -253,7 +258,12 @@ def _post_job_inference(base_url: str, job_id: str, timeout: int) -> tuple[bytes
         from .sello_client import begin_receiver_call
     except ImportError:
         from sello_client import begin_receiver_call
-    receiver_call = begin_receiver_call("run_and_verify_tee_inference", "tee-inference", action_input)
+    receiver_call = begin_receiver_call(
+        "run_and_verify_tee_inference",
+        "tee-inference",
+        action_input,
+        receiver_base_url=base_url,
+    )
     headers = {"Accept": "application/cbor"}
     if receiver_call is not None:
         headers.update(receiver_call.headers)

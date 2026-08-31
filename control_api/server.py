@@ -49,6 +49,9 @@ TRAINING_COMPOSE_ENV_FILE = _workspace_relative_path(
 TRAINING_COMPOSE_FILE = WORKSPACE_ROOT / "compose.yml"
 EVALUATION_SUMMARY_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "global_model_round_summary.csv"
 TRANSACTION_COST_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "transaction_costs.csv"
+WORKER_TRANSACTION_COST_CSV = (
+    WORKSPACE_ROOT / "data" / "evaluation" / "worker_transaction_costs.csv"
+)
 CONTROL_API_STARTED_AT_UNIX_MS = int(time.time() * 1000)
 CONTROL_RUNTIME_MODE = os.environ.get("CONTROL_RUNTIME_MODE", "local").strip().lower()
 REQUESTED_TRAINING_ROUNDS_ENV_KEY = "REQUESTED_TRAINING_ROUNDS"
@@ -75,6 +78,7 @@ EVALUATION_ARTIFACT_PATTERNS = (
     "global_model_label_metrics.csv",
     "global_model_sample_metrics.csv",
     "transaction_costs.csv",
+    "worker_transaction_costs.csv",
 )
 TRANSACTION_COST_EXPORT_FIELDS = (
     "timestamp_unix_ms",
@@ -277,6 +281,32 @@ def _canonical_telemetry_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def _append_worker_transaction_cost(attributes: dict[str, Any]) -> None:
+    """Durably retain receipt-derived worker gas accounting.
+
+    Runtime-event counters may remain ephemeral, but confirmed transaction
+    receipts must survive a control-service restart.  Transaction hashes are
+    de-duplicated when the file is read, making a retried signed event
+    idempotent for accounting purposes.
+    """
+
+    WORKER_TRANSACTION_COST_CSV.parent.mkdir(parents=True, exist_ok=True)
+    needs_header = not WORKER_TRANSACTION_COST_CSV.exists() or (
+        WORKER_TRANSACTION_COST_CSV.stat().st_size == 0
+    )
+    with WORKER_TRANSACTION_COST_CSV.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=TRANSACTION_COST_EXPORT_FIELDS,
+            extrasaction="ignore",
+        )
+        if needs_header:
+            writer.writeheader()
+        writer.writerow({str(key): value for key, value in attributes.items()})
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 def _record_telemetry(payload: dict[str, Any], signature: str) -> None:
     from eth_account import Account
     from eth_account.messages import encode_defunct
@@ -321,8 +351,24 @@ def _record_telemetry(payload: dict[str, Any], signature: str) -> None:
             _telemetry_nonces.pop(seen_nonce, None)
         if nonce in _telemetry_nonces:
             raise ValueError("telemetry nonce was already used")
+        if event == "worker.transaction_cost":
+            transaction_hash = str(attributes.get("transactionHash", "")).strip().lower()
+            gas_used = _prometheus_quantity(attributes.get("gasUsed"))
+            if not re.fullmatch(r"0x[0-9a-f]{64}", transaction_hash):
+                raise ValueError("invalid transaction-cost hash")
+            if gas_used is None or gas_used <= 0:
+                raise ValueError("invalid transaction-cost gasUsed")
+            _append_worker_transaction_cost(
+                {
+                    **attributes,
+                    "transactionHash": transaction_hash,
+                    "account": account,
+                    "deviceId": device_id,
+                }
+            )
+        else:
+            _telemetry_records.append(dict(payload))
         _telemetry_nonces[nonce] = timestamp_unix_ms
-        _telemetry_records.append(dict(payload))
         if len(_telemetry_records) > TELEMETRY_MAX_RECORDS:
             del _telemetry_records[: len(_telemetry_records) - TELEMETRY_MAX_RECORDS]
 
@@ -336,6 +382,7 @@ def reset_runtime_telemetry() -> None:
     with _telemetry_lock:
         _telemetry_records.clear()
         _telemetry_nonces.clear()
+        WORKER_TRANSACTION_COST_CSV.unlink(missing_ok=True)
 
 
 def telemetry_evaluation_records(records: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -489,6 +536,24 @@ def read_transaction_cost_records(path: Path = TRANSACTION_COST_CSV) -> list[dic
     return deduplicated
 
 
+def deduplicate_transaction_cost_records(
+    records: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """De-duplicate receipts after combining persistent and legacy sources."""
+
+    deduplicated: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for index, record in enumerate(records):
+        transaction_hash = (record.get("transactionHash") or "").strip().lower()
+        scope = (record.get("scope") or "").strip()
+        key = (scope, transaction_hash or f"row-{index}")
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(record)
+    return deduplicated
+
+
 def transaction_cost_with_gwei(record: dict[str, str]) -> dict[str, str]:
     normalized = dict(record)
     cost_wei = _integer_value(normalized.get("costWei"))
@@ -577,7 +642,11 @@ def build_observability_export() -> tuple[str, bytes]:
     evaluation_records = read_evaluation_summary_records() + telemetry_evaluation_records(telemetry_records)
     transaction_records = [
         transaction_cost_with_gwei(record)
-        for record in read_transaction_cost_records() + telemetry_transaction_cost_records(telemetry_records)
+        for record in deduplicate_transaction_cost_records(
+            read_transaction_cost_records()
+            + read_transaction_cost_records(WORKER_TRANSACTION_COST_CSV)
+            + telemetry_transaction_cost_records(telemetry_records)
+        )
     ]
     worker_cost_records = worker_cost_export_records(transaction_records)
     metadata_records = [
@@ -846,9 +915,14 @@ def append_round_progress_metrics(
     payload_lines.append("")
 
 
-def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict[str, str]]) -> None:
+def append_transaction_cost_metrics(
+    payload_lines: list[str],
+    records: list[dict[str, str]],
+    expected_worker_count: int | None = None,
+) -> None:
     totals: dict[str, dict[str, float]] = {}
     worker_totals: dict[tuple[str, str, str], dict[str, float]] = {}
+    registration_totals: dict[tuple[str, str, str], dict[str, float]] = {}
     for raw_record in records:
         record = transaction_cost_with_gwei(raw_record)
         scope = record.get("scope") or "unknown"
@@ -897,6 +971,13 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
             worker_values["eur"] += cost_eur
             worker_values["usd"] += cost_usd
             worker_values["transactions"] += 1.0
+            if (record.get("operation") or "").strip() == "rtmr3_registration":
+                registration_values = registration_totals.setdefault(
+                    worker_key,
+                    {"gas": 0.0, "transactions": 0.0},
+                )
+                registration_values["gas"] += gas_used
+                registration_values["transactions"] += 1.0
 
     metric_specs = {
         "dfl_transaction_gas_used_total": ("gas", "Total gas used by scope."),
@@ -962,6 +1043,38 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
             ]
         )
 
+    registration_gas = sum(values["gas"] for values in registration_totals.values())
+    registration_transactions = sum(
+        values["transactions"] for values in registration_totals.values()
+    )
+    payload_lines.extend(
+        [
+            "",
+            "# HELP dfl_worker_registration_gas_used_total Gas used by confirmed RTMR3 worker-registration transactions.",
+            "# TYPE dfl_worker_registration_gas_used_total gauge",
+            f"dfl_worker_registration_gas_used_total {registration_gas}",
+            "",
+            "# HELP dfl_worker_registration_transaction_count Confirmed RTMR3 worker-registration transactions.",
+            "# TYPE dfl_worker_registration_transaction_count gauge",
+            f"dfl_worker_registration_transaction_count {registration_transactions}",
+        ]
+    )
+    if expected_worker_count is not None:
+        expected_registrations = max(int(expected_worker_count), 0)
+        payload_lines.extend(
+            [
+                "",
+                "# HELP dfl_worker_registration_expected_count RTMR3 registration receipts expected for the configured run roster.",
+                "# TYPE dfl_worker_registration_expected_count gauge",
+                f"dfl_worker_registration_expected_count {expected_registrations}",
+                "",
+                "# HELP dfl_worker_registration_receipt_gap Absolute difference between expected and retained RTMR3 registration receipts; zero is complete.",
+                "# TYPE dfl_worker_registration_receipt_gap gauge",
+                "dfl_worker_registration_receipt_gap "
+                f"{abs(expected_registrations - int(registration_transactions))}",
+            ]
+        )
+
     worker_metric_specs = {
         "dfl_worker_gas_used_by_worker": ("gas", "Gas used by worker transactions."),
         "dfl_worker_cost_gwei_by_worker": ("gwei", "Worker transaction fee in Gwei by worker."),
@@ -985,6 +1098,29 @@ def append_transaction_cost_metrics(payload_lines: list[str], records: list[dict
                 f'device_id="{_prometheus_label_value(device_id)}"'
             )
             payload_lines.append(f"{metric_name}{{{labels}}} {values[field]}")
+
+    payload_lines.extend(
+        [
+            "",
+            "# HELP dfl_worker_registration_gas_used_by_worker Gas used by each confirmed RTMR3 worker-registration transaction.",
+            "# TYPE dfl_worker_registration_gas_used_by_worker gauge",
+            "# HELP dfl_worker_registration_transaction_count_by_worker Confirmed RTMR3 registrations attributed to each worker.",
+            "# TYPE dfl_worker_registration_transaction_count_by_worker gauge",
+        ]
+    )
+    for (worker, account, device_id), values in registration_totals.items():
+        labels = (
+            f'worker="{_prometheus_label_value(worker)}",'
+            f'account="{_prometheus_label_value(account)}",'
+            f'device_id="{_prometheus_label_value(device_id)}"'
+        )
+        payload_lines.append(
+            f"dfl_worker_registration_gas_used_by_worker{{{labels}}} {values['gas']}"
+        )
+        payload_lines.append(
+            f"dfl_worker_registration_transaction_count_by_worker{{{labels}}} "
+            f"{values['transactions']}"
+        )
 
 
 def training_config_with_round_plan(config: dict[str, Any]) -> dict[str, Any]:
@@ -3243,7 +3379,11 @@ async def metrics() -> Response:
     training_config = read_training_config()
     telemetry_records = _telemetry_snapshot()
     evaluation_records = read_evaluation_summary_records() + telemetry_evaluation_records(telemetry_records)
-    transaction_cost_records = read_transaction_cost_records() + telemetry_transaction_cost_records(telemetry_records)
+    transaction_cost_records = deduplicate_transaction_cost_records(
+        read_transaction_cost_records()
+        + read_transaction_cost_records(WORKER_TRANSACTION_COST_CSV)
+        + telemetry_transaction_cost_records(telemetry_records)
+    )
     aggregator_vm = current_aggregator["vm"] or "unknown"
     payload_lines: list[str] = []
     append_round_progress_metrics(
@@ -3262,7 +3402,13 @@ async def metrics() -> Response:
     )
     runtime_totals = telemetry_run_totals(telemetry_records) if phala_runtime_mode() else None
     append_evaluation_metrics(payload_lines, evaluation_records, runtime_totals)
-    append_transaction_cost_metrics(payload_lines, transaction_cost_records)
+    append_transaction_cost_metrics(
+        payload_lines,
+        transaction_cost_records,
+        expected_worker_count=int(
+            training_config.get("worker_count") or len(_dynamic_worker_slots())
+        ),
+    )
     payload_lines.extend(
         [
             "",
@@ -3622,6 +3768,11 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                             "Phala already has deployed workers before roster commitment. "
                             "Reset them before starting a new run."
                         )
+                    # Clear the preceding run before any worker can emit signed
+                    # start-up or registration telemetry.  Resetting after
+                    # ``scale`` races with fast worker registrations and can
+                    # silently erase already accepted receipt records.
+                    reset_runtime_telemetry()
                     aggregation_policy = await asyncio.to_thread(
                         configure_default_aggregation_policy,
                         normalized["client_limit"],
@@ -3665,7 +3816,6 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                         for worker in worker_status["workers"]
                     ],
                 )
-                reset_runtime_telemetry()
                 return {
                     "ok": True,
                     "config": {**read_training_config(), **normalized},

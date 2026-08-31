@@ -83,7 +83,7 @@ services:
       TEE_JOB_DIR: /tmp/tee-inference/jobs
       CHESTMNIST_TEST_DATA: /dfl/config/chestmnist/test_data/test-data.npz
       SELLO_REQUIRED: "${sello_required ? 1 : 0}"
-      SELLO_SERVICE_SIGNING_SEED: "$${SELLO_SERVICE_SIGNING_SEED}"
+      SELLO_SERVICE_KEY_PROVIDER: "dstack"
       SELLO_TOKEN_ISSUER_PUBLIC_KEY: "$${SELLO_TOKEN_ISSUER_PUBLIC_KEY}"
       SCITT_URL: "${sello_scitt_url}"
       SCITT_DEVELOPMENT: "1"

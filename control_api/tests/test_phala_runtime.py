@@ -638,7 +638,11 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "read_training_config",
                 return_value={**normalized, "max_worker_count": 500},
             ),
-            patch.object(server, "reset_runtime_telemetry"),
+            patch.object(
+                server,
+                "reset_runtime_telemetry",
+                side_effect=lambda: operation_order.append("reset-telemetry"),
+            ),
             patch.object(
                 server,
                 "current_training_runtime_status",
@@ -654,7 +658,15 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             operation_order,
-            ["preflight", "select", "policy", "commit", "scale", "publish"],
+            [
+                "preflight",
+                "select",
+                "reset-telemetry",
+                "policy",
+                "commit",
+                "scale",
+                "publish",
+            ],
         )
         self.assertEqual(result["aggregation_policy"]["transaction_hash"], "0x" + "22" * 32)
         worker_config = server.worker_runtime_training_config(normalized)
@@ -788,7 +800,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "read_training_config",
                 return_value={**normalized, "max_worker_count": 500},
             ),
-            patch.object(server, "reset_runtime_telemetry"),
+            patch.object(server, "reset_runtime_telemetry") as reset_telemetry,
             patch.object(
                 server,
                 "current_training_runtime_status",
@@ -809,6 +821,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(operation_order, ["preflight", "select", "commit", "scale", "publish"])
         self.assertTrue(result["resumed_committed_roster"])
+        reset_telemetry.assert_not_called()
         configure_policy.assert_not_called()
         write_config.assert_not_called()
         controller.status.assert_not_called()
