@@ -1,7 +1,0 @@
-forge-std/=lib/forge-std/src/
-openzeppelin/=lib/openzeppelin-contracts/contracts/
-@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
-automata-dcap-v3-attestation/=lib/automata-dcap-v3-attestation/contracts/
-@automata-network/on-chain-pccs/=lib/automata-dcap-v3-attestation/lib/automata-on-chain-pccs/src/
-solady/=lib/automata-dcap-v3-attestation/lib/automata-on-chain-pccs/lib/solady/src/
-p256-verifier/=lib/p256-verifier/src/

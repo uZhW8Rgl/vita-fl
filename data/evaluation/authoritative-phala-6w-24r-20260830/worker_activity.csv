@@ -1,7 +1,0 @@
-worker,training_rounds,model_transfers,aggregator_rounds,selection_gap_recoveries,transactions,registration_gas,gas_used
-VM-0,22,22,2,0,31,81405938,90842001
-VM-1,23,23,1,0,14,78240386,81792403
-VM-2,19,19,5,0,62,78275279,95957839
-VM-3,20,20,4,1,51,78227075,92502911
-VM-4,19,19,5,0,61,78231201,95650560
-VM-5,17,17,7,0,86,78238676,103281415

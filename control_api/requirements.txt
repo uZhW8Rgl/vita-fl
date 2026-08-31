@@ -1,4 +1,0 @@
-fastapi>=0.115
-uvicorn>=0.30
-eth-account>=0.13,<0.14
-eth-utils>=2,<6
