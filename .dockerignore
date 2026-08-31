@@ -1,8 +1,0 @@
-.env
-**/.env
-dfl/node_server/.env
-**/__pycache__/
-dfl/node_server/data/lm.bin
-dfl/node_server/data/lm.bin.enc
-dfl/node_server/data/results_iid/
-dfl/node_server/received_models/

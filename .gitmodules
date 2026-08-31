@@ -1,3 +1,15 @@
 [submodule "overleaf"]
 	path = overleaf
 	url = https://github.com/uZhW8Rgl/Overleaf.git
+[submodule "presentation"]
+	path = presentation
+	url = https://github.com/uZhW8Rgl/presentation.git
+[submodule "expose"]
+	path = expose
+	url = https://github.com/uZhW8Rgl/expose.git
+[submodule "journal"]
+	path = journal
+	url = https://github.com/uZhW8Rgl/journal.git
+[submodule "vita-fl"]
+	path = vita-fl
+	url = https://github.com/uZhW8Rgl/vita-fl.git
