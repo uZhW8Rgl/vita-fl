@@ -117,19 +117,19 @@ class CombinedWorkerScriptTests(unittest.TestCase):
             script,
         )
 
-    def test_chestmnist_validation_artifact_is_packaged_and_copied_to_runtime(self) -> None:
+    def test_chestmnist_validation_artifact_is_not_an_active_runtime_dependency(self) -> None:
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")
         script = START_SCRIPT.read_text(encoding="utf-8")
-        self.assertIn(
+        self.assertNotIn(
             "COPY data/chestmnist/validation_data ./config/chestmnist/validation_data",
             dockerfile,
         )
-        self.assertIn(
+        self.assertNotIn(
             "CHESTMNIST_VALIDATION_DATA=/dfl/config/chestmnist/validation_data/validation-data.npz",
             dockerfile,
         )
-        self.assertIn("VALIDATION_DATA_SRC=${VALIDATION_DATA_SRC:-${CHESTMNIST_VALIDATION_DATA:-", script)
-        self.assertIn(
+        self.assertNotIn("VALIDATION_DATA_SRC", script)
+        self.assertNotIn(
             'cp "${VALIDATION_DATA_SRC}" /dfl/node_server/data/validation-data.npz',
             script,
         )
@@ -147,7 +147,7 @@ class CombinedWorkerScriptTests(unittest.TestCase):
             "random_start.bin",
         )
 
-        cleanup_start = script.index("# Runtime model files are derived state.")
+        cleanup_start = script.index("# Runtime model artifacts are derived state.")
         bootstrap_copy = script.index(
             'cp "${BOOTSTRAP_MODEL_SRC}" /dfl/node_server/data/random_start.bin'
         )

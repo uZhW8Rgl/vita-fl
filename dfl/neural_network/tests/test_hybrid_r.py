@@ -2,18 +2,14 @@ from __future__ import annotations
 
 import json
 import math
-import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-import numpy as np
 import torch
 from torch import nn
 
 from dfl.neural_network import cli
 from dfl.neural_network.hybrid_r import (
-    HYBRID_R_V1_HASH,
     canonical_json_bytes,
     coordinate_median,
     flatten_model,
@@ -330,52 +326,6 @@ class HybridRBindingTests(unittest.TestCase):
     def test_noncanonical_worker_filename_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "non-canonical"):
             cli._canonical_aggregation_model_paths([Path("worker.bin")])
-
-    def test_algorithm_hash_is_checked_against_local_constant(self) -> None:
-        with self.assertRaisesRegex(ValueError, "algorithm hash mismatch"):
-            cli._run_hybrid_aggregation(
-                [],
-                source_round=1,
-                round_id=2,
-                medical_signer_snapshot={},
-                expected_algorithm_hash="0x" + "00" * 32,
-                expected_validation_data_hash="0x" + "11" * 32,
-                max_loss_increase_bps=500,
-            )
-        self.assertEqual(
-            cli._normalize_bytes32(HYBRID_R_V1_HASH.upper(), "hash"),
-            HYBRID_R_V1_HASH,
-        )
-
-    def test_validation_hash_mismatch_precedes_provenance_verification(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            validation_path = Path(directory) / "validation-data.npz"
-            np.savez_compressed(
-                validation_path,
-                dataset_split=np.bytes_("CHESTMNIST-VAL-V1"),
-            )
-            snapshot = {
-                "registry_address": "0x" + "11" * 20,
-                "block_number": 10,
-                "block_hash": "0x" + "22" * 32,
-                "key_set_version": "1",
-            }
-            with (
-                patch.object(cli, "is_multilabel_dataset", return_value=True),
-                patch.object(cli, "validation_dataset_path", return_value=validation_path),
-                patch.object(
-                    cli,
-                    "validation_semantic_sha256",
-                    return_value="33" * 32,
-                ),
-                patch.object(cli, "verify_training_provenance") as verify,
-            ):
-                with self.assertRaisesRegex(ValueError, "semantic hash mismatch"):
-                    cli._load_verified_hybrid_validation(
-                        medical_signer_snapshot=snapshot,
-                        expected_validation_data_hash="0x" + "44" * 32,
-                    )
-            verify.assert_not_called()
 
     def test_evidence_json_round_trip_preserves_candidate_score_array(self) -> None:
         evidence = {

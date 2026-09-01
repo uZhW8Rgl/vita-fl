@@ -39,7 +39,7 @@ test('reconciliation preserves verified decrypted metadata with authoritative id
 
 test('reconciliation carries verified learned-model evidence without arbitrary fields', () => {
     const learnedIdentity = { ...current, modelRound: 2 };
-    const evidence = { algorithm: 'hybrid-r-v1' };
+    const evidence = { algorithm: 'example-v1' };
     const reconciled = reconcileFetchedGlobalModel(
         {
             ...learnedIdentity,

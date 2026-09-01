@@ -151,26 +151,20 @@ invent another worker's accepted contribution nor replay it for a different
 round, model lineage or package. Exact retries are idempotent.
 
 `AggregationPolicy` additionally snapshots the configured minimum submission
-count, absolute deadline, deterministic `HYBRID_R_V1_HASH`, canonical
-ChestMNIST validation-data hash, 500-basis-point maximum relative loss increase,
-and a domain-separated v2 policy hash when a non-bootstrap round opens. The
-algorithm hash fixes update-space aggregation, candidate and tie-break order,
-all coordinate-wise trimmed means, Multi-Krum parameters, float64 CPU scoring
-with mean BCE-with-logits, and unchanged-parent fallback. Every accepted worker
-commitment extends an ordered on-chain input root; closing the round fixes that
-root and count and is impossible below the snapshotted minimum.
+count, absolute deadline, deterministic `FEDERATED_AVERAGING_V1_HASH`, and a
+domain-separated v2 policy hash when a non-bootstrap round opens. The retained
+validation-data and loss-gate extension fields are set to zero for this
+baseline. Every accepted worker commitment extends an ordered on-chain input
+root; closing the round fixes that root and count and is impossible below the
+snapshotted minimum.
 
-The admitted aggregator evaluates the Hybrid-R candidates against the
-policy-bound validation set. It selects the first minimum finite loss and uses
-the unchanged parent if no candidate is finite or the best loss exceeds
-`parent_loss * 1.05`. Publication requires its current TEE action key to sign an
-EIP-712 statement binding the closed inputs, algorithm and policy hashes,
-plaintext model hash, encrypted output bundle, CID tuple, and nonce.
-`GMStorage` verifies the statement and advances the round atomically. This
-provides policy-bound, empirically evaluated Byzantine resilience under the
-stated participant bound and TDX/dstack assumptions; it is not an independent
-mathematical proof or an unrestricted guarantee against arbitrary Byzantine
-participation.
+The admitted aggregator applies equal-weight model averaging to the closed
+input set. Publication requires its current TEE action key to sign an EIP-712
+statement binding the closed inputs, algorithm and policy hashes, plaintext
+model hash, encrypted output bundle, CID tuple, and nonce. `GMStorage` verifies
+the statement and advances the round atomically. This provides policy and
+publication integrity, not Byzantine-robust aggregation or an unrestricted
+guarantee against malicious contributions.
 
 For the local Docker flow, `IPFS_PROVIDER` controls how the initial model CID is supplied. With `IPFS_PROVIDER=kubo`, the deployment script imports the unsigned plaintext `data/initial_gm/<dataset>/aggregated.bin` into the local Kubo node and writes its CID into `GMStorage`. The dataset is selected through `DATASET_NAME` and defaults to `mnist`. With `IPFS_PROVIDER=pinata`, the script does not touch Kubo during initialization and expects `INITIAL_GM_CID` to point to the already hosted plaintext model.
 

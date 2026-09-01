@@ -262,7 +262,7 @@ class FinalizedModelBundleTests(unittest.TestCase):
             decode_sello_receiver_record(_encoded_sello_receiver(receipt_key=bytes(32)))
 
 
-class HybridRAggregationEvidenceTests(unittest.TestCase):
+class AggregationBundleMetadataTests(unittest.TestCase):
     @staticmethod
     def _encrypted_fixture(root: Path) -> tuple[dict[str, str], dict[str, Path], str]:
         address = "0x" + "12" * 20
@@ -277,13 +277,9 @@ class HybridRAggregationEvidenceTests(unittest.TestCase):
         )
         evidence = (
             "{"
-            '"algorithm_hash":"0xfee8d99e620214799109487915a0c3a4f37f5a6fb66cb08dfed75fb5b6573610",'
-            '"gate_passed":true,'
-            '"max_loss_increase_bps":500,'
-            '"output_kind":"candidate",'
-            f'"output_model_sha256":"0x{hashlib.sha256(b"model").hexdigest()}",'
-            '"source_round":2,'
-            '"validation_data_hash":"0xe4457c09ceeb203858e9b74232a4aa5b8852c623d85a63742a8751405d189d63"'
+            '"algorithm":"example-v1",'
+            '"input_count":5,'
+            '"source_round":2'
             "}\n"
         ).encode()
         evidence_hash = hashlib.sha256(evidence).hexdigest()
@@ -374,6 +370,8 @@ class HybridRAggregationEvidenceTests(unittest.TestCase):
             payload["signature_b64"] = None
         elif signature_mode == "empty":
             payload["signature_b64"] = ""
+        elif signature_mode == "present":
+            payload["signature_b64"] = base64.b64encode(b"signature").decode()
         elif signature_mode != "absent":
             raise AssertionError(f"unsupported signature mode: {signature_mode}")
 
@@ -432,7 +430,7 @@ class HybridRAggregationEvidenceTests(unittest.TestCase):
             address,
         )
 
-    def test_decrypts_and_exports_publicly_bound_hybrid_r_evidence(self) -> None:
+    def test_decrypts_and_exports_optional_publicly_bound_aggregation_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             bundle, paths, address = self._encrypted_fixture(Path(directory))
             with patch.dict(
@@ -542,6 +540,33 @@ class HybridRAggregationEvidenceTests(unittest.TestCase):
                     paths["plain_model"],
                     paths["plain_signature"],
                 )
+
+    def test_later_round_accepts_signed_model_without_aggregation_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle, paths, address = self._unsigned_encrypted_fixture(
+                Path(directory),
+                model_round=2,
+                signature_mode="present",
+            )
+            with patch.dict(
+                "os.environ",
+                {
+                    "ACCOUNT_ADDRESS": address,
+                    "RSA_PRIVATE_KEY_FILE": str(paths["private_key"]),
+                },
+                clear=False,
+            ):
+                result = _decrypt_encrypted_bundle(
+                    bundle,
+                    paths["encrypted_model"],
+                    paths["key_bundle"],
+                    paths["plain_model"],
+                    paths["plain_signature"],
+                )
+
+            self.assertEqual(result["round"], 2)
+            self.assertTrue(result["plaintext_signature_present"])
+            self.assertIsNone(result["aggregation_evidence_path"])
 
     def test_decryption_rejects_round_metadata_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

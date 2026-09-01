@@ -5,10 +5,9 @@ Expected layout for the current training pipeline:
 - `data/chestmnist/chestmnist.npz`: original MedMNIST bundle downloaded from the official project
 - `data/chestmnist/training_data/train-data-0.npz`, `train-data-1.npz`, ...: per-worker IID shards
 - `data/chestmnist/training-metadata.json`: task-wide class counts used to derive fixed training-loss weights
-- `data/chestmnist/validation_data/validation-data.npz`: signed, immutable reference split used only by
-  the Hybrid-R aggregation policy
-- `data/chestmnist/test_data/test-data.npz`: final evaluation split; it is not an input to Hybrid-R
-  candidate selection
+- `data/chestmnist/validation_data/validation-data.npz`: signed research artifact retained for
+  historical experiments; the active FedAvg baseline does not consume it
+- `data/chestmnist/test_data/test-data.npz`: final evaluation split; it is never an aggregation input
 
 The repository includes `scripts/generate_chestmnist_training_splits.py` to create the shard files and
 the validation artifact from `chestmnist.npz`.

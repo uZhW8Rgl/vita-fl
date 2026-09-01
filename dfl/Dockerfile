@@ -13,7 +13,6 @@ ENV PYTHON_SERVICE_PORT=8000
 ENV TEE_MODEL_DIR=/tmp/tee-inference/model
 ENV TEE_JOB_DIR=/tmp/tee-inference/jobs
 ENV CHESTMNIST_TEST_DATA=/dfl/config/chestmnist/test_data/test-data.npz
-ENV CHESTMNIST_VALIDATION_DATA=/dfl/config/chestmnist/validation_data/validation-data.npz
 ENV NPM_CONFIG_FETCH_RETRIES=5
 ENV NPM_CONFIG_FETCH_RETRY_FACTOR=2
 ENV NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000
@@ -70,7 +69,6 @@ ENV PATH="/opt/venv/bin:${PATH}"
 COPY data/mnist ./config
 COPY data/chestmnist/training_data ./config/chestmnist/training_data
 COPY data/chestmnist/training-metadata.json ./config/chestmnist/training-metadata.json
-COPY data/chestmnist/validation_data ./config/chestmnist/validation_data
 COPY data/chestmnist/test_data ./config/chestmnist/test_data
 COPY data/chestmnist/README.md ./config/chestmnist/README.md
 COPY data/initial_gm ./initial_gm

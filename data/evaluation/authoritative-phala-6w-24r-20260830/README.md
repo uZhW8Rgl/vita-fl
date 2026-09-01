@@ -1,10 +1,12 @@
 # Authoritative Phala evaluation run
 
-This directory is the canonical evidence package for the single evaluation run
-reported by the master's thesis, journal paper, and presentation. The run used
-six Phala `tdx.small` workers, one bootstrap completion, and 24 successful
-federated rounds with five client updates per round. Worker 0 additionally
-served the final round-25 model through the TEE-inference path.
+This directory preserves the canonical evidence package for the historical
+evaluation run performed with the former VITA-FL-specific candidate-selection
+configuration. It is a legacy research artifact, not evidence for the active
+equal-weight FedAvg baseline. The run used six Phala `tdx.small` workers, one
+bootstrap completion, and 24 successful federated rounds with five client
+updates per round. Worker 0 additionally served the final round-25 model through
+the TEE-inference path.
 
 The evaluated Tier-1 account exposed eight concurrent TEE slots. Six slots
 therefore hosted the worker roster and its six equal ChestMNIST shards; the
@@ -13,10 +15,10 @@ run-specific account-capacity decision, not a protocol or general Phala limit.
 
 ## Evidence policy
 
-Earlier local Docker scale experiments and earlier partial Phala runs are not
-reported as evaluation evidence in the three publications. They remain outside
-this package only as development history. Every result table and learning curve
-in the three artifacts must be derivable from this directory.
+Earlier local Docker scale experiments and earlier partial Phala runs remain
+outside this package as development history. Any publication that reuses
+learning results from this directory must identify the legacy aggregation
+configuration explicitly and must not describe the measurements as FedAvg.
 
 ## Files
 

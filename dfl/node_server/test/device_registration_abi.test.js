@@ -209,28 +209,14 @@ test("aggregation ABIs require atomic policy-bound finalization", () => {
         ],
     );
     assert.deepEqual(
-        functionOutputs(aggregationPolicyAbi, "HYBRID_R_V1_HASH"),
+        functionOutputs(aggregationPolicyAbi, "FEDERATED_AVERAGING_V1_HASH"),
         [{ name: "", type: "bytes32" }],
-    );
-    assert.deepEqual(
-        functionOutputs(
-            aggregationPolicyAbi,
-            "HYBRID_R_VALIDATION_DATA_V1_HASH",
-        ),
-        [{ name: "", type: "bytes32" }],
-    );
-    assert.deepEqual(
-        functionOutputs(
-            aggregationPolicyAbi,
-            "HYBRID_R_MAX_LOSS_INCREASE_BPS",
-        ),
-        [{ name: "", type: "uint16" }],
     );
     assert.equal(
         aggregationPolicyAbi.some(
             (entry) =>
                 entry.type === "function" &&
-                entry.name === "FEDERATED_AVERAGING_V1_HASH",
+                entry.name.startsWith("HYBRID_R"),
         ),
         false,
     );

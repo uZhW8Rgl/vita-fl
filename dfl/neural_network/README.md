@@ -8,7 +8,7 @@ It provides:
 - binary model serialization for convolutional and linear layer weights,
 - local training,
 - encrypted model transfer helpers,
-- deterministic adaptive robust aggregation,
+- deterministic equal-weight federated averaging,
 - global model signing,
 - and an HTTP service used by `node_server`.
 
@@ -74,37 +74,23 @@ The generator creates six signed IID shards by default, each containing 13,078
 of the 78,468 training samples. It removes obsolete higher-numbered shards and
 writes the task-wide label-count metadata.
 
-The generator also creates a signed `CHESTMNIST-VAL-V1` reference artifact
+The generator can also create a signed `CHESTMNIST-VAL-V1` research artifact
 from the official validation split. Images that duplicate a training image or
-an earlier validation image are removed before signing. This artifact is
-distinct from `test-data.npz`: it is an input to aggregation policy, whereas
-the test split is used only for reporting.
+an earlier validation image are removed before signing. The active aggregation
+baseline does not consume this artifact; `test-data.npz` remains reporting-only.
 
-## Adaptive Robust Aggregation
+## Active Aggregation Baseline
 
-For every non-bootstrap ChestMNIST round, the aggregator sorts the closed
-worker set by address and converts each client model into an update relative to
-the parent model. It deterministically constructs equal-weight FedAvg,
-coordinate-median, all admissible symmetric trimmed-mean, and, for at least five
-updates, Multi-Krum candidates. All candidates are evaluated with binary
-cross-entropy on the separately signed validation artifact. Exact score ties
-keep the earlier policy candidate.
+For every non-bootstrap round, the aggregator sorts the closed worker set by
+address and computes an equal-weight arithmetic mean for every `float64`
+state-dict tensor. This is model averaging with one equal contribution per
+accepted client model; it is not weighted by local sample count. Non-finite
+inputs or output parameters stop aggregation.
 
-The selected candidate is published only if its validation loss is at most 5%
-above the parent-model loss. Otherwise the unchanged parent model is emitted as
-a no-op fallback. Aggregation uses single-threaded `float64` CPU operations and
-fails closed if the configured algorithm hash, validation semantic hash,
-medical-signer snapshot, model layout, or finite-value checks disagree.
-
-The service writes canonical selection evidence to
-`data/results_iid/aggregated.hybrid-r.json`. This records the closed inputs,
-candidate scores, selected candidate or parent fallback, validation identity,
-signer snapshot, and output-model hash. The mechanism is inspired by adaptive
-hybrid defenses evaluated by
-[Yue et al.](https://arxiv.org/abs/2409.06474); it provides an empirically
-testable mitigation, not universal Byzantine robustness. In particular, its
-assurance depends on a representative honest validation reference and a
-sufficient honest contribution majority.
+The former VITA-FL-specific Hybrid-R-style experiment remains isolated in
+`hybrid_r.py` solely for auditability of historical research runs. The runtime
+service does not import or call it, and active rounds use neither candidate
+selection, a validation-loss gate, nor parent fallback.
 
 ## HTTP Service
 

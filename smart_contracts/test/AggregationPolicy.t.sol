@@ -18,8 +18,8 @@ contract AggregationPolicyTest is Test {
     bytes32 private constant OUTPUT_MODEL_HASH = keccak256("output-model");
     bytes32 private constant OUTPUT_BUNDLE_HASH = keccak256("output-bundle");
     bytes32 private constant PUBLICATION_HASH = keccak256("publication");
-    string private constant HYBRID_R_V1_PREIMAGE =
-        "VITA-FL:hybrid-r:v1|model=torch-state-dict|layout=conv1.weight,conv1.bias,conv2.weight,conv2.bias,fc1.weight,fc1.bias,fc2.weight,fc2.bias|tensor-order=c-contiguous-row-major|numeric=ieee754-binary64-cpu|update=client-model-minus-parent-model|input-order=worker-address-ascending|candidates=fedavg(equal-weight-arithmetic-mean),coordinate-median(even-count=arithmetic-mean-of-middle-two),trimmed-mean(q=1..floor((n-1)/2),q-ascending,drop-q-lowest-and-q-highest-per-coordinate),multi-krum(n>=5,f=floor((n-3)/2),neighbors=n-f-2,select=n-f-2,single-pass,squared-l2,score=sum-nearest,score-ties=input-order,selected-update=equal-weight-arithmetic-mean)|candidate-order=fedavg,coordinate-median,trimmed-mean-q-ascending,multi-krum|candidate-model=parent-model-plus-candidate-update|validation=round.validationDataHash|risk=bce-with-logits(raw-logits,elementwise-mean-over-Nx14,binary64-cpu)|selection=exact-binary64-less-than;ties=earlier-candidate|gate=best-loss<=parent-loss*(1+round.maxLossIncreaseBps/10000)|parent-fallback=unchanged-parent-if-no-finite-candidate-or-gate-fails|fail-closed=missing-or-hash-mismatched-validation,invalid-model-layout,nonfinite-parent-loss";
+    string private constant FEDERATED_AVERAGING_V1_PREIMAGE =
+        "VITA-FL:fedavg:torch-state-dict:float64:equal-weight:v1";
 
     function setUp() public {
         aggregator = makeAddr("aggregator");
@@ -83,12 +83,10 @@ contract AggregationPolicyTest is Test {
         assertEq(requiredSubmissions, 2);
         assertEq(acceptedSubmissions, 0);
         assertEq(configurationVersion, 1);
-        assertEq(algorithmHash, policy.HYBRID_R_V1_HASH());
-        assertEq(algorithmHash, 0xfee8d99e620214799109487915a0c3a4f37f5a6fb66cb08dfed75fb5b6573610);
-        assertEq(algorithmHash, keccak256(bytes(HYBRID_R_V1_PREIMAGE)));
-        assertEq(validationDataHash, policy.HYBRID_R_VALIDATION_DATA_V1_HASH());
-        assertEq(validationDataHash, 0xe4457c09ceeb203858e9b74232a4aa5b8852c623d85a63742a8751405d189d63);
-        assertEq(maxLossIncreaseBps, 500);
+        assertEq(algorithmHash, policy.FEDERATED_AVERAGING_V1_HASH());
+        assertEq(algorithmHash, keccak256(bytes(FEDERATED_AVERAGING_V1_PREIMAGE)));
+        assertEq(validationDataHash, bytes32(0));
+        assertEq(maxLossIncreaseBps, 0);
         assertEq(
             policyHash,
             keccak256(
@@ -107,7 +105,7 @@ contract AggregationPolicyTest is Test {
         assertEq(inputRoot, policy.INPUT_ROOT_SEED());
     }
 
-    function testBootstrapRoundSnapshotsRolloverWithoutHybridValidationGate() public {
+    function testBootstrapRoundSnapshotsRolloverWithoutAggregationInputs() public {
         vm.warp(1000);
         policy.openRound(0);
 

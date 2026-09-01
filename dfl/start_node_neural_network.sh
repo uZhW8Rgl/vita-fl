@@ -77,8 +77,6 @@ case "$DATASET_NAME" in
     ;;
   chestmnist)
     cp "${TRAIN_DATA_SRC}" /dfl/node_server/data/train-data.npz
-    VALIDATION_DATA_SRC=${VALIDATION_DATA_SRC:-${CHESTMNIST_VALIDATION_DATA:-/dfl/config/chestmnist/validation_data/validation-data.npz}}
-    cp "${VALIDATION_DATA_SRC}" /dfl/node_server/data/validation-data.npz
     cp "${TEST_DATA_SRC}" /dfl/node_server/data/test-data.npz
     ;;
   *)
@@ -87,7 +85,7 @@ case "$DATASET_NAME" in
     ;;
 esac
 
-# Runtime model files are derived state.  They must never survive an image
+# Runtime model artifacts are derived state.  They must never survive an image
 # build or a container restart because their shape and round may belong to an
 # older training configuration.  The immutable bootstrap source lives outside
 # this directory and is copied back immediately below.

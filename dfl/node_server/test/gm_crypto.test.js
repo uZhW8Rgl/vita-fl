@@ -61,13 +61,13 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gm-crypto-'));
     const modelPath = path.join(tempDir, 'aggregated.bin');
     const signaturePath = path.join(tempDir, 'aggregated.bin.sig');
-    const aggregationEvidencePath = path.join(tempDir, 'aggregated.hybrid-r.json');
+    const aggregationEvidencePath = path.join(tempDir, 'aggregated.aggregation.json');
     const encryptedBundlePath = path.join(tempDir, 'aggregated.bundle.enc');
     const encryptedSignaturePath = path.join(tempDir, 'aggregated.bundle.enc.sig');
     const keyBundlePath = path.join(tempDir, 'aggregated.bundle.keys.json');
     const outModelPath = path.join(tempDir, 'gm.bin');
     const outSignaturePath = path.join(tempDir, 'gm.bin.sig');
-    const outAggregationEvidencePath = path.join(tempDir, 'gm.hybrid-r.json');
+    const outAggregationEvidencePath = path.join(tempDir, 'gm.aggregation.json');
 
     const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
     const publicKeyDerHex = publicKey.export({ format: 'der', type: 'spki' }).toString('hex');
@@ -75,7 +75,7 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
     const modelBytes = Buffer.from('encrypted-global-model-payload', 'utf8');
     const signatureBytes = Buffer.from('signed-model-bytes', 'utf8');
     const aggregationEvidenceBytes = Buffer.from(
-        '{"algorithm":"hybrid-r-v1","gate_passed":true,"selected_candidate":"coordinate_median"}',
+        '{"algorithm":"example-v1","input_count":5}',
         'utf8',
     );
     await fs.writeFile(modelPath, modelBytes);
@@ -155,20 +155,20 @@ test('gm crypto roundtrip encrypts once and decrypts for the intended recipient'
             await fs.readFile(outAggregationEvidencePath),
             aggregationEvidenceBytes,
         );
-        assert.equal(result.aggregationEvidence.algorithm, 'hybrid-r-v1');
-        assert.equal(result.aggregationEvidence.gate_passed, true);
+        assert.equal(result.aggregationEvidence.algorithm, 'example-v1');
+        assert.equal(result.aggregationEvidence.input_count, 5);
     } finally {
         await fs.rm(tempDir, { recursive: true, force: true });
     }
 });
 
-test('gm crypto rejects non-JSON Hybrid-R evidence before publication', async () => {
+test('gm crypto rejects non-JSON aggregation evidence before publication', async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gm-crypto-evidence-'));
     const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
     const paths = {
         modelPath: path.join(tempDir, 'aggregated.bin'),
         signaturePath: path.join(tempDir, 'aggregated.bin.sig'),
-        aggregationEvidencePath: path.join(tempDir, 'aggregated.hybrid-r.json'),
+        aggregationEvidencePath: path.join(tempDir, 'aggregated.aggregation.json'),
         encryptedBundlePath: path.join(tempDir, 'aggregated.bundle.enc'),
         encryptedSignaturePath: path.join(tempDir, 'aggregated.bundle.enc.sig'),
         keyBundlePath: path.join(tempDir, 'aggregated.bundle.keys.json'),
@@ -185,7 +185,7 @@ test('gm crypto rejects non-JSON Hybrid-R evidence before publication', async ()
                 round: 1,
                 signingPrivateKey: privateKey,
             }),
-            /Invalid Hybrid-R aggregation evidence/,
+            /Invalid aggregation evidence/,
         );
     } finally {
         await fs.rm(tempDir, { recursive: true, force: true });

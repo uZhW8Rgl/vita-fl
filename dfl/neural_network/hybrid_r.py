@@ -1,3 +1,10 @@
+"""Inactive research prototype for the former VITA-FL-specific Hybrid-R variant.
+
+The production DFL path deliberately does not import or call this module.  It is
+retained only so the historical experiment remains auditable; active rounds use
+the equal-weight FedAvg implementation in ``cli.aggregate``.
+"""
+
 from __future__ import annotations
 
 import copy

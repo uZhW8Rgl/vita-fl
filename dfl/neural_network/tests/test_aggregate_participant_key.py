@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from dfl.neural_network import cli, service
-from dfl.neural_network.cli import FederatedCNN, write_model_bin
+from dfl.neural_network.cli import FederatedCNN, read_model_bin, write_model_bin
 
 
 class AggregateParticipantKeyTests(unittest.TestCase):
@@ -37,40 +37,34 @@ class AggregateParticipantKeyTests(unittest.TestCase):
             results = root / "results"
             inputs.mkdir()
             results.mkdir()
-            worker_address = "0x" + "11" * 20
-            write_model_bin(
-                FederatedCNN().double(),
-                inputs / f"wb_client_{worker_address}.bin",
-            )
+            first_model = FederatedCNN().double()
+            second_model = FederatedCNN().double()
+            with torch.no_grad():
+                for parameter in first_model.parameters():
+                    parameter.fill_(1.0)
+                for parameter in second_model.parameters():
+                    parameter.fill_(3.0)
+            write_model_bin(first_model, inputs / f"wb_client_0x{'11' * 20}.bin")
+            write_model_bin(second_model, inputs / f"wb_client_0x{'22' * 20}.bin")
             participant_key = root / "run" / "participant-private.pem"
-            aggregation_evidence = {
-                "output_kind": "candidate",
-                "selected_candidate": "coordinate_median",
-            }
 
             with (
                 patch.object(cli, "aggregation_inputs_dir", return_value=inputs),
                 patch.object(cli, "results_dir", return_value=results),
-                patch.object(
-                    cli,
-                    "_run_hybrid_aggregation",
-                    return_value=(FederatedCNN().double(), aggregation_evidence),
-                ),
                 patch.object(cli, "sign_file") as sign_file,
                 patch.object(cli, "run_test", return_value={}),
             ):
-                result = cli.aggregate(1, private_key=str(participant_key))
+                result = cli.aggregate(2, private_key=str(participant_key))
 
             sign_file.assert_called_once_with(
                 results / "aggregated.bin",
                 participant_key,
             )
-            persisted_evidence = json.loads((results / "aggregated.hybrid-r.json").read_text(encoding="utf-8"))
-            self.assertEqual(result["aggregation_evidence"], persisted_evidence)
-            self.assertRegex(
-                persisted_evidence["output_model_sha256"],
-                r"^0x[0-9a-f]{64}$",
-            )
+            aggregated = read_model_bin(results / "aggregated.bin")
+            for parameter in aggregated.parameters():
+                self.assertTrue(torch.equal(parameter, torch.full_like(parameter, 2.0)))
+            self.assertEqual(result, {"model_path": str(results / "aggregated.bin"), "metrics": {}})
+            self.assertFalse((results / "aggregated.hybrid-r.json").exists())
 
     def test_aggregate_rejects_input_count_different_from_closed_round(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -99,10 +93,6 @@ class AggregateParticipantKeyTests(unittest.TestCase):
                         "source_round": 2,
                         "expected_models": 2,
                         "participant_count": 3,
-                        "medical_signer_snapshot": {"block_number": 100},
-                        "expected_algorithm_hash": "0x" + "11" * 32,
-                        "expected_validation_data_hash": "0x" + "22" * 32,
-                        "max_loss_increase_bps": 500,
                         "private_key": participant_key,
                     }
                 ).encode("utf-8"),
@@ -124,10 +114,6 @@ class AggregateParticipantKeyTests(unittest.TestCase):
                 source_round=2,
                 expected_models=2,
                 participant_count=3,
-                medical_signer_snapshot={"block_number": 100},
-                expected_algorithm_hash="0x" + "11" * 32,
-                expected_validation_data_hash="0x" + "22" * 32,
-                max_loss_increase_bps=500,
                 private_key=participant_key,
             )
         finally:

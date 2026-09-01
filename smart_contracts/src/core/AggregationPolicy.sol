@@ -15,15 +15,8 @@ contract AggregationPolicy {
 
     bytes32 public constant POLICY_HASH_DOMAIN = keccak256("VITA-FL:aggregation-policy:v2");
     bytes32 public constant INPUT_ROOT_SEED = keccak256("VITA-FL:aggregation-input-root:v1");
-    /// @dev Keccak-256 of this single-line ASCII preimage:
-    /// VITA-FL:hybrid-r:v1|model=torch-state-dict|layout=conv1.weight,conv1.bias,conv2.weight,conv2.bias,fc1.weight,fc1.bias,fc2.weight,fc2.bias|tensor-order=c-contiguous-row-major|numeric=ieee754-binary64-cpu|update=client-model-minus-parent-model|input-order=worker-address-ascending|candidates=fedavg(equal-weight-arithmetic-mean),coordinate-median(even-count=arithmetic-mean-of-middle-two),trimmed-mean(q=1..floor((n-1)/2),q-ascending,drop-q-lowest-and-q-highest-per-coordinate),multi-krum(n>=5,f=floor((n-3)/2),neighbors=n-f-2,select=n-f-2,single-pass,squared-l2,score=sum-nearest,score-ties=input-order,selected-update=equal-weight-arithmetic-mean)|candidate-order=fedavg,coordinate-median,trimmed-mean-q-ascending,multi-krum|candidate-model=parent-model-plus-candidate-update|validation=round.validationDataHash|risk=bce-with-logits(raw-logits,elementwise-mean-over-Nx14,binary64-cpu)|selection=exact-binary64-less-than;ties=earlier-candidate|gate=best-loss<=parent-loss*(1+round.maxLossIncreaseBps/10000)|parent-fallback=unchanged-parent-if-no-finite-candidate-or-gate-fails|fail-closed=missing-or-hash-mismatched-validation,invalid-model-layout,nonfinite-parent-loss
-    bytes32 public constant HYBRID_R_V1_HASH = 0xfee8d99e620214799109487915a0c3a4f37f5a6fb66cb08dfed75fb5b6573610;
-    /// @dev SHA-256 of the canonical ChestMNIST validation semantics. The
-    ///      domain-separated framing covers the split ID, dtype, shape and raw
-    ///      bytes of every image, label, sample ID and provenance field.
-    bytes32 public constant HYBRID_R_VALIDATION_DATA_V1_HASH =
-        0xe4457c09ceeb203858e9b74232a4aa5b8852c623d85a63742a8751405d189d63;
-    uint16 public constant HYBRID_R_MAX_LOSS_INCREASE_BPS = 500;
+    bytes32 public constant FEDERATED_AVERAGING_V1_HASH =
+        keccak256("VITA-FL:fedavg:torch-state-dict:float64:equal-weight:v1");
     bytes32 public constant BOOTSTRAP_ROLLOVER_V1_HASH = keccak256("VITA-FL:bootstrap-model-rollover:v1");
 
     bytes32 public constant EIP712_DOMAIN_TYPEHASH =
@@ -148,9 +141,9 @@ contract AggregationPolicy {
             configurationVersion,
             requiredSubmissions,
             submissionWindowSeconds,
-            HYBRID_R_V1_HASH,
-            HYBRID_R_VALIDATION_DATA_V1_HASH,
-            HYBRID_R_MAX_LOSS_INCREASE_BPS
+            FEDERATED_AVERAGING_V1_HASH,
+            bytes32(0),
+            0
         );
     }
 
@@ -164,9 +157,9 @@ contract AggregationPolicy {
         require(block.timestamp <= type(uint64).max - defaultSubmissionWindowSeconds, "deadline overflow");
 
         uint32 requiredSubmissions = round == 0 ? 0 : defaultRequiredSubmissions;
-        bytes32 algorithmHash = round == 0 ? BOOTSTRAP_ROLLOVER_V1_HASH : HYBRID_R_V1_HASH;
-        bytes32 validationDataHash = round == 0 ? bytes32(0) : HYBRID_R_VALIDATION_DATA_V1_HASH;
-        uint16 maxLossIncreaseBps = round == 0 ? 0 : HYBRID_R_MAX_LOSS_INCREASE_BPS;
+        bytes32 algorithmHash = round == 0 ? BOOTSTRAP_ROLLOVER_V1_HASH : FEDERATED_AVERAGING_V1_HASH;
+        bytes32 validationDataHash = bytes32(0);
+        uint16 maxLossIncreaseBps = 0;
         uint64 openedAt = uint64(block.timestamp);
         uint64 deadline = openedAt + defaultSubmissionWindowSeconds;
         bytes32 policyHash = keccak256(

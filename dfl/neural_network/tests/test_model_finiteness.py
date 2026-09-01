@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import struct
-import sys
 import unittest
 
 import torch
@@ -9,10 +8,10 @@ import torch
 from dfl.neural_network.cli import (
     MODEL_LAYOUT,
     FederatedCNN,
+    _equal_weight_federated_average,
     model_from_bytes,
     model_to_bytes,
 )
-from dfl.neural_network.hybrid_r import client_updates
 
 
 class ModelFinitenessTests(unittest.TestCase):
@@ -43,17 +42,14 @@ class ModelFinitenessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-finite parameter"):
             model_to_bytes(model)
 
-    def test_overflowing_client_update_is_rejected_before_candidate_selection(self) -> None:
-        parent = FederatedCNN().double()
-        client = FederatedCNN().double()
+    def test_non_finite_federated_average_is_rejected(self) -> None:
+        first = FederatedCNN().double()
+        second = FederatedCNN().double()
         with torch.no_grad():
-            for parameter in parent.parameters():
-                parameter.fill_(-sys.float_info.max)
-            for parameter in client.parameters():
-                parameter.fill_(sys.float_info.max)
+            second.conv1.weight[0, 0, 0, 0] = float("nan")
 
-        with self.assertRaisesRegex(ValueError, "client updates contains a non-finite value"):
-            client_updates(parent, [client], MODEL_LAYOUT)
+        with self.assertRaisesRegex(ValueError, "Federated average contains a non-finite parameter"):
+            _equal_weight_federated_average([first, second])
 
 
 if __name__ == "__main__":

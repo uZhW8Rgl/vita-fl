@@ -130,7 +130,7 @@ export const buildEncryptedGlobalModelArtifacts = async ({
     if (aggregationEvidencePath) {
         aggregationEvidenceBytes = await fs.readFile(aggregationEvidencePath);
         if (aggregationEvidenceBytes.length === 0) {
-            throw new Error("Hybrid-R aggregation evidence must not be empty.");
+            throw new Error("Aggregation evidence must not be empty.");
         }
         try {
             const parsed = JSON.parse(aggregationEvidenceBytes.toString("utf8"));
@@ -139,7 +139,7 @@ export const buildEncryptedGlobalModelArtifacts = async ({
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            throw new Error(`Invalid Hybrid-R aggregation evidence: ${message}`);
+            throw new Error(`Invalid aggregation evidence: ${message}`);
         }
         aggregationEvidenceHash = crypto
             .createHash("sha256")
@@ -345,14 +345,14 @@ export const decryptEncryptedGlobalModelArtifacts = async ({
     if (payload.aggregation_evidence_b64 !== null && payload.aggregation_evidence_b64 !== undefined) {
         const evidenceBytes = toBufferFromBase64(
             payload.aggregation_evidence_b64,
-            "Hybrid-R aggregation evidence",
+            "aggregation evidence",
         );
         const actualHash = crypto.createHash("sha256").update(evidenceBytes).digest("hex");
         if (
             typeof payload.aggregation_evidence_sha256 !== "string"
             || payload.aggregation_evidence_sha256.toLowerCase() !== actualHash
         ) {
-            throw new Error("Hybrid-R aggregation evidence hash mismatch.");
+            throw new Error("Aggregation evidence hash mismatch.");
         }
         if (
             keyBundleDocument.aggregation_evidence_b64
@@ -362,12 +362,12 @@ export const decryptEncryptedGlobalModelArtifacts = async ({
             ).toLowerCase() !== actualHash
         ) {
             throw new Error(
-                "Public key-bundle Hybrid-R evidence does not match the encrypted payload.",
+                "Public key-bundle aggregation evidence does not match the encrypted payload.",
             );
         }
         const parsed = JSON.parse(evidenceBytes.toString("utf8"));
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-            throw new Error("Hybrid-R aggregation evidence JSON root must be an object.");
+            throw new Error("Aggregation evidence JSON root must be an object.");
         }
         aggregationEvidence = parsed as Record<string, unknown>;
         aggregationEvidenceHash = `0x${actualHash}`;
@@ -379,7 +379,7 @@ export const decryptEncryptedGlobalModelArtifacts = async ({
         && keyBundleDocument.aggregation_evidence_b64 !== undefined
     ) {
         throw new Error(
-            "Public key-bundle Hybrid-R evidence is missing from the encrypted payload.",
+            "Public key-bundle aggregation evidence is missing from the encrypted payload.",
         );
     }
 

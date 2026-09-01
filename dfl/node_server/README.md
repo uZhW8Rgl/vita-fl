@@ -52,10 +52,11 @@ Each worker process determines whether it is the current aggregator from the sma
 - non-aggregator workers fetch the global model, verify its signature, train locally, and send their encrypted local model to the aggregator;
 - the aggregator starts the authenticated HTTPS model receiver, verifies every
   worker commitment, opens and closes the snapshotted on-chain aggregation
-  policy, runs the policy-identified adaptive robust aggregation over exactly
-  that closed input set, signs the new global model, uploads the encrypted model
-  bundle and selection evidence to IPFS, and atomically finalizes the
-  policy-bound publication in `GMStorage`.
+  policy, runs policy-identified equal-weight FedAvg over exactly that closed
+  input set, signs the new global model, uploads the encrypted model bundle and
+  companion signature/key-bundle objects to IPFS, signs the aggregation
+  statement, and atomically finalizes the policy-bound publication in
+  `GMStorage`.
 
 ## Participant Identity and TEE Action Authority
 
@@ -110,19 +111,15 @@ hash, and nonce. `GMStorage` accepts that statement only for the currently
 registered action key and combines publication, reward, and round advancement
 in one transaction. The fixed worker path independently checks that every
 staged file has an accepted on-chain commitment and refuses any count mismatch.
-For non-bootstrap rounds, the policy also fixes the Hybrid-R algorithm identity,
-the semantic hash of the separately signed ChestMNIST validation artifact, and
-a 500-basis-point parent-loss gate. The Node.js process compares these fields
-with the Python result, verifies the canonical selection-evidence file and
-output-model hash, and binds the evidence into both the encrypted payload and
-the public recipient-key bundle. The framed `outputBundleHash`, the
-action-key-signed aggregation statement, and the finalized publication
-therefore commit to the same evidence bytes. Receivers reject a learned-model
-bundle whose evidence is missing or inconsistent.
+For non-bootstrap rounds, the policy fixes the equal-weight FedAvg algorithm
+identity while the reserved validation-data hash and loss-gate fields are zero.
+The Node.js process rejects any different policy before calling the Python
+aggregator. The framed `outputBundleHash`, action-key-signed aggregation
+statement, and finalized publication bind the same closed input set and output.
 
-This provides attestation-based execution integrity and a policy-bound adaptive
-mitigation under the TDX/dstack, key-custody, reference-data, and participant
-assumptions. It is not an independent mathematical aggregation proof or a
+This provides attestation-based execution integrity and policy-bound
+publication under the TDX/dstack, key-custody, and participant assumptions. It
+is not an independent mathematical aggregation proof or a
 universal Byzantine-robustness guarantee.
 
 Official worker Terraform resources disable SSH and user-provided pre-launch

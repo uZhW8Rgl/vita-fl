@@ -51,33 +51,7 @@
   },
   {
     "type": "function",
-    "name": "HYBRID_R_MAX_LOSS_INCREASE_BPS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "HYBRID_R_V1_HASH",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "HYBRID_R_VALIDATION_DATA_V1_HASH",
+    "name": "FEDERATED_AVERAGING_V1_HASH",
     "inputs": [],
     "outputs": [
       {

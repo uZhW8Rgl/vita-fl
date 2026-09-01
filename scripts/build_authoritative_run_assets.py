@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Build compact, document-ready assets for the authoritative Phala run.
+"""Build compact assets for the archived 2026-08-30 Phala experiment.
 
 The script only derives data from the archived export, worker logs, runtime
 snapshot, and local ChestMNIST test split. It never contacts a live service.
+That historical run used the former VITA-FL-specific candidate-selection path;
+its output must not be presented as a run of the active FedAvg baseline.
 """
 
 from __future__ import annotations

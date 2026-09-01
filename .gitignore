@@ -10,6 +10,7 @@
 !*.tfvars.example
 .idea
 /.tools/
+.ruff_cache/
 !lib/**
 __pycache__/
 *.pyc
@@ -24,6 +25,7 @@ phala/app_code.txt
 data/rsa_keys/*
 !data/rsa_keys/README.md
 data/chestmnist/provenance/private/
+data/worker_state/
 **/private_key*.pem
 dfl/node_server/public_key.pem
 cache/
