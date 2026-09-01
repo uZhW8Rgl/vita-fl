@@ -2,21 +2,21 @@
   "evidence_policy": "sole evaluation run used by thesis, journal, and presentation",
   "gas_accounting": {
     "initialization": {
-      "gas": 57323711,
+      "gas": 57540777,
       "transactions": 24
     },
     "registration": {
-      "gas": 472618555,
+      "gas": 472240960,
       "transactions": 6
     },
     "scope": "Anvil EVM protocol gas accounting",
-    "source": "deduplicated receipt-derived gas records in the six immutable worker logs",
+    "source": "329 unique receipt-derived rows in the observability export",
     "total": {
-      "gas": 617350840,
+      "gas": 616141147,
       "transactions": 329
     },
     "worker": {
-      "gas": 560027129,
+      "gas": 558600370,
       "transactions": 305
     }
   },
@@ -35,36 +35,36 @@
     "total_label_positions": 314062
   },
   "learning": {
-    "best_macro_auroc": 0.7100258011495155,
-    "best_macro_auroc_round": 11,
-    "best_macro_f1": 0.18673065947361436,
-    "best_macro_f1_round": 18,
-    "best_test_bce": 0.31293886654228215,
-    "best_test_bce_round": 18,
+    "best_macro_auroc": 0.7203009492715939,
+    "best_macro_auroc_round": 13,
+    "best_macro_f1": 0.19537667628142125,
+    "best_macro_f1_round": 8,
+    "best_test_bce": 0.32973311173845726,
+    "best_test_bce_round": 24,
     "final": {
-      "accuracy_percent": 86.72746145665505,
-      "exact_match_percent": 29.795390719030003,
+      "accuracy_percent": 85.85916156682438,
+      "exact_match_percent": 26.02416083448491,
       "global_model_round": 25,
-      "loss": 0.32831031544844314,
-      "macro_auroc": 0.7041662456384822,
-      "macro_f1": 0.18470865890615829,
-      "micro_f1": 0.26553194488494203
+      "loss": 0.3325438750451859,
+      "macro_auroc": 0.7113524957727245,
+      "macro_f1": 0.17747070816439142,
+      "micro_f1": 0.2625819842258199
     },
     "first": {
-      "accuracy_percent": 89.16105737083761,
-      "exact_match_percent": 26.331743413720858,
+      "accuracy_percent": 88.69363374110844,
+      "exact_match_percent": 25.284179556902775,
       "global_model_round": 2,
-      "loss": 0.3959545894924458,
-      "macro_auroc": 0.6490901062910949,
-      "macro_f1": 0.16871818872054514,
-      "micro_f1": 0.2480284521416422
+      "loss": 0.41414830100438255,
+      "macro_auroc": 0.6555732122104928,
+      "macro_f1": 0.14098417444413835,
+      "micro_f1": 0.254247611046939
     },
     "interpretation": "Functional distributed-learning evidence, not clinical validation; label-wise accuracy is dominated by negative labels."
   },
-  "run_id": "authoritative-phala-6w-24r-20260830",
+  "run_id": "authoritative-phala-6w-24r-20260901",
   "runtime": {
-    "agent_image": "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:78df895d7aa2637488da069e76a80f6d44842969e301d06e5cae0ce0fb8863ae",
-    "control_api_image": "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:92c8b24644084df308cda84c1d28bc2c2f1c8beb86ab9dc1e099733d19e8c350",
+    "agent_image": "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:b6520d0a970362e77a420621acf476cca2afb56fdad3bca54d20afabbcdbb6c5",
+    "control_api_image": "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:1371e015c4b8e6042ab1094501bcdc00d283c576b2880e6492de67a88037b9cf",
     "dstack_version": "0.5.9",
     "infrastructure_tee_count": 2,
     "infrastructure_tees": [
@@ -74,45 +74,47 @@
     "mode": "phala",
     "node": "prod9",
     "run_roster_digest": "0x59570da00a642ba8e540bed095080590320a2ea67c1b9989433e66c6191af19c",
-    "smart_contracts_image": "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b09465bb1c1dbd54b7ad527e1ec66c9c74463f600ea86e53fa65673501a394f0",
+    "smart_contracts_image": "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:1ed6bedbe8afd7b2ee433ca7097667c624a415b8fe7bb37c73e0536bda9b16e7",
     "tier_1_concurrent_tee_limit_observed": 8,
     "ui_image": "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:f01a75934d3e6c1b1aa784d1faa80a4f05b1e97264ca509bdd3255f66fe014a7",
     "worker0_profile": "training plus TEE inference",
     "worker1_to_5_profile": "training only",
     "worker_count": 6,
-    "worker_image": "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:578e7fe9c5426c2ed92119a26bee4be54b664e93e6aa71bd91bf9af4fdb1b7b4"
+    "worker_image": "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:e0b3771ca6135932405054947a4eeca88d4c7612d91f93cf2f0482eb804a1b27",
+    "zk_inference_image": "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:2d25f9c1aca15616ce1a45d3b64a29fec10f3e44a57dfea18c55e9fd71e25568"
   },
   "tee_inference": {
     "dcap_collateral_verified": false,
-    "duration_microseconds": 5218,
+    "duration_microseconds": 2839,
     "ground_truth": [],
-    "job_id": "8e96d0955427a60ca8bbd6165cf5ecd9",
-    "manifest_sha256": "f5ca912a892bb3723fc736ee7270d9f9c092b0fcfed76accbc9b2cd58425f53d",
-    "model_sha256": "0da5e8fede045cb00f2e75ec0e0e0ca80dfc243e62a3a7b01c03fe4b050d26c8",
+    "job_id": "a37a70863cba55dc3633a1ee1756a537",
+    "manifest_sha256": "ed45e6eca3599d90a47427485999e06504238e283ab5e6de9e02628038060fe5",
+    "model_sha256": "bf72fa9369459804f6c82caa4d6f922e7c2cea170f0fa8ed8d044b4bd6383c80",
     "model_version": "round-25",
     "predicted_labels": [],
     "quote_bytes": 5010,
-    "receipt_signature_transaction": "2.21",
+    "receipt_signature_transaction": "2.23",
     "rtmr3_event_count": 10,
     "sample_index": 19963,
-    "transparency_record_id": "4eae5e2130ef5de118acfffe6e7e7870c59a6d0dea576d516d6cb52559dbeb7c",
-    "transparency_transaction": "2.20",
+    "transparency_record_id": "944fb7397e27c7fece13519fffc93132b86b21880a63b6b7e1dbd023bd8b24d3",
+    "transparency_transaction": "2.22",
     "verification_scope": "air-signature-reportdata-rtmr3-compose-image-contract-endpoint-trust-root-policy"
   },
   "training": {
     "aborted_round_attempts": 0,
+    "aggregation": "deterministic equal-weight FedAvg",
     "bootstrap_completions": 1,
     "client_updates_per_round": 5,
     "dataset": "ChestMNIST",
     "federated_rounds": 24,
-    "first_evaluation_utc": "2026-08-30T11:40:03.485000+00:00",
-    "first_to_last_evaluation_seconds": 860.87,
-    "last_evaluation_utc": "2026-08-30T11:54:24.355000+00:00",
+    "first_evaluation_utc": "2026-09-01T06:11:46.327000+00:00",
+    "first_to_last_evaluation_seconds": 689.22,
+    "last_evaluation_utc": "2026-09-01T06:23:15.547000+00:00",
     "learning_rate": 0.003,
     "learning_rate_schedule": "constant",
     "local_epochs": 2,
-    "mean_evaluation_interval_seconds": 37.42913043478261,
-    "model": "two-convolution CNN",
+    "mean_evaluation_interval_seconds": 29.96608695652174,
+    "model": "compact two-convolution CNN",
     "model_transfers": 120,
     "optimizer": "AdamW",
     "positive_class_weight_cap": 10,
@@ -122,5 +124,17 @@
     "training_shards": 6,
     "training_starts": 120,
     "weight_decay": 0.0001
+  },
+  "transparency": {
+    "exported_record_count": 6,
+    "not_retained": [
+      "evidence.cbor bytes",
+      "transparent-statement.cose bytes"
+    ],
+    "retained": [
+      "agent session",
+      "TEE result",
+      "record read-models and digests"
+    ]
   }
 }

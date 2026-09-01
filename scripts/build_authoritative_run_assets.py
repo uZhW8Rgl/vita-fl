@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Build compact assets for the archived 2026-08-30 Phala experiment.
+"""Regenerate publication assets from the 2026-09-01 Phala FedAvg run.
 
-The script only derives data from the archived export, worker logs, runtime
-snapshot, and local ChestMNIST test split. It never contacts a live service.
-That historical run used the former VITA-FL-specific candidate-selection path;
-its output must not be presented as a run of the active FedAvg baseline.
+The script is deliberately offline. It derives every compact table and the
+manifest from the checked-in observability export, final Prometheus scrape,
+worker logs, runtime status, TEE-inference result, and local ChestMNIST split.
 """
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ import csv
 import gzip
 import json
 import re
+import shutil
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,218 +21,82 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RUN_DIR = ROOT / "data" / "evaluation" / "authoritative-phala-6w-24r-20260830"
+WORKSPACE = ROOT.parent
+RUN_DIR = ROOT / "data" / "evaluation" / "authoritative-phala-6w-24r-20260901"
 RAW_DIR = RUN_DIR / "raw"
 TEST_SPLIT = ROOT / "data" / "chestmnist" / "test_data" / "test-data.npz"
+PUBLICATION_STEMS = {
+    "round_metrics.csv": "authoritative_phala_6w_24r.csv",
+    "first_best_final.csv": "authoritative_phala_6w_24r_first_best_final.csv",
+    "worker_activity.csv": "authoritative_phala_6w_24r_worker_activity.csv",
+    "run_manifest.json": "authoritative_phala_6w_24r_manifest.json",
+}
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]], fields: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fields,
+            extrasaction="ignore",
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(rows)
 
 
 def _parse_worker_logs() -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    complete_re = re.compile(
-        r"Hybrid-R aggregation complete: output_kind=(\w+), selected_candidate=(\w+)"
-    )
-    field_patterns = {
-        "selected_candidate": re.compile(r"selectedCandidate: '([^']+)'"),
-        "output_kind": re.compile(r"outputKind: '([^']+)'"),
-        "gate_passed": re.compile(r"gatePassed: (true|false)"),
-        "parent_validation_loss": re.compile(r"parentLoss: ([0-9.eE+-]+)"),
-        "selected_validation_loss": re.compile(r"selectedLoss: ([0-9.eE+-]+)"),
-        "validation_data_hash": re.compile(r"validationDataHash: '([^']+)'"),
-    }
-
-    for log_path in sorted((RAW_DIR / "workers").glob("vita-fl-worker?-full.log.gz")):
+    paths = sorted((RAW_DIR / "workers").glob("vita-fl-worker[0-5]-full.log.gz"))
+    if len(paths) != 6:
+        raise RuntimeError(f"Expected six worker logs, found {len(paths)}")
+    for log_path in paths:
         worker_match = re.search(r"worker(\d+)", log_path.name)
-        worker = f"VM-{worker_match.group(1)}" if worker_match else "unknown"
-        pending: dict[str, object] = {}
-        evidence_target: dict[str, object] | None = None
-        in_evidence = False
+        if worker_match is None:
+            raise RuntimeError(f"Cannot derive worker identity from {log_path.name}")
+        worker = f"VM-{worker_match.group(1)}"
         with gzip.open(log_path, "rt", encoding="utf-8", errors="replace") as handle:
             for line in handle:
-                complete = complete_re.search(line)
-                if complete:
-                    pending = {
-                        "output_kind": complete.group(1),
-                        "selected_candidate": complete.group(2),
+                if not line.startswith('{"accuracy_percent"'):
+                    continue
+                payload = json.loads(line)
+                if payload.get("kind") != "global_model_evaluation":
+                    continue
+                payload.update(
+                    {
+                        "experiment_id": "phala",
+                        "federated_round": int(payload["source_round"]),
+                        "global_model_round": int(payload["round"]),
+                        "aggregator_worker": worker,
+                        "aggregation_rule": "equal_weight_fedavg",
                     }
-                    continue
-
-                json_start = line.find('{"accuracy_percent"')
-                if json_start >= 0:
-                    payload = json.loads(line[json_start:])
-                    payload.update(pending)
-                    payload["aggregator_worker"] = worker
-                    payload["experiment_id"] = "phala"
-                    payload["federated_round"] = int(payload["source_round"])
-                    payload["global_model_round"] = int(payload["round"])
-                    records.append(payload)
-                    evidence_target = payload
-                    pending = {}
-                    continue
-
-                if "Hybrid-R selection evidence:" in line:
-                    in_evidence = True
-                    continue
-                if in_evidence and evidence_target is not None:
-                    if re.search(r"\}\s*$", line):
-                        in_evidence = False
-                        continue
-                    for field, pattern in field_patterns.items():
-                        match = pattern.search(line)
-                        if not match:
-                            continue
-                        value: object = match.group(1)
-                        if field == "gate_passed":
-                            value = value == "true"
-                        elif field.endswith("_loss"):
-                            value = float(value)
-                        evidence_target[field] = value
-
+                )
+                records.append(payload)
     records.sort(key=lambda row: int(row["federated_round"]))
-    if len(records) != 24:
-        raise RuntimeError(f"Expected 24 evaluation records, found {len(records)}")
-    if len({int(row["federated_round"]) for row in records}) != 24:
-        raise RuntimeError("Duplicate or missing federated-round records")
+    if [int(row["federated_round"]) for row in records] != list(range(1, 25)):
+        raise RuntimeError("Expected exactly one evaluation for each federated round 1--24")
+    if [int(row["global_model_round"]) for row in records] != list(range(2, 26)):
+        raise RuntimeError("Expected global-model rounds 2--25")
     return records
 
 
-def _worker_gas_records() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    """Recover confirmed worker transactions from the immutable worker logs.
-
-    The final Prometheus scrape is a useful dashboard snapshot, but it is not
-    the accounting source of record: a start-up race in the evaluated control
-    service cleared telemetry after workers had begun registering.  The worker
-    logs contain the receipt-derived ``gas_cost`` record for every confirmed
-    transaction and therefore permit transaction-hash de-duplication without
-    estimating or inventing a value.
-
-    Every worker-scoped receipt is included, including the one action-key
-    funding transfer per worker, so no executed gas value is silently omitted.
-    """
-
-    transactions: list[dict[str, object]] = []
-    registrations: list[dict[str, object]] = []
-    seen_hashes: set[str] = set()
-
-    for log_path in sorted((RAW_DIR / "workers").glob("vita-fl-worker?-full.log.gz")):
-        worker_match = re.search(r"worker(\d+)", log_path.name)
-        if worker_match is None:
-            raise RuntimeError(f"Could not derive worker identity from {log_path.name}")
-        worker = f"VM-{worker_match.group(1)}"
-        worker_transactions: list[dict[str, object]] = []
-        registration_success_line: int | None = None
-
-        with gzip.open(log_path, "rt", encoding="utf-8", errors="replace") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                if "Device registered with onchain TDX quote and RTMR3 event replay verification" in line:
-                    registration_success_line = line_number
-
-                json_start = line.find('{"timestamp_unix_ms"')
-                if json_start < 0:
-                    continue
-                try:
-                    payload = json.loads(line[json_start:])
-                except json.JSONDecodeError:
-                    continue
-                if payload.get("kind") != "gas_cost":
-                    continue
-                if payload.get("scope") != "worker":
-                    continue
-                transaction_hash = str(payload.get("transactionHash", "")).lower()
-                if not re.fullmatch(r"0x[0-9a-f]{64}", transaction_hash):
-                    raise RuntimeError(
-                        f"Invalid worker transaction hash in {log_path.name}:{line_number}"
-                    )
-                if transaction_hash in seen_hashes:
-                    raise RuntimeError(f"Duplicate worker transaction {transaction_hash}")
-                gas_used = int(payload.get("gasUsed", 0))
-                if gas_used <= 0:
-                    raise RuntimeError(
-                        f"Invalid gasUsed in {log_path.name}:{line_number}"
-                    )
-                record = {
-                    "worker": worker,
-                    "operation": str(payload.get("operation", "")),
-                    "transaction_hash": transaction_hash,
-                    "block_number": int(payload.get("blockNumber", 0)),
-                    "gas_used": gas_used,
-                    "account": str(payload.get("account", "")).lower(),
-                    "device_id": str(payload.get("deviceId", "")),
-                    "log_file": log_path.name,
-                    "log_line": line_number,
-                }
-                seen_hashes.add(transaction_hash)
-                worker_transactions.append(record)
-                transactions.append(record)
-
-        if registration_success_line is None:
-            raise RuntimeError(f"No successful RTMR3 registration in {log_path.name}")
-        preceding = [
-            record
-            for record in worker_transactions
-            if int(record["log_line"]) < registration_success_line
-            and record["operation"] == "contract_transaction"
-        ]
-        if len(preceding) != 1:
-            raise RuntimeError(
-                f"Expected one receipt before registration success for {worker}, found {len(preceding)}"
-            )
-        registrations.append({**preceding[0], "registration_verified_line": registration_success_line})
-
-    if len(registrations) != 6:
-        raise RuntimeError(f"Expected six successful RTMR3 registrations, found {len(registrations)}")
-    return transactions, registrations
+def _read_prometheus() -> list[tuple[str, dict[str, str], float]]:
+    samples: list[tuple[str, dict[str, str], float]] = []
+    pattern = re.compile(r'^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{([^}]*)\})?\s+([-+0-9.eE]+)$')
+    label_pattern = re.compile(r'(\w+)="((?:\\.|[^"])*)"')
+    for line in (RAW_DIR / "control_metrics.prom").read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#"):
+            continue
+        match = pattern.match(line)
+        if not match:
+            continue
+        labels = {key: value for key, value in label_pattern.findall(match.group(2) or "")}
+        samples.append((match.group(1), labels, float(match.group(3))))
+    return samples
 
 
-def _worker_activity() -> list[dict[str, object]]:
-    snapshot = json.loads((RAW_DIR / "prometheus_final_snapshot.json").read_text())
-    results = snapshot["data"]["result"]
-    events: dict[str, dict[str, int]] = defaultdict(dict)
-    for item in results:
-        metric = item["metric"]
-        name = metric.get("__name__", "")
-        value = float(item["value"][1])
-        worker = metric.get("worker")
-        if name == "dfl_worker_runtime_event_total" and worker:
-            events[worker][metric.get("event", "")] = int(value)
-    transactions, registrations = _worker_gas_records()
-    gas_by_worker: dict[str, int] = defaultdict(int)
-    transactions_by_worker: dict[str, int] = defaultdict(int)
-    registration_gas_by_worker = {
-        str(record["worker"]): int(record["gas_used"]) for record in registrations
-    }
-    for record in transactions:
-        worker = str(record["worker"])
-        gas_by_worker[worker] += int(record["gas_used"])
-        transactions_by_worker[worker] += 1
-
-    rows = []
-    for worker in sorted(events, key=lambda value: int(value.split("-")[1])):
-        rows.append(
-            {
-                "worker": worker,
-                "training_rounds": events[worker].get("worker.training.finished", 0),
-                "model_transfers": events[worker].get("worker.model_transfer.finished", 0),
-                "aggregator_rounds": events[worker].get("aggregator.global_model_evaluation", 0),
-                "selection_gap_recoveries": events[worker].get(
-                    "worker.aggregator_selection_gap.recovered", 0
-                ),
-                "transactions": transactions_by_worker[worker],
-                "registration_gas": registration_gas_by_worker[worker],
-                "gas_used": gas_by_worker[worker],
-            }
-        )
-    return rows
-
-
-def _scalar_metrics() -> dict[str, float]:
-    snapshot = json.loads((RAW_DIR / "prometheus_final_snapshot.json").read_text())
+def _scalar_metrics(samples: list[tuple[str, dict[str, str], float]]) -> dict[str, float]:
     wanted = {
         "dfl_aborted_round_attempts",
         "dfl_aggregations_total",
@@ -241,13 +105,80 @@ def _scalar_metrics() -> dict[str, float]:
         "dfl_model_transfers_total",
         "dfl_successful_training_rounds",
         "dfl_training_starts_total",
+        "dfl_worker_gas_used_total",
+        "dfl_worker_registration_gas_used_total",
+        "dfl_worker_registration_receipt_gap",
     }
-    values: dict[str, float] = {}
-    for item in snapshot["data"]["result"]:
-        name = item["metric"].get("__name__")
-        if name in wanted and len(item["metric"]) <= 3:
-            values[name] = float(item["value"][1])
+    values = {name: value for name, labels, value in samples if name in wanted and not labels}
+    missing = wanted - values.keys()
+    if missing:
+        raise RuntimeError(f"Missing Prometheus scalars: {sorted(missing)}")
     return values
+
+
+def _transaction_rows() -> list[dict[str, str]]:
+    with (RAW_DIR / "transaction_costs.csv").open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    hashes = [row["transactionHash"].lower() for row in rows]
+    if len(rows) != 329 or len(set(hashes)) != 329:
+        raise RuntimeError("Expected 329 unique receipt-derived transactions")
+    return rows
+
+
+def _worker_activity(
+    samples: list[tuple[str, dict[str, str], float]],
+    transactions: list[dict[str, str]],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    events: dict[str, dict[str, int]] = defaultdict(dict)
+    accounts: dict[str, str] = {}
+    for name, labels, value in samples:
+        worker = labels.get("worker")
+        if name == "dfl_worker_runtime_event_total" and worker:
+            events[worker][labels.get("event", "")] = int(value)
+            accounts[worker] = labels.get("account", "")
+
+    with (RAW_DIR / "worker_costs_by_worker.csv").open(newline="", encoding="utf-8") as handle:
+        costs = {row["worker"]: row for row in csv.DictReader(handle)}
+
+    registrations = []
+    for row in transactions:
+        if row["scope"] != "worker" or row["operation"] != "rtmr3_registration":
+            continue
+        worker = f"VM-{int(row['deviceId'])}"
+        registrations.append(
+            {
+                "worker": worker,
+                "account": row["account"],
+                "device_id": int(row["deviceId"]),
+                "transaction_hash": row["transactionHash"].lower(),
+                "block_number": int(row["blockNumber"]),
+                "gas_used": int(row["gasUsed"]),
+            }
+        )
+    registrations.sort(key=lambda row: int(row["device_id"]))
+    if len(registrations) != 6:
+        raise RuntimeError(f"Expected six RTMR3 registration receipts, found {len(registrations)}")
+    registration_gas = {str(row["worker"]): int(row["gas_used"]) for row in registrations}
+
+    rows: list[dict[str, object]] = []
+    for index in range(6):
+        worker = f"VM-{index}"
+        event = events[worker]
+        cost = costs[worker]
+        rows.append(
+            {
+                "worker": worker,
+                "account": accounts[worker],
+                "training_rounds": event.get("worker.training.finished", 0),
+                "model_transfers": event.get("worker.model_transfer.finished", 0),
+                "aggregator_rounds": event.get("aggregator.global_model_evaluation", 0),
+                "selection_gap_recoveries": event.get("worker.aggregator_selection_gap.recovered", 0),
+                "transactions": int(cost["transactionCount"]),
+                "registration_gas": registration_gas[worker],
+                "gas_used": int(cost["gasUsed"]),
+            }
+        )
+    return rows, registrations
 
 
 def _imbalance() -> dict[str, object]:
@@ -274,46 +205,46 @@ def _best_row(rows: list[dict[str, object]], metric: str, minimize: bool = False
     return (min if minimize else max)(rows, key=lambda row: float(row[metric]))
 
 
+def _publish() -> None:
+    destinations = [
+        WORKSPACE / "journal" / "data",
+        WORKSPACE / "overleaf" / "images" / "data",
+        WORKSPACE / "presentation" / "data" / "evaluation",
+    ]
+    for destination in destinations:
+        destination.mkdir(parents=True, exist_ok=True)
+        for source_name, destination_name in PUBLICATION_STEMS.items():
+            source = RUN_DIR / source_name
+            target = destination / destination_name
+            if destination == WORKSPACE / "journal" / "data" and source_name == "first_best_final.csv":
+                with source.open(newline="", encoding="utf-8") as handle:
+                    rows = list(csv.DictReader(handle))
+                for row in rows:
+                    row["metric"] = row["metric"].replace("%", r"\%")
+                _write_csv(target, rows, list(rows[0]))
+            else:
+                shutil.copyfile(source, target)
+    shutil.copyfile(RUN_DIR / "plot-metrics.csv", WORKSPACE / "overleaf" / "images" / "data" / "plot-metrics.csv")
+
+
 def main() -> None:
     rows = _parse_worker_logs()
-    fields = [
-        "experiment_id",
-        "dataset",
-        "federated_round",
-        "global_model_round",
-        "timestamp_unix_ms",
-        "participant_count",
-        "aggregated_model_count",
-        "expected_models",
-        "aggregator_worker",
-        "selected_candidate",
-        "output_kind",
-        "gate_passed",
-        "parent_validation_loss",
-        "selected_validation_loss",
-        "validation_data_hash",
-        "accuracy_percent",
-        "exact_match_percent",
-        "loss",
-        "micro_f1",
-        "macro_f1",
-        "macro_auroc",
-        "sample_count",
-        "label_count",
-        "correct_predictions",
-        "total_predictions",
+    round_fields = [
+        "experiment_id", "dataset", "federated_round", "global_model_round",
+        "timestamp_unix_ms", "participant_count", "aggregated_model_count",
+        "expected_models", "aggregator_worker", "aggregation_rule",
+        "accuracy_percent", "exact_match_percent", "loss", "micro_f1",
+        "macro_f1", "macro_auroc", "sample_count", "label_count",
+        "correct_predictions", "total_predictions",
     ]
-    _write_csv(RUN_DIR / "round_metrics.csv", rows, fields)
+    _write_csv(RUN_DIR / "round_metrics.csv", rows, round_fields)
     _write_csv(
         RUN_DIR / "plot-metrics.csv",
         [
             {
-                "round": row["global_model_round"],
-                "loss": row["loss"],
-                "microf1": row["micro_f1"],
-                "macrof1": row["macro_f1"],
-                "auroc": row["macro_auroc"],
-                "accuracy": row["accuracy_percent"],
+                "round": row["global_model_round"], "loss": row["loss"],
+                "microf1": row["micro_f1"], "macrof1": row["macro_f1"],
+                "auroc": row["macro_auroc"], "accuracy": row["accuracy_percent"],
                 "exactmatch": row["exact_match_percent"],
             }
             for row in rows
@@ -321,21 +252,7 @@ def main() -> None:
         ["round", "loss", "microf1", "macrof1", "auroc", "accuracy", "exactmatch"],
     )
 
-    activity = _worker_activity()
-    activity_fields = [
-        "worker",
-        "training_rounds",
-        "model_transfers",
-        "aggregator_rounds",
-        "selection_gap_recoveries",
-        "transactions",
-        "registration_gas",
-        "gas_used",
-    ]
-    _write_csv(RUN_DIR / "worker_activity.csv", activity, activity_fields)
-
-    first = rows[0]
-    final = rows[-1]
+    first, final = rows[0], rows[-1]
     metric_rows = []
     for metric, label, minimize in (
         ("accuracy_percent", "Label-wise accuracy (%)", False),
@@ -345,115 +262,69 @@ def main() -> None:
         ("micro_f1", "Micro F1", False),
         ("exact_match_percent", "Exact match (%)", False),
     ):
-        best = _best_row(rows, metric, minimize=minimize)
+        best = _best_row(rows, metric, minimize)
         metric_rows.append(
             {
-                "metric": label,
-                "first": first[metric],
+                "metric": label, "first": first[metric],
                 "first_global_model_round": first["global_model_round"],
-                "best": best[metric],
-                "best_global_model_round": best["global_model_round"],
-                "final": final[metric],
-                "final_global_model_round": final["global_model_round"],
+                "best": best[metric], "best_global_model_round": best["global_model_round"],
+                "final": final[metric], "final_global_model_round": final["global_model_round"],
             }
         )
     _write_csv(
-        RUN_DIR / "first_best_final.csv",
-        metric_rows,
-        [
-            "metric",
-            "first",
-            "first_global_model_round",
-            "best",
-            "best_global_model_round",
-            "final",
-            "final_global_model_round",
-        ],
-    )
-    # The journal consumes this table directly through pgfplotstable.  Keep the
-    # canonical CSV tool-neutral while escaping percent signs in the TeX-facing
-    # copy so a regeneration cannot turn the rest of a row into a TeX comment.
-    journal_metric_rows = [
-        {**row, "metric": str(row["metric"]).replace("%", r"\%")}
-        for row in metric_rows
-    ]
-    _write_csv(
-        ROOT / "journal" / "data" / "authoritative_phala_6w_24r_first_best_final.csv",
-        journal_metric_rows,
-        [
-            "metric",
-            "first",
-            "first_global_model_round",
-            "best",
-            "best_global_model_round",
-            "final",
-            "final_global_model_round",
-        ],
+        RUN_DIR / "first_best_final.csv", metric_rows,
+        ["metric", "first", "first_global_model_round", "best", "best_global_model_round", "final", "final_global_model_round"],
     )
 
-    scalar = _scalar_metrics()
-    imbalance = _imbalance()
-    inference = json.loads((RAW_DIR / "tee_inference_result.json").read_text())
-    status = json.loads((RAW_DIR / "runtime_status.json").read_text())
-    start_ms = int(first["timestamp_unix_ms"])
-    end_ms = int(final["timestamp_unix_ms"])
-    init_gas = int(scalar["dfl_contract_init_gas_used_total"])
-    worker_transactions = sum(int(row["transactions"]) for row in activity)
+    samples = _read_prometheus()
+    scalar = _scalar_metrics(samples)
+    transactions = _transaction_rows()
+    activity, registrations = _worker_activity(samples, transactions)
+    activity_fields = ["worker", "account", "training_rounds", "model_transfers", "aggregator_rounds", "selection_gap_recoveries", "transactions", "registration_gas", "gas_used"]
+    _write_csv(RUN_DIR / "worker_activity.csv", activity, activity_fields)
+    _write_csv(RUN_DIR / "registration_gas_audit.csv", registrations, ["worker", "account", "device_id", "transaction_hash", "block_number", "gas_used"])
+
+    status = json.loads((RAW_DIR / "runtime_status.json").read_text(encoding="utf-8"))
+    inference = json.loads((RAW_DIR / "tee_inference_result.json").read_text(encoding="utf-8"))
+    transparency = json.loads((RAW_DIR / "transparency_records.json").read_text(encoding="utf-8"))
+    start_ms, end_ms = int(first["timestamp_unix_ms"]), int(final["timestamp_unix_ms"])
     worker_gas = sum(int(row["gas_used"]) for row in activity)
-    _, registrations = _worker_gas_records()
+    worker_transactions = sum(int(row["transactions"]) for row in activity)
     registration_gas = sum(int(row["gas_used"]) for row in registrations)
+    init_transactions = [row for row in transactions if row["scope"] == "smart_contracts_init"]
+    init_gas = sum(int(row["gasUsed"]) for row in init_transactions)
+    if worker_gas != int(scalar["dfl_worker_gas_used_total"]):
+        raise RuntimeError("Worker gas does not match the final Prometheus total")
+    if registration_gas != int(scalar["dfl_worker_registration_gas_used_total"]):
+        raise RuntimeError("Registration gas does not match the final Prometheus total")
 
-    _write_csv(
-        RUN_DIR / "registration_gas_audit.csv",
-        registrations,
-        [
-            "worker",
-            "account",
-            "device_id",
-            "transaction_hash",
-            "operation",
-            "block_number",
-            "gas_used",
-            "log_file",
-            "log_line",
-            "registration_verified_line",
-        ],
-    )
-
+    learning_fields = ("global_model_round", "accuracy_percent", "loss", "macro_auroc", "macro_f1", "micro_f1", "exact_match_percent")
     manifest = {
-        "run_id": "authoritative-phala-6w-24r-20260830",
+        "run_id": "authoritative-phala-6w-24r-20260901",
         "evidence_policy": "sole evaluation run used by thesis, journal, and presentation",
         "runtime": {
-            "mode": "phala",
-            "node": "prod9",
-            "dstack_version": "0.5.9",
-            "worker_count": 6,
-            "tier_1_concurrent_tee_limit_observed": 8,
+            "mode": "phala", "node": "prod9", "dstack_version": "0.5.9",
+            "worker_count": 6, "tier_1_concurrent_tee_limit_observed": 8,
             "infrastructure_tee_count": 2,
             "infrastructure_tees": ["contract/control runtime", "Ollama"],
             "worker0_profile": "training plus TEE inference",
             "worker1_to_5_profile": "training only",
-            "worker_image": "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:578e7fe9c5426c2ed92119a26bee4be54b664e93e6aa71bd91bf9af4fdb1b7b4",
-            "control_api_image": "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:92c8b24644084df308cda84c1d28bc2c2f1c8beb86ab9dc1e099733d19e8c350",
+            "worker_image": "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:e0b3771ca6135932405054947a4eeca88d4c7612d91f93cf2f0482eb804a1b27",
+            "control_api_image": "ghcr.io/uzhw8rgl/master-thesis-control-api@sha256:1371e015c4b8e6042ab1094501bcdc00d283c576b2880e6492de67a88037b9cf",
             "ui_image": "ghcr.io/uzhw8rgl/master-thesis-ui@sha256:f01a75934d3e6c1b1aa784d1faa80a4f05b1e97264ca509bdd3255f66fe014a7",
-            "agent_image": "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:78df895d7aa2637488da069e76a80f6d44842969e301d06e5cae0ce0fb8863ae",
-            "smart_contracts_image": "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b09465bb1c1dbd54b7ad527e1ec66c9c74463f600ea86e53fa65673501a394f0",
+            "agent_image": "ghcr.io/uzhw8rgl/master-thesis-agent@sha256:b6520d0a970362e77a420621acf476cca2afb56fdad3bca54d20afabbcdbb6c5",
+            "smart_contracts_image": "ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:1ed6bedbe8afd7b2ee433ca7097667c624a415b8fe7bb37c73e0536bda9b16e7",
+            "zk_inference_image": "ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:2d25f9c1aca15616ce1a45d3b64a29fec10f3e44a57dfea18c55e9fd71e25568",
             "run_roster_digest": status["runtime"]["run_roster"]["digest"],
         },
         "training": {
-            "dataset": "ChestMNIST",
-            "training_samples": 78468,
-            "training_shards": 6,
-            "samples_per_shard": 13078,
-            "model": "two-convolution CNN",
-            "optimizer": "AdamW",
-            "learning_rate": 0.003,
-            "learning_rate_schedule": "constant",
-            "weight_decay": 0.0001,
-            "positive_class_weight_cap": 10,
-            "local_epochs": 2,
-            "bootstrap_completions": 1,
-            "federated_rounds": 24,
+            "dataset": "ChestMNIST", "training_samples": 78468,
+            "training_shards": 6, "samples_per_shard": 13078,
+            "model": "compact two-convolution CNN", "aggregation": "deterministic equal-weight FedAvg",
+            "optimizer": "AdamW", "learning_rate": 0.003,
+            "learning_rate_schedule": "constant", "weight_decay": 0.0001,
+            "positive_class_weight_cap": 10, "local_epochs": 2,
+            "bootstrap_completions": 1, "federated_rounds": 24,
             "client_updates_per_round": 5,
             "successful_federated_rounds": int(scalar["dfl_aggregations_total"]),
             "aborted_round_attempts": int(scalar["dfl_aborted_round_attempts"]),
@@ -461,37 +332,35 @@ def main() -> None:
             "model_transfers": int(scalar["dfl_model_transfers_total"]),
             "first_evaluation_utc": datetime.fromtimestamp(start_ms / 1000, timezone.utc).isoformat(),
             "last_evaluation_utc": datetime.fromtimestamp(end_ms / 1000, timezone.utc).isoformat(),
-            "first_to_last_evaluation_seconds": (end_ms - start_ms) / 1000.0,
-            "mean_evaluation_interval_seconds": (end_ms - start_ms) / 1000.0 / 23.0,
+            "first_to_last_evaluation_seconds": (end_ms - start_ms) / 1000,
+            "mean_evaluation_interval_seconds": (end_ms - start_ms) / 1000 / 23,
         },
         "learning": {
-            "first": {field: first[field] for field in ("global_model_round", "accuracy_percent", "loss", "macro_auroc", "macro_f1", "micro_f1", "exact_match_percent")},
-            "final": {field: final[field] for field in ("global_model_round", "accuracy_percent", "loss", "macro_auroc", "macro_f1", "micro_f1", "exact_match_percent")},
-            "best_test_bce": _best_row(rows, "loss", minimize=True)["loss"],
-            "best_test_bce_round": _best_row(rows, "loss", minimize=True)["global_model_round"],
+            "first": {field: first[field] for field in learning_fields},
+            "final": {field: final[field] for field in learning_fields},
+            "best_test_bce": _best_row(rows, "loss", True)["loss"],
+            "best_test_bce_round": _best_row(rows, "loss", True)["global_model_round"],
             "best_macro_auroc": _best_row(rows, "macro_auroc")["macro_auroc"],
             "best_macro_auroc_round": _best_row(rows, "macro_auroc")["global_model_round"],
             "best_macro_f1": _best_row(rows, "macro_f1")["macro_f1"],
             "best_macro_f1_round": _best_row(rows, "macro_f1")["global_model_round"],
             "interpretation": "Functional distributed-learning evidence, not clinical validation; label-wise accuracy is dominated by negative labels.",
         },
-        "imbalance_baselines": imbalance,
+        "imbalance_baselines": _imbalance(),
         "gas_accounting": {
             "scope": "Anvil EVM protocol gas accounting",
-            "source": "deduplicated receipt-derived gas records in the six immutable worker logs",
+            "source": "329 unique receipt-derived rows in the observability export",
             "registration": {"transactions": 6, "gas": registration_gas},
-            "initialization": {"transactions": 24, "gas": init_gas},
+            "initialization": {"transactions": len(init_transactions), "gas": init_gas},
             "worker": {"transactions": worker_transactions, "gas": worker_gas},
-            "total": {"transactions": worker_transactions + 24, "gas": init_gas + worker_gas},
+            "total": {"transactions": len(transactions), "gas": sum(int(row["gasUsed"]) for row in transactions)},
         },
         "tee_inference": {
-            "job_id": inference["job_id"],
-            "sample_index": inference["sample_index"],
-            "ground_truth": inference["ground_truth"],
-            "predicted_labels": inference["predicted_labels"],
+            "job_id": inference["job_id"], "sample_index": inference["sample_index"],
+            "ground_truth": inference["ground_truth"], "predicted_labels": inference["predicted_labels"],
             "model_version": inference["verification"]["model_version"],
             "manifest_sha256": inference["verification"]["manifest_sha256"],
-            "model_sha256": "0da5e8fede045cb00f2e75ec0e0e0ca80dfc243e62a3a7b01c03fe4b050d26c8",
+            "model_sha256": "bf72fa9369459804f6c82caa4d6f922e7c2cea170f0fa8ed8d044b4bd6383c80",
             "duration_microseconds": inference["verification"]["duration_microseconds"],
             "quote_bytes": inference["verification"]["quote_bytes"],
             "rtmr3_event_count": inference["verification"]["rtmr3_event_count"],
@@ -501,10 +370,14 @@ def main() -> None:
             "transparency_record_id": inference["transparency_record_id"],
             "verification_scope": inference["verification"]["verification_scope"],
         },
+        "transparency": {
+            "exported_record_count": len(transparency["records"]),
+            "retained": ["agent session", "TEE result", "record read-models and digests"],
+            "not_retained": ["evidence.cbor bytes", "transparent-statement.cose bytes"],
+        },
     }
-    (RUN_DIR / "run_manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    (RUN_DIR / "run_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _publish()
 
 
 if __name__ == "__main__":

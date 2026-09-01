@@ -1,0 +1,552 @@
+# HELP dfl_protocol_round Current on-chain protocol attempt index; it advances after successful and aborted attempts.
+# TYPE dfl_protocol_round gauge
+dfl_protocol_round 25
+
+# HELP dfl_completed_round_count Successfully finalized on-chain rounds, including the round-zero bootstrap.
+# TYPE dfl_completed_round_count gauge
+dfl_completed_round_count 25
+
+# HELP dfl_successful_training_rounds Successfully finalized federated training rounds, excluding the round-zero bootstrap.
+# TYPE dfl_successful_training_rounds gauge
+dfl_successful_training_rounds 24
+
+# HELP dfl_aborted_round_attempts Protocol attempts that advanced without successfully finalizing a round.
+# TYPE dfl_aborted_round_attempts gauge
+dfl_aborted_round_attempts 0
+
+# HELP dfl_target_training_rounds User-selected number of federated training rounds, excluding the bootstrap.
+# TYPE dfl_target_training_rounds gauge
+dfl_target_training_rounds 24
+
+# HELP dfl_current_round Deprecated alias for dfl_protocol_round; this is not a successful-round count.
+# TYPE dfl_current_round gauge
+dfl_current_round 25
+
+# HELP dfl_current_aggregator Current DFL aggregator selected on-chain.
+# TYPE dfl_current_aggregator gauge
+dfl_current_aggregator{aggregator_vm="VM-1"} 1
+
+# HELP dfl_global_model_evaluation_info Global model evaluation metadata, one time series per evaluated round.
+# TYPE dfl_global_model_evaluation_info gauge
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="2",source_round="1",recorded_at_unix_ms="1788243107612",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="88.69363374110844",loss="0.41414830100438255",micro_f1="",macro_f1="0.14098417444413835",macro_auroc="0.6555732122104928",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="3",source_round="2",recorded_at_unix_ms="1788243140144",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="87.30919372607956",loss="0.36377939851203867",micro_f1="",macro_f1="0.16391035321594843",macro_auroc="0.6812835139673143",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="4",source_round="3",recorded_at_unix_ms="1788243175772",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="87.47412931204667",loss="0.35627950077624626",micro_f1="",macro_f1="0.16330845181894332",macro_auroc="0.6920295756047519",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="5",source_round="4",recorded_at_unix_ms="1788243205536",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="88.35548394902916",loss="0.34574263170321257",micro_f1="",macro_f1="0.16667692203312112",macro_auroc="0.7006913950381363",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="6",source_round="5",recorded_at_unix_ms="1788243229625",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="87.36714406709504",loss="0.3493106423271746",micro_f1="",macro_f1="0.18631704899157298",macro_auroc="0.7065964165324845",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="7",source_round="6",recorded_at_unix_ms="1788243255379",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="87.6642191669161",loss="0.3407244474940973",micro_f1="",macro_f1="0.19246759223141635",macro_auroc="0.7103498125115403",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="8",source_round="7",recorded_at_unix_ms="1788243284369",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="87.31524348695481",loss="0.33797255236490603",micro_f1="",macro_f1="0.19537667628142125",macro_auroc="0.71289501374707",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="9",source_round="8",recorded_at_unix_ms="1788243315238",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="87.4391043806637",loss="0.32977543386840136",micro_f1="",macro_f1="0.18748593379626474",macro_auroc="0.717286587759331",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="10",source_round="9",recorded_at_unix_ms="1788243346367",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.58131197024791",loss="0.34369252592448973",micro_f1="",macro_f1="0.18658264856677179",macro_auroc="0.7166546332575779",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="11",source_round="10",recorded_at_unix_ms="1788243375842",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.21386859919379",loss="0.34345660007255663",micro_f1="",macro_f1="0.18747679628638192",macro_auroc="0.7190568847233141",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="12",source_round="11",recorded_at_unix_ms="1788243404563",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.2390228680961",loss="0.34358854853112275",micro_f1="",macro_f1="0.19179522085749587",macro_auroc="0.7173665282543401",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="13",source_round="12",recorded_at_unix_ms="1788243432429",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.25908260152454",loss="0.3447906219731837",micro_f1="",macro_f1="0.17679283125157688",macro_auroc="0.7203009492715939",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="14",source_round="13",recorded_at_unix_ms="1788243462341",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="85.87858448331858",loss="0.34071385727754483",micro_f1="",macro_f1="0.17937558869472095",macro_auroc="0.7193291792975368",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="15",source_round="14",recorded_at_unix_ms="1788243493898",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.42752068062994",loss="0.33129794243751753",micro_f1="",macro_f1="0.1786567181456994",macro_auroc="0.718043119116404",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="16",source_round="15",recorded_at_unix_ms="1788243525085",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.13203762314447",loss="0.34050765253423615",micro_f1="",macro_f1="0.17864905160283026",macro_auroc="0.7195122750512902",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="17",source_round="16",recorded_at_unix_ms="1788243553018",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.3240379288166",loss="0.3363340540205785",micro_f1="",macro_f1="0.17779241048636227",macro_auroc="0.7162060149842456",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="18",source_round="17",recorded_at_unix_ms="1788243589331",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.21959995160191",loss="0.3337728525002267",micro_f1="",macro_f1="0.1811295982706046",macro_auroc="0.7183193300107059",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="19",source_round="18",recorded_at_unix_ms="1788243618441",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.1715202730671",loss="0.33181911686209675",micro_f1="",macro_f1="0.1787515087659321",macro_auroc="0.7162022192770635",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="20",source_round="19",recorded_at_unix_ms="1788243648577",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="85.92475371105068",loss="0.3350557285704777",micro_f1="",macro_f1="0.17827543050615013",macro_auroc="0.7153177072706798",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="21",source_round="20",recorded_at_unix_ms="1788243680458",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.08332112767543",loss="0.33238344548352167",micro_f1="",macro_f1="0.17775030006496342",macro_auroc="0.7121633500793653",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="22",source_round="21",recorded_at_unix_ms="1788243710495",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="85.72415637676637",loss="0.33579831138828753",micro_f1="",macro_f1="0.17885539552395002",macro_auroc="0.7121389709648465",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="23",source_round="22",recorded_at_unix_ms="1788243739241",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="86.0403359846145",loss="0.33203016041882705",micro_f1="",macro_f1="0.17727700726196777",macro_auroc="0.7109466173739517",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="24",source_round="23",recorded_at_unix_ms="1788243767570",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="85.90819647076054",loss="0.32973311173845726",micro_f1="",macro_f1="0.1782018193507907",macro_auroc="0.7136269359352215",exact_match_percent=""} 1
+dfl_global_model_evaluation_info{experiment_id="phala",dataset="chestmnist",round="25",source_round="24",recorded_at_unix_ms="1788243796834",participant_count="6",aggregated_model_count="5",expected_models="5",sample_count="",label_count="",accuracy_percent="85.85916156682438",loss="0.3325438750451859",micro_f1="",macro_f1="0.17747070816439142",macro_auroc="0.7113524957727245",exact_match_percent=""} 1
+
+# HELP dfl_global_model_evaluation_expected_models Global model evaluation field 'expected_models' by evaluated round.
+# TYPE dfl_global_model_evaluation_expected_models gauge
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="2",recorded_at_unix_ms="1788243107612",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="3",recorded_at_unix_ms="1788243140144",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="4",recorded_at_unix_ms="1788243175772",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="5",recorded_at_unix_ms="1788243205536",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="6",recorded_at_unix_ms="1788243229625",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="7",recorded_at_unix_ms="1788243255379",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="8",recorded_at_unix_ms="1788243284369",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="9",recorded_at_unix_ms="1788243315238",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="10",recorded_at_unix_ms="1788243346367",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="11",recorded_at_unix_ms="1788243375842",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="12",recorded_at_unix_ms="1788243404563",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="13",recorded_at_unix_ms="1788243432429",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="14",recorded_at_unix_ms="1788243462341",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="15",recorded_at_unix_ms="1788243493898",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="16",recorded_at_unix_ms="1788243525085",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="17",recorded_at_unix_ms="1788243553018",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="18",recorded_at_unix_ms="1788243589331",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="19",recorded_at_unix_ms="1788243618441",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="20",recorded_at_unix_ms="1788243648577",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="21",recorded_at_unix_ms="1788243680458",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="22",recorded_at_unix_ms="1788243710495",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="23",recorded_at_unix_ms="1788243739241",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="24",recorded_at_unix_ms="1788243767570",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_expected_models{experiment_id="phala",dataset="chestmnist",round="25",recorded_at_unix_ms="1788243796834",participant_count="6",aggregated_model_count="5"} 5.0
+
+# HELP dfl_global_model_evaluation_aggregated_model_count Global model evaluation field 'aggregated_model_count' by evaluated round.
+# TYPE dfl_global_model_evaluation_aggregated_model_count gauge
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="2",recorded_at_unix_ms="1788243107612",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="3",recorded_at_unix_ms="1788243140144",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="4",recorded_at_unix_ms="1788243175772",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="5",recorded_at_unix_ms="1788243205536",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="6",recorded_at_unix_ms="1788243229625",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="7",recorded_at_unix_ms="1788243255379",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="8",recorded_at_unix_ms="1788243284369",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="9",recorded_at_unix_ms="1788243315238",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="10",recorded_at_unix_ms="1788243346367",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="11",recorded_at_unix_ms="1788243375842",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="12",recorded_at_unix_ms="1788243404563",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="13",recorded_at_unix_ms="1788243432429",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="14",recorded_at_unix_ms="1788243462341",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="15",recorded_at_unix_ms="1788243493898",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="16",recorded_at_unix_ms="1788243525085",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="17",recorded_at_unix_ms="1788243553018",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="18",recorded_at_unix_ms="1788243589331",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="19",recorded_at_unix_ms="1788243618441",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="20",recorded_at_unix_ms="1788243648577",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="21",recorded_at_unix_ms="1788243680458",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="22",recorded_at_unix_ms="1788243710495",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="23",recorded_at_unix_ms="1788243739241",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="24",recorded_at_unix_ms="1788243767570",participant_count="6",aggregated_model_count="5"} 5.0
+dfl_global_model_evaluation_aggregated_model_count{experiment_id="phala",dataset="chestmnist",round="25",recorded_at_unix_ms="1788243796834",participant_count="6",aggregated_model_count="5"} 5.0
+
+# HELP dfl_global_model_evaluation_accuracy_percent Global model evaluation field 'accuracy_percent' by evaluated round.
+# TYPE dfl_global_model_evaluation_accuracy_percent gauge
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="2",recorded_at_unix_ms="1788243107612",participant_count="6",aggregated_model_count="5"} 88.69363374110844
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="3",recorded_at_unix_ms="1788243140144",participant_count="6",aggregated_model_count="5"} 87.30919372607956
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="4",recorded_at_unix_ms="1788243175772",participant_count="6",aggregated_model_count="5"} 87.47412931204667
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="5",recorded_at_unix_ms="1788243205536",participant_count="6",aggregated_model_count="5"} 88.35548394902916
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="6",recorded_at_unix_ms="1788243229625",participant_count="6",aggregated_model_count="5"} 87.36714406709504
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="7",recorded_at_unix_ms="1788243255379",participant_count="6",aggregated_model_count="5"} 87.6642191669161
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="8",recorded_at_unix_ms="1788243284369",participant_count="6",aggregated_model_count="5"} 87.31524348695481
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="9",recorded_at_unix_ms="1788243315238",participant_count="6",aggregated_model_count="5"} 87.4391043806637
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="10",recorded_at_unix_ms="1788243346367",participant_count="6",aggregated_model_count="5"} 86.58131197024791
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="11",recorded_at_unix_ms="1788243375842",participant_count="6",aggregated_model_count="5"} 86.21386859919379
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="12",recorded_at_unix_ms="1788243404563",participant_count="6",aggregated_model_count="5"} 86.2390228680961
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="13",recorded_at_unix_ms="1788243432429",participant_count="6",aggregated_model_count="5"} 86.25908260152454
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="14",recorded_at_unix_ms="1788243462341",participant_count="6",aggregated_model_count="5"} 85.87858448331858
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="15",recorded_at_unix_ms="1788243493898",participant_count="6",aggregated_model_count="5"} 86.42752068062994
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="16",recorded_at_unix_ms="1788243525085",participant_count="6",aggregated_model_count="5"} 86.13203762314447
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="17",recorded_at_unix_ms="1788243553018",participant_count="6",aggregated_model_count="5"} 86.3240379288166
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="18",recorded_at_unix_ms="1788243589331",participant_count="6",aggregated_model_count="5"} 86.21959995160191
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="19",recorded_at_unix_ms="1788243618441",participant_count="6",aggregated_model_count="5"} 86.1715202730671
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="20",recorded_at_unix_ms="1788243648577",participant_count="6",aggregated_model_count="5"} 85.92475371105068
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="21",recorded_at_unix_ms="1788243680458",participant_count="6",aggregated_model_count="5"} 86.08332112767543
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="22",recorded_at_unix_ms="1788243710495",participant_count="6",aggregated_model_count="5"} 85.72415637676637
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="23",recorded_at_unix_ms="1788243739241",participant_count="6",aggregated_model_count="5"} 86.0403359846145
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="24",recorded_at_unix_ms="1788243767570",participant_count="6",aggregated_model_count="5"} 85.90819647076054
+dfl_global_model_evaluation_accuracy_percent{experiment_id="phala",dataset="chestmnist",round="25",recorded_at_unix_ms="1788243796834",participant_count="6",aggregated_model_count="5"} 85.85916156682438
+
+# HELP dfl_global_model_evaluation_loss Global model evaluation field 'loss' by evaluated round.
+# TYPE dfl_global_model_evaluation_loss gauge
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="2",recorded_at_unix_ms="1788243107612",participant_count="6",aggregated_model_count="5"} 0.41414830100438255
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="3",recorded_at_unix_ms="1788243140144",participant_count="6",aggregated_model_count="5"} 0.36377939851203867
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="4",recorded_at_unix_ms="1788243175772",participant_count="6",aggregated_model_count="5"} 0.35627950077624626
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="5",recorded_at_unix_ms="1788243205536",participant_count="6",aggregated_model_count="5"} 0.34574263170321257
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="6",recorded_at_unix_ms="1788243229625",participant_count="6",aggregated_model_count="5"} 0.3493106423271746
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="7",recorded_at_unix_ms="1788243255379",participant_count="6",aggregated_model_count="5"} 0.3407244474940973
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="8",recorded_at_unix_ms="1788243284369",participant_count="6",aggregated_model_count="5"} 0.33797255236490603
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="9",recorded_at_unix_ms="1788243315238",participant_count="6",aggregated_model_count="5"} 0.32977543386840136
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="10",recorded_at_unix_ms="1788243346367",participant_count="6",aggregated_model_count="5"} 0.34369252592448973
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="11",recorded_at_unix_ms="1788243375842",participant_count="6",aggregated_model_count="5"} 0.34345660007255663
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="12",recorded_at_unix_ms="1788243404563",participant_count="6",aggregated_model_count="5"} 0.34358854853112275
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="13",recorded_at_unix_ms="1788243432429",participant_count="6",aggregated_model_count="5"} 0.3447906219731837
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="14",recorded_at_unix_ms="1788243462341",participant_count="6",aggregated_model_count="5"} 0.34071385727754483
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="15",recorded_at_unix_ms="1788243493898",participant_count="6",aggregated_model_count="5"} 0.33129794243751753
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="16",recorded_at_unix_ms="1788243525085",participant_count="6",aggregated_model_count="5"} 0.34050765253423615
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="17",recorded_at_unix_ms="1788243553018",participant_count="6",aggregated_model_count="5"} 0.3363340540205785
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="18",recorded_at_unix_ms="1788243589331",participant_count="6",aggregated_model_count="5"} 0.3337728525002267
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="19",recorded_at_unix_ms="1788243618441",participant_count="6",aggregated_model_count="5"} 0.33181911686209675
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="20",recorded_at_unix_ms="1788243648577",participant_count="6",aggregated_model_count="5"} 0.3350557285704777
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="21",recorded_at_unix_ms="1788243680458",participant_count="6",aggregated_model_count="5"} 0.33238344548352167
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="22",recorded_at_unix_ms="1788243710495",participant_count="6",aggregated_model_count="5"} 0.33579831138828753
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="23",recorded_at_unix_ms="1788243739241",participant_count="6",aggregated_model_count="5"} 0.33203016041882705
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="24",recorded_at_unix_ms="1788243767570",participant_count="6",aggregated_model_count="5"} 0.32973311173845726
+dfl_global_model_evaluation_loss{experiment_id="phala",dataset="chestmnist",round="25",recorded_at_unix_ms="1788243796834",participant_count="6",aggregated_model_count="5"} 0.3325438750451859
+
+# HELP dfl_global_model_evaluation_micro_f1 Global model evaluation field 'micro_f1' by evaluated round.
+# TYPE dfl_global_model_evaluation_micro_f1 gauge
+
+# HELP dfl_global_model_evaluation_macro_f1 Global model evaluation field 'macro_f1' by evaluated round.
+# TYPE dfl_global_model_evaluation_macro_f1 gauge
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="2",recorded_at_unix_ms="1788243107612",participant_count="6",aggregated_model_count="5"} 0.14098417444413835
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="3",recorded_at_unix_ms="1788243140144",participant_count="6",aggregated_model_count="5"} 0.16391035321594843
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="4",recorded_at_unix_ms="1788243175772",participant_count="6",aggregated_model_count="5"} 0.16330845181894332
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="5",recorded_at_unix_ms="1788243205536",participant_count="6",aggregated_model_count="5"} 0.16667692203312112
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="6",recorded_at_unix_ms="1788243229625",participant_count="6",aggregated_model_count="5"} 0.18631704899157298
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="7",recorded_at_unix_ms="1788243255379",participant_count="6",aggregated_model_count="5"} 0.19246759223141635
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="8",recorded_at_unix_ms="1788243284369",participant_count="6",aggregated_model_count="5"} 0.19537667628142125
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="9",recorded_at_unix_ms="1788243315238",participant_count="6",aggregated_model_count="5"} 0.18748593379626474
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="10",recorded_at_unix_ms="1788243346367",participant_count="6",aggregated_model_count="5"} 0.18658264856677179
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="11",recorded_at_unix_ms="1788243375842",participant_count="6",aggregated_model_count="5"} 0.18747679628638192
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="12",recorded_at_unix_ms="1788243404563",participant_count="6",aggregated_model_count="5"} 0.19179522085749587
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="13",recorded_at_unix_ms="1788243432429",participant_count="6",aggregated_model_count="5"} 0.17679283125157688
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="14",recorded_at_unix_ms="1788243462341",participant_count="6",aggregated_model_count="5"} 0.17937558869472095
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="15",recorded_at_unix_ms="1788243493898",participant_count="6",aggregated_model_count="5"} 0.1786567181456994
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="16",recorded_at_unix_ms="1788243525085",participant_count="6",aggregated_model_count="5"} 0.17864905160283026
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="17",recorded_at_unix_ms="1788243553018",participant_count="6",aggregated_model_count="5"} 0.17779241048636227
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="18",recorded_at_unix_ms="1788243589331",participant_count="6",aggregated_model_count="5"} 0.1811295982706046
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="19",recorded_at_unix_ms="1788243618441",participant_count="6",aggregated_model_count="5"} 0.1787515087659321
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="20",recorded_at_unix_ms="1788243648577",participant_count="6",aggregated_model_count="5"} 0.17827543050615013
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="21",recorded_at_unix_ms="1788243680458",participant_count="6",aggregated_model_count="5"} 0.17775030006496342
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="22",recorded_at_unix_ms="1788243710495",participant_count="6",aggregated_model_count="5"} 0.17885539552395002
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="23",recorded_at_unix_ms="1788243739241",participant_count="6",aggregated_model_count="5"} 0.17727700726196777
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="24",recorded_at_unix_ms="1788243767570",participant_count="6",aggregated_model_count="5"} 0.1782018193507907
+dfl_global_model_evaluation_macro_f1{experiment_id="phala",dataset="chestmnist",round="25",recorded_at_unix_ms="1788243796834",participant_count="6",aggregated_model_count="5"} 0.17747070816439142
+
+# HELP dfl_global_model_evaluation_macro_auroc Global model evaluation field 'macro_auroc' by evaluated round.
+# TYPE dfl_global_model_evaluation_macro_auroc gauge
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="2",recorded_at_unix_ms="1788243107612",participant_count="6",aggregated_model_count="5"} 0.6555732122104928
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="3",recorded_at_unix_ms="1788243140144",participant_count="6",aggregated_model_count="5"} 0.6812835139673143
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="4",recorded_at_unix_ms="1788243175772",participant_count="6",aggregated_model_count="5"} 0.6920295756047519
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="5",recorded_at_unix_ms="1788243205536",participant_count="6",aggregated_model_count="5"} 0.7006913950381363
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="6",recorded_at_unix_ms="1788243229625",participant_count="6",aggregated_model_count="5"} 0.7065964165324845
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="7",recorded_at_unix_ms="1788243255379",participant_count="6",aggregated_model_count="5"} 0.7103498125115403
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="8",recorded_at_unix_ms="1788243284369",participant_count="6",aggregated_model_count="5"} 0.71289501374707
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="9",recorded_at_unix_ms="1788243315238",participant_count="6",aggregated_model_count="5"} 0.717286587759331
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="10",recorded_at_unix_ms="1788243346367",participant_count="6",aggregated_model_count="5"} 0.7166546332575779
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="11",recorded_at_unix_ms="1788243375842",participant_count="6",aggregated_model_count="5"} 0.7190568847233141
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="12",recorded_at_unix_ms="1788243404563",participant_count="6",aggregated_model_count="5"} 0.7173665282543401
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="13",recorded_at_unix_ms="1788243432429",participant_count="6",aggregated_model_count="5"} 0.7203009492715939
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="14",recorded_at_unix_ms="1788243462341",participant_count="6",aggregated_model_count="5"} 0.7193291792975368
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="15",recorded_at_unix_ms="1788243493898",participant_count="6",aggregated_model_count="5"} 0.718043119116404
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="16",recorded_at_unix_ms="1788243525085",participant_count="6",aggregated_model_count="5"} 0.7195122750512902
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="17",recorded_at_unix_ms="1788243553018",participant_count="6",aggregated_model_count="5"} 0.7162060149842456
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="18",recorded_at_unix_ms="1788243589331",participant_count="6",aggregated_model_count="5"} 0.7183193300107059
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="19",recorded_at_unix_ms="1788243618441",participant_count="6",aggregated_model_count="5"} 0.7162022192770635
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="20",recorded_at_unix_ms="1788243648577",participant_count="6",aggregated_model_count="5"} 0.7153177072706798
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="21",recorded_at_unix_ms="1788243680458",participant_count="6",aggregated_model_count="5"} 0.7121633500793653
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="22",recorded_at_unix_ms="1788243710495",participant_count="6",aggregated_model_count="5"} 0.7121389709648465
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="23",recorded_at_unix_ms="1788243739241",participant_count="6",aggregated_model_count="5"} 0.7109466173739517
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="24",recorded_at_unix_ms="1788243767570",participant_count="6",aggregated_model_count="5"} 0.7136269359352215
+dfl_global_model_evaluation_macro_auroc{experiment_id="phala",dataset="chestmnist",round="25",recorded_at_unix_ms="1788243796834",participant_count="6",aggregated_model_count="5"} 0.7113524957727245
+
+# HELP dfl_global_model_evaluation_exact_match_percent Global model evaluation field 'exact_match_percent' by evaluated round.
+# TYPE dfl_global_model_evaluation_exact_match_percent gauge
+
+# HELP dfl_training_starts_total Current training-run total derived from one evaluation record per aggregated round.
+# TYPE dfl_training_starts_total gauge
+dfl_training_starts_total 120.0
+
+# HELP dfl_model_transfers_total Current training-run total derived from one evaluation record per aggregated round.
+# TYPE dfl_model_transfers_total gauge
+dfl_model_transfers_total 120.0
+
+# HELP dfl_aggregations_total Current training-run total derived from one evaluation record per aggregated round.
+# TYPE dfl_aggregations_total gauge
+dfl_aggregations_total 24.0
+
+# HELP dfl_global_model_latest_round Latest global model evaluation value mirrored from the round summary CSV.
+# TYPE dfl_global_model_latest_round gauge
+dfl_global_model_latest_round 25.0
+
+# HELP dfl_global_model_latest_accuracy_percent Latest global model evaluation value mirrored from the round summary CSV.
+# TYPE dfl_global_model_latest_accuracy_percent gauge
+dfl_global_model_latest_accuracy_percent 85.85916156682438
+
+# HELP dfl_global_model_latest_loss Latest global model evaluation value mirrored from the round summary CSV.
+# TYPE dfl_global_model_latest_loss gauge
+dfl_global_model_latest_loss 0.3325438750451859
+
+# HELP dfl_global_model_latest_macro_f1 Latest global model evaluation value mirrored from the round summary CSV.
+# TYPE dfl_global_model_latest_macro_f1 gauge
+dfl_global_model_latest_macro_f1 0.17747070816439142
+
+# HELP dfl_global_model_latest_macro_auroc Latest global model evaluation value mirrored from the round summary CSV.
+# TYPE dfl_global_model_latest_macro_auroc gauge
+dfl_global_model_latest_macro_auroc 0.7113524957727245
+
+# HELP dfl_transaction_gas_used_total Total gas used by scope.
+# TYPE dfl_transaction_gas_used_total gauge
+dfl_transaction_gas_used_total{scope="smart_contracts_init"} 57540777.0
+dfl_transaction_gas_used_total{scope="worker"} 558600370.0
+
+# HELP dfl_transaction_cost_gwei_total Total transaction fee denominated in Gwei by scope.
+# TYPE dfl_transaction_cost_gwei_total gauge
+dfl_transaction_cost_gwei_total{scope="smart_contracts_init"} 26585742.334062256
+dfl_transaction_cost_gwei_total{scope="worker"} 567623386.20498
+
+# HELP dfl_transaction_cost_eth_total Total transaction fee denominated in ETH by scope.
+# TYPE dfl_transaction_cost_eth_total gauge
+dfl_transaction_cost_eth_total{scope="smart_contracts_init"} 0.02658574233406226
+dfl_transaction_cost_eth_total{scope="worker"} 0.5676233862049804
+
+# HELP dfl_transaction_cost_eur_total Total configured EUR scenario value by scope.
+# TYPE dfl_transaction_cost_eur_total gauge
+dfl_transaction_cost_eur_total{scope="smart_contracts_init"} 79.75722700218672
+dfl_transaction_cost_eur_total{scope="worker"} 1702.8701586149468
+
+# HELP dfl_transaction_cost_usd_total Total configured USD scenario value by scope.
+# TYPE dfl_transaction_cost_usd_total gauge
+dfl_transaction_cost_usd_total{scope="smart_contracts_init"} 0.0
+dfl_transaction_cost_usd_total{scope="worker"} 0.0
+
+# HELP dfl_transaction_count_total Total number of unique transactions by scope.
+# TYPE dfl_transaction_count_total gauge
+dfl_transaction_count_total{scope="smart_contracts_init"} 24.0
+dfl_transaction_count_total{scope="worker"} 305.0
+
+# HELP dfl_worker_gas_used_total Total gas used by worker transactions. Derived from deduplicated transaction records.
+# TYPE dfl_worker_gas_used_total gauge
+dfl_worker_gas_used_total 558600370.0
+
+# HELP dfl_worker_cost_gwei_total Total worker transaction fee denominated in Gwei. Derived from deduplicated transaction records.
+# TYPE dfl_worker_cost_gwei_total gauge
+dfl_worker_cost_gwei_total 567623386.20498
+
+# HELP dfl_worker_cost_eth_total Total worker transaction fee denominated in ETH. Derived from deduplicated transaction records.
+# TYPE dfl_worker_cost_eth_total gauge
+dfl_worker_cost_eth_total 0.5676233862049804
+
+# HELP dfl_worker_cost_eur_total Total configured worker EUR scenario value. Derived from deduplicated transaction records.
+# TYPE dfl_worker_cost_eur_total gauge
+dfl_worker_cost_eur_total 1702.8701586149468
+
+# HELP dfl_worker_cost_usd_total Total configured worker USD scenario value. Derived from deduplicated transaction records.
+# TYPE dfl_worker_cost_usd_total gauge
+dfl_worker_cost_usd_total 0.0
+
+# HELP dfl_contract_init_gas_used_total Total gas used by contract initialization transactions. Derived from deduplicated transaction records.
+# TYPE dfl_contract_init_gas_used_total gauge
+dfl_contract_init_gas_used_total 57540777.0
+
+# HELP dfl_contract_init_cost_gwei_total Total contract initialization transaction fee denominated in Gwei. Derived from deduplicated transaction records.
+# TYPE dfl_contract_init_cost_gwei_total gauge
+dfl_contract_init_cost_gwei_total 26585742.334062256
+
+# HELP dfl_contract_init_cost_eth_total Total contract initialization transaction fee denominated in ETH. Derived from deduplicated transaction records.
+# TYPE dfl_contract_init_cost_eth_total gauge
+dfl_contract_init_cost_eth_total 0.02658574233406226
+
+# HELP dfl_contract_init_cost_eur_total Total configured contract initialization EUR scenario value. Derived from deduplicated transaction records.
+# TYPE dfl_contract_init_cost_eur_total gauge
+dfl_contract_init_cost_eur_total 79.75722700218672
+
+# HELP dfl_contract_init_cost_usd_total Total configured contract initialization USD scenario value. Derived from deduplicated transaction records.
+# TYPE dfl_contract_init_cost_usd_total gauge
+dfl_contract_init_cost_usd_total 0.0
+
+# HELP dfl_worker_registration_gas_used_total Gas used by confirmed RTMR3 worker-registration transactions.
+# TYPE dfl_worker_registration_gas_used_total gauge
+dfl_worker_registration_gas_used_total 472240960.0
+
+# HELP dfl_worker_registration_transaction_count Confirmed RTMR3 worker-registration transactions.
+# TYPE dfl_worker_registration_transaction_count gauge
+dfl_worker_registration_transaction_count 6.0
+
+# HELP dfl_worker_registration_expected_count RTMR3 registration receipts expected for the configured run roster.
+# TYPE dfl_worker_registration_expected_count gauge
+dfl_worker_registration_expected_count 6
+
+# HELP dfl_worker_registration_receipt_gap Absolute difference between expected and retained RTMR3 registration receipts; zero is complete.
+# TYPE dfl_worker_registration_receipt_gap gauge
+dfl_worker_registration_receipt_gap 0
+
+# HELP dfl_worker_gas_used_by_worker Gas used by worker transactions.
+# TYPE dfl_worker_gas_used_by_worker gauge
+dfl_worker_gas_used_by_worker{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",device_id="5"} 85240352.0
+dfl_worker_gas_used_by_worker{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",device_id="3"} 92196410.0
+dfl_worker_gas_used_by_worker{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",device_id="0"} 90833464.0
+dfl_worker_gas_used_by_worker{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",device_id="4"} 109407702.0
+dfl_worker_gas_used_by_worker{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",device_id="1"} 88515526.0
+dfl_worker_gas_used_by_worker{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",device_id="2"} 92406916.0
+
+# HELP dfl_worker_cost_gwei_by_worker Worker transaction fee in Gwei by worker.
+# TYPE dfl_worker_cost_gwei_by_worker gauge
+dfl_worker_cost_gwei_by_worker{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",device_id="5"} 86973060.63767368
+dfl_worker_cost_gwei_by_worker{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",device_id="3"} 93788720.8940438
+dfl_worker_cost_gwei_by_worker{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",device_id="0"} 92223178.46626037
+dfl_worker_cost_gwei_by_worker{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",device_id="4"} 110965466.83902691
+dfl_worker_cost_gwei_by_worker{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",device_id="1"} 89869138.13187104
+dfl_worker_cost_gwei_by_worker{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",device_id="2"} 93803821.23610523
+
+# HELP dfl_worker_cost_eth_by_worker Worker transaction fee in ETH by worker.
+# TYPE dfl_worker_cost_eth_by_worker gauge
+dfl_worker_cost_eth_by_worker{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",device_id="5"} 0.08697306063767365
+dfl_worker_cost_eth_by_worker{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",device_id="3"} 0.0937887208940438
+dfl_worker_cost_eth_by_worker{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",device_id="0"} 0.09222317846626042
+dfl_worker_cost_eth_by_worker{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",device_id="4"} 0.11096546683902694
+dfl_worker_cost_eth_by_worker{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",device_id="1"} 0.08986913813187107
+dfl_worker_cost_eth_by_worker{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",device_id="2"} 0.09380382123610524
+
+# HELP dfl_worker_cost_eur_by_worker Configured EUR scenario value by worker.
+# TYPE dfl_worker_cost_eur_by_worker gauge
+dfl_worker_cost_eur_by_worker{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",device_id="5"} 260.91918191302096
+dfl_worker_cost_eur_by_worker{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",device_id="3"} 281.36616268213146
+dfl_worker_cost_eur_by_worker{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",device_id="0"} 276.669535398781
+dfl_worker_cost_eur_by_worker{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",device_id="4"} 332.8964005170805
+dfl_worker_cost_eur_by_worker{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",device_id="1"} 269.6074143956131
+dfl_worker_cost_eur_by_worker{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",device_id="2"} 281.41146370831575
+
+# HELP dfl_worker_cost_usd_by_worker Configured USD scenario value by worker.
+# TYPE dfl_worker_cost_usd_by_worker gauge
+dfl_worker_cost_usd_by_worker{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",device_id="5"} 0.0
+dfl_worker_cost_usd_by_worker{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",device_id="3"} 0.0
+dfl_worker_cost_usd_by_worker{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",device_id="0"} 0.0
+dfl_worker_cost_usd_by_worker{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",device_id="4"} 0.0
+dfl_worker_cost_usd_by_worker{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",device_id="1"} 0.0
+dfl_worker_cost_usd_by_worker{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",device_id="2"} 0.0
+
+# HELP dfl_worker_transaction_count_by_worker Worker transaction count by worker.
+# TYPE dfl_worker_transaction_count_by_worker gauge
+dfl_worker_transaction_count_by_worker{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",device_id="5"} 26.0
+dfl_worker_transaction_count_by_worker{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",device_id="3"} 50.0
+dfl_worker_transaction_count_by_worker{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",device_id="0"} 32.0
+dfl_worker_transaction_count_by_worker{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",device_id="4"} 110.0
+dfl_worker_transaction_count_by_worker{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",device_id="1"} 37.0
+dfl_worker_transaction_count_by_worker{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",device_id="2"} 50.0
+
+# HELP dfl_worker_registration_gas_used_by_worker Gas used by each confirmed RTMR3 worker-registration transaction.
+# TYPE dfl_worker_registration_gas_used_by_worker gauge
+# HELP dfl_worker_registration_transaction_count_by_worker Confirmed RTMR3 registrations attributed to each worker.
+# TYPE dfl_worker_registration_transaction_count_by_worker gauge
+dfl_worker_registration_gas_used_by_worker{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",device_id="5"} 78237568.0
+dfl_worker_registration_transaction_count_by_worker{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",device_id="5"} 1.0
+dfl_worker_registration_gas_used_by_worker{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",device_id="3"} 78206909.0
+dfl_worker_registration_transaction_count_by_worker{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",device_id="3"} 1.0
+dfl_worker_registration_gas_used_by_worker{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",device_id="0"} 81196280.0
+dfl_worker_registration_transaction_count_by_worker{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",device_id="0"} 1.0
+dfl_worker_registration_gas_used_by_worker{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",device_id="1"} 78203956.0
+dfl_worker_registration_transaction_count_by_worker{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",device_id="1"} 1.0
+dfl_worker_registration_gas_used_by_worker{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",device_id="2"} 78201666.0
+dfl_worker_registration_transaction_count_by_worker{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",device_id="2"} 1.0
+dfl_worker_registration_gas_used_by_worker{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",device_id="4"} 78194581.0
+dfl_worker_registration_transaction_count_by_worker{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",device_id="4"} 1.0
+
+# HELP dfl_worker_runtime_event_total Signed runtime events received from each Phala worker.
+# TYPE dfl_worker_runtime_event_total gauge
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="worker.round0_bootstrap.waiting"} 1
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="worker.round0_bootstrap.waiting"} 1
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="state.training.aggregator"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="worker.round0_bootstrap.waiting"} 1
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="worker.round0_bootstrap.waiting"} 1
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="worker.round0_bootstrap.waiting"} 1
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.aggregation.started"} 3
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.models.staged"} 3
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.update.started"} 3
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.update.finished"} 3
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.selection.triggered"} 3
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="state.training.worker"} 22
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="worker.medical_signers.fetched"} 22
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="worker.fetch_global_model.started"} 22
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="worker.fetch_global_model.finished"} 22
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="state.training.worker"} 21
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="state.training.aggregator"} 4
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="worker.training.started"} 22
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="state.training.worker"} 15
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.fetch_parent_global_model.started"} 8
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="worker.medical_signers.fetched"} 21
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="worker.fetch_global_model.started"} 21
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="worker.medical_signers.fetched"} 15
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="worker.fetch_global_model.started"} 15
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="state.training.worker"} 20
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="state.training.worker"} 22
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.fetch_parent_global_model.finished"} 8
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="worker.medical_signers.fetched"} 22
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="worker.medical_signers.fetched"} 20
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="worker.fetch_global_model.started"} 22
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="worker.fetch_global_model.started"} 20
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="worker.fetch_global_model.finished"} 21
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="worker.fetch_global_model.finished"} 15
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="worker.training.started"} 21
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="worker.training.started"} 15
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.wait_for_models.started"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="worker.fetch_global_model.finished"} 20
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="worker.training.started"} 20
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="worker.fetch_global_model.finished"} 22
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="worker.training.started"} 22
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="worker.training.finished"} 22
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="worker.model_transfer.started"} 22
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="worker.training.finished"} 21
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="worker.model_transfer.started"} 21
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="worker.model_transfer.finished"} 22
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="worker.training.finished"} 15
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="worker.training.finished"} 22
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="worker.training.finished"} 20
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="worker.model_transfer.started"} 15
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="worker.model_transfer.started"} 22
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="worker.model_transfer.started"} 20
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="worker.model_transfer.finished"} 21
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="worker.model_transfer.finished"} 15
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="worker.model_transfer.finished"} 22
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="worker.model_transfer.finished"} 20
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.wait_for_models.finished"} 4
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.aggregation.started"} 4
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.models.staged"} 4
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.fedavg.completed"} 4
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.global_model_evaluation"} 4
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.aggregation.finished"} 4
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.update.started"} 4
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.update.finished"} 4
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="aggregator.selection.triggered"} 4
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="state.training.worker"} 20
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="worker.medical_signers.fetched"} 20
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="worker.fetch_global_model.started"} 20
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="worker.fetch_global_model.finished"} 20
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="worker.training.started"} 20
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="state.training.aggregator"} 9
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.fetch_parent_global_model.started"} 18
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.fetch_parent_global_model.finished"} 18
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.wait_for_models.started"} 9
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="worker.training.finished"} 20
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="worker.model_transfer.started"} 20
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="worker.model_transfer.finished"} 20
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.wait_for_models.finished"} 9
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.aggregation.started"} 9
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.models.staged"} 9
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.fedavg.completed"} 9
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.global_model_evaluation"} 9
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.aggregation.finished"} 9
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.update.started"} 9
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.update.finished"} 9
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="aggregator.selection.triggered"} 9
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="state.training.aggregator"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.fetch_parent_global_model.started"} 8
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.fetch_parent_global_model.finished"} 8
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.wait_for_models.started"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.wait_for_models.finished"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.aggregation.started"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.models.staged"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.fedavg.completed"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.global_model_evaluation"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.aggregation.finished"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.update.started"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.update.finished"} 4
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="aggregator.selection.triggered"} 4
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="state.training.aggregator"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.fetch_parent_global_model.started"} 6
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.fetch_parent_global_model.finished"} 6
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.wait_for_models.started"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.wait_for_models.finished"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.aggregation.started"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.models.staged"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.fedavg.completed"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.global_model_evaluation"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.aggregation.finished"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.update.started"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.update.finished"} 3
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="aggregator.selection.triggered"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="state.training.aggregator"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.fetch_parent_global_model.started"} 4
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.fetch_parent_global_model.finished"} 4
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.wait_for_models.started"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.wait_for_models.finished"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.aggregation.started"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.models.staged"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.fedavg.completed"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.global_model_evaluation"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.aggregation.finished"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.update.started"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.update.finished"} 2
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="aggregator.selection.triggered"} 2
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.fetch_parent_global_model.started"} 4
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.fetch_parent_global_model.finished"} 4
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.wait_for_models.started"} 2
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.wait_for_models.finished"} 2
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.fedavg.completed"} 2
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.global_model_evaluation"} 2
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="aggregator.aggregation.finished"} 2
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="training.completed"} 1
+dfl_worker_runtime_event_total{worker="VM-1",account="0x70997970c51812dc3a010c7d01b50e0d17dc79c8",event="training.rebooted_idle"} 1
+dfl_worker_runtime_event_total{worker="VM-4",account="0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",event="training.rebooted_idle"} 1
+dfl_worker_runtime_event_total{worker="VM-2",account="0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",event="training.rebooted_idle"} 1
+dfl_worker_runtime_event_total{worker="VM-0",account="0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",event="training.rebooted_idle"} 1
+dfl_worker_runtime_event_total{worker="VM-5",account="0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc",event="training.rebooted_idle"} 1
+dfl_worker_runtime_event_total{worker="VM-3",account="0x90f79bf6eb2c4f870365e785982e1f101e93b906",event="training.rebooted_idle"} 1

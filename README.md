@@ -43,9 +43,9 @@ The current published tags and immutable deployment references are:
 | Component | Tag | Digest-pinned reference |
 | --- | --- | --- |
 | TEE inference (standalone) | `ghcr.io/uzhw8rgl/master-thesis-tee-inference:tee` | `ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:c3bbf27daee0435207ed250e6f3861e53dba0678b6536d4e670321b46d663492` |
-| DFL worker | `ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala` | `ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:e4da8f8c85db0bc68b7d4a82511628e5c32ca628c1a90669896dd49ee7dd6a33` |
+| DFL worker | `ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala` | `ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:e0b3771ca6135932405054947a4eeca88d4c7612d91f93cf2f0482eb804a1b27` |
 | Agent | `ghcr.io/uzhw8rgl/master-thesis-agent:agent` | `ghcr.io/uzhw8rgl/master-thesis-agent@sha256:b6520d0a970362e77a420621acf476cca2afb56fdad3bca54d20afabbcdbb6c5` |
-| Smart-contract runtime | `ghcr.io/uzhw8rgl/master-thesis-smart-contracts:phala` | `ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:19180092da9e8a7b4783fba589788d1269f2e216e01efb39e8021819901a32ad` |
+| Smart-contract runtime | `ghcr.io/uzhw8rgl/master-thesis-smart-contracts:phala` | `ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:1ed6bedbe8afd7b2ee433ca7097667c624a415b8fe7bb37c73e0536bda9b16e7` |
 | ZK inference | `ghcr.io/uzhw8rgl/master-thesis-zk-inference:zk` | `ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:2d25f9c1aca15616ce1a45d3b64a29fec10f3e44a57dfea18c55e9fd71e25568` |
 
 Phala uses the combined DFL worker image for Worker 0 and its co-located TEE
