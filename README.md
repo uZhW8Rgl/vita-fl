@@ -1,6 +1,6 @@
 # Master Thesis Prototype: Trusted DFL and Verifiable Inference
 
-[![CI](https://github.com/uZhW8Rgl/Master-Thesis/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/uZhW8Rgl/Master-Thesis/actions/workflows/ci.yml)
+[![CI](https://github.com/uZhW8Rgl/vita-fl/actions/workflows/ci.yml/badge.svg?branch=phala_app_key)](https://github.com/uZhW8Rgl/vita-fl/actions/workflows/ci.yml)
 
 This repository contains a proof-of-concept implementation for trusted decentralized federated learning (DFL), model provenance, and verifiable single-image inference.
 
@@ -35,6 +35,22 @@ The current prototype combines:
 - [tee_inference](./tee_inference/README.md): PyTorch ChestMNIST inference service with deterministic CBOR and AIR/TDX evidence.
 - [transparency_log](./transparency_log/README.md): Persistent Microsoft SCITT-CCF ledger in virtual mode.
 - [agent](./agent/README.md): Local LangChain/MCP agent for contract-based model lookup, ZK inference, and verified TEE inference with SCITT registration.
+
+## Published Container Images
+
+The current published tags and immutable deployment references are:
+
+| Component | Tag | Digest-pinned reference |
+| --- | --- | --- |
+| TEE inference (standalone) | `ghcr.io/uzhw8rgl/master-thesis-tee-inference:tee` | `ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:c3bbf27daee0435207ed250e6f3861e53dba0678b6536d4e670321b46d663492` |
+| DFL worker | `ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala` | `ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:e4da8f8c85db0bc68b7d4a82511628e5c32ca628c1a90669896dd49ee7dd6a33` |
+| Agent | `ghcr.io/uzhw8rgl/master-thesis-agent:agent` | `ghcr.io/uzhw8rgl/master-thesis-agent@sha256:b6520d0a970362e77a420621acf476cca2afb56fdad3bca54d20afabbcdbb6c5` |
+| Smart-contract runtime | `ghcr.io/uzhw8rgl/master-thesis-smart-contracts:phala` | `ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:19180092da9e8a7b4783fba589788d1269f2e216e01efb39e8021819901a32ad` |
+| ZK inference | `ghcr.io/uzhw8rgl/master-thesis-zk-inference:zk` | `ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:2d25f9c1aca15616ce1a45d3b64a29fec10f3e44a57dfea18c55e9fd71e25568` |
+
+Phala uses the combined DFL worker image for Worker 0 and its co-located TEE
+inference process. The standalone TEE-inference image is published for separate
+deployments and is not selected by the Phala Terraform configuration.
 
 ## Architecture
 

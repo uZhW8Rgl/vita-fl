@@ -188,9 +188,10 @@ Registration supplies the exact canonical `app_compose` byte preimage reported
 by dstack, not a caller-supplied compose hash, image digest, or policy claim.
 The separately deployed `AppComposePolicy` parser validates the outer manifest
 and its inner `docker_compose_file`. The outer policy requires manifest version
-2, the `docker-compose` runner, the expected platform pre-launch identity and a
-closed set of platform fields. Custom initialization code and unsafe outer
-environment inputs fail closed. The inner parser requires the strict
+2, the `docker-compose` runner, one of the exact official Phala platform
+pre-launch script identities observed for v0.0.19 and v0.0.20, and a closed set
+of platform fields. Custom initialization code and unsafe outer environment
+inputs fail closed. The inner parser requires the strict
 single-service `services.dfl-worker` form, extracts its immutable
 `@sha256:<digest>` value, and compares that digest with
 `expectedWorkerImageDigest`. It also derives a domain-separated

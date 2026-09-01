@@ -46,10 +46,20 @@ library AppComposeImage {
     uint8 private constant OUTER_STORAGE_FS = 16;
     uint8 private constant OUTER_TPROXY_ENABLED = 17;
 
-    // SHA-256 of the decoded Phala Cloud platform pre-launch script v0.0.19
-    // exported in phala/app_code.txt. User-supplied pre-launch code is rejected.
+    // SHA-256 digests of the decoded Phala Cloud platform pre-launch scripts
+    // observed in the reproducible run (v0.0.19) and current deployments
+    // (v0.0.20). User-supplied pre-launch code is rejected.
     bytes32 private constant PHALA_PLATFORM_PRE_LAUNCH_V0_0_19 =
         0xcec8f68ce6185b912023d886bba20cd06386dd9751af904e6107e758b9d68983;
+    bytes32 private constant PHALA_PLATFORM_PRE_LAUNCH_V0_0_20 =
+        0x982181610f70be9087b1c69b36b719b47b82d37fcef8acc9289ed3bb3095ffe8;
+    bytes32 private constant PHALA_PLATFORM_PRE_LAUNCH_POLICY =
+        keccak256(
+            abi.encode(
+                PHALA_PLATFORM_PRE_LAUNCH_V0_0_19,
+                PHALA_PLATFORM_PRE_LAUNCH_V0_0_20
+            )
+        );
     bytes private constant SERVICES = "services:";
     bytes private constant WORKER_SERVICE = "dfl-worker:";
     bytes private constant PARTICIPANT_KEY_VOLUME = "participant-key-state:";
@@ -174,7 +184,7 @@ library AppComposeImage {
                         OUTER_MANIFEST_POLICY_DOMAIN,
                         uint256(2),
                         keccak256(DOCKER_COMPOSE_RUNNER),
-                        PHALA_PLATFORM_PRE_LAUNCH_V0_0_19
+                        PHALA_PLATFORM_PRE_LAUNCH_POLICY
                     )
                 )
             )
@@ -260,8 +270,11 @@ library AppComposeImage {
         if (field == OUTER_PRE_LAUNCH_SCRIPT) {
             bytes memory script;
             (script, next) = _decodeJsonString(input, cursor);
+            bytes32 scriptHash = sha256(script);
             require(
-                script.length == 0 || sha256(script) == PHALA_PLATFORM_PRE_LAUNCH_V0_0_19,
+                script.length == 0
+                    || scriptHash == PHALA_PLATFORM_PRE_LAUNCH_V0_0_19
+                    || scriptHash == PHALA_PLATFORM_PRE_LAUNCH_V0_0_20,
                 "user pre-launch script not allowed"
             );
             return next;

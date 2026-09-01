@@ -10,8 +10,10 @@ const SHA256_MARKER = "@sha256:";
 const YAML_MERGE_KEY = "<<:";
 const ENVIRONMENT_KEY = "environment:";
 const MAX_ENVIRONMENT_KEYS = 128;
-const PLATFORM_PRE_LAUNCH_SHA256 =
-    "cec8f68ce6185b912023d886bba20cd06386dd9751af904e6107e758b9d68983";
+const PLATFORM_PRE_LAUNCH_SHA256 = new Set([
+    "cec8f68ce6185b912023d886bba20cd06386dd9751af904e6107e758b9d68983",
+    "982181610f70be9087b1c69b36b719b47b82d37fcef8acc9289ed3bb3095ffe8",
+]);
 
 const OUTER_MANIFEST_FIELDS = new Set([
     "docker_compose_file",
@@ -122,6 +124,10 @@ const word = (value: Buffer | bigint | number): Buffer => {
 
 const abiHash = (...values: Array<Buffer | bigint | number>): Buffer =>
     hash(Buffer.concat(values.map(word)));
+
+const PLATFORM_PRE_LAUNCH_POLICY = abiHash(
+    ...[...PLATFORM_PRE_LAUNCH_SHA256].map((digest) => Buffer.from(digest, "hex")),
+);
 
 const domain = (value: string): Buffer => hash(value);
 
@@ -341,7 +347,10 @@ const parseOuterManifest = (canonicalAppCompose: Buffer): OuterManifest => {
             .createHash("sha256")
             .update(Buffer.from(manifest.pre_launch_script))
             .digest("hex");
-        if (manifest.pre_launch_script.length !== 0 && digest !== PLATFORM_PRE_LAUNCH_SHA256) {
+        if (
+            manifest.pre_launch_script.length !== 0
+            && !PLATFORM_PRE_LAUNCH_SHA256.has(digest)
+        ) {
             throw new Error("user pre-launch script not allowed");
         }
     }
@@ -698,7 +707,7 @@ export const deriveWorkerPolicyIdentity = (
         OUTER_MANIFEST_POLICY_DOMAIN,
         2,
         hash("docker-compose"),
-        Buffer.from(PLATFORM_PRE_LAUNCH_SHA256, "hex"),
+        PLATFORM_PRE_LAUNCH_POLICY,
     );
     const policyHash = abiHash(
         WORKER_POLICY_DOMAIN,

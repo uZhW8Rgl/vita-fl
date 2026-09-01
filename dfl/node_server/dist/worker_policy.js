@@ -9,7 +9,10 @@ const SHA256_MARKER = "@sha256:";
 const YAML_MERGE_KEY = "<<:";
 const ENVIRONMENT_KEY = "environment:";
 const MAX_ENVIRONMENT_KEYS = 128;
-const PLATFORM_PRE_LAUNCH_SHA256 = "cec8f68ce6185b912023d886bba20cd06386dd9751af904e6107e758b9d68983";
+const PLATFORM_PRE_LAUNCH_SHA256 = new Set([
+    "cec8f68ce6185b912023d886bba20cd06386dd9751af904e6107e758b9d68983",
+    "982181610f70be9087b1c69b36b719b47b82d37fcef8acc9289ed3bb3095ffe8",
+]);
 const OUTER_MANIFEST_FIELDS = new Set([
     "docker_compose_file",
     "manifest_version",
@@ -106,6 +109,7 @@ const word = (value) => {
     return Buffer.from(integer.toString(16).padStart(64, "0"), "hex");
 };
 const abiHash = (...values) => hash(Buffer.concat(values.map(word)));
+const PLATFORM_PRE_LAUNCH_POLICY = abiHash(...[...PLATFORM_PRE_LAUNCH_SHA256].map((digest) => Buffer.from(digest, "hex")));
 const domain = (value) => hash(value);
 const DOCKER_WORKER_POLICY_DOMAIN = domain("MasterThesis.AppCompose.worker-policy.v1");
 const WORKER_POLICY_DOMAIN = domain("MasterThesis.AppCompose.worker-policy.v2");
@@ -287,7 +291,8 @@ const parseOuterManifest = (canonicalAppCompose) => {
             .createHash("sha256")
             .update(Buffer.from(manifest.pre_launch_script))
             .digest("hex");
-        if (manifest.pre_launch_script.length !== 0 && digest !== PLATFORM_PRE_LAUNCH_SHA256) {
+        if (manifest.pre_launch_script.length !== 0
+            && !PLATFORM_PRE_LAUNCH_SHA256.has(digest)) {
             throw new Error("user pre-launch script not allowed");
         }
     }
@@ -568,7 +573,7 @@ export const deriveWorkerPolicyIdentity = (canonicalAppCompose) => {
     const networkPolicy = abiHash(NETWORK_POLICY_DOMAIN, fieldHash(accumulator, "network_mode"), fieldHash(accumulator, "networks"), fieldHash(accumulator, "ports"), fieldHash(accumulator, "expose"));
     const dstackSocketPolicy = abiHash(DSTACK_SOCKET_POLICY_DOMAIN, accumulator.dstackSocketChain, accumulator.dstackSocketCount);
     const dockerPolicyHash = abiHash(DOCKER_WORKER_POLICY_DOMAIN, digest, entrypoint, command, user, volumes, capabilities, securityOptions, networkPolicy, dstackSocketPolicy);
-    const outerManifestPolicyHash = abiHash(OUTER_MANIFEST_POLICY_DOMAIN, 2, hash("docker-compose"), Buffer.from(PLATFORM_PRE_LAUNCH_SHA256, "hex"));
+    const outerManifestPolicyHash = abiHash(OUTER_MANIFEST_POLICY_DOMAIN, 2, hash("docker-compose"), PLATFORM_PRE_LAUNCH_POLICY);
     const policyHash = abiHash(WORKER_POLICY_DOMAIN, dockerPolicyHash, outerManifestPolicyHash);
     return {
         imageDigest: `0x${digest.toString("hex")}`,

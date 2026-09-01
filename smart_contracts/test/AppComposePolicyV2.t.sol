@@ -13,7 +13,7 @@ contract AppComposePolicyV2Test is Test {
     bytes32 private constant IMAGE_DIGEST =
         0x4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553;
     bytes32 private constant POLICY_V2_GOLDEN =
-        0xe4bda57e5c71e65b35ae363d33a338d0027033f648a9f91829d16d80f00e1864;
+        0x25d1e3de9e6a91c4f672c49e60294b8ed0ef865b86370a1706908180f94c1059;
 
     function setUp() public {
         policy = new AppComposePolicy();
