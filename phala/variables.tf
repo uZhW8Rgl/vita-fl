@@ -1064,3 +1064,17 @@ variable "runtime_kubo_gateway_url_override" {
   type        = string
   default     = null
 }
+
+variable "deployment_image_revisions" {
+  description = "Git commit per automatically deployed image, persisted with the Terraform state."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition = alltrue([
+      for name, revision in var.deployment_image_revisions :
+      contains(["worker_image", "smart_contracts_image", "control_api_image", "ui_image", "agent_image", "transparency_log_image", "zk_inference_image"], name) && can(regex("^[0-9a-f]{40}$", revision))
+    ])
+    error_message = "Image revisions must map known image variables to full Git commit SHAs."
+  }
+}

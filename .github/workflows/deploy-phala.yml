@@ -1,0 +1,100 @@
+name: Deploy published image to Phala
+
+on:
+  workflow_call:
+    inputs:
+      image-variable:
+        description: Terraform image variable to update
+        required: true
+        type: string
+      image-reference:
+        description: Exact digest-pinned reference from the successful build
+        required: true
+        type: string
+      revision:
+        description: Git commit that produced the image
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  deploy:
+    if: >-
+      vars.PHALA_AUTO_DEPLOY == 'true' &&
+      github.ref_type == 'branch' &&
+      github.ref_name == (vars.PHALA_DEPLOY_BRANCH || 'phala_app_key')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: phala
+    # Shared by every publisher. queue:max retains simultaneous component
+    # builds; the default queue would silently replace pending deployments.
+    concurrency:
+      group: phala-deploy
+      queue: max
+      cancel-in-progress: false
+    env:
+      TF_IN_AUTOMATION: "true"
+      PHALA_STATE_REPOSITORY: ${{ github.repository }}
+      PHALA_STATE_BRANCH: ${{ vars.PHALA_STATE_BRANCH || 'phala-state' }}
+      GHCR_USERNAME: ${{ github.actor }}
+      GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out current deployment configuration
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ vars.PHALA_DEPLOY_BRANCH || 'phala_app_key' }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Test deployment helpers before accessing Phala
+        run: PYTHONPATH=. python3 -m unittest discover -s phala -p 'test_*.py' -v
+
+      - name: Prepare private deployment configuration
+        env:
+          PHALA_ENV_CONTENT: ${{ secrets.PHALA_ENV_CONTENT }}
+          PHALA_ENV_PASSPHRASE: ${{ secrets.PHALA_ENV_PASSPHRASE }}
+          PHALA_ENV_ENCRYPTED_FILE: ${{ vars.PHALA_ENV_ENCRYPTED_FILE }}
+          PHALA_STATE_PASSPHRASE: ${{ secrets.PHALA_STATE_PASSPHRASE }}
+        run: python3 phala/ci_config.py
+
+      - name: Reconcile Phala using the published digest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PHALA_STATE_PASSPHRASE: ${{ secrets.PHALA_STATE_PASSPHRASE }}
+          IMAGE_VARIABLE: ${{ inputs.image-variable }}
+          IMAGE_REFERENCE: ${{ inputs.image-reference }}
+          IMAGE_REVISION: ${{ inputs.revision }}
+        run: |
+          python3 phala/ci_deploy.py \
+            --image-variable "$IMAGE_VARIABLE" \
+            --image-reference "$IMAGE_REFERENCE" \
+            --revision "$IMAGE_REVISION"
+
+      - name: Preserve encrypted state if GitHub synchronization failed
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phala-state-recovery-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.image-variable }}
+          path: phala/state-recovery.gpg
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Remove decrypted configuration and local Terraform files
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/vita-fl-phala"
+          rm -rf phala/.terraform
+          rm -f phala/terraform.tfstate phala/terraform.tfstate.*
+          rm -f phala/errored.tfstate phala/deployment-backend_override.tf

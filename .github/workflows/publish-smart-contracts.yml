@@ -94,3 +94,20 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Digest-pinned reference for Phala/Terraform:" >> "$GITHUB_STEP_SUMMARY"
           echo "\`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: Deploy published image to Phala
+    needs: publish
+    if: >-
+      vars.PHALA_AUTO_DEPLOY == 'true' &&
+      github.ref_type == 'branch' &&
+      github.ref_name == (vars.PHALA_DEPLOY_BRANCH || 'phala_app_key')
+    uses: ./.github/workflows/deploy-phala.yml
+    permissions:
+      contents: write
+      packages: read
+    with:
+      image-variable: smart_contracts_image
+      image-reference: ${{ needs.publish.outputs.image }}@${{ needs.publish.outputs.digest }}
+      revision: ${{ github.sha }}
+    secrets: inherit

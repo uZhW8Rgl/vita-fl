@@ -3,31 +3,16 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
-SHARED_ENV_FILE="${ROOT_DIR}/.env.shared"
 DEFAULT_ENV_FILE="${ROOT_DIR}/.env.phala.anvil"
 REPO_TERRAFORM_BIN="${SCRIPT_DIR}/bin/terraform"
 DYNAMIC_WORKER_TFVARS_FILE=""
 
-if [ -n "${PHALA_ENV_FILE:-}" ]; then
-  ENV_FILE="${PHALA_ENV_FILE}"
-elif [ -f "${DEFAULT_ENV_FILE}" ]; then
-  ENV_FILE="${DEFAULT_ENV_FILE}"
-else
-  ENV_FILE="${DEFAULT_ENV_FILE}"
-fi
+ENV_FILE="${PHALA_ENV_FILE:-${DEFAULT_ENV_FILE}}"
 
 if [ ! -f "${ENV_FILE}" ]; then
   echo "Missing environment file: ${ENV_FILE}"
   exit 1
 fi
-
-ENV_FILES=()
-
-if [ -f "${SHARED_ENV_FILE}" ]; then
-  ENV_FILES+=("${SHARED_ENV_FILE}")
-fi
-
-ENV_FILES+=("${ENV_FILE}")
 
 cleanup_dynamic_worker_tfvars() {
   if [ -n "${DYNAMIC_WORKER_TFVARS_FILE}" ]; then
@@ -37,26 +22,6 @@ cleanup_dynamic_worker_tfvars() {
 trap cleanup_dynamic_worker_tfvars EXIT
 
 read_env_value() {
-  local key="$1"
-  local file
-  local value=""
-
-  for file in "${ENV_FILES[@]}"; do
-    if [ ! -f "${file}" ]; then
-      continue
-    fi
-
-    local match
-    match=$(grep -E "^${key}=" "${file}" | tail -n 1 || true)
-    if [ -n "${match}" ]; then
-      value="${match#*=}"
-    fi
-  done
-
-  printf '%s' "${value}"
-}
-
-read_worker_env_value() {
   local key="$1"
   local match
   match=$(grep -E "^${key}=" "${ENV_FILE}" | tail -n 1 || true)
@@ -70,20 +35,7 @@ require_env_value() {
   value=$(read_env_value "${key}")
 
   if [ -z "${value}" ]; then
-    echo "${key} is required in ${ENV_FILES[*]}"
-    exit 1
-  fi
-
-  printf '%s' "${value}"
-}
-
-require_worker_env_value() {
-  local key="$1"
-  local value
-  value=$(read_worker_env_value "${key}")
-
-  if [ -z "${value}" ]; then
-    echo "${key} is required in ${ENV_FILE}"
+    echo "${key} is required in ${ENV_FILE}" >&2
     exit 1
   fi
 
@@ -91,10 +43,10 @@ require_worker_env_value() {
 }
 
 PHALA_CLOUD_API_KEY=$(require_env_value "PHALA_CLOUD_API_KEY")
-W0_ACCOUNT_ADDRESS=$(require_worker_env_value "W0_ACCOUNT_ADDRESS")
-W0_PRIVATE_KEY=$(require_worker_env_value "W0_PRIVATE_KEY")
-W0_RSA_PRIVATE_KEY=$(require_worker_env_value "W0_RSA_PRIVATE_KEY")
-W0_RSA_PUBLIC_KEY=$(require_worker_env_value "W0_RSA_PUBLIC_KEY")
+W0_ACCOUNT_ADDRESS=$(require_env_value "W0_ACCOUNT_ADDRESS")
+W0_PRIVATE_KEY=$(require_env_value "W0_PRIVATE_KEY")
+W0_RSA_PRIVATE_KEY=$(require_env_value "W0_RSA_PRIVATE_KEY")
+W0_RSA_PUBLIC_KEY=$(require_env_value "W0_RSA_PUBLIC_KEY")
 W0_RSA_PRIVATE_KEY=${W0_RSA_PRIVATE_KEY//\\n/$'\n'}
 W0_RSA_PUBLIC_KEY=${W0_RSA_PUBLIC_KEY//\\n/$'\n'}
 
@@ -128,6 +80,12 @@ append_var_if_set() {
   local tf_name="$1"
   local env_name="$2"
   local value
+  local tf_env_name="TF_VAR_${tf_name}"
+  # Launcher-discovered endpoints and explicit operator overrides take
+  # precedence over stale values in an env file (including an explicit null).
+  if [[ -v "${tf_env_name}" ]]; then
+    return
+  fi
   value=$(read_env_value "${env_name}")
 
   if [ -n "${value}" ]; then
@@ -257,7 +215,7 @@ configure_phala_agent() {
     export TF_VAR_sello_service_registry
     TF_VAR_sello_service_registry=$(require_env_value "SELLO_SERVICE_REGISTRY")
     export TF_VAR_sello_scitt_url
-    TF_VAR_sello_scitt_url=$(require_env_value "SELLO_SCITT_URL")
+    TF_VAR_sello_scitt_url=${TF_VAR_sello_scitt_url-$(require_env_value "SELLO_SCITT_URL")}
   fi
   if [ "${ollama_enabled}" = "1" ] || [ "${ollama_enabled}" = "true" ]; then
     export TF_VAR_ollama_api_token
@@ -296,7 +254,7 @@ derive_runtime_service_urls() {
   fi
 }
 
-runtime_w1_account_address=$(read_worker_env_value "W1_ACCOUNT_ADDRESS")
+runtime_w1_account_address=$(read_env_value "W1_ACCOUNT_ADDRESS")
 if [ -n "${runtime_w1_account_address}" ]; then
   export TF_VAR_runtime_w1_account_address="${runtime_w1_account_address}"
 fi
@@ -381,5 +339,42 @@ configure_phala_ui
 configure_phala_agent
 
 export PHALA_CLOUD_API_KEY
+
+# A command-line var file has higher precedence than both TF_VAR_* and local
+# terraform.tfvars. CI must never silently roll back to a copied old digest.
+case "${1:-}" in
+  plan|apply|destroy|import|refresh)
+    if [ -n "${PHALA_IMAGE_VARS_FILE:-}" ]; then
+      if [ ! -f "${PHALA_IMAGE_VARS_FILE}" ]; then
+        echo "Missing resolved image variables: ${PHALA_IMAGE_VARS_FILE}" >&2
+        exit 1
+      fi
+      # Keep flags before positional arguments (import address/id or a saved
+      # plan). Also support the wrapper's usual '-var-file file' spelling.
+      command_name=$1
+      shift
+      command_options=()
+      while [ "$#" -gt 0 ] && [[ "$1" == -* ]]; do
+        case "$1" in
+          -var|-var-file|-out|-target|-replace|-parallelism|-lock-timeout|-backup|-state|-state-out|-generate-config-out)
+            command_options+=("$1")
+            shift
+            if [ "$#" -eq 0 ]; then
+              echo "Missing value for Terraform option" >&2
+              exit 1
+            fi
+            command_options+=("$1")
+            shift
+            ;;
+          *) command_options+=("$1"); shift ;;
+        esac
+      done
+      if [ "${command_name}" != "apply" ] || [ "$#" -eq 0 ]; then
+        command_options+=("-var-file=${PHALA_IMAGE_VARS_FILE}")
+      fi
+      terraform_args=(-chdir="${SCRIPT_DIR}" "${command_name}" "${command_options[@]}" "$@")
+    fi
+    ;;
+esac
 
 "${TERRAFORM_CMD}" "${terraform_args[@]}"

@@ -168,3 +168,13 @@ output "account_ssh_key_id" {
   description = "ID of the optional account-level SSH key."
   value       = var.manage_account_ssh_key && var.ssh_public_key_path != null ? phala_ssh_key.operator[0].id : null
 }
+
+output "deployment_images" {
+  description = "Selected immutable image set, retained across failed recreation for the next deployment attempt."
+  value       = terraform_data.deployment_manifest.output.images
+}
+
+output "deployment_image_revisions" {
+  description = "Selected build commits, retained across resets to reject stale queued builds."
+  value       = terraform_data.deployment_manifest.output.revisions
+}

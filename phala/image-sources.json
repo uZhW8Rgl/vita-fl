@@ -1,0 +1,9 @@
+{
+  "worker_image": "ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala",
+  "smart_contracts_image": "ghcr.io/uzhw8rgl/master-thesis-smart-contracts:phala",
+  "control_api_image": "ghcr.io/uzhw8rgl/master-thesis-control-api:control",
+  "ui_image": "ghcr.io/uzhw8rgl/master-thesis-ui:ui",
+  "agent_image": "ghcr.io/uzhw8rgl/master-thesis-agent:agent",
+  "transparency_log_image": "ghcr.io/uzhw8rgl/master-thesis-transparency-log:scitt",
+  "zk_inference_image": "ghcr.io/uzhw8rgl/master-thesis-zk-inference:zk"
+}

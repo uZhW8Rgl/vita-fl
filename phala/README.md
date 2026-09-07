@@ -1,4 +1,4 @@
-# Phala/dstack Worker Image Attestation
+# Phala Deployment and Worker Image Attestation
 
 This directory contains deployment templates for the contract runtime and the
 DFL worker TEEs. Worker 0 additionally serves TEE inference from the same
@@ -7,14 +7,21 @@ TEE-inference Phala app.
 
 ## Terraform Deployment
 
-This directory also contains a Terraform scaffold for deploying the DFL prototype to Phala Cloud with the official provider `phala-network/phala` version `0.2.0-beta.3`.
+The supported entry point is `bash phala/start.sh`, run from the repository root.
+It deploys the DFL prototype through Terraform and the official provider
+`phala-network/phala` version `0.2.0-beta.3`, resolves image tags to digests, and
+handles existing workers before a deployment change.
 
 Files:
 
 - `main.tf`: provider, one `phala_app` for the contract runtime TEE, worker apps, optional `phala_ssh_key`, and optional `phala_cvm_power`
 - `variables.tf`: Phala and worker runtime configuration
-- `outputs.tf`: deployed app metadata
-- `terraform.tfvars.example`: values you can copy into `terraform.tfvars`
+- `outputs.tf`: deployed app metadata and the selected image set/source revisions
+- `start.sh` / `deploy.py`: startup, image updates, recovery, and teardown
+- `github_state.py`: encrypted GitHub state snapshots and deployment locking
+- `tf-env.sh`: validated transport of env configuration into Terraform
+- `image-sources.json` / `resolve_images.py`: release tags and digest resolution
+- `terraform.tfvars.example`: reference for optional Terraform settings
 - `dstack-compose.contracts.phala.tftpl`: Terraform-rendered compose policy for the contract-runtime TEE
 - `dstack-compose.worker.phala.tftpl`: Terraform-rendered compose policy for a
   worker TEE; its Worker 0 rendering also enables the co-located inference
@@ -23,18 +30,243 @@ Files:
 - `dstack-compose.template.yml`: manual Worker 0 compose policy, including the
   co-located inference process
 
-Copy the complete example, replace every placeholder (including the Phala API
-key and UI login), and start the complete deployment with one command:
+### One-time setup
+
+Shared Terraform state is stored **GPG-encrypted in the `phala-state` branch of
+this GitHub repository**. No additional cloud account, storage service, or Phala
+VM is needed. GitHub Actions still uses the repository's normal minutes and
+storage quota. Run these steps from the repository root with Python 3, GPG,
+GitHub CLI, and Terraform available; the bundled Terraform 1.9.8 is sufficient.
+
+1. Keep all Phala settings in `.env.phala.anvil`, including
+   `PHALA_CLOUD_API_KEY`, UI credentials, and the complete W0--W499 inventory.
+   When migrating an older setup, copy any required settings from `.env.shared`
+   into this profile once; Phala commands do not read `.env.shared`.
+   Only if the profile does not exist, copy
+   `.env.phala.anvil.example` and fill in its placeholders. Add:
+
+   ```dotenv
+   PHALA_STATE_REPOSITORY=uZhW8Rgl/vita-fl
+   PHALA_STATE_PASSPHRASE=YOUR-LONG-RANDOM-PASSWORD
+   ```
+
+   Generate a password with at least 32 characters using your password manager or
+   `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` and save it
+   privately. You will also use it as a GitHub secret in step 4.
+2. Sign in to GitHub with repository write access. If a local deployment
+   exists, privately back up `phala/terraform.tfstate` first. Initialize the
+   shared state once, then check the planned deployment:
+
+   ```bash
+   gh auth login
+   bash phala/start.sh --init-github-state --init-only
+   bash phala/start.sh --dry-run
+   ```
+
+   Initialization uploads the existing local state, or creates an empty state
+   for a new deployment, without starting or deleting any Phala apps. Keep
+   automatic deployment disabled until setup is complete.
+3. Encrypt the completed env file, choosing a separate strong passphrase:
+
+   ```bash
+   gpg --symmetric --cipher-algo AES256 --output phala/deploy.env.gpg .env.phala.anvil
+   ```
+
+   Commit only the encrypted file. Repeat encryption whenever deployment
+   settings change, using the same env passphrase. An env change does not require
+   reinitializing the shared Terraform state or recreating the GitHub environment.
+   The full inventory exceeds GitHub's single-secret size
+   limit; see [GitHub's large-secret procedure](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets#storing-large-secrets).
+4. In GitHub **Settings → Environments**, create `phala` for deployment branch
+   `phala_app_key`. Add the secrets `PHALA_STATE_PASSPHRASE` from step 1 and
+   `PHALA_ENV_PASSPHRASE` from step 3. These are the only two required deployment
+   secrets; the Phala API key is inside the encrypted env file. Leave required reviewers disabled
+   for automatic deployment.
+5. In **Settings → Secrets and variables → Actions → Variables**, set
+   `PHALA_AUTO_DEPLOY=true` and `PHALA_DEPLOY_BRANCH=phala_app_key`. Commit and
+   push the implementation and `phala/deploy.env.gpg` to that branch. A change
+   to this encrypted file also triggers the UI build and deployment.
+6. Wait for all builds and deploy jobs to finish. Open the reported UI, choose
+   **Training Setup**, and press **Start Training** when you want training to
+   begin.
+
+After setup, local startup or updates use one command:
 
 ```bash
-cp .env.phala.anvil.example .env.phala.anvil
 bash phala/start.sh
 ```
 
-On a fresh account the launcher first creates the contract-runtime endpoint,
-then reapplies the runtime with the derived RPC, Kubo API, and Kubo gateway
-URLs used by dynamically created worker TEEs. The application bootstrap is
-deliberately separated from deployment:
+The launcher reads the GitHub state settings from your Phala env profile.
+Locally it uses `gh auth token`, or `PHALA_STATE_TOKEN`/`GH_TOKEN` when supplied
+in the shell; a fine-grained token needs repository **Contents: read and write**.
+CI uses its existing `GITHUB_TOKEN` and needs no personal access token secret.
+Without GitHub state settings, the launcher retains the local-only state mode
+in `phala/terraform.tfstate`.
+
+Local Phala commands and GitHub Actions use one complete env profile.
+Use `PHALA_ENV_FILE=/absolute/path/to/config` for another profile.
+Terraform can be on `PATH`, in `phala/bin/terraform`, or selected with
+`TERRAFORM_BIN=/absolute/path/to/terraform`. Image resolution uses Python's
+standard library and needs access to GHCR and Phala, without local Docker.
+Phala must be able to pull the published images. The launcher resolves release
+tags from `image-sources.json`; old `*_IMAGE` pins do not prevent updates.
+
+Terraform startup prepares the runtime and its current RPC/Kubo endpoints.
+The UI commits the participant roster and launches the worker TEEs. A successful
+Terraform apply confirms resource creation; application bootstrap and model
+loading can still be in progress when the CVMs become ready.
+
+### Automatic deployment after image publishing
+
+[deploy-phala.yml](../.github/workflows/deploy-phala.yml) is called by the seven
+Phala image publish workflows after their build and registry push succeed:
+DFL worker, smart contracts, Control API, UI, agent, transparency log, and ZK
+inference. Each call passes the exact built digest, preserves the other image
+pins from shared Terraform state, and invokes the same launcher used locally.
+The standalone TEE-inference publisher is excluded because Worker 0 uses the
+combined DFL worker image. The separate ZK app remains disabled by the current
+Terraform policy; tracking its image does not enable that app.
+
+The [one-time setup](#one-time-setup) configures the required values. Available
+settings are:
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Environment secret | `PHALA_STATE_PASSPHRASE` | Password for the encrypted shared Terraform state; match the local Phala profile. |
+| Environment secret | `PHALA_ENV_PASSPHRASE` | Passphrase for `phala/deploy.env.gpg`; recommended for the complete inventory. |
+| Environment secret | `PHALA_ENV_CONTENT` | Alternative plain env contents only for a complete configuration smaller than 48 KB; set this or the env passphrase, never both. |
+| Repository variable | `PHALA_AUTO_DEPLOY` | `true` enables deployment after successful publication. |
+| Repository variable | `PHALA_DEPLOY_BRANCH` | Optional branch name; defaults to `phala_app_key`. |
+| Repository variable | `PHALA_STATE_BRANCH` | Optional shared-state branch; defaults to `phala-state`. Match `PHALA_STATE_BRANCH` in your local profile when changing it. |
+| Repository variable | `PHALA_ENV_ENCRYPTED_FILE` | Optional repository-relative encrypted env path; defaults to `phala/deploy.env.gpg`. |
+
+Deployment workflows request `contents: write` to update encrypted state and the
+deployment lock in the same repository. Keep the state branch outside any rule
+that would prevent those writes. The default state branch is `phala-state`;
+local commands and CI must use the same repository, branch, and passphrase.
+
+If you choose another deployment branch, also add it to the `push.branches`
+lists of the image publishers; the variable selects deployment eligibility and
+does not change their build triggers. The default `phala_app_key` branch is
+already covered by all seven workflows. Deployment uses the current branch's
+Terraform/configuration code while retaining the exact image digest and source
+revision from the successful build.
+
+The workflows pass secrets through a reusable workflow whose deployment job
+references the `phala` environment. Environment protection rules therefore also
+apply to these deployments; a required reviewer makes the job wait for approval.
+See [GitHub reusable workflow secrets](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#using-inputs-and-secrets-in-a-reusable-workflow).
+
+Deployment jobs share the `phala-deploy` concurrency group with `queue: max` and
+`cancel-in-progress: false`. Up to 100 pending jobs wait while the active job
+finishes; jobs beyond that GitHub limit are canceled and need to be rerun. See
+[GitHub concurrency queues](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency#example-queueing-multiple-pending-runs).
+An exclusive GitHub deployment lock also coordinates local commands and CI for
+the whole deployment. Older builds of a component are skipped if a
+newer descendant revision is already recorded; divergent revisions fail for
+review. Failed builds never reach deployment. Terraform failures fail the deploy
+job and retain the state for a retry; they do not report a successful rollout or
+restore an already destroyed training run.
+
+Before changing or deleting cloud apps, Terraform records the desired images
+and source revisions in an independent `deployment_manifest` state resource.
+A reset preserves that record, so CI retries retain the intended image set even
+if a previous apply failed after deleting the runtime. Explicit `--destroy`
+removes the deployment manifest as well.
+
+When one source update publishes several components, wait for all queued
+deployment jobs to finish before starting the next training run.
+
+### Existing workers, retries, and recovery
+
+This is an ephemeral training prototype. **A material runtime/worker app change or
+`--recreate` destroys the current deployment and its worker CVMs before creating
+a fresh deployment. Anvil state, IPFS artifacts, training progress, and runtime
+evaluation data are lost.** Export an experiment's evaluation data before
+publishing deployment changes. After the update, start a new run from the UI.
+
+| Situation | Launcher behavior |
+| --- | --- |
+| Fresh account and state | Creates the runtime and configured auxiliary apps, then wires their current endpoints. Workers start through the UI. |
+| Same images and app configuration | Leaves the existing deployment and workers running. |
+| Changed runtime/worker image or measured app configuration | Removes existing workers and recreates the demo so the on-chain roster and image policy agree. |
+| Auxiliary app change or image metadata for a disabled service | Applies the Terraform change without resetting a healthy runtime and worker roster. |
+| Stopped workers or leftover workers outside root Terraform state | Checks Phala's app inventory and removes matching deployment workers during reset or teardown. |
+| Old runtime exists without local/shared state | Reports and reconciles reserved deployment apps through the reset path; restore/migrate the original state first when preserving ownership is intended. |
+| Interrupted deployment or a resource manually deleted in Phala | Refreshes the plan and cloud inventory on the next run and reconciles the remaining apps. |
+| Registry, credentials, inventory, or planning failure | Aborts before the destructive phase; fix the reported problem and rerun. |
+| Deletion fails or an old app is still present | Stops the rollout; rerun after resolving the Phala error. |
+
+Cleanup is limited to app IDs held by this Terraform state, configured app
+names, and the reserved prototype names (including numbered W0--W499 workers
+and supported legacy worker names). Use one deployment per naming scope/account
+workspace. Apps with these reserved names are treated as belonging to this
+prototype, even if they were created manually. Unrelated names are preserved.
+
+Preview the plan and matching cleanup candidates, explicitly recreate the demo,
+or remove it with your configured deployment profile:
+
+```bash
+bash phala/start.sh --dry-run
+bash phala/start.sh --recreate
+bash phala/start.sh --destroy
+```
+
+`--dry-run` reads registry metadata, Terraform state, and the Phala inventory and
+initializes local Terraform files, but does not apply or delete apps. `--destroy`
+also cleans matching workers whose ownership state was held inside the old
+Control API volume. Keep using the same GitHub state repository, branch, and
+passphrase for all local commands and CI runs. The deployment lock prevents a
+local command and CI from changing the deployment at the same time.
+
+Initialize an existing local deployment with
+`bash phala/start.sh --init-github-state --init-only` before enabling CI. Back up
+the local state privately first; initialization does not replace an existing
+shared state. Do not initialize another independent state for apps already
+managed by this deployment.
+
+State snapshots are encrypted before upload to `terraform.tfstate.gpg` and
+retained in the state branch's Git history. Keep the state passphrase in a
+password manager: neither GitHub nor Phala can recover it. Terraform state
+contains sensitive deployment values;
+plaintext state, plans, and env files remain excluded from Git.
+
+If a process is interrupted, its GitHub lock can remain in place. First check
+that its local process or CI job has stopped. If its latest state was already
+uploaded, release the exact lock ID reported by the launcher:
+
+```bash
+bash phala/start.sh --unlock-github-state LOCK_ID
+```
+
+The launcher saves state after Terraform operations, including failed applies.
+If an upload fails, the lock remains held and the launcher preserves the latest
+encrypted snapshot as `phala/state-recovery.gpg`; CI also uploads this file as a
+recovery artifact. Download it and recover with the same lock ID:
+
+```bash
+bash phala/start.sh --recover-github-state /path/to/state-recovery.gpg --github-state-lock-id LOCK_ID
+```
+
+The recovery command also accepts a private, unencrypted `terraform.tfstate`.
+It validates the state, refuses to overwrite newer state, uploads the encrypted
+snapshot, and releases the lock after success. Then rerun the original command.
+Encrypted snapshots in the state branch's history and private backups provide
+additional recovery copies; resetting orphan apps cannot recover lost training
+data.
+
+Use `--pinned` only for a deliberate deployment with explicit image pins: all
+seven application `*_IMAGE` values must be complete GHCR digest references in
+the env profile. The normal local startup path resolves current release tags
+automatically. The durable Terraform outputs `deployment_images` and
+`deployment_image_revisions` record the selected image set and available source
+revisions, including interrupted deployments. These outputs identify deployment
+intent; check the workflow result and application UI to confirm successful
+startup.
+
+### Application startup and training lifecycle
+
+The application bootstrap is separated from deployment:
 
 1. the runtime deploys the contracts and publishes
    `/runtime/contracts.json` (including `aggregation_policy_address`) and
@@ -127,13 +359,16 @@ evaluation reports surface gas as the sole resource accounting unit. Raw
 receipt fields remain in the export for auditability but are not presented as
 public-network prices.
 
-If you already keep the deployment values in repository-root env files, you can use the helper wrapper instead of duplicating secrets into `terraform.tfvars`:
+For low-level Terraform inspection, `tf-env.sh` loads the same env configuration
+and validates the worker inventory:
 
 ```bash
 bash phala/tf-env.sh init
 bash phala/tf-env.sh plan -input=false
-bash phala/tf-env.sh apply
 ```
+
+Use `start.sh` for deployment changes so image resolution, cloud cleanup, and
+endpoint wiring run together. Raw `tf-env.sh apply` bypasses that lifecycle.
 
 The wrapper uses `.env.phala.anvil` by default and can be pointed at another
 complete Phala environment file with `PHALA_ENV_FILE=/path/to/file`. It fails
@@ -186,9 +421,9 @@ is still subject to the account quota and cost. A target platform with a
 stricter aggregate environment/request limit may require an external encrypted
 inventory store.
 
-The wrapper is the supported deployment entry point because it validates and
-transports the complete credential inventory. Do not maintain a second copy of
-worker identities in `terraform.tfvars`.
+The launcher uses this wrapper to validate and transport the complete credential
+inventory. Do not maintain a second copy of worker identities in
+`terraform.tfvars`.
 
 Notes:
 
@@ -198,7 +433,7 @@ Notes:
 - The Control API receives the same encrypted Anvil-owner key as the contract
   deployer, plus only the internal `http://anvil:8545` write endpoint. Dynamic
   worker CVMs continue to receive the externally exposed restricted RPC URL.
-- Terraform still records sensitive `env` inputs in state. Local state, state backups, `terraform.tfvars`, and exported `app_code.txt` are ignored; use an encrypted, access-controlled remote backend for non-demo deployments.
+- Terraform still records sensitive `env` inputs in state. Local state, state backups, `terraform.tfvars`, and exported `app_code.txt` are ignored. The shared state branch contains encrypted snapshots; protect its passphrase and repository access.
 - `public_logs` defaults to `true` for this observable Anvil demo deployment. Do not log secrets when adapting it for production.
 - Worker and smart-contract images contain no private keys. The prototype EVM
   keys remain the unchanged public Anvil fixtures and must be replaced for
@@ -288,45 +523,25 @@ The Phala hardware and placement are chosen through the following Terraform inpu
 
 In this scaffold those values are wired into `resource "phala_app" "contract_runtime"` and `resource "phala_app" "dfl_worker"` in `main.tf`.
 
-## Flow
+## Attestation policy and quote maintenance
 
-1. Publish the combined DFL worker image through the GitHub Actions workflow
-   `Publish DFL Worker Image`. On branches `phala`, `tee_inference`, and
-   `phala_app_key`, changes to either the worker or embedded inference code
-   trigger this workflow and keep the default `phala` tag.
-2. Copy the digest-pinned worker image reference from the workflow summary:
+Publishing a combined worker image updates its immutable deployment reference
+automatically when CI deployment is enabled. The launcher also refreshes the
+contract runtime so it installs the expected worker image and role policies.
+The manually rendered Compose examples are reference material; the supported
+launcher renders its deployment from the Terraform templates.
 
-```text
-ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:578e7fe9c5426c2ed92119a26bee4be54b664e93e6aa71bd91bf9af4fdb1b7b4
-```
+Keep `data/phala_tdx_quote` available for PCCS collateral discovery. Keep the
+owner-reviewed base-runtime policy quote separately at
+`data/dstack-dev-0.5.9-de9c74f0-reference-tdx-quote`. Replace the policy quote only
+when intentionally approving another dstack base-runtime image, review its
+`MRTD` and `RTMR0`--`RTMR2` values, and rebuild the smart-contract image. An
+application image update does not implicitly approve another base OS.
 
-3. Replace the image reference in `dstack-compose.template.yml` with the digest-pinned worker image.
-4. Publish the runtime image through the manual GitHub Actions workflow `Publish Smart Contracts Image`.
-5. Copy the digest-pinned runtime image reference from the workflow summary:
-
-```text
-ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:b09465bb1c1dbd54b7ad527e1ec66c9c74463f600ea86e53fa65673501a394f0
-```
-
-6. Use that digest-pinned runtime image for `smart_contracts_image` in Terraform or in `dstack-compose.contracts.template.yml`.
-7. Deploy the digest-pinned compose files on Phala/dstack.
-8. Fetch a current TDX quote for PCCS collateral discovery and store it as
-   `data/phala_tdx_quote`.
-9. Keep the owner-reviewed base-runtime policy quote separately at
-   `data/dstack-dev-0.5.9-de9c74f0-reference-tdx-quote`. Replace it only when
-   intentionally approving a different dstack base-runtime image, then review
-   its `MRTD` and `RTMR0`--`RTMR2` values and rebuild the smart-contract image.
-10. Optionally inspect its RTMR3:
+Optionally inspect the collateral-discovery quote's RTMR3:
 
 ```bash
 scripts/extract_tdx_rtmr3.py data/phala_tdx_quote
-```
-
-11. Start the local stack.
-
-```bash
-docker compose down --volumes --remove-orphans
-docker compose up --build --force-recreate
 ```
 
 During deployment, `starter_docker.sh` requires the digest-pinned
@@ -364,27 +579,18 @@ scripts/fetch_phala_worker_artifacts.sh "$KUBO_API"
 
 This refreshes `phala/rtmr3_event_log.txt` and `phala/app_code.txt` when Phala exposes them. These are audit copies, not bootstrap inputs, and their hashes are never provisioned as registration policy. Treat exports as deployment artifacts and do not add new exports to version control.
 
-## Manual Runtime-Only Redeploy
+## Runtime endpoint changes
 
-If you only want to rebuild the contract-runtime TEE manually in the Phala UI, use:
+The launcher derives RPC, Kubo API, Kubo gateway, and the default SCITT endpoint
+from the newly deployed runtime. It disregards obsolete endpoint overrides in
+old env files for its managed deployment path. Phala encodes exposed ports in
+hostnames, for example `https://<app>-5001.dstack-...`; port-specific URLs need
+`-8545`, `-5001`, and `-8080` in that hostname.
 
-- `phala/dstack-compose.contracts.runtime-only.yml`
-
-That file is a fully rendered runtime compose for the current `phala` image set and current local DFL values.
-
-Important caveat:
-
-- the worker TEEs currently reference the runtime TEE by its concrete Phala endpoint URL for `KUBO_API`, `KUBO_GATEWAY`, and `RPC_URL`
-- if the runtime app is recreated and gets a new endpoint, the workers must be updated to the new runtime endpoint before they can talk to Anvil/IPFS again
-- this is the main reason a full Terraform apply currently wants to replace the workers too
-- Phala can encode the exposed service port directly in the hostname, e.g. `https://<app>-5001.dstack-...`; worker wiring must replace that embedded port marker with `-8545`, `-5001`, and `-8080` rather than appending `:8545`, `:5001`, or `:8080`
-
-So the safe manual order is:
-
-1. Redeploy the runtime app with `dstack-compose.contracts.runtime-only.yml`.
-2. Note the new runtime endpoint.
-3. Update the worker app compose files so `KUBO_API`, `KUBO_GATEWAY`, and `RPC_URL` point at that new runtime endpoint.
-4. Redeploy the workers only if the runtime endpoint changed.
+The historical `dstack-compose.contracts.runtime-only.yml` is a manually rendered
+snapshot. It does not refresh image pins or manage worker ownership. Use
+`start.sh --recreate` with the configured shared state to recreate the runtime and workers
+with consistent endpoints and attestation policy.
 
 ## Worker Attestation Notes
 
@@ -471,15 +677,15 @@ python scripts/verify_phala_rtmr3.py \
 ```
 
 5. After changing the worker image or a security-relevant worker template field,
-   update `worker_image` and redeploy the contract runtime so it installs the
-   new image digest and both freshly derived role policies. Normalized
+   publish the updated component. Automatic deployment (or `start.sh` locally)
+   installs the new image digest and freshly derived role policies. Normalized
    per-worker values require no policy change.
 
 Important:
 
 - The on-chain attestation policy verifies the live worker quote and event replay, not the contract-runtime TEE quote.
 - The dstack reference quote is mandatory for pinning `MRTD` and `RTMR0`--`RTMR2`, but it is not a Compose or `RTMR3` allowlist. It must be selected explicitly for the worker OS version; bootstrap aborts instead of falling back to the PCCS quote. `PHALA_ENFORCE_REFERENCE_RTMR3` remains a separate legacy-only debugging input. The new `registerDeviceWithAttestedAppCompose` selector calls the structured-log verifier without exact-`RTMR3` enforcement, so keep that flag disabled for the normal Phala flow.
-- If the worker digest changes, update `worker_image` and redeploy the contract runtime so it installs the new expected digest. Rebuild the `smart-contracts` image when its contract/bootstrap code or either packaged quote artifact changes.
+- Worker image updates require fresh contracts and a fresh run; the launcher handles that reset. Rebuild the `smart-contracts` image when its contract/bootstrap code or either packaged quote artifact changes.
 
 Current Terraform defaults in this scaffold match that target layout:
 
@@ -488,7 +694,8 @@ Current Terraform defaults in this scaffold match that target layout:
 - `worker_replicas = 1`
 - `contracts_size = "tdx.small"`
 - `worker_size = "tdx.small"`
-- `zk_inference_size = "tdx.medium"` (4 GB RAM; the ZK prover does not complete on the 2 GB `tdx.small` profile)
+- `enable_zk_inference = false` (required until separate ZK inference supports attested participant-key delegation)
+- `zk_inference_size = "tdx.medium"` (legacy separate-app setting; inactive while ZK inference is disabled)
 - `os_image = "dstack-dev-0.5.7"`
 - `dynamic_worker_os_image = "dstack-dev-0.5.9"`
 
@@ -509,14 +716,12 @@ with a fresh tmpfs ledger on every container start. Ollama runs in a separate
 Bearer-authenticated proxy is exposed through the Ollama app gateway; the raw
 Ollama API is not published.
 
-Publish the Agent and transparency-log images with the GitHub Actions workflows
-`Publish Phala Agent` and `Publish Phala Transparency Log`, then place their
-digest-pinned references in `.env.phala.anvil`:
+The `Publish Phala Agent` and `Publish Phala Transparency Log` workflows pass
+their image digests to automatic deployment. Configure the services in
+`.env.phala.anvil`; image references are resolved by the launcher:
 
 ```dotenv
 ENABLE_PHALA_AGENT=true
-AGENT_IMAGE=ghcr.io/uzhw8rgl/master-thesis-agent@sha256:78df895d7aa2637488da069e76a80f6d44842969e301d06e5cae0ce0fb8863ae
-TRANSPARENCY_LOG_IMAGE=ghcr.io/uzhw8rgl/master-thesis-transparency-log@sha256:4c6789921d5ff89e546c65c435bc19d479acc8248715dff3f5b1536e2c8af723
 ENABLE_OLLAMA=true
 OLLAMA_MODEL=qwen3:1.7b
 OLLAMA_SIZE=tdx.medium
@@ -537,20 +742,21 @@ output to `.env.phala.anvil`:
 python phala/generate_sello_env.py --scitt-url https://CONTRACT_APP_ID-8000s.dstack-REGION.phala.network
 ```
 
-The trailing `s` selects dstack-gateway TLS passthrough, so Worker 0 and the
-separate ZK-inference CVM connect directly to SCITT-CCF's own TLS listener
-without an HTTP proxy.
+The trailing `s` selects dstack-gateway TLS passthrough, so Worker 0 connects
+directly to SCITT-CCF's own TLS listener without an HTTP proxy. The launcher
+derives the managed runtime's SCITT endpoint on deployment.
 
-With `ENABLE_SELLO_RECEIPTS=true`, the ZK receiver continues to receive its own
-operator-generated signing seed and remains in the owner's static service
-registry. Worker 0 does not receive a TEE-receiver seed. Its measured compose
-fixes `SELLO_SERVICE_KEY_PROVIDER=dstack`, and the receiver derives its
+The legacy separate ZK receiver configuration uses an operator-generated signing
+seed and the owner's static service registry, but that Phala app is currently
+disabled pending attested participant-key delegation. With
+`ENABLE_SELLO_RECEIPTS=true`, Worker 0 does not receive a TEE-receiver seed. Its
+measured compose fixes `SELLO_SERVICE_KEY_PROVIDER=dstack`, and the receiver derives its
 domain-separated Ed25519 key inside the active dstack CVM. The token-issuer
 public key is the only Sello key material provisioned to Worker 0. The agent
 resolves the TEE receiver key through Worker 0's attested DeviceRegistry
 enrollment rather than through `SELLO_SERVICE_REGISTRY`.
 
 Each receiver registers its signed, owner-encrypted receipt directly with SCITT
-and releases the tool response only after verifying the inclusion receipt. Set
-`SELLO_SCITT_URL` to the contract-runtime app's public `-8000s` TLS-passthrough
-URL so both inference receivers can reach SCITT-CCF directly.
+and releases the tool response only after verifying the inclusion receipt. For
+manual Compose deployments, set `SELLO_SCITT_URL` to the contract-runtime app's
+public `-8000s` TLS-passthrough URL. The managed launcher derives that URL.

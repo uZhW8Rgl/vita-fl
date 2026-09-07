@@ -36,25 +36,87 @@ The current prototype combines:
 - [transparency_log](./transparency_log/README.md): Persistent Microsoft SCITT-CCF ledger in virtual mode.
 - [agent](./agent/README.md): Local LangChain/MCP agent for contract-based model lookup, ZK inference, and verified TEE inference with SCITT registration.
 
+## Docker Compose Files
+
+- [compose.yml](./compose.yml): Main local VITA-FL stack with blockchain,
+  IPFS, UI, workers, and inference services.
+- [transparency_log/compose.yml](./transparency_log/compose.yml): Standalone
+  SCITT-CCF transparency log with persistent storage.
+
 ## Published Container Images
 
-The current published tags and immutable deployment references are:
+The Phala launcher resolves the release tags in
+[phala/image-sources.json](./phala/image-sources.json) to immutable digests.
+Successful publish workflows pass their exact build digest directly to the
+Phala deployment workflow. Image IDs do not need to be copied into env files or
+Terraform. The selected image set is recorded in the Terraform
+`deployment_images` output, including during an interrupted rollout.
 
-| Component | Tag | Digest-pinned reference |
-| --- | --- | --- |
-| TEE inference (standalone) | `ghcr.io/uzhw8rgl/master-thesis-tee-inference:tee` | `ghcr.io/uzhw8rgl/master-thesis-tee-inference@sha256:c3bbf27daee0435207ed250e6f3861e53dba0678b6536d4e670321b46d663492` |
-| DFL worker | `ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala` | `ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:e0b3771ca6135932405054947a4eeca88d4c7612d91f93cf2f0482eb804a1b27` |
-| Agent | `ghcr.io/uzhw8rgl/master-thesis-agent:agent` | `ghcr.io/uzhw8rgl/master-thesis-agent@sha256:b6520d0a970362e77a420621acf476cca2afb56fdad3bca54d20afabbcdbb6c5` |
-| Smart-contract runtime | `ghcr.io/uzhw8rgl/master-thesis-smart-contracts:phala` | `ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:1ed6bedbe8afd7b2ee433ca7097667c624a415b8fe7bb37c73e0536bda9b16e7` |
-| ZK inference | `ghcr.io/uzhw8rgl/master-thesis-zk-inference:zk` | `ghcr.io/uzhw8rgl/master-thesis-zk-inference@sha256:2d25f9c1aca15616ce1a45d3b64a29fec10f3e44a57dfea18c55e9fd71e25568` |
+| Component | Release tag |
+| --- | --- |
+| Combined DFL worker and Worker 0 TEE inference | `ghcr.io/uzhw8rgl/master-thesis-dfl-worker:phala` |
+| Smart-contract runtime | `ghcr.io/uzhw8rgl/master-thesis-smart-contracts:phala` |
+| Control API | `ghcr.io/uzhw8rgl/master-thesis-control-api:control` |
+| Browser UI | `ghcr.io/uzhw8rgl/master-thesis-ui:ui` |
+| Agent | `ghcr.io/uzhw8rgl/master-thesis-agent:agent` |
+| Transparency log | `ghcr.io/uzhw8rgl/master-thesis-transparency-log:scitt` |
+| ZK inference | `ghcr.io/uzhw8rgl/master-thesis-zk-inference:zk` |
 
 Phala uses the combined DFL worker image for Worker 0 and its co-located TEE
 inference process. The standalone TEE-inference image is published for separate
 deployments and is not selected by the Phala Terraform configuration.
 
+## Start on Phala
+
+Once the [Phala configuration and shared Terraform state](./phala/README.md#one-time-setup)
+are prepared, start or update the deployment from this directory with one line:
+
+```bash
+bash phala/start.sh
+```
+
+All Phala settings, including the API key, belong in `.env.phala.anvil`.
+GitHub Actions decrypts this complete profile from `phala/deploy.env.gpg`;
+the two required secrets are `PHALA_STATE_PASSPHRASE` and `PHALA_ENV_PASSPHRASE`.
+
+The shared state is encrypted in the existing GitHub repository's `phala-state`
+branch. This needs no additional cloud account or VM. Without the GitHub state
+configuration, the launcher uses local Terraform state for local-only deployments.
+The launcher resolves images, checks existing apps and workers, and configures
+the runtime endpoints. Open the reported UI, choose **Training Setup**, and
+press **Start Training** to commit the participant roster and launch the selected
+worker TEEs. Worker 0 also provides TEE inference.
+
+After the [GitHub Actions setup](./phala/README.md#automatic-deployment-after-image-publishing),
+each successful publish on the configured deployment branch updates Phala
+automatically. Deployment changes reset this prototype's training run and remove
+its old workers when runtime or worker configuration changes; an unchanged
+deployment is left running. Export evaluation data
+before publishing a change to an active experiment. The
+[Phala guide](./phala/README.md#existing-workers-retries-and-recovery) explains
+retries, existing workers, explicit recreation, and teardown.
+
+### Preview, recreate, or delete
+
+Run these commands from this directory with your configured deployment profile:
+
+```bash
+# Preview changes without applying or deleting resources.
+bash phala/start.sh --dry-run
+
+# Delete the existing demo and create a fresh runtime.
+bash phala/start.sh --recreate
+
+# Delete the deployment, including leftover worker CVMs.
+bash phala/start.sh --destroy
+```
+
+`--recreate` and `--destroy` erase the current run's chain state, IPFS data, and
+training progress. After recreation, start training yourself in the UI.
+
 ## Architecture
 
-The prototype is organized around a Docker Compose runtime. The diagrams below show the main runtime components and the end-to-end execution path from local infrastructure startup to verifiable inference.
+The diagram below shows the main runtime components and their connections.
 
 ### Runtime Component Overview
 
@@ -138,39 +200,3 @@ flowchart TB
 
   Artifacts --> MCP
 ```
-
-## Reproducible Demo
-
-For a clean local demo, start from a fresh stack and use Docker Compose for the base runtime:
-
-```bash
-docker compose --env-file .env.example --env-file .env.phala.anvil.example \
-  down --volumes --remove-orphans
-docker compose --env-file .env.example \
-  --env-file .env.phala.anvil.example up --build --force-recreate
-```
-
-If Docker reports `Conflict. The container name "/ipfs_local" is already in use`, a separate Kubo/IPFS container is already running on your machine with the same fixed name and host ports. Stop and remove that old container before starting this stack:
-
-```bash
-docker stop ipfs_local
-docker rm ipfs_local
-```
-
-The `.env` file is intentionally ignored by Git. For new setups, prefer split profiles over a single mixed file:
-
-```bash
-cp .env.shared.example .env.shared
-cp .env.phala.anvil.example .env.phala.anvil
-cp .env.sepolia.example .env.sepolia
-./scripts/use-env-profile.sh anvil
-```
-
-This keeps common values in `.env.shared`, puts chain-specific values into `.env.phala.anvil` or `.env.sepolia`, and regenerates the active `.env` from the selected profile. That avoids dangerous mixes such as a Sepolia RPC together with Anvil contract addresses.
-
-This rebuilds the base services, launches the local infrastructure, deploys the contracts, pins the public initial model, and leaves the deployment container successfully exited. Open the UI, select the desired configuration in **Training Setup**, and press **Start Training**. That action commits the exact roster and starts only the selected workers, the agent, and the inference service.
-
-After the stack is up, the browser frontend is available at:
-
-- `http://127.0.0.1:8089` for the thesis agent website with the chat UI and embedded Grafana dashboard
-- `http://127.0.0.1:3300` for the standalone Grafana instance
