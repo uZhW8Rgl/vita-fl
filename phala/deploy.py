@@ -191,6 +191,79 @@ class PhalaClient:
                 raise DeploymentError("Phala inventory ended before its last page; retry")
         raise DeploymentError("Phala inventory pagination exceeded the safety limit")
 
+    def validate_os_images(self, plan: dict[str, Any]) -> None:
+        """Check planned placements against the current read-only node catalog."""
+        requested = [
+            (resource.get("address", "phala_app"), resource.get("values", {}))
+            for resource in managed_apps(plan)
+        ]
+        variables = plan.get("variables", {})
+        if variables.get("enable_phala_control_api", {}).get("value") is True:
+            # UI workers do not exist in root state until the user starts
+            # training, but their pinned OS must already be deployable.
+            requested.append(
+                (
+                    "dynamic UI workers",
+                    {
+                        "image": variables.get("dynamic_worker_os_image", {}).get("value"),
+                        "node_id": variables.get("dynamic_worker_node_id", {}).get("value"),
+                        "region": variables.get("region", {}).get("value"),
+                    },
+                )
+            )
+        if not requested:
+            return
+        for address, values in requested:
+            node_id = values.get("node_id")
+            if (
+                not isinstance(values.get("image"), str)
+                or not values["image"]
+                or not isinstance(values.get("region"), str)
+                or not values["region"]
+                or (node_id is not None and (type(node_id) is not int or node_id <= 0))
+            ):
+                raise DeploymentError(f"Cannot validate OS image placement for {address}; check the Terraform plan")
+
+        payload = self.request("GET", "/teepods/available")
+        if not isinstance(payload, dict) or not isinstance(payload.get("nodes"), list):
+            raise DeploymentError("Phala returned an invalid node/OS image catalog; refusing deployment")
+        nodes = payload["nodes"]
+        for node in nodes:
+            if (
+                not isinstance(node, dict)
+                or type(node.get("teepod_id")) is not int
+                or node["teepod_id"] <= 0
+                or not isinstance(node.get("region_identifier"), str)
+                or not node["region_identifier"]
+                or not isinstance(node.get("images"), list)
+            ):
+                raise DeploymentError("Phala returned an invalid node/OS image catalog; refusing deployment")
+            for image in node["images"]:
+                if (
+                    not isinstance(image, dict)
+                    or not isinstance(image.get("name"), str)
+                    or not image["name"]
+                    or (image.get("slug") is not None and not isinstance(image["slug"], str))
+                    or type(image.get("enabled")) is not bool
+                ):
+                    raise DeploymentError("Phala returned an invalid node/OS image catalog; refusing deployment")
+        for address, values in requested:
+            compatible = any(
+                node["region_identifier"] == values["region"]
+                and (values.get("node_id") is None or node["teepod_id"] == values["node_id"])
+                and any(
+                    image["enabled"] and values["image"] in {image["name"], image.get("slug")}
+                    for image in node["images"]
+                )
+                for node in nodes
+            )
+            if not compatible:
+                placement = f"node {values['node_id']} in " if values.get("node_id") is not None else ""
+                raise DeploymentError(
+                    f"OS image {values['image']} for {address} is unavailable or disabled on "
+                    f"{placement}region {values['region']}; choose an enabled image before retrying"
+                )
+
     def delete(self, cvms: list[Cvm], timeout: float = 300) -> None:
         """Wait until concrete CVM IDs disappear before reusing their names."""
         pending = {cvm.identifier: cvm for cvm in cvms}
@@ -469,6 +542,8 @@ def execute_deployment(
         )
         terraform.wire_runtime(endpoint, sello=sello)
         plan = terraform.plan(temporary_path / "preflight.tfplan", destroy=args.destroy)
+        if not args.destroy:
+            client.validate_os_images(plan)
         decision = decide(state, plan, cvms, recreate=args.recreate, destroy=args.destroy)
         cvms = client.inventory(decision.names, decision.app_ids)
         decision = decide(state, plan, cvms, recreate=args.recreate, destroy=args.destroy)

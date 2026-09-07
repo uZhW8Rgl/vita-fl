@@ -10,7 +10,10 @@ from pathlib import Path
 
 
 class TerraformEnvironmentTests(unittest.TestCase):
-    def invoke(self, *arguments, include_api_key=True, shared_unreadable=False, use_default=False, check=True):
+    def invoke(
+        self, *arguments, include_api_key=True, shared_unreadable=False, use_default=False, check=True,
+        explicit_os=None,
+    ):
         root = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
@@ -47,6 +50,9 @@ class TerraformEnvironmentTests(unittest.TestCase):
                         "PHALA_RUNTIME_ENDPOINT_OVERRIDE=https://old-5001.example",
                         "PHALA_RUNTIME_RPC_URL=https://old-8545.example",
                         "WORKER_IMAGE=stale",
+                        "PHALA_OS_IMAGE=selected-app-os",
+                        "PHALA_CONTRACTS_OS_IMAGE=selected-runtime-os",
+                        "PHALA_DYNAMIC_WORKER_OS_IMAGE=dstack-dev-0.5.9",
                     ]
                 )
             )
@@ -56,6 +62,9 @@ class TerraformEnvironmentTests(unittest.TestCase):
                 "print(json.dumps({'args': sys.argv[1:], 'rpc': os.environ.get('TF_VAR_runtime_rpc_url_override'), "
                 "'worker': os.environ.get('TF_VAR_worker_image'), "
                 "'api_key': os.environ.get('TF_VAR_phala_cloud_api_key'), "
+                "'os': os.environ.get('TF_VAR_os_image'), "
+                "'runtime_os': os.environ.get('TF_VAR_contracts_os_image'), "
+                "'worker_os': os.environ.get('TF_VAR_dynamic_worker_os_image'), "
                 "'wallet': os.environ.get('TF_VAR_eth_wallet_private_key')}))\n"
             )
             fake_terraform.chmod(0o700)
@@ -70,6 +79,8 @@ class TerraformEnvironmentTests(unittest.TestCase):
             )
             if not use_default:
                 env["PHALA_ENV_FILE"] = str(env_file)
+            if explicit_os is not None:
+                env["TF_VAR_os_image"] = explicit_os
             result = subprocess.run(
                 ["bash", str(script_directory / "tf-env.sh"), *arguments],
                 env=env,
@@ -96,6 +107,14 @@ class TerraformEnvironmentTests(unittest.TestCase):
         self.assertNotIn(".env.shared", result.stderr)
         self.assertNotIn("wrong-shared-key", result.stdout + result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_app_os_override_preserves_explicit_tf_precedence_and_worker_policy(self):
+        for explicit in (None, "explicit-app-os"):
+            with self.subTest(explicit=explicit):
+                actual, _ = self.invoke("plan", explicit_os=explicit)
+                self.assertEqual(actual["os"], explicit or "selected-app-os")
+                self.assertEqual(actual["runtime_os"], "selected-runtime-os")
+                self.assertEqual(actual["worker_os"], "dstack-dev-0.5.9")
 
     def test_unreadable_shared_file_does_not_affect_terraform(self):
         actual, _ = self.invoke("plan", shared_unreadable=True)

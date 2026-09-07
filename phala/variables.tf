@@ -450,7 +450,7 @@ variable "region" {
 variable "os_image" {
   description = "Phala OS image slug for the CVM."
   type        = string
-  default     = "dstack-dev-0.5.7"
+  default     = "dstack-dev-0.5.9"
 }
 
 variable "contracts_os_image" {

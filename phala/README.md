@@ -223,6 +223,16 @@ Before a reset, both the dry-run and deployment also plan runtime bootstrap with
 the endpoint overrides cleared. A configuration error in that first creation
 phase therefore aborts before existing apps or workers are deleted.
 
+The launcher also checks the requested OS images against Phala's available
+nodes before applying or resetting apps. Disabled or unavailable images abort
+the deployment, including `--dry-run`. The shared app OS defaults to
+`dstack-dev-0.5.9`; override it with `PHALA_OS_IMAGE` in the selected env profile.
+`PHALA_CONTRACTS_OS_IMAGE` can override the contract runtime separately.
+Dynamic workers retain their explicit `PHALA_DYNAMIC_WORKER_OS_IMAGE` and
+the matching owner-reviewed reference quote; the launcher never upgrades them
+automatically. Availability checks cannot guarantee that a later provisioning
+request will succeed, for example if Phala's capacity changes in the meantime.
+
 Initialize an existing local deployment with
 `bash phala/start.sh --init-github-state --init-only` before enabling CI. Back up
 the local state privately first; initialization does not replace an existing
@@ -700,7 +710,7 @@ Current Terraform defaults in this scaffold match that target layout:
 - `worker_size = "tdx.small"`
 - `enable_zk_inference = false` (required until separate ZK inference supports attested participant-key delegation)
 - `zk_inference_size = "tdx.medium"` (legacy separate-app setting; inactive while ZK inference is disabled)
-- `os_image = "dstack-dev-0.5.7"`
+- `os_image = "dstack-dev-0.5.9"`
 - `dynamic_worker_os_image = "dstack-dev-0.5.9"`
 
 Use the canonical Phala OS selector above for dynamic workers. The

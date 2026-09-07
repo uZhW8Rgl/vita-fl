@@ -3,7 +3,7 @@
 # - contracts_size = "tdx.small"
 # - worker_size    = "tdx.small"
 # - region    = "US-WEST-1"
-# - os_image  = "dstack-dev-0.5.7"
+# - os_image  = "dstack-dev-0.5.9"
 # - contracts_os_image = null (falls back to os_image)
 # - contracts_disk_size = 20
 # - contracts_replicas = 1

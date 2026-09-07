@@ -25,7 +25,14 @@ def resource(address=deploy.RUNTIME_ADDRESS, name=RUNTIME_NAME, identifier="runt
         "address": address,
         "mode": "managed",
         "type": "phala_app",
-        "values": {"name": name, "app_id": identifier, "endpoint": endpoint},
+        "values": {
+            "name": name,
+            "app_id": identifier,
+            "endpoint": endpoint,
+            "image": "dstack-dev-0.5.9",
+            "region": "US-WEST-1",
+            "node_id": None,
+        },
     }
 
 
@@ -37,6 +44,18 @@ def plan(actions="no-op", address=deploy.RUNTIME_ADDRESS):
     return {
         "planned_values": {"root_module": {"resources": [resource()]}},
         "resource_changes": [{"address": address, "type": "phala_app", "change": {"actions": [actions]}}],
+    }
+
+
+def node_catalog():
+    return {
+        "nodes": [
+            {
+                "teepod_id": 18,
+                "region_identifier": "US-WEST-1",
+                "images": [{"name": "dstack-dev-0.5.9", "slug": "dstack-dev-0.5.9-hash", "enabled": True}],
+            }
+        ]
     }
 
 
@@ -219,6 +238,88 @@ class PhalaClientTests(unittest.TestCase):
             self.assertIsNone(self.client.request("DELETE", "/cvms/123"))
 
 
+class OsImagePreflightTests(unittest.TestCase):
+    def setUp(self):
+        self.client = deploy.PhalaClient("secret")
+        self.catalog = node_catalog()
+        self.client.request = Mock(return_value=self.catalog)
+        self.plan = plan("create")
+        self.values = self.plan["planned_values"]["root_module"]["resources"][0]["values"]
+
+    def test_accepts_enabled_image_name_or_slug(self):
+        for image in ("dstack-dev-0.5.9", "dstack-dev-0.5.9-hash"):
+            with self.subTest(image=image):
+                self.values["image"] = image
+                self.values["node_id"] = 18
+                self.client.validate_os_images(self.plan)
+        self.client.request.assert_called_with("GET", "/teepods/available")
+
+    def test_rejects_disabled_image(self):
+        self.catalog["nodes"][0]["images"][0]["enabled"] = False
+        with self.assertRaisesRegex(deploy.DeploymentError, "unavailable or disabled"):
+            self.client.validate_os_images(self.plan)
+
+    def test_rejects_image_missing_from_node(self):
+        self.values["image"] = "dstack-dev-0.5.7"
+        with self.assertRaisesRegex(deploy.DeploymentError, "dstack-dev-0.5.7"):
+            self.client.validate_os_images(self.plan)
+
+    def test_enabled_image_in_another_region_does_not_satisfy_placement(self):
+        self.catalog["nodes"][0]["region_identifier"] = "EU-WEST-1"
+        with self.assertRaisesRegex(deploy.DeploymentError, "region US-WEST-1"):
+            self.client.validate_os_images(self.plan)
+
+    def test_enabled_image_on_another_node_does_not_satisfy_pinning(self):
+        self.values["node_id"] = 26
+        with self.assertRaisesRegex(deploy.DeploymentError, "node 26"):
+            self.client.validate_os_images(self.plan)
+
+    def test_missing_and_malformed_catalogs_fail_closed(self):
+        for payload in (
+            None,
+            {},
+            {"nodes": None},
+            {"nodes": [{}]},
+            {"nodes": [{"teepod_id": 18, "region_identifier": "US-WEST-1", "images": [{}]}]},
+        ):
+            with self.subTest(payload=payload):
+                self.client.request.return_value = payload
+                with self.assertRaisesRegex(deploy.DeploymentError, "invalid node/OS image catalog"):
+                    self.client.validate_os_images(self.plan)
+
+    def test_image_without_explicit_enabled_status_fails_closed(self):
+        for enabled in (None, "true", 1):
+            with self.subTest(enabled=enabled):
+                self.catalog["nodes"][0]["images"][0]["enabled"] = enabled
+                with self.assertRaisesRegex(deploy.DeploymentError, "invalid node/OS image catalog"):
+                    self.client.validate_os_images(self.plan)
+
+    def test_missing_planned_image_fails_before_cloud_request(self):
+        del self.values["image"]
+        with self.assertRaisesRegex(deploy.DeploymentError, "Cannot validate OS image placement"):
+            self.client.validate_os_images(self.plan)
+        self.client.request.assert_not_called()
+
+    def test_dynamic_workers_are_checked_before_ui_creates_them(self):
+        self.plan["variables"] = {
+            "enable_phala_control_api": {"value": True},
+            "dynamic_worker_os_image": {"value": "dstack-dev-0.5.7"},
+            "dynamic_worker_node_id": {"value": 18},
+            "region": {"value": "US-WEST-1"},
+        }
+        with self.assertRaisesRegex(deploy.DeploymentError, "dynamic UI workers"):
+            self.client.validate_os_images(self.plan)
+        self.plan["variables"]["dynamic_worker_os_image"]["value"] = "dstack-dev-0.5.9"
+        self.client.validate_os_images(self.plan)
+
+    def test_disabled_control_api_does_not_require_dynamic_worker_image(self):
+        self.plan["variables"] = {
+            "enable_phala_control_api": {"value": False},
+            "dynamic_worker_os_image": {"value": "dstack-dev-0.5.7"},
+        }
+        self.client.validate_os_images(self.plan)
+
+
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -235,6 +336,7 @@ class LifecycleTests(unittest.TestCase):
         self.initial_state = state(resource())
         self.current_state = self.initial_state
         self.current_plan = plan()
+        self.catalog = node_catalog()
         self.cloud_cvms = [
             deploy.Cvm("runtime-cvm", RUNTIME_NAME, "runtime"),
             deploy.Cvm("worker-cvm", "master-thesis-dfl-worker-0", "worker"),
@@ -268,7 +370,7 @@ class LifecycleTests(unittest.TestCase):
                     raise deploy.DeploymentError("simulated runtime bootstrap failure")
                 return scenario.current_plan
 
-        class FakeClient:
+        class FakeClient(deploy.PhalaClient):
             def __init__(self, *_args):
                 pass
 
@@ -277,6 +379,12 @@ class LifecycleTests(unittest.TestCase):
 
             def inventory(self, _names, _ids):
                 return list(scenario.cloud_cvms)
+
+            def request(self, method, path):
+                scenario.events.append(("request", method, path))
+                if (method, path) != ("GET", "/teepods/available"):
+                    raise AssertionError(f"Unexpected Phala request: {method} {path}")
+                return scenario.catalog
 
             def delete(self, cvms):
                 for cvm in cvms:
@@ -345,6 +453,27 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(deploy.DeploymentError, "runtime bootstrap failure"):
             self.run_deployment(dry_run=True)
         self.assertFalse(self.mutations())
+
+    def test_unavailable_os_preserves_existing_apps_and_workers(self):
+        self.current_plan = plan("update")
+        self.catalog["nodes"][0]["images"][0]["enabled"] = False
+        original_cvms = list(self.cloud_cvms)
+        with self.assertRaisesRegex(deploy.DeploymentError, "unavailable or disabled"):
+            self.run_deployment(recreate=True)
+        self.assertFalse(self.mutations())
+        self.assertEqual(self.cloud_cvms, original_cvms)
+
+    def test_dry_run_also_rejects_unavailable_os(self):
+        self.catalog["nodes"] = []
+        with self.assertRaisesRegex(deploy.DeploymentError, "unavailable or disabled"):
+            self.run_deployment(dry_run=True)
+        self.assertFalse(self.mutations())
+
+    def test_destroy_does_not_require_available_os_images(self):
+        self.catalog = None
+        self.run_deployment(destroy=True)
+        self.assertFalse(any(event[0] == "request" for event in self.events))
+        self.assertTrue(any(event[0] == "tf" and event[1][0] == "destroy" for event in self.mutations()))
 
     def test_destroy_does_not_require_a_valid_bootstrap(self):
         self.fail_bootstrap_plan = True
