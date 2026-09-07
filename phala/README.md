@@ -219,6 +219,10 @@ Control API volume. Keep using the same GitHub state repository, branch, and
 passphrase for all local commands and CI runs. The deployment lock prevents a
 local command and CI from changing the deployment at the same time.
 
+Before a reset, both the dry-run and deployment also plan runtime bootstrap with
+the endpoint overrides cleared. A configuration error in that first creation
+phase therefore aborts before existing apps or workers are deleted.
+
 Initialize an existing local deployment with
 `bash phala/start.sh --init-github-state --init-only` before enabling CI. Back up
 the local state privately first; initialization does not replace an existing

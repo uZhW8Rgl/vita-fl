@@ -291,7 +291,7 @@ class CombinedWorkerComposeTests(unittest.TestCase):
         )
         self.assertIn(
             "dynamic_worker_rpc_url               = "
-            'coalesce(var.runtime_rpc_url_override, "")',
+            'var.runtime_rpc_url_override == null ? "" : var.runtime_rpc_url_override',
             root_module,
         )
 

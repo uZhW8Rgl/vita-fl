@@ -241,6 +241,7 @@ class LifecycleTests(unittest.TestCase):
             deploy.Cvm("unrelated", "other-application", "other"),
         ]
         self.fail_command = None
+        self.fail_bootstrap_plan = False
         scenario = self
 
         class FakeTerraform(deploy.Terraform):
@@ -263,6 +264,8 @@ class LifecycleTests(unittest.TestCase):
                 scenario.events.append(("plan", destroy, dict(self.runtime_vars)))
                 if scenario.fail_command == "plan":
                     raise deploy.DeploymentError("simulated invalid configuration")
+                if scenario.fail_bootstrap_plan and self.runtime_vars.get("runtime_endpoint_override") is None:
+                    raise deploy.DeploymentError("simulated runtime bootstrap failure")
                 return scenario.current_plan
 
         class FakeClient:
@@ -322,6 +325,31 @@ class LifecycleTests(unittest.TestCase):
         self.current_plan = plan("update")
         self.run_deployment(dry_run=True)
         self.assertFalse(self.mutations())
+
+    def test_bootstrap_plan_failure_preserves_existing_apps_and_workers(self):
+        self.current_plan = plan("update")
+        self.fail_bootstrap_plan = True
+        original_cvms = list(self.cloud_cvms)
+        with self.assertRaisesRegex(deploy.DeploymentError, "runtime bootstrap failure"):
+            self.run_deployment()
+        self.assertFalse(self.mutations())
+        self.assertEqual(self.cloud_cvms, original_cvms)
+        plans = [event for event in self.events if event[0] == "plan"]
+        self.assertEqual(len(plans), 2)
+        self.assertEqual(plans[0][2]["runtime_endpoint_override"], OLD_ENDPOINT)
+        self.assertIsNone(plans[1][2]["runtime_endpoint_override"])
+
+    def test_dry_run_also_validates_the_bootstrap_phase(self):
+        self.current_plan = plan("update")
+        self.fail_bootstrap_plan = True
+        with self.assertRaisesRegex(deploy.DeploymentError, "runtime bootstrap failure"):
+            self.run_deployment(dry_run=True)
+        self.assertFalse(self.mutations())
+
+    def test_destroy_does_not_require_a_valid_bootstrap(self):
+        self.fail_bootstrap_plan = True
+        self.run_deployment(destroy=True)
+        self.assertTrue(any(event[0] == "tf" and event[1][0] == "destroy" for event in self.mutations()))
 
     def test_init_only_never_resolves_images_or_reads_cloud(self):
         self.run_deployment(init_only=True)

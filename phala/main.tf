@@ -191,9 +191,9 @@ locals {
     agent_available                      = var.enable_phala_agent ? "1" : "0"
     dynamic_worker_inventory             = var.dynamic_worker_inventory
     dynamic_worker_inventory_environment = local.dynamic_worker_inventory_environment
-    dynamic_worker_rpc_url               = coalesce(var.runtime_rpc_url_override, "")
-    dynamic_worker_kubo_api_url          = coalesce(var.runtime_kubo_api_url_override, "")
-    dynamic_worker_kubo_gateway_url      = coalesce(var.runtime_kubo_gateway_url_override, "")
+    dynamic_worker_rpc_url               = var.runtime_rpc_url_override == null ? "" : var.runtime_rpc_url_override
+    dynamic_worker_kubo_api_url          = var.runtime_kubo_api_url_override == null ? "" : var.runtime_kubo_api_url_override
+    dynamic_worker_kubo_gateway_url      = var.runtime_kubo_gateway_url_override == null ? "" : var.runtime_kubo_gateway_url_override
     max_dynamic_workers                  = var.max_dynamic_workers
     initial_dynamic_worker_count         = min(var.initial_dynamic_worker_count, var.max_dynamic_workers)
     region                               = var.region

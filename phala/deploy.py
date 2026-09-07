@@ -472,6 +472,16 @@ def execute_deployment(
         decision = decide(state, plan, cvms, recreate=args.recreate, destroy=args.destroy)
         cvms = client.inventory(decision.names, decision.app_ids)
         decision = decide(state, plan, cvms, recreate=args.recreate, destroy=args.destroy)
+        if decision.reset and not args.destroy:
+            # Validate the first creation phase before removing a working
+            # runtime. Its new endpoints are unknown, even when the initial
+            # plan could use the existing runtime's healthy endpoints.
+            print("Validating runtime bootstrap before resetting existing apps.", flush=True)
+            terraform.wire_runtime(None, sello=sello)
+            try:
+                terraform.plan(temporary_path / "bootstrap-preflight.tfplan")
+            finally:
+                terraform.wire_runtime(endpoint, sello=sello)
         print(f"Deployment decision: {decision.reason}", flush=True)
         if decision.reset:
             print(
