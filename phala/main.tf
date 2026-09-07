@@ -184,7 +184,8 @@ locals {
     expected_aggregator_address              = var.expected_aggregator_address
     expected_medical_signer_registry_address = var.expected_medical_signer_registry_address
     expected_runtime_rpc_url                 = local.worker_policy_runtime_rpc_url
-    zk_inference_url = var.zk_inference_url_override != null ? trimsuffix(
+    enable_zk_inference = var.enable_zk_inference
+    zk_inference_url = var.enable_zk_inference && var.zk_inference_url_override != null ? trimsuffix(
       var.zk_inference_url_override,
       "/",
     ) : ""

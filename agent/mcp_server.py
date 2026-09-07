@@ -21,6 +21,7 @@ try:
         run_fetch_latest_verified_model_bundle_skill,
         run_generate_random_chestmnist_image_skill,
         run_generate_zk_inference_proof_skill,
+        zk_inference_enabled,
     )
 except ImportError:
     from agent_skills import (
@@ -28,6 +29,7 @@ except ImportError:
         run_fetch_latest_verified_model_bundle_skill,
         run_generate_random_chestmnist_image_skill,
         run_generate_zk_inference_proof_skill,
+        zk_inference_enabled,
     )
 
 try:
@@ -132,6 +134,8 @@ def _remote_call(
     receipt_input: bytes | None = None,
 ) -> dict[str, Any]:
     """Unified helper for POST requests to the remote zk_inference service."""
+    if not zk_inference_enabled():
+        raise RuntimeError("ZK inference is disabled in this deployment. TEE model bundles use Worker 0.")
     if not ZK_INFERENCE_URL:
         raise RuntimeError("ZK_INFERENCE_URL is not set and local zk_inference tools are unavailable.")
 
@@ -183,6 +187,8 @@ def _remote_call(
 
 
 def _remote_get_bytes(endpoint: str, timeout: int = 120) -> bytes:
+    if not zk_inference_enabled():
+        raise RuntimeError("ZK inference is disabled in this deployment. TEE model bundles use Worker 0.")
     if not ZK_INFERENCE_URL:
         raise RuntimeError("ZK_INFERENCE_URL is not set and local zk_inference tools are unavailable.")
     request = urllib.request.Request(

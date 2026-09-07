@@ -8,6 +8,7 @@ import asyncio
 import contextvars
 import json
 import os
+import re
 import sys
 import traceback
 import uuid
@@ -23,6 +24,7 @@ try:
         format_selection_summary,
         format_verified_bundle_summary,
         resolve_preferred_sample_index,
+        zk_inference_enabled,
     )
     from .blockchain_source import (
         DEFAULT_ENV_FILE,
@@ -42,6 +44,7 @@ except ImportError:
         format_selection_summary,
         format_verified_bundle_summary,
         resolve_preferred_sample_index,
+        zk_inference_enabled,
     )
     from blockchain_source import (
         DEFAULT_ENV_FILE,
@@ -349,7 +352,7 @@ def _local_langchain_tools():
             raise RuntimeError("No TEE inference job exists in this chat; generate a TEE ChestMNIST image first.")
         return run_tee_impl(job_id=str(job["job_id"]))
 
-    return [
+    tools = [
         fetch_latest_verified_zk_model_bundle,
         generate_random_zk_chestmnist_image,
         generate_and_verify_zk_inference_proof,
@@ -357,6 +360,9 @@ def _local_langchain_tools():
         generate_random_tee_chestmnist_image,
         run_and_verify_tee_inference,
     ]
+    if not zk_inference_enabled():
+        tools = [tool for tool in tools if "_zk_" not in tool.name]
+    return tools
 
 
 def _default_llm_prompt(args: argparse.Namespace) -> str:
@@ -751,10 +757,10 @@ class AgentRuntime:
             return "generate_random_tee_chestmnist_image"
         if "run_and_verify_tee_inference" in lowered:
             return "run_and_verify_tee_inference"
+        if "bundle" in lowered:
+            return self._bundle_requested_skill(user_message)
         if "tee" in lowered and "inference" in lowered:
             return "run_and_verify_tee_inference"
-        if "bundle" in lowered and any(token in lowered for token in ("fetch", "latest", "verified")):
-            return "fetch_latest_verified_tee_model_bundle"
         if "chestmnist" in lowered or ("random" in lowered and "image" in lowered):
             return "generate_random_tee_chestmnist_image"
         if "proof" in lowered or "ezkl" in lowered:
@@ -766,6 +772,25 @@ class AgentRuntime:
         if normalized in PUBLIC_SKILL_NAMES:
             return normalized
         return None
+
+    def _bundle_requested_skill(self, user_message: str) -> str | None:
+        """Route a single bundle command without turning discussion into a tool call."""
+        normalized = " ".join(user_message.lower().split())
+        match = re.fullmatch(
+            r"(?:please )?(?:fetch|get|download) (?:the )?"
+            r"(?:(?:latest|current|verified) )*"
+            r"(?:(tee|zk(?: tee)?|ezkl(?: tee)?) )?(?:model )?bundle"
+            r"(?: (?:in|inside|from) (?:the )?(tee|zk(?: tee)?|ezkl(?: tee)?))?"
+            r"(?:,? please)?[.!]?",
+            normalized,
+        )
+        if match is None:
+            return None
+        modes = {"zk" if mode.startswith(("zk", "ezkl")) else "tee" for mode in match.groups() if mode}
+        if len(modes) > 1:
+            return None
+        mode = next(iter(modes), "tee")
+        return f"fetch_latest_verified_{mode}_model_bundle"
 
     def _execute_skill_fallback(
         self,
@@ -965,16 +990,16 @@ class AgentRuntime:
         try:
             session_state = session.setdefault("state", {})
             session_state.setdefault("id", session_id)
-            exact_skill = self._exact_requested_skill(user_message)
-            if exact_skill is not None:
-                print(f"[route] explicit_skill skill={exact_skill}", file=sys.stderr)
+            direct_skill = self._exact_requested_skill(user_message) or self._bundle_requested_skill(user_message)
+            if direct_skill is not None:
+                print(f"[route] explicit_skill skill={direct_skill}", file=sys.stderr)
                 assistant_message = await asyncio.to_thread(
                     self._execute_skill_fallback,
                     session_state,
-                    exact_skill,
+                    direct_skill,
                 )
                 if assistant_message is None:
-                    raise RuntimeError(f"Requested skill is not executable: {exact_skill}")
+                    raise RuntimeError(f"Requested skill is not executable: {direct_skill}")
                 session["messages"].append({"role": "assistant", **assistant_message})
                 return
 

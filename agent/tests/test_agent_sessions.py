@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
-from agent.run_agent import AgentRuntime
+from agent.run_agent import AgentRuntime, _local_langchain_tools
 
 
 class AgentSessionTests(unittest.TestCase):
@@ -44,6 +46,39 @@ class AgentSessionTests(unittest.TestCase):
                     expected,
                 )
 
+    def test_bundle_commands_preserve_explicit_inference_mode(self) -> None:
+        commands = {
+            "fetch the latest bundle": "tee",
+            "Please fetch the latest verified TEE model bundle.": "tee",
+            "get the current model bundle, please!": "tee",
+            "fetch the latest ZK bundle": "zk",
+            "fetch the latest bundle inside the ZK TEE": "zk",
+            "download the verified EZKL model bundle": "zk",
+        }
+        for command, mode in commands.items():
+            with self.subTest(command=command):
+                expected = f"fetch_latest_verified_{mode}_model_bundle"
+                self.assertEqual(self.runtime._bundle_requested_skill(command), expected)
+                self.assertEqual(self.runtime._infer_requested_skill(command), expected)
+
+    def test_disabled_zk_is_absent_from_planner_tools(self) -> None:
+        with patch.dict("os.environ", {"ZK_INFERENCE_ENABLED": "false"}):
+            tools = _local_langchain_tools()
+        self.assertEqual(
+            {tool.name for tool in tools},
+            {
+                "fetch_latest_verified_tee_model_bundle",
+                "generate_random_tee_chestmnist_image",
+                "run_and_verify_tee_inference",
+            },
+        )
+
+    def test_enabled_zk_keeps_both_planner_workflows(self) -> None:
+        with patch.dict("os.environ", {"ZK_INFERENCE_ENABLED": "true"}):
+            tools = _local_langchain_tools()
+        self.assertEqual(len(tools), 6)
+        self.assertIn("fetch_latest_verified_zk_model_bundle", {tool.name for tool in tools})
+
 
 class AgentSessionAsyncTests(unittest.IsolatedAsyncioTestCase):
     async def test_busy_state_is_cleared_when_chat_is_cancelled(self) -> None:
@@ -71,6 +106,77 @@ class AgentSessionAsyncTests(unittest.IsolatedAsyncioTestCase):
         execute.assert_called_once_with(session["state"], "fetch_latest_verified_tee_model_bundle")
         self.assertEqual(updated["messages"][-1]["content"], "Tool completed.")
         self.assertFalse(updated["busy"])
+
+    async def test_bundle_commands_call_requested_receiver_without_planner(self) -> None:
+        for command, mode in (
+            ("fetch the latest bundle", "tee"),
+            ("fetch the latest ZK bundle", "zk"),
+        ):
+            with self.subTest(command=command):
+                runtime = AgentRuntime(args=None)
+                session = runtime.create_session()
+                runtime.ensure_agent_model = AsyncMock(side_effect=AssertionError("LLM planner must not run"))
+                payload = {"ok": True, "tool_receipt": {"status": "verified"}}
+                receivers = SimpleNamespace(
+                    fetch_latest_verified_tee_model_bundle=Mock(return_value=json.dumps(payload)),
+                    fetch_latest_verified_zk_model_bundle=Mock(return_value=json.dumps(payload)),
+                )
+                with patch.dict("sys.modules", {"mcp_server": receivers}):
+                    updated = await runtime.chat(session["id"], command)
+
+                selected = getattr(receivers, f"fetch_latest_verified_{mode}_model_bundle")
+                other_mode = "zk" if mode == "tee" else "tee"
+                unselected = getattr(receivers, f"fetch_latest_verified_{other_mode}_model_bundle")
+                selected.assert_called_once_with()
+                unselected.assert_not_called()
+                self.assertEqual(session["state"][f"latest_{mode}_model"], payload)
+                event = updated["messages"][-1]["events"][0]
+                self.assertEqual(event["label"], f"fetch_latest_verified_{mode}_model_bundle")
+                self.assertEqual(json.loads(event["detail"])["tool_receipt"], payload["tool_receipt"])
+
+    async def test_bundle_discussion_and_multistep_requests_stay_with_planner(self) -> None:
+        commands = (
+            "How do I fetch the latest bundle?",
+            "fetch the latest bundle?",
+            "Do not fetch the latest bundle.",
+            "Don't fetch the latest bundle; explain it.",
+            "fetch the latest bundle and run inference",
+            "fetch the latest bundle and run TEE inference",
+            "fetch the latest bundle, then generate a proof",
+            "fetch the latest TEE bundle inside the ZK TEE",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                runtime = AgentRuntime(args=None)
+                session = runtime.create_session()
+                runtime.ensure_agent_model = AsyncMock()
+                runtime._run_agent_with_timeout = AsyncMock(
+                    return_value=({"output": "Planner response."}, False, False)
+                )
+                with patch.object(runtime, "_execute_skill_fallback") as execute:
+                    updated = await runtime.chat(session["id"], command)
+
+                runtime.ensure_agent_model.assert_awaited_once()
+                runtime._run_agent_with_timeout.assert_awaited_once()
+                execute.assert_not_called()
+                self.assertEqual(updated["messages"][-1]["content"], "Planner response.")
+
+    async def test_explicit_zk_failure_never_switches_to_tee(self) -> None:
+        runtime = AgentRuntime(args=None)
+        session = runtime.create_session()
+        runtime.ensure_agent_model = AsyncMock(side_effect=AssertionError("LLM planner must not run"))
+        receivers = SimpleNamespace(
+            fetch_latest_verified_tee_model_bundle=Mock(),
+            fetch_latest_verified_zk_model_bundle=Mock(side_effect=RuntimeError("ZK inference is disabled")),
+        )
+        with patch.dict("sys.modules", {"mcp_server": receivers}):
+            updated = await runtime.chat(session["id"], "fetch the latest ZK bundle")
+
+        receivers.fetch_latest_verified_zk_model_bundle.assert_called_once_with()
+        receivers.fetch_latest_verified_tee_model_bundle.assert_not_called()
+        self.assertIn("ZK inference is disabled", updated["messages"][-1]["content"])
+        self.assertNotIn("latest_zk_model", session["state"])
+        self.assertNotIn("latest_tee_model", session["state"])
 
     async def test_requested_target_tool_closes_agent_stream_before_llm_tail(self) -> None:
         class Stream:

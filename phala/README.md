@@ -126,6 +126,11 @@ pins from shared Terraform state, and invokes the same launcher used locally.
 The standalone TEE-inference publisher is excluded because Worker 0 uses the
 combined DFL worker image. The separate ZK app remains disabled by the current
 Terraform policy; tracking its image does not enable that app.
+The agent's ZK tools are also disabled in this deployment, and legacy
+`ZK_INFERENCE_URL_OVERRIDE` values are not passed to it. A plain request such as
+`fetch the latest bundle` uses the TEE receiver on Worker 0, discovered through
+the current DeviceRegistry. That receiver becomes available after you start
+training in the UI and Worker 0 registers successfully.
 
 The [one-time setup](#one-time-setup) configures the required values. Available
 settings are:

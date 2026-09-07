@@ -7,6 +7,7 @@ reimplementing the workflow themselves.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -108,9 +109,16 @@ AGENT_SKILL_SPECS: tuple[SkillSpec, ...] = (
 )
 
 
+def zk_inference_enabled() -> bool:
+    """Allow deployments to disable ZK tools while retaining the local tool API."""
+    return os.environ.get("ZK_INFERENCE_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+
+
 def describe_agent_skills() -> str:
     lines: list[str] = ["Available agent skills:"]
     for spec in AGENT_SKILL_SPECS:
+        if not zk_inference_enabled() and "_zk_" in spec.name:
+            continue
         lines.append(f"- {spec.name}: {spec.summary}")
         lines.append(f"  stages={', '.join(spec.stages)}")
     return "\n".join(lines)

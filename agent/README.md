@@ -13,6 +13,14 @@ own Phala TEE:
 5. `generate_random_zk_chestmnist_image(...)`
 6. `generate_and_verify_zk_inference_proof(job_id)`
 
+In chat, `fetch the latest bundle` selects the TEE workflow directly. An
+explicit ZK bundle request selects ZK and never silently switches to TEE.
+Questions and requests involving several steps continue through the planner.
+Deployments can set `ZK_INFERENCE_ENABLED=false` to omit ZK tools from the
+planner and reject direct ZK calls before contacting a service. Phala sets this
+flag while separate ZK inference lacks attested participant-key delegation;
+local deployments retain both workflows by default.
+
 The shared skill orchestration now lives in `agent/agent_skills.py`. MCP, the deterministic CLI path, and the LangChain/Ollama chat layer use that skill layer instead of each implementing the workflow independently.
 
 Together they cover the normal flow in separate steps:
