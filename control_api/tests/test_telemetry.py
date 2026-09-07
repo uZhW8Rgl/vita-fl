@@ -46,6 +46,7 @@ class SignedTelemetryTests(unittest.TestCase):
 
     def test_signed_event_updates_evaluation_metrics(self) -> None:
         payload = self.payload()
+        payload["attributes"].update(micro_f1=0.75, exact_match_percent=0.0)
         with patch.dict(os.environ, {"DYNAMIC_WORKER_INVENTORY": self.inventory}):
             server._record_telemetry(payload, self.signature(payload))
 
@@ -53,6 +54,22 @@ class SignedTelemetryTests(unittest.TestCase):
 
         self.assertEqual(records[0]["round"], "1")
         self.assertEqual(records[0]["accuracy_percent"], "75.5")
+        self.assertEqual(records[0]["micro_f1"], "0.75")
+        self.assertEqual(records[0]["exact_match_percent"], "0.0")
+        metrics: list[str] = []
+        server.append_evaluation_metrics(metrics, records)
+        info = next(line for line in metrics if line.startswith("dfl_global_model_evaluation_info{"))
+        self.assertIn('micro_f1="0.75"', info)
+        self.assertIn('exact_match_percent="0.0"', info)
+        self.assertTrue(
+            any(line.startswith("dfl_global_model_evaluation_micro_f1{") and line.endswith(" 0.75") for line in metrics)
+        )
+        self.assertTrue(
+            any(
+                line.startswith("dfl_global_model_evaluation_exact_match_percent{") and line.endswith(" 0.0")
+                for line in metrics
+            )
+        )
 
     def test_signed_event_accepts_chunked_worker_inventory(self) -> None:
         payload = self.payload()

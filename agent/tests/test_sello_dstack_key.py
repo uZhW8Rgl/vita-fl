@@ -4,7 +4,6 @@ import unittest
 
 from agent_receipts.dstack_key import derive_sello_signing_seed, tee_sello_signing_seed
 
-
 BASE_ENV = {
     "ACCOUNT_ADDRESS": "0x" + "11" * 20,
     "REGISTRY_ADDRESS": "0x" + "22" * 20,

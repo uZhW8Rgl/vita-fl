@@ -55,14 +55,10 @@ def _registered_tee_receiver() -> tuple[str, bytes]:
 
     rpc_url = (os.environ.get("EXPECTED_RUNTIME_RPC_URL") or os.environ.get("RPC_URL") or "").strip()
     registry_address = (
-        os.environ.get("EXPECTED_DEVICE_REGISTRY_ADDRESS")
-        or os.environ.get("REGISTRY_ADDRESS")
-        or ""
+        os.environ.get("EXPECTED_DEVICE_REGISTRY_ADDRESS") or os.environ.get("REGISTRY_ADDRESS") or ""
     ).strip()
     participant_address = (
-        os.environ.get("TEE_INFERENCE_PARTICIPANT_ADDRESS")
-        or os.environ.get("ACCOUNT_ADDRESS")
-        or ""
+        os.environ.get("TEE_INFERENCE_PARTICIPANT_ADDRESS") or os.environ.get("ACCOUNT_ADDRESS") or ""
     ).strip()
     if not rpc_url or not registry_address or not participant_address:
         raise RuntimeError("TEE Sello verification requires RPC, DeviceRegistry, and participant configuration")

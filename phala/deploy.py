@@ -194,8 +194,7 @@ class PhalaClient:
     def validate_os_images(self, plan: dict[str, Any]) -> None:
         """Check planned placements against the current read-only node catalog."""
         requested = [
-            (resource.get("address", "phala_app"), resource.get("values", {}))
-            for resource in managed_apps(plan)
+            (resource.get("address", "phala_app"), resource.get("values", {})) for resource in managed_apps(plan)
         ]
         variables = plan.get("variables", {})
         if variables.get("enable_phala_control_api", {}).get("value") is True:
@@ -663,15 +662,18 @@ def main() -> int:
         "--init-only", action="store_true", help="Initialize Terraform without changing Phala resources"
     )
     parser.add_argument(
-        "--init-github-state", action="store_true",
+        "--init-github-state",
+        action="store_true",
         help="Initialize the encrypted GitHub state branch from existing local state (requires --init-only)",
     )
     parser.add_argument(
-        "--unlock-github-state", metavar="LOCK_ID",
+        "--unlock-github-state",
+        metavar="LOCK_ID",
         help="Explicitly remove an abandoned deployment lock after verifying no deployment is running",
     )
     parser.add_argument(
-        "--recover-github-state", metavar="FILE",
+        "--recover-github-state",
+        metavar="FILE",
         help="Save an interrupted deployment's encrypted snapshot or raw Terraform state, then release its lock",
     )
     parser.add_argument("--github-state-lock-id", metavar="LOCK_ID", help="Lock ID for explicit state recovery")

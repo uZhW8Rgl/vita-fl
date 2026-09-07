@@ -12,7 +12,6 @@ import torch
 
 from dfl.neural_network import cli
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CHESTMNIST_BOOTSTRAP = REPO_ROOT / "data" / "initial_gm" / "chestmnist" / "aggregated.bin"
 EXPECTED_BOOTSTRAP_SHA256 = "8dfe51ae6de4a5772927efa216cc8b0383ac6aac711cc69000230b4b464e54cd"

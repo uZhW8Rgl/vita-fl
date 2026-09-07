@@ -186,21 +186,15 @@ class PhalaWorkspaceQuotaGuard:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 raw = response.read()
         except urllib.error.HTTPError as exc:
-            raise WorkerProvisioningError(
-                f"Phala workspace quota request failed with HTTP {exc.code}"
-            ) from exc
+            raise WorkerProvisioningError(f"Phala workspace quota request failed with HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise WorkerProvisioningError("Phala workspace quota request failed") from exc
         try:
             payload = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise WorkerProvisioningError(
-                "Phala workspace quota response is not valid JSON"
-            ) from exc
+            raise WorkerProvisioningError("Phala workspace quota response is not valid JSON") from exc
         if not isinstance(payload, dict):
-            raise WorkerProvisioningError(
-                "Phala workspace quota response has an invalid shape"
-            )
+            raise WorkerProvisioningError("Phala workspace quota response has an invalid shape")
         return payload
 
     @staticmethod
@@ -209,20 +203,12 @@ class PhalaWorkspaceQuotaGuard:
         quota = quotas.get(resource) if isinstance(quotas, dict) else None
         remaining = quota.get("remaining") if isinstance(quota, dict) else None
         if isinstance(remaining, bool) or not isinstance(remaining, int) or remaining < -1:
-            raise WorkerProvisioningError(
-                f"Phala workspace quota response has invalid {resource}.remaining"
-            )
+            raise WorkerProvisioningError(f"Phala workspace quota response has invalid {resource}.remaining")
         return None if remaining == -1 else remaining
 
     def ensure_capacity(self, additional_workers: int) -> None:
-        if (
-            isinstance(additional_workers, bool)
-            or not isinstance(additional_workers, int)
-            or additional_workers < 0
-        ):
-            raise WorkerConfigurationError(
-                "additional_workers must be a non-negative integer"
-            )
+        if isinstance(additional_workers, bool) or not isinstance(additional_workers, int) or additional_workers < 0:
+            raise WorkerConfigurationError("additional_workers must be a non-negative integer")
         if additional_workers == 0:
             return
 
@@ -230,9 +216,7 @@ class PhalaWorkspaceQuotaGuard:
         workspace = current_user.get("workspace")
         workspace_slug = workspace.get("slug") if isinstance(workspace, dict) else None
         if not isinstance(workspace_slug, str) or not workspace_slug.strip():
-            raise WorkerProvisioningError(
-                "Phala current-user response does not contain a workspace slug"
-            )
+            raise WorkerProvisioningError("Phala current-user response does not contain a workspace slug")
         encoded_slug = urllib.parse.quote(workspace_slug.strip(), safe="")
         quota_payload = self._request_json(f"/workspaces/{encoded_slug}/quotas")
 
@@ -267,9 +251,7 @@ def dynamic_worker_inventory_json_from_environment(
         if name.startswith(INVENTORY_CHUNK_PREFIX) and INVENTORY_CHUNK_RE.fullmatch(name) is None
     )
     if malformed_names:
-        raise WorkerConfigurationError(
-            f"invalid dynamic worker inventory chunk name: {malformed_names[0]}"
-        )
+        raise WorkerConfigurationError(f"invalid dynamic worker inventory chunk name: {malformed_names[0]}")
 
     indexed_chunks = sorted(
         (
@@ -289,9 +271,7 @@ def dynamic_worker_inventory_json_from_environment(
 
     indices = [index for index, _name, _value in indexed_chunks]
     if indices != list(range(len(indices))):
-        raise WorkerConfigurationError(
-            "dynamic worker inventory chunk indices must be contiguous from 000"
-        )
+        raise WorkerConfigurationError("dynamic worker inventory chunk indices must be contiguous from 000")
 
     records: list[Any] = []
     for _index, name, value in indexed_chunks:
@@ -557,10 +537,7 @@ class PhalaWorkerController:
         """Return the exact ordered identities that a subsequent scale will use."""
         with self._lock:
             self._validated_training_request(worker_count, None)
-            return [
-                identity.account_address
-                for identity in self.inventory[:worker_count]
-            ]
+            return [identity.account_address for identity in self.inventory[:worker_count]]
 
     def scale(self, worker_count: int, training_config: dict[str, int] | None = None) -> dict[str, Any]:
         with self._lock:
@@ -571,10 +548,7 @@ class PhalaWorkerController:
                 training_config,
                 current,
             )
-            selected = {
-                identity.key: identity.terraform_value()
-                for identity in self.inventory[:worker_count]
-            }
+            selected = {identity.key: identity.terraform_value() for identity in self.inventory[:worker_count]}
             if requested is not None:
                 self.runner.configure(requested)
             deployments = self.runner.apply(selected)
@@ -677,17 +651,11 @@ def controller_from_environment() -> PhalaWorkerController:
         expected_chain_id=integer("DYNAMIC_WORKER_EXPECTED_CHAIN_ID", 31337),
         eth_eur_price=os.environ.get("ETH_EUR_PRICE", "3000"),
         eth_usd_price=os.environ.get("ETH_USD_PRICE", ""),
-        exchange_rate_source=os.environ.get(
-            "EXCHANGE_RATE_SOURCE", "manual_configuration"
-        ),
+        exchange_rate_source=os.environ.get("EXCHANGE_RATE_SOURCE", "manual_configuration"),
         exchange_rate_timestamp_utc=os.environ.get("EXCHANGE_RATE_TIMESTAMP_UTC", ""),
-        reference_mainnet_gas_price_gwei=os.environ.get(
-            "REFERENCE_MAINNET_GAS_PRICE_GWEI", ""
-        ),
+        reference_mainnet_gas_price_gwei=os.environ.get("REFERENCE_MAINNET_GAS_PRICE_GWEI", ""),
         reference_gas_price_source=os.environ.get("REFERENCE_GAS_PRICE_SOURCE", ""),
-        reference_gas_price_timestamp_utc=os.environ.get(
-            "REFERENCE_GAS_PRICE_TIMESTAMP_UTC", ""
-        ),
+        reference_gas_price_timestamp_utc=os.environ.get("REFERENCE_GAS_PRICE_TIMESTAMP_UTC", ""),
         region=os.environ.get("PHALA_REGION", "US-WEST-1"),
         os_image=os.environ.get("PHALA_OS_IMAGE", "dstack-dev-0.5.9"),
         node_id=optional_integer("PHALA_NODE_ID"),
@@ -698,9 +666,7 @@ def controller_from_environment() -> PhalaWorkerController:
         dfl_train_optimizer=os.environ.get("DFL_TRAIN_OPTIMIZER", "adamw"),
         dfl_train_learning_rate=os.environ.get("DFL_TRAIN_LEARNING_RATE", "0.003"),
         dfl_train_lr_schedule=os.environ.get("DFL_TRAIN_LR_SCHEDULE", "constant"),
-        dfl_train_lr_decay_start_round=os.environ.get(
-            "DFL_TRAIN_LR_DECAY_START_ROUND", "20"
-        ),
+        dfl_train_lr_decay_start_round=os.environ.get("DFL_TRAIN_LR_DECAY_START_ROUND", "20"),
         dfl_train_lr_final_factor=os.environ.get("DFL_TRAIN_LR_FINAL_FACTOR", "0.25"),
         dfl_train_weight_decay=os.environ.get("DFL_TRAIN_WEIGHT_DECAY", "0.0001"),
         dfl_grad_clip_norm=os.environ.get("DFL_GRAD_CLIP_NORM", "5"),
@@ -719,8 +685,7 @@ def controller_from_environment() -> PhalaWorkerController:
         python_service_url=os.environ.get("PYTHON_SERVICE_URL", "http://127.0.0.1:8000"),
         public_ip=os.environ.get("PUBLIC_IP", "127.0.0.1"),
         msg_broker_ip=os.environ.get("MSG_BROKER_IP", "127.0.0.1"),
-        sello_required=os.environ.get("DYNAMIC_WORKER_SELLO_REQUIRED", "0").lower()
-        in {"1", "true", "yes"},
+        sello_required=os.environ.get("DYNAMIC_WORKER_SELLO_REQUIRED", "0").lower() in {"1", "true", "yes"},
         sello_scitt_url=os.environ.get("DYNAMIC_WORKER_SELLO_SCITT_URL", ""),
         sello_token_issuer_public_key=os.environ.get(
             "DYNAMIC_WORKER_SELLO_TOKEN_ISSUER_PUBLIC_KEY",

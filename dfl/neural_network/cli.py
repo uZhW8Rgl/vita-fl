@@ -242,8 +242,7 @@ def _read_tensor(
         flat_index = int(torch.nonzero(~finite, as_tuple=False)[0].item())
         value = values[flat_index].item()
         raise ValueError(
-            f"{source} contains a non-finite parameter in tensor "
-            f"{tensor_name} at flat index {flat_index}: {value}"
+            f"{source} contains a non-finite parameter in tensor {tensor_name} at flat index {flat_index}: {value}"
         )
     return values.reshape(shape).contiguous(), offset + byte_count
 
@@ -391,8 +390,7 @@ def load_chestmnist_pos_weight(*, dtype: torch.dtype = torch.float32) -> torch.T
     positive_counts = [int(value) for value in metadata["positive_counts"]]
     negative_counts = [int(value) for value in metadata["negative_counts"]]
     if len(negative_counts) != CHESTMNIST_NUM_LABELS or any(
-        positive + negative != sample_count
-        for positive, negative in zip(positive_counts, negative_counts, strict=True)
+        positive + negative != sample_count for positive, negative in zip(positive_counts, negative_counts, strict=True)
     ):
         raise ValueError(f"Inconsistent ChestMNIST class counts in {metadata_path}")
     cap = _environment_float("DFL_POS_WEIGHT_CAP", CHESTMNIST_DEFAULT_POS_WEIGHT_CAP)
@@ -906,9 +904,7 @@ def training_learning_rate(round_id: int | None = None) -> float:
 
     schedule = os.environ.get("DFL_TRAIN_LR_SCHEDULE", "constant").strip().lower() or "constant"
     if schedule not in {"constant", "late_cosine"}:
-        raise ValueError(
-            f"Unsupported DFL_TRAIN_LR_SCHEDULE={schedule!r}; expected 'constant' or 'late_cosine'"
-        )
+        raise ValueError(f"Unsupported DFL_TRAIN_LR_SCHEDULE={schedule!r}; expected 'constant' or 'late_cosine'")
     if schedule == "constant" or round_id is None:
         return base_learning_rate
 
@@ -922,9 +918,7 @@ def training_learning_rate(round_id: int | None = None) -> float:
     if target_round < 2:
         raise ValueError("ROUND must be at least 2 for the late-cosine schedule")
     if decay_start_round < 0 or decay_start_round >= final_source_round:
-        raise ValueError(
-            "DFL_TRAIN_LR_DECAY_START_ROUND must be non-negative and smaller than ROUND - 1"
-        )
+        raise ValueError("DFL_TRAIN_LR_DECAY_START_ROUND must be non-negative and smaller than ROUND - 1")
     if not np.isfinite(final_factor) or not 0.0 < final_factor <= 1.0:
         raise ValueError("DFL_TRAIN_LR_FINAL_FACTOR must be finite and in (0, 1]")
     if parsed_round <= decay_start_round:
@@ -934,9 +928,7 @@ def training_learning_rate(round_id: int | None = None) -> float:
         1.0,
         (parsed_round - decay_start_round) / (final_source_round - decay_start_round),
     )
-    multiplier = final_factor + (1.0 - final_factor) * 0.5 * (
-        1.0 + math.cos(math.pi * progress)
-    )
+    multiplier = final_factor + (1.0 - final_factor) * 0.5 * (1.0 + math.cos(math.pi * progress))
     return base_learning_rate * multiplier
 
 
@@ -1057,10 +1049,7 @@ def train_model(
         print(f"Mean loss: {cumulative_loss / num_images:.6f}")
         if is_multilabel_dataset():
             positive_rate = (predicted_positives / total_predictions) * 100 if total_predictions else 0.0
-            print(
-                f"Uncalibrated label-wise accuracy @0.5: "
-                f"{accuracy_percent:.2f}% ({correct}/{total_predictions})"
-            )
+            print(f"Uncalibrated label-wise accuracy @0.5: {accuracy_percent:.2f}% ({correct}/{total_predictions})")
             print(f"Uncalibrated predicted-positive rate @0.5: {positive_rate:.2f}%")
         else:
             print(f"Accuracy: {accuracy_percent:.2f}% ({correct}/{total_predictions})")

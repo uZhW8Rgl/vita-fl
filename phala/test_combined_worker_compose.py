@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import re
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = ROOT.parent
@@ -11,12 +10,8 @@ REPOSITORY_ROOT = ROOT.parent
 
 class CombinedWorkerComposeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.static_template = (
-            ROOT / "dstack-compose.worker.phala.tftpl"
-        ).read_text(encoding="utf-8")
-        self.dynamic_template = (
-            ROOT / "dynamic-workers/worker-compose.tftpl"
-        ).read_text(encoding="utf-8")
+        self.static_template = (ROOT / "dstack-compose.worker.phala.tftpl").read_text(encoding="utf-8")
+        self.dynamic_template = (ROOT / "dynamic-workers/worker-compose.tftpl").read_text(encoding="utf-8")
 
     def test_worker_templates_keep_sealed_state_and_plaintext_keys_separate(self) -> None:
         required = (
@@ -39,9 +34,7 @@ class CombinedWorkerComposeTests(unittest.TestCase):
                 self.assertIn("restart: unless-stopped", template)
                 self.assertNotIn("restart: on-failure", template)
 
-        compatibility_compose = (ROOT / "dstack-compose.template.yml").read_text(
-            encoding="utf-8"
-        )
+        compatibility_compose = (ROOT / "dstack-compose.template.yml").read_text(encoding="utf-8")
         self.assertIn("restart: unless-stopped", compatibility_compose)
         self.assertNotIn("restart: on-failure", compatibility_compose)
 
@@ -49,12 +42,8 @@ class CombinedWorkerComposeTests(unittest.TestCase):
         canonical = "dstack-dev-0.5.9"
         deprecated = canonical + "-de9c74f0"
         root_variables = (ROOT / "variables.tf").read_text(encoding="utf-8")
-        dynamic_variables = (
-            ROOT / "dynamic-workers/variables.tf"
-        ).read_text(encoding="utf-8")
-        environment_example = (
-            REPOSITORY_ROOT / ".env.phala.anvil.example"
-        ).read_text(encoding="utf-8")
+        dynamic_variables = (ROOT / "dynamic-workers/variables.tf").read_text(encoding="utf-8")
+        environment_example = (REPOSITORY_ROOT / ".env.phala.anvil.example").read_text(encoding="utf-8")
 
         self.assertRegex(
             root_variables,
@@ -106,9 +95,7 @@ class CombinedWorkerComposeTests(unittest.TestCase):
                 with self.subTest(template=template[:20], entry=entry):
                     self.assertIn(entry, template)
 
-        manual_template = (ROOT / "dstack-compose.template.yml").read_text(
-            encoding="utf-8"
-        )
+        manual_template = (ROOT / "dstack-compose.template.yml").read_text(encoding="utf-8")
         for environment_name in (
             "DFL_MODEL_SEED",
             "DFL_TRAIN_SEED",
@@ -124,9 +111,7 @@ class CombinedWorkerComposeTests(unittest.TestCase):
             with self.subTest(manual_environment_name=environment_name):
                 self.assertIn(f"      {environment_name}:", manual_template)
 
-        contracts_template = (
-            ROOT / "dstack-compose.contracts.phala.tftpl"
-        ).read_text(encoding="utf-8")
+        contracts_template = (ROOT / "dstack-compose.contracts.phala.tftpl").read_text(encoding="utf-8")
         for environment_name in (
             "DFL_MODEL_SEED",
             "DFL_TRAIN_SEED",
@@ -143,12 +128,8 @@ class CombinedWorkerComposeTests(unittest.TestCase):
                 self.assertIn(f"      {environment_name}:", contracts_template)
 
     def test_completed_training_reboots_once_then_keeps_worker_idle(self) -> None:
-        supervisor = (
-            REPOSITORY_ROOT / "dfl/start_node_neural_network.sh"
-        ).read_text(encoding="utf-8")
-        worker = (
-            REPOSITORY_ROOT / "dfl/node_server/src/server.ts"
-        ).read_text(encoding="utf-8")
+        supervisor = (REPOSITORY_ROOT / "dfl/start_node_neural_network.sh").read_text(encoding="utf-8")
+        worker = (REPOSITORY_ROOT / "dfl/node_server/src/server.ts").read_text(encoding="utf-8")
 
         self.assertIn(
             "exiting once so Docker reboots the combined worker",
@@ -166,17 +147,10 @@ class CombinedWorkerComposeTests(unittest.TestCase):
             re.DOTALL,
         )
         for template in (self.static_template, self.dynamic_template):
-            conditional_bodies = [
-                match.group("body")
-                for match in conditional_receiver.finditer(template)
-            ]
-            self.assertTrue(
-                any("/tmp/tee-inference:size=256m,mode=0700" in body for body in conditional_bodies)
-            )
+            conditional_bodies = [match.group("body") for match in conditional_receiver.finditer(template)]
+            self.assertTrue(any("/tmp/tee-inference:size=256m,mode=0700" in body for body in conditional_bodies))
             self.assertTrue(any('"8080:8080"' in body for body in conditional_bodies))
-            self.assertTrue(
-                any('SELLO_SERVICE_KEY_PROVIDER: "dstack"' in body for body in conditional_bodies)
-            )
+            self.assertTrue(any('SELLO_SERVICE_KEY_PROVIDER: "dstack"' in body for body in conditional_bodies))
             self.assertNotIn("SELLO_SERVICE_SIGNING_SEED", template)
             self.assertIn('- "8001:8001"', template)
             self.assertIn(
@@ -185,9 +159,7 @@ class CombinedWorkerComposeTests(unittest.TestCase):
             )
 
     def test_aggregation_threshold_and_deadline_are_not_worker_security_inputs(self) -> None:
-        manual_template = (ROOT / "dstack-compose.template.yml").read_text(
-            encoding="utf-8"
-        )
+        manual_template = (ROOT / "dstack-compose.template.yml").read_text(encoding="utf-8")
         for template in (
             self.static_template,
             self.dynamic_template,
@@ -197,12 +169,8 @@ class CombinedWorkerComposeTests(unittest.TestCase):
                 self.assertNotIn("CLIENT_LIMIT:", template)
                 self.assertNotIn("MODEL_SUBMISSION_DEADLINE_MS:", template)
 
-        dynamic_variables = (
-            ROOT / "dynamic-workers/variables.tf"
-        ).read_text(encoding="utf-8")
-        dynamic_module = (
-            ROOT / "dynamic-workers/main.tf"
-        ).read_text(encoding="utf-8")
+        dynamic_variables = (ROOT / "dynamic-workers/variables.tf").read_text(encoding="utf-8")
+        dynamic_module = (ROOT / "dynamic-workers/main.tf").read_text(encoding="utf-8")
         self.assertNotIn('variable "client_limit"', dynamic_variables)
         self.assertNotIn(
             'variable "model_submission_deadline_ms"',
@@ -212,9 +180,7 @@ class CombinedWorkerComposeTests(unittest.TestCase):
         self.assertNotIn("model_submission_deadline_ms", dynamic_module)
 
     def test_control_api_keeps_owner_policy_inputs_on_the_internal_runtime(self) -> None:
-        contracts_template = (
-            ROOT / "dstack-compose.contracts.phala.tftpl"
-        ).read_text(encoding="utf-8")
+        contracts_template = (ROOT / "dstack-compose.contracts.phala.tftpl").read_text(encoding="utf-8")
         control_block = re.search(
             r"%\{ if enable_control_api ~\}(?P<body>.*?)%\{ endif ~\}",
             contracts_template,
@@ -236,17 +202,13 @@ class CombinedWorkerComposeTests(unittest.TestCase):
 
         self.assertEqual(contracts_template.count('CLIENT_LIMIT: "${client_limit}"'), 2)
         self.assertEqual(
-            contracts_template.count(
-                'MODEL_SUBMISSION_DEADLINE_MS: "${model_submission_deadline_ms}"'
-            ),
+            contracts_template.count('MODEL_SUBMISSION_DEADLINE_MS: "${model_submission_deadline_ms}"'),
             2,
         )
 
     def test_terraform_assigns_inference_role_only_to_worker_zero(self) -> None:
         root_module = (ROOT / "main.tf").read_text(encoding="utf-8")
-        dynamic_module = (
-            ROOT / "dynamic-workers/main.tf"
-        ).read_text(encoding="utf-8")
+        dynamic_module = (ROOT / "dynamic-workers/main.tf").read_text(encoding="utf-8")
 
         self.assertRegex(
             root_module,
@@ -259,8 +221,7 @@ class CombinedWorkerComposeTests(unittest.TestCase):
             r"inference_enabled\s+= false",
         )
         self.assertIn(
-            "inference_enabled                        = "
-            "var.workers[each.key].device_id == 0",
+            "inference_enabled                        = var.workers[each.key].device_id == 0",
             dynamic_module,
         )
         self.assertRegex(
@@ -316,9 +277,7 @@ class CombinedWorkerComposeTests(unittest.TestCase):
             terraform_sources,
             r'resource "phala_(?:app|cvm_power)" "tee_inference"',
         )
-        self.assertFalse(
-            (ROOT / "dstack-compose.tee-inference.phala.tftpl").exists()
-        )
+        self.assertFalse((ROOT / "dstack-compose.tee-inference.phala.tftpl").exists())
 
     def test_compatibility_output_targets_the_inference_port(self) -> None:
         outputs = (ROOT / "outputs.tf").read_text(encoding="utf-8")
@@ -333,17 +292,13 @@ class CombinedWorkerComposeTests(unittest.TestCase):
         self.assertIn('}:8080"', body)
 
     def test_image_healthcheck_uses_inference_after_key_materialization(self) -> None:
-        dockerfile = (
-            REPOSITORY_ROOT / "dfl/Dockerfile"
-        ).read_text(encoding="utf-8")
-        healthcheck = (
-            REPOSITORY_ROOT / "dfl/container_healthcheck.sh"
-        ).read_text(encoding="utf-8")
+        dockerfile = (REPOSITORY_ROOT / "dfl/Dockerfile").read_text(encoding="utf-8")
+        healthcheck = (REPOSITORY_ROOT / "dfl/container_healthcheck.sh").read_text(encoding="utf-8")
 
-        self.assertIn('EXPOSE 8001 8080', dockerfile)
+        self.assertIn("EXPOSE 8001 8080", dockerfile)
         self.assertIn('CMD ["/dfl/container_healthcheck.sh"]', dockerfile)
         self.assertIn(
-            '${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH:-/run/vita-fl/participant-private.pem}',
+            "${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH:-/run/vita-fl/participant-private.pem}",
             healthcheck,
         )
         self.assertIn("http://127.0.0.1:8080/healthz", healthcheck)

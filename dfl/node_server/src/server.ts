@@ -2340,8 +2340,11 @@ const stateMachine = async () => {
                                 expected_models: expected,
                                 accuracy_percent: Number(metrics.accuracy_percent ?? 0),
                                 loss: Number(metrics.loss ?? 0),
+                                ...(Number.isFinite(metrics.micro_f1) ? { micro_f1: metrics.micro_f1 } : {}),
                                 macro_f1: Number(metrics.macro_f1 ?? 0),
                                 macro_auroc: Number(metrics.macro_auroc ?? 0),
+                                ...(Number.isFinite(metrics.exact_match_percent)
+                                    ? { exact_match_percent: metrics.exact_match_percent } : {}),
                             });
                         }
                     } catch (e) {

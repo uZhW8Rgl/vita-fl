@@ -33,12 +33,13 @@ class AgentZkConfigurationTests(unittest.TestCase):
                 'variable "zk_inference_url_override" { type = string }\n'
                 'output "agent_environment" {\n'
                 '  value = templatefile("${path.module}/agent.tftpl", {\n'
-                f'    enable_zk_inference = {enabled.group(1)}\n'
-                f'    {endpoint.group().strip()}\n'
-                '  })\n}\n'
+                f"    enable_zk_inference = {enabled.group(1)}\n"
+                f"    {endpoint.group().strip()}\n"
+                "  })\n}\n"
             )
             environment = {
-                key: value for key, value in os.environ.items()
+                key: value
+                for key, value in os.environ.items()
                 if not key.startswith(("TF_VAR_", "TF_CLI_ARGS")) and key not in {"TF_DATA_DIR", "TF_WORKSPACE"}
             }
             environment["TF_DATA_DIR"] = str(directory / ".terraform")
@@ -53,9 +54,14 @@ class AgentZkConfigurationTests(unittest.TestCase):
             terraform("init", "-input=false", "-no-color")
             for url in (None, "https://deleted-cvm.example.test/"):
                 with self.subTest(url=url):
-                    (directory / "test.auto.tfvars.json").write_text(json.dumps({
-                        "enable_zk_inference": False, "zk_inference_url_override": url,
-                    }))
+                    (directory / "test.auto.tfvars.json").write_text(
+                        json.dumps(
+                            {
+                                "enable_zk_inference": False,
+                                "zk_inference_url_override": url,
+                            }
+                        )
+                    )
                     terraform("apply", "-input=false", "-auto-approve", "-no-color")
                     rendered = json.loads(terraform("output", "-json"))["agent_environment"]["value"]
                     self.assertEqual(rendered, 'ZK_INFERENCE_URL: ""\nZK_INFERENCE_ENABLED: "false"')

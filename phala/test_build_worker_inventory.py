@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 from phala.build_worker_inventory import (
     DEFAULT_CHUNK_BYTES,
@@ -11,7 +11,6 @@ from phala.build_worker_inventory import (
     chunk_inventory,
     read_env_files,
 )
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -87,11 +86,7 @@ class BuildWorkerInventoryTests(unittest.TestCase):
         )
 
         chunks = chunk_inventory(inventory)
-        restored = [
-            record
-            for name in sorted(chunks)
-            for record in json.loads(chunks[name])
-        ]
+        restored = [record for name in sorted(chunks) for record in json.loads(chunks[name])]
 
         self.assertEqual(restored, inventory)
         self.assertEqual(next(iter(chunks)), f"{INVENTORY_CHUNK_PREFIX}000")

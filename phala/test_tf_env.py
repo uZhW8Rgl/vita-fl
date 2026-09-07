@@ -11,7 +11,12 @@ from pathlib import Path
 
 class TerraformEnvironmentTests(unittest.TestCase):
     def invoke(
-        self, *arguments, include_api_key=True, shared_unreadable=False, use_default=False, check=True,
+        self,
+        *arguments,
+        include_api_key=True,
+        shared_unreadable=False,
+        use_default=False,
+        check=True,
         explicit_os=None,
     ):
         root = Path(__file__).resolve().parent

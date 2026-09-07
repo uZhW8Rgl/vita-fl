@@ -9,8 +9,8 @@ from pathlib import Path
 from unittest import mock
 
 from control_api.phala_workers import (
-    PhalaWorkspaceQuotaGuard,
     PhalaWorkerController,
+    PhalaWorkspaceQuotaGuard,
     SubprocessTerraformRunner,
     WorkerCapacityError,
     WorkerConfigurationError,
@@ -400,13 +400,9 @@ class WorkerInventoryTests(unittest.TestCase):
                 }
             )
         with self.assertRaisesRegex(WorkerConfigurationError, "contiguous"):
-            dynamic_worker_inventory_json_from_environment(
-                {"DYNAMIC_WORKER_INVENTORY_001": inventory_json(1)}
-            )
+            dynamic_worker_inventory_json_from_environment({"DYNAMIC_WORKER_INVENTORY_001": inventory_json(1)})
         with self.assertRaisesRegex(WorkerConfigurationError, "must contain a JSON array"):
-            dynamic_worker_inventory_json_from_environment(
-                {"DYNAMIC_WORKER_INVENTORY_000": "{}"}
-            )
+            dynamic_worker_inventory_json_from_environment({"DYNAMIC_WORKER_INVENTORY_000": "{}"})
 
     def test_out_of_range_scale_is_rejected_without_apply(self) -> None:
         instance, runner = controller(2)
@@ -604,6 +600,7 @@ class TerraformReconciliationTests(unittest.TestCase):
 
             with self.assertRaisesRegex(WorkerProvisioningError, "without its variable file"):
                 instance.reconcile()
+
 
 if __name__ == "__main__":
     unittest.main()

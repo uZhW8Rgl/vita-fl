@@ -78,20 +78,12 @@ def resolve_tee_inference_url(endpoint: str | None = None) -> str:
         except ImportError:
             from blockchain_source import read_sello_receiver
 
-        rpc_url = (
-            os.environ.get("EXPECTED_RUNTIME_RPC_URL")
-            or os.environ.get("RPC_URL")
-            or ""
-        ).strip()
+        rpc_url = (os.environ.get("EXPECTED_RUNTIME_RPC_URL") or os.environ.get("RPC_URL") or "").strip()
         registry_address = (
-            os.environ.get("EXPECTED_DEVICE_REGISTRY_ADDRESS")
-            or os.environ.get("REGISTRY_ADDRESS")
-            or ""
+            os.environ.get("EXPECTED_DEVICE_REGISTRY_ADDRESS") or os.environ.get("REGISTRY_ADDRESS") or ""
         ).strip()
         participant_address = (
-            os.environ.get("TEE_INFERENCE_PARTICIPANT_ADDRESS")
-            or os.environ.get("ACCOUNT_ADDRESS")
-            or ""
+            os.environ.get("TEE_INFERENCE_PARTICIPANT_ADDRESS") or os.environ.get("ACCOUNT_ADDRESS") or ""
         ).strip()
         if not rpc_url or not registry_address or not participant_address:
             raise TeeInferenceVerificationError(
@@ -106,9 +98,7 @@ def resolve_tee_inference_url(endpoint: str | None = None) -> str:
                 )["public_ip"]
             ).strip()
         except (KeyError, RuntimeError, ValueError) as exc:
-            raise TeeInferenceVerificationError(
-                f"registered TEE inference endpoint resolution failed: {exc}"
-            ) from exc
+            raise TeeInferenceVerificationError(f"registered TEE inference endpoint resolution failed: {exc}") from exc
 
     parts = urllib.parse.urlsplit(configured)
     if (
@@ -120,9 +110,7 @@ def resolve_tee_inference_url(endpoint: str | None = None) -> str:
         or parts.fragment
         or parts.path not in {"", "/"}
     ):
-        raise TeeInferenceVerificationError(
-            "TEE inference endpoint must be an origin-only HTTPS URL"
-        )
+        raise TeeInferenceVerificationError("TEE inference endpoint must be an origin-only HTTPS URL")
     return configured.rstrip("/")
 
 

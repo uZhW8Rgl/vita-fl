@@ -171,9 +171,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "max_worker_count": 500,
         }
         with patch.object(server, "read_training_config", return_value=current):
-            normalized = server.normalize_training_config(
-                {"worker_count": 1, "client_limit": 1}
-            )
+            normalized = server.normalize_training_config({"worker_count": 1, "client_limit": 1})
 
         self.assertEqual(normalized["worker_count"], 2)
         self.assertEqual(normalized["client_limit"], 1)
@@ -297,14 +295,12 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             if method == "eth_call":
                 selector = params[0]["data"]
                 return {
-                    f"0x{server._ethereum_function_selector('device_registry_address()')}":
-                        address_word(registry),
-                    f"0x{server._ethereum_function_selector('aggregator_selection_address()')}":
-                        address_word(aggregator),
-                    f"0x{server._ethereum_function_selector('aggregation_policy_address()')}":
-                        address_word(policy),
-                    f"0x{server._ethereum_function_selector('gmStorage()')}":
-                        address_word(gm_storage),
+                    f"0x{server._ethereum_function_selector('device_registry_address()')}": address_word(registry),
+                    f"0x{server._ethereum_function_selector('aggregator_selection_address()')}": address_word(
+                        aggregator
+                    ),
+                    f"0x{server._ethereum_function_selector('aggregation_policy_address()')}": address_word(policy),
+                    f"0x{server._ethereum_function_selector('gmStorage()')}": address_word(gm_storage),
                 }[selector]
             self.fail(f"unexpected RPC method {method}")
 
@@ -410,12 +406,9 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             if method == "eth_call":
                 selector = params[0]["data"]
                 return {
-                    f"0x{server.AGGREGATION_POLICY_OWNER_SELECTOR}":
-                        "0x" + "0" * 24 + owner_address[2:],
-                    f"0x{server.AGGREGATION_POLICY_REQUIRED_SUBMISSIONS_SELECTOR}":
-                        f"0x{3:064x}",
-                    f"0x{server.AGGREGATION_POLICY_SUBMISSION_WINDOW_SELECTOR}":
-                        f"0x{21:064x}",
+                    f"0x{server.AGGREGATION_POLICY_OWNER_SELECTOR}": "0x" + "0" * 24 + owner_address[2:],
+                    f"0x{server.AGGREGATION_POLICY_REQUIRED_SUBMISSIONS_SELECTOR}": f"0x{3:064x}",
+                    f"0x{server.AGGREGATION_POLICY_SUBMISSION_WINDOW_SELECTOR}": f"0x{21:064x}",
                 }[selector]
             return {
                 "eth_chainId": "0x7a69",
@@ -477,23 +470,17 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["transaction_hash"], transaction_hash)
         self.assertTrue(all(call[0] == "http://anvil:8545" for call in rpc_calls))
         contract_calls = [
-            params[0]
-            for _rpc_url, method, params in rpc_calls
-            if method in {"eth_call", "eth_estimateGas"}
+            params[0] for _rpc_url, method, params in rpc_calls if method in {"eth_call", "eth_estimateGas"}
         ]
         self.assertTrue(contract_calls)
-        self.assertTrue(
-            all(call["to"] == checksummed_policy_address for call in contract_calls)
-        )
+        self.assertTrue(all(call["to"] == checksummed_policy_address for call in contract_calls))
 
     def test_checksum_ethereum_address_rejects_invalid_values(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "not a valid Ethereum address"):
             server._checksum_ethereum_address("0x1234", "policy")
 
     def test_eth_account_signer_supports_the_control_api_transaction_shape(self) -> None:
-        private_key = (
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-        )
+        private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
         address = server._ethereum_account_address(private_key)
 
         raw_transaction = server._sign_ethereum_transaction(
@@ -682,8 +669,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         }
         controller = Mock()
         controller.preflight_scale.side_effect = server.WorkerCapacityError(
-            "Phala workspace quota can create at most 0 additional workers, "
-            "but 16 are required"
+            "Phala workspace quota can create at most 0 additional workers, but 16 are required"
         )
 
         with (
@@ -766,12 +752,10 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         controller = Mock()
         controller.preflight_scale.side_effect = lambda *_args: operation_order.append("preflight")
         controller.selected_account_addresses.side_effect = lambda _count: (
-            operation_order.append("select")
-            or [worker["account_address"] for worker in workers]
+            operation_order.append("select") or [worker["account_address"] for worker in workers]
         )
         controller.scale.side_effect = lambda *_args: (
-            operation_order.append("scale")
-            or {"deployed_worker_count": 2, "workers": workers}
+            operation_order.append("scale") or {"deployed_worker_count": 2, "workers": workers}
         )
 
         def commit_roster(_addresses):
@@ -1002,9 +986,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda _path, value: value,
             ) as write_marker,
         ):
-            declaration = server.publish_bootstrap_recipient_declaration(
-                [first, second]
-            )
+            declaration = server.publish_bootstrap_recipient_declaration([first, second])
 
         self.assertEqual(declaration["status"], "declared")
         self.assertEqual(declaration["chain_id"], "31337")
@@ -1033,9 +1015,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
     def test_bootstrap_recipient_declaration_rejects_duplicates(self) -> None:
         address = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
         with self.assertRaisesRegex(ValueError, "unique"):
-            server.publish_bootstrap_recipient_declaration(
-                [address, address.lower()]
-            )
+            server.publish_bootstrap_recipient_declaration([address, address.lower()])
 
     async def test_phala_contract_initialization_restarts_anvil_prometheus_and_contracts(self) -> None:
         controller = Mock()

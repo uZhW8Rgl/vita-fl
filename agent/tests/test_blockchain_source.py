@@ -18,9 +18,9 @@ from agent.blockchain_source import (
     decode_device_record,
     decode_finalized_model_bundle,
     decode_sello_receiver_record,
+    read_current_bundle_from_contract,
     read_device_record,
     read_sello_receiver,
-    read_current_bundle_from_contract,
     verify_download_with_registry,
 )
 
@@ -77,20 +77,14 @@ def _encoded_device(
     dynamic_values = [
         _dynamic_string(public_ip),
         _dynamic_string(broker_ip),
-        _word(len(public_key))
-        + public_key
-        + b"\x00" * ((32 - len(public_key) % 32) % 32),
+        _word(len(public_key)) + public_key + b"\x00" * ((32 - len(public_key) % 32) % 32),
     ]
     next_offset = 4 * 32
     offsets = []
     for value in dynamic_values:
         offsets.append(next_offset)
         next_offset += len(value)
-    encoded = (
-        _word(1 if authorized else 0)
-        + b"".join(_word(offset) for offset in offsets)
-        + b"".join(dynamic_values)
-    )
+    encoded = _word(1 if authorized else 0) + b"".join(_word(offset) for offset in offsets) + b"".join(dynamic_values)
     return "0x" + encoded.hex()
 
 
@@ -101,12 +95,7 @@ def _encoded_sello_receiver(
     receipt_key: bytes = bytes.fromhex("55" * 32),
 ) -> str:
     endpoint = _dynamic_string(public_ip)
-    encoded = (
-        _word(1 if authorized else 0)
-        + _word(3 * 32)
-        + receipt_key
-        + endpoint
-    )
+    encoded = _word(1 if authorized else 0) + _word(3 * 32) + receipt_key + endpoint
     return "0x" + encoded.hex()
 
 
@@ -275,13 +264,7 @@ class AggregationBundleMetadataTests(unittest.TestCase):
                 serialization.NoEncryption(),
             )
         )
-        evidence = (
-            "{"
-            '"algorithm":"example-v1",'
-            '"input_count":5,'
-            '"source_round":2'
-            "}\n"
-        ).encode()
+        evidence = ('{"algorithm":"example-v1","input_count":5,"source_round":2}\n').encode()
         evidence_hash = hashlib.sha256(evidence).hexdigest()
         payload = json.dumps(
             {

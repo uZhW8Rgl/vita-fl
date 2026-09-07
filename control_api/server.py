@@ -38,8 +38,7 @@ def _workspace_relative_path(value: str, default: Path) -> Path:
 
 
 TRAINING_ENV_FILE = _workspace_relative_path(
-    os.environ.get("TRAINING_CONFIG_FILE", "").strip()
-    or os.environ.get("TRAINING_ENV_FILE", "").strip(),
+    os.environ.get("TRAINING_CONFIG_FILE", "").strip() or os.environ.get("TRAINING_ENV_FILE", "").strip(),
     WORKSPACE_ROOT / ".env",
 )
 TRAINING_COMPOSE_ENV_FILE = _workspace_relative_path(
@@ -49,9 +48,7 @@ TRAINING_COMPOSE_ENV_FILE = _workspace_relative_path(
 TRAINING_COMPOSE_FILE = WORKSPACE_ROOT / "compose.yml"
 EVALUATION_SUMMARY_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "global_model_round_summary.csv"
 TRANSACTION_COST_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "transaction_costs.csv"
-WORKER_TRANSACTION_COST_CSV = (
-    WORKSPACE_ROOT / "data" / "evaluation" / "worker_transaction_costs.csv"
-)
+WORKER_TRANSACTION_COST_CSV = WORKSPACE_ROOT / "data" / "evaluation" / "worker_transaction_costs.csv"
 CONTROL_API_STARTED_AT_UNIX_MS = int(time.time() * 1000)
 CONTROL_RUNTIME_MODE = os.environ.get("CONTROL_RUNTIME_MODE", "local").strip().lower()
 REQUESTED_TRAINING_ROUNDS_ENV_KEY = "REQUESTED_TRAINING_ROUNDS"
@@ -291,9 +288,7 @@ def _append_worker_transaction_cost(attributes: dict[str, Any]) -> None:
     """
 
     WORKER_TRANSACTION_COST_CSV.parent.mkdir(parents=True, exist_ok=True)
-    needs_header = not WORKER_TRANSACTION_COST_CSV.exists() or (
-        WORKER_TRANSACTION_COST_CSV.stat().st_size == 0
-    )
+    needs_header = not WORKER_TRANSACTION_COST_CSV.exists() or (WORKER_TRANSACTION_COST_CSV.stat().st_size == 0)
     with WORKER_TRANSACTION_COST_CSV.open("a", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle,
@@ -844,19 +839,9 @@ def append_round_progress_metrics(
     finalization and includes the round-zero bootstrap. Their difference is
     therefore the number of aborted attempts in the current run.
     """
-    protocol_round_value = (
-        max(0, int(protocol_round)) if protocol_round is not None else None
-    )
-    completed_round_value = (
-        max(0, int(completed_round_count))
-        if completed_round_count is not None
-        else None
-    )
-    successful_training_rounds = (
-        max(0, completed_round_value - 1)
-        if completed_round_value is not None
-        else None
-    )
+    protocol_round_value = max(0, int(protocol_round)) if protocol_round is not None else None
+    completed_round_value = max(0, int(completed_round_count)) if completed_round_count is not None else None
+    successful_training_rounds = max(0, completed_round_value - 1) if completed_round_value is not None else None
     aborted_round_attempts = (
         max(0, protocol_round_value - completed_round_value)
         if protocol_round_value is not None and completed_round_value is not None
@@ -1044,13 +1029,12 @@ def append_transaction_cost_metrics(
         )
 
     registration_gas = sum(values["gas"] for values in registration_totals.values())
-    registration_transactions = sum(
-        values["transactions"] for values in registration_totals.values()
-    )
+    registration_transactions = sum(values["transactions"] for values in registration_totals.values())
     payload_lines.extend(
         [
             "",
-            "# HELP dfl_worker_registration_gas_used_total Gas used by confirmed RTMR3 worker-registration transactions.",
+            "# HELP dfl_worker_registration_gas_used_total "
+            "Gas used by confirmed RTMR3 worker-registration transactions.",
             "# TYPE dfl_worker_registration_gas_used_total gauge",
             f"dfl_worker_registration_gas_used_total {registration_gas}",
             "",
@@ -1064,14 +1048,15 @@ def append_transaction_cost_metrics(
         payload_lines.extend(
             [
                 "",
-                "# HELP dfl_worker_registration_expected_count RTMR3 registration receipts expected for the configured run roster.",
+                "# HELP dfl_worker_registration_expected_count "
+                "RTMR3 registration receipts expected for the configured run roster.",
                 "# TYPE dfl_worker_registration_expected_count gauge",
                 f"dfl_worker_registration_expected_count {expected_registrations}",
                 "",
-                "# HELP dfl_worker_registration_receipt_gap Absolute difference between expected and retained RTMR3 registration receipts; zero is complete.",
+                "# HELP dfl_worker_registration_receipt_gap "
+                "Absolute difference between expected and retained RTMR3 registration receipts; zero is complete.",
                 "# TYPE dfl_worker_registration_receipt_gap gauge",
-                "dfl_worker_registration_receipt_gap "
-                f"{abs(expected_registrations - int(registration_transactions))}",
+                f"dfl_worker_registration_receipt_gap {abs(expected_registrations - int(registration_transactions))}",
             ]
         )
 
@@ -1102,9 +1087,11 @@ def append_transaction_cost_metrics(
     payload_lines.extend(
         [
             "",
-            "# HELP dfl_worker_registration_gas_used_by_worker Gas used by each confirmed RTMR3 worker-registration transaction.",
+            "# HELP dfl_worker_registration_gas_used_by_worker "
+            "Gas used by each confirmed RTMR3 worker-registration transaction.",
             "# TYPE dfl_worker_registration_gas_used_by_worker gauge",
-            "# HELP dfl_worker_registration_transaction_count_by_worker Confirmed RTMR3 registrations attributed to each worker.",
+            "# HELP dfl_worker_registration_transaction_count_by_worker "
+            "Confirmed RTMR3 registrations attributed to each worker.",
             "# TYPE dfl_worker_registration_transaction_count_by_worker gauge",
         ]
     )
@@ -1114,12 +1101,9 @@ def append_transaction_cost_metrics(
             f'account="{_prometheus_label_value(account)}",'
             f'device_id="{_prometheus_label_value(device_id)}"'
         )
+        payload_lines.append(f"dfl_worker_registration_gas_used_by_worker{{{labels}}} {values['gas']}")
         payload_lines.append(
-            f"dfl_worker_registration_gas_used_by_worker{{{labels}}} {values['gas']}"
-        )
-        payload_lines.append(
-            f"dfl_worker_registration_transaction_count_by_worker{{{labels}}} "
-            f"{values['transactions']}"
+            f"dfl_worker_registration_transaction_count_by_worker{{{labels}}} {values['transactions']}"
         )
 
 
@@ -1144,9 +1128,7 @@ def training_config_with_round_plan(config: dict[str, Any]) -> dict[str, Any]:
         "rounds": requested,
         "requested_training_rounds": requested,
         "bootstrap_completion_count": BOOTSTRAP_COMPLETION_COUNT,
-        "worker_target_completed_round_count": (
-            requested + BOOTSTRAP_COMPLETION_COUNT
-        ),
+        "worker_target_completed_round_count": (requested + BOOTSTRAP_COMPLETION_COUNT),
     }
 
 
@@ -1183,26 +1165,28 @@ def read_training_config(
                 max(1, worker_count - 1),
             ),
         )
-        return training_config_with_round_plan({
-            "rounds": max(
-                1,
-                _safe_int(
-                    values.get(REQUESTED_TRAINING_ROUNDS_ENV_KEY)
-                    or values.get("ROUND")
-                    or os.environ.get(REQUESTED_TRAINING_ROUNDS_ENV_KEY)
-                    or os.environ.get("ROUND"),
-                    5,
+        return training_config_with_round_plan(
+            {
+                "rounds": max(
+                    1,
+                    _safe_int(
+                        values.get(REQUESTED_TRAINING_ROUNDS_ENV_KEY)
+                        or values.get("ROUND")
+                        or os.environ.get(REQUESTED_TRAINING_ROUNDS_ENV_KEY)
+                        or os.environ.get("ROUND"),
+                        5,
+                    ),
                 ),
-            ),
-            "epoch": max(
-                1,
-                _safe_int(values.get("EPOCH") or os.environ.get("EPOCH"), 1),
-            ),
-            "worker_count": worker_count,
-            "client_limit": client_limit,
-            "max_worker_count": maximum,
-            "available_workers": [f"worker{slot}" for slot in range(maximum)],
-        })
+                "epoch": max(
+                    1,
+                    _safe_int(values.get("EPOCH") or os.environ.get("EPOCH"), 1),
+                ),
+                "worker_count": worker_count,
+                "client_limit": client_limit,
+                "max_worker_count": maximum,
+                "available_workers": [f"worker{slot}" for slot in range(maximum)],
+            }
+        )
 
     available_workers = _available_worker_services(compose_file)
     max_worker_count = len(available_workers)
@@ -1215,21 +1199,22 @@ def read_training_config(
     max_client_limit = max(1, worker_count - 1)
     client_limit = max(1, min(_safe_int(values.get("CLIENT_LIMIT"), max_client_limit), max_client_limit))
 
-    return training_config_with_round_plan({
-        "rounds": max(
-            1,
-            _safe_int(
-                values.get(REQUESTED_TRAINING_ROUNDS_ENV_KEY)
-                or values.get("ROUND"),
-                5,
+    return training_config_with_round_plan(
+        {
+            "rounds": max(
+                1,
+                _safe_int(
+                    values.get(REQUESTED_TRAINING_ROUNDS_ENV_KEY) or values.get("ROUND"),
+                    5,
+                ),
             ),
-        ),
-        "epoch": max(1, _safe_int(values.get("EPOCH"), 1)),
-        "worker_count": worker_count,
-        "client_limit": client_limit,
-        "max_worker_count": max_worker_count,
-        "available_workers": available_workers,
-    })
+            "epoch": max(1, _safe_int(values.get("EPOCH"), 1)),
+            "worker_count": worker_count,
+            "client_limit": client_limit,
+            "max_worker_count": max_worker_count,
+            "available_workers": available_workers,
+        }
+    )
 
 
 def normalize_training_config(payload: dict[str, Any]) -> dict[str, int]:
@@ -1564,10 +1549,7 @@ def probe_contract_deployment(env_values: dict[str, str]) -> bool:
 def runtime_contract_env_values() -> dict[str, str]:
     values = read_env_values()
     if phala_runtime_mode():
-        rpc_url = (
-            os.environ.get("RPC_URL", "").strip()
-            or os.environ.get("DYNAMIC_WORKER_RPC_URL", "").strip()
-        )
+        rpc_url = os.environ.get("RPC_URL", "").strip() or os.environ.get("DYNAMIC_WORKER_RPC_URL", "").strip()
         kubo_api = (
             os.environ.get("KUBO_API_URL", "").strip()
             or os.environ.get("KUBO_API", "").strip()
@@ -1592,10 +1574,7 @@ def runtime_contract_env_values() -> dict[str, str]:
         values.pop("AGGREGATION_POLICY_ADDRESS", None)
     else:
         rpc_url = values.get("RPC_URL", "").strip()
-        kubo_api = (
-            values.get("KUBO_API", "").strip()
-            or values.get("KUBO_API_URL", "").strip()
-        ).rstrip("/")
+        kubo_api = (values.get("KUBO_API", "").strip() or values.get("KUBO_API_URL", "").strip()).rstrip("/")
     if rpc_url:
         values["RPC_URL"] = rpc_url
     if kubo_api:
@@ -1615,27 +1594,18 @@ def runtime_contract_env_values() -> dict[str, str]:
             for manifest_key, env_key in address_keys.items():
                 address = str(manifest.get(manifest_key, "")).strip()
                 if not re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
-                    raise RuntimeError(
-                        f"runtime contract manifest has no valid {manifest_key}"
-                    )
+                    raise RuntimeError(f"runtime contract manifest has no valid {manifest_key}")
                 if phala_runtime_mode() and address.lower() != values[env_key].lower():
                     raise RuntimeError(
-                        f"runtime contract manifest {env_key} does not match "
-                        f"{expected_addresses[env_key]}"
+                        f"runtime contract manifest {env_key} does not match {expected_addresses[env_key]}"
                     )
                 if not phala_runtime_mode():
                     values[env_key] = address
 
-            manifest_policy_address = str(
-                manifest.get("aggregation_policy_address", "")
-            ).strip()
+            manifest_policy_address = str(manifest.get("aggregation_policy_address", "")).strip()
             if not re.fullmatch(r"0x[a-fA-F0-9]{40}", manifest_policy_address):
-                raise RuntimeError(
-                    "runtime contract manifest has no valid aggregation_policy_address"
-                )
-            values["RUNTIME_MANIFEST_AGGREGATION_POLICY_ADDRESS"] = (
-                manifest_policy_address
-            )
+                raise RuntimeError("runtime contract manifest has no valid aggregation_policy_address")
+            values["RUNTIME_MANIFEST_AGGREGATION_POLICY_ADDRESS"] = manifest_policy_address
             if phala_runtime_mode():
                 manifest_chain_id = str(manifest.get("chain_id", "")).strip()
                 expected_chain_id = os.environ.get(
@@ -1648,8 +1618,7 @@ def runtime_contract_env_values() -> dict[str, str]:
                     or int(manifest_chain_id) != int(expected_chain_id)
                 ):
                     raise RuntimeError(
-                        "runtime contract manifest chain_id does not match "
-                        "DYNAMIC_WORKER_EXPECTED_CHAIN_ID"
+                        "runtime contract manifest chain_id does not match DYNAMIC_WORKER_EXPECTED_CHAIN_ID"
                     )
         except (urllib.error.URLError, TimeoutError, OSError):
             # Mutable MFS is a deployment hand-off, not a recovery authority.
@@ -1772,9 +1741,7 @@ def verified_setup_contract_env_values() -> dict[str, str]:
         if not expected_chain_id_text.isdigit() or int(expected_chain_id_text) <= 0:
             raise RuntimeError("DYNAMIC_WORKER_EXPECTED_CHAIN_ID is missing or invalid")
         if chain_id != int(expected_chain_id_text):
-            raise RuntimeError(
-                "live RPC chain ID does not match DYNAMIC_WORKER_EXPECTED_CHAIN_ID"
-            )
+            raise RuntimeError("live RPC chain ID does not match DYNAMIC_WORKER_EXPECTED_CHAIN_ID")
 
     addresses = {
         "REGISTRY_ADDRESS": _checksum_ethereum_address(
@@ -1862,9 +1829,7 @@ def verified_setup_contract_env_values() -> dict[str, str]:
             "runtime manifest aggregation_policy_address",
         )
         if manifest_policy.lower() != policy_address.lower():
-            raise RuntimeError(
-                "runtime contract manifest aggregation policy does not match GMStorage"
-            )
+            raise RuntimeError("runtime contract manifest aggregation policy does not match GMStorage")
 
     return {
         **values,
@@ -1879,8 +1844,7 @@ def _normalize_run_roster(addresses: list[str]) -> list[str]:
     if not addresses:
         raise ValueError("at least one run-roster address is required")
     normalized = [
-        _checksum_ethereum_address(address, f"run-roster address {index}")
-        for index, address in enumerate(addresses)
+        _checksum_ethereum_address(address, f"run-roster address {index}") for index, address in enumerate(addresses)
     ]
     if len({address.lower() for address in normalized}) != len(normalized):
         raise ValueError("run-roster addresses must be unique")
@@ -1891,10 +1855,7 @@ def _encode_address_array_argument(addresses: list[str]) -> bytes:
     return (
         (32).to_bytes(32, byteorder="big")
         + len(addresses).to_bytes(32, byteorder="big")
-        + b"".join(
-            bytes.fromhex(address.removeprefix("0x")).rjust(32, b"\0")
-            for address in addresses
-        )
+        + b"".join(bytes.fromhex(address.removeprefix("0x")).rjust(32, b"\0") for address in addresses)
     )
 
 
@@ -1914,7 +1875,7 @@ def _decode_rpc_address_array(value: Any, name: str) -> list[str]:
             raise ValueError
         return [
             _checksum_ethereum_address(
-                f"0x{data[start + index * 32 + 12:start + (index + 1) * 32].hex()}",
+                f"0x{data[start + index * 32 + 12 : start + (index + 1) * 32].hex()}",
                 f"Ethereum RPC {name} entry {index}",
             )
             for index in range(length)
@@ -2014,31 +1975,18 @@ def commit_run_roster(addresses: list[str]) -> dict[str, Any]:
     if contract_owner.lower() != owner_address.lower():
         raise RuntimeError("ETH_WALLET_PRIVATE_KEY does not belong to the DeviceRegistry owner")
 
-    bootstrap_aggregator = read_current_aggregator(
-        {**runtime_values, "RPC_URL": rpc_url}
-    ).get("address")
-    if (
-        not bootstrap_aggregator
-        or bootstrap_aggregator.lower() != roster[0].lower()
-    ):
-        raise RuntimeError(
-            "the first committed run-roster member must be the on-chain "
-            "bootstrap aggregator W0"
-        )
+    bootstrap_aggregator = read_current_aggregator({**runtime_values, "RPC_URL": rpc_url}).get("address")
+    if not bootstrap_aggregator or bootstrap_aggregator.lower() != roster[0].lower():
+        raise RuntimeError("the first committed run-roster member must be the on-chain bootstrap aggregator W0")
 
     encoded_arguments = _encode_address_array_argument(roster)
     roster_digest = f"0x{keccak(encoded_arguments).hex()}"
     before = read_run_roster_state({**runtime_values, "RPC_URL": rpc_url})
     if before["committed"]:
-        if (
-            before["digest"] != roster_digest
-            or [address.lower() for address in before["roster"]]
-            != [address.lower() for address in roster]
-        ):
-            raise RuntimeError(
-                "DeviceRegistry already contains a different immutable run roster; "
-                "reset the run first"
-            )
+        if before["digest"] != roster_digest or [address.lower() for address in before["roster"]] != [
+            address.lower() for address in roster
+        ]:
+            raise RuntimeError("DeviceRegistry already contains a different immutable run roster; reset the run first")
         return {
             **before,
             "owner": owner_address,
@@ -2048,19 +1996,12 @@ def commit_run_roster(addresses: list[str]) -> dict[str, Any]:
             "idempotent": True,
         }
 
-    call_data = (
-        f"0x{_ethereum_function_selector('commitRunRoster(address[])')}"
-        f"{encoded_arguments.hex()}"
-    )
+    call_data = f"0x{_ethereum_function_selector('commitRunRoster(address[])')}{encoded_arguments.hex()}"
     chain_id = _rpc_quantity(_ethereum_rpc(rpc_url, "eth_chainId", []), "chain ID")
     if phala_runtime_mode():
-        expected_chain_id = str(
-            os.environ.get("DYNAMIC_WORKER_EXPECTED_CHAIN_ID", "")
-        ).strip()
+        expected_chain_id = str(os.environ.get("DYNAMIC_WORKER_EXPECTED_CHAIN_ID", "")).strip()
         if not expected_chain_id.isdigit() or chain_id != int(expected_chain_id):
-            raise RuntimeError(
-                "live RPC chain ID does not match DYNAMIC_WORKER_EXPECTED_CHAIN_ID"
-            )
+            raise RuntimeError("live RPC chain ID does not match DYNAMIC_WORKER_EXPECTED_CHAIN_ID")
     nonce = _rpc_quantity(
         _ethereum_rpc(rpc_url, "eth_getTransactionCount", [owner_address, "pending"]),
         "transaction count",
@@ -2114,8 +2055,7 @@ def commit_run_roster(addresses: list[str]) -> dict[str, Any]:
     if (
         not observed["committed"]
         or observed["digest"] != roster_digest
-        or [address.lower() for address in observed["roster"]]
-        != [address.lower() for address in roster]
+        or [address.lower() for address in observed["roster"]] != [address.lower() for address in roster]
     ):
         raise RuntimeError("DeviceRegistry state does not match the confirmed run-roster transaction")
     return {
@@ -2134,9 +2074,7 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
         or not isinstance(client_limit, int)
         or not 1 <= client_limit <= MAX_DYNAMIC_WORKERS
     ):
-        raise ValueError(
-            f"client_limit must be an integer between 1 and {MAX_DYNAMIC_WORKERS}"
-        )
+        raise ValueError(f"client_limit must be an integer between 1 and {MAX_DYNAMIC_WORKERS}")
 
     runtime_values = verified_setup_contract_env_values()
     deadline_value = (
@@ -2152,9 +2090,7 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
         raise ValueError("MODEL_SUBMISSION_DEADLINE_MS must be positive")
     submission_window_seconds = (deadline_ms + 999) // 1000
     if submission_window_seconds > MAX_AGGREGATION_SUBMISSION_WINDOW_SECONDS:
-        raise ValueError(
-            "MODEL_SUBMISSION_DEADLINE_MS exceeds the AggregationPolicy maximum"
-        )
+        raise ValueError("MODEL_SUBMISSION_DEADLINE_MS exceeds the AggregationPolicy maximum")
 
     raw_policy_address = runtime_values.get("AGGREGATION_POLICY_ADDRESS", "").strip()
     try:
@@ -2163,9 +2099,7 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
             "aggregation_policy_address",
         )
     except RuntimeError as exc:
-        raise RuntimeError(
-            "GMStorage returned a missing or invalid aggregation policy address"
-        ) from exc
+        raise RuntimeError("GMStorage returned a missing or invalid aggregation policy address") from exc
     if policy_address.lower() == "0x" + "0" * 40:
         raise RuntimeError("GMStorage returned an unconfigured aggregation policy address")
 
@@ -2181,9 +2115,8 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
         raise RuntimeError("ETH_WALLET_PRIVATE_KEY is missing or invalid")
 
     owner_address = _ethereum_account_address(private_key)
-    encoded_arguments = (
-        client_limit.to_bytes(32, byteorder="big")
-        + submission_window_seconds.to_bytes(32, byteorder="big")
+    encoded_arguments = client_limit.to_bytes(32, byteorder="big") + submission_window_seconds.to_bytes(
+        32, byteorder="big"
     )
     call_data = f"0x{AGGREGATION_POLICY_CONFIGURE_SELECTOR}{encoded_arguments.hex()}"
 
@@ -2202,9 +2135,7 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
         "AggregationPolicy owner",
     )
     if contract_owner.lower() != owner_address.lower():
-        raise RuntimeError(
-            "ETH_WALLET_PRIVATE_KEY does not belong to the AggregationPolicy owner"
-        )
+        raise RuntimeError("ETH_WALLET_PRIVATE_KEY does not belong to the AggregationPolicy owner")
 
     chain_id = _rpc_quantity(_ethereum_rpc(rpc_url, "eth_chainId", []), "chain ID")
     nonce = _rpc_quantity(
@@ -2235,9 +2166,7 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
         "gasPrice": gas_price,
     }
     raw_transaction = _sign_ethereum_transaction(transaction, private_key)
-    transaction_hash = str(
-        _ethereum_rpc(rpc_url, "eth_sendRawTransaction", [raw_transaction])
-    )
+    transaction_hash = str(_ethereum_rpc(rpc_url, "eth_sendRawTransaction", [raw_transaction]))
     if not re.fullmatch(r"0x[a-fA-F0-9]{64}", transaction_hash):
         raise RuntimeError("Ethereum RPC returned an invalid transaction hash")
 
@@ -2256,9 +2185,7 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
             break
         time.sleep(0.25)
     if receipt is None:
-        raise RuntimeError(
-            "timed out waiting for the AggregationPolicy configuration transaction"
-        )
+        raise RuntimeError("timed out waiting for the AggregationPolicy configuration transaction")
     if _rpc_quantity(receipt.get("status"), "transaction status") != 1:
         raise RuntimeError("AggregationPolicy configuration transaction reverted")
 
@@ -2290,13 +2217,8 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
         ),
         "AggregationPolicy submission window",
     )
-    if (
-        observed_client_limit != client_limit
-        or observed_submission_window != submission_window_seconds
-    ):
-        raise RuntimeError(
-            "AggregationPolicy state does not match the confirmed configuration transaction"
-        )
+    if observed_client_limit != client_limit or observed_submission_window != submission_window_seconds:
+        raise RuntimeError("AggregationPolicy state does not match the confirmed configuration transaction")
 
     return {
         "address": policy_address,
@@ -2533,10 +2455,14 @@ async def wait_for_docker_container_exit_success(
 def read_runtime_mfs_marker(path: str) -> dict[str, Any]:
     if not path.startswith("/runtime/"):
         raise ValueError("runtime marker path must stay below /runtime")
-    kubo_api = os.environ.get(
-        "CONTROL_RUNTIME_KUBO_API_URL",
-        "http://ipfs:5001",
-    ).strip().rstrip("/")
+    kubo_api = (
+        os.environ.get(
+            "CONTROL_RUNTIME_KUBO_API_URL",
+            "http://ipfs:5001",
+        )
+        .strip()
+        .rstrip("/")
+    )
     if not kubo_api:
         raise RuntimeError("CONTROL_RUNTIME_KUBO_API_URL is empty")
     marker_url = kubo_api + "/api/v0/files/read?arg=" + urllib.parse.quote(path, safe="")
@@ -2554,16 +2480,18 @@ def write_runtime_mfs_marker(path: str, value: dict[str, Any]) -> dict[str, Any]
     if not isinstance(value, dict):
         raise ValueError("runtime marker value must be a JSON object")
 
-    kubo_api = os.environ.get(
-        "CONTROL_RUNTIME_KUBO_API_URL",
-        "http://ipfs:5001",
-    ).strip().rstrip("/")
+    kubo_api = (
+        os.environ.get(
+            "CONTROL_RUNTIME_KUBO_API_URL",
+            "http://ipfs:5001",
+        )
+        .strip()
+        .rstrip("/")
+    )
     if not kubo_api:
         raise RuntimeError("CONTROL_RUNTIME_KUBO_API_URL is empty")
 
-    mkdir_url = kubo_api + "/api/v0/files/mkdir?" + urllib.parse.urlencode(
-        {"arg": "/runtime", "parents": "true"}
-    )
+    mkdir_url = kubo_api + "/api/v0/files/mkdir?" + urllib.parse.urlencode({"arg": "/runtime", "parents": "true"})
     mkdir_request = urllib.request.Request(mkdir_url, data=b"", method="POST")
     try:
         with urllib.request.urlopen(mkdir_request, timeout=10.0):
@@ -2580,17 +2508,25 @@ def write_runtime_mfs_marker(path: str, value: dict[str, Any]) -> dict[str, Any]
         ensure_ascii=False,
     ).encode("utf-8")
     body = (
-        f"--{boundary}\r\n"
-        'Content-Disposition: form-data; name="file"; filename="marker.json"\r\n'
-        "Content-Type: application/json\r\n\r\n"
-    ).encode("ascii") + document + f"\r\n--{boundary}--\r\n".encode("ascii")
-    write_url = kubo_api + "/api/v0/files/write?" + urllib.parse.urlencode(
-        {
-            "arg": path,
-            "create": "true",
-            "truncate": "true",
-            "parents": "true",
-        }
+        (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="marker.json"\r\n'
+            "Content-Type: application/json\r\n\r\n"
+        ).encode("ascii")
+        + document
+        + f"\r\n--{boundary}--\r\n".encode("ascii")
+    )
+    write_url = (
+        kubo_api
+        + "/api/v0/files/write?"
+        + urllib.parse.urlencode(
+            {
+                "arg": path,
+                "create": "true",
+                "truncate": "true",
+                "parents": "true",
+            }
+        )
     )
     request = urllib.request.Request(
         write_url,
@@ -2625,9 +2561,7 @@ def publish_bootstrap_recipient_declaration(addresses: list[str]) -> dict[str, A
     if not run_roster["committed"]:
         raise RuntimeError("DeviceRegistry run roster is not committed")
     if [address.lower() for address in run_roster["roster"]] != normalized:
-        raise RuntimeError(
-            "bootstrap declaration does not match the committed DeviceRegistry run roster"
-        )
+        raise RuntimeError("bootstrap declaration does not match the committed DeviceRegistry run roster")
 
     runtime_values = runtime_contract_env_values()
     rpc_url = runtime_values.get("RPC_URL", "").strip()
@@ -2698,9 +2632,7 @@ async def wait_for_runtime_admission_ready(
                     "phase": "admission-ready",
                     "admission_marker": marker,
                 }
-            last_error = RuntimeError(
-                "runtime admission marker does not contain status=admission-ready"
-            )
+            last_error = RuntimeError("runtime admission marker does not contain status=admission-ready")
         except (
             urllib.error.URLError,
             TimeoutError,
@@ -2716,15 +2648,9 @@ async def wait_for_runtime_admission_ready(
                     f"worker-admission marker. Last error: {last_error}"
                 )
             else:
-                raise RuntimeError(
-                    "smart-contracts stopped before publishing the worker-admission marker: "
-                    f"{state}"
-                )
+                raise RuntimeError(f"smart-contracts stopped before publishing the worker-admission marker: {state}")
         await asyncio.sleep(2)
-    raise RuntimeError(
-        "Timed out waiting for smart-contract worker admission readiness. "
-        f"Last error: {last_error}"
-    )
+    raise RuntimeError(f"Timed out waiting for smart-contract worker admission readiness. Last error: {last_error}")
 
 
 async def wait_for_local_runtime_admission_ready(
@@ -2745,9 +2671,7 @@ async def wait_for_local_runtime_admission_ready(
                     "phase": "admission-ready",
                     "admission_marker": marker,
                 }
-            last_error = RuntimeError(
-                "runtime admission marker does not contain status=admission-ready"
-            )
+            last_error = RuntimeError("runtime admission marker does not contain status=admission-ready")
         except (
             urllib.error.URLError,
             TimeoutError,
@@ -2763,23 +2687,16 @@ async def wait_for_local_runtime_admission_ready(
                     f"worker-admission marker. Last error: {last_error}"
                 )
             else:
-                raise RuntimeError(
-                    "smart-contracts stopped before publishing the worker-admission marker: "
-                    f"{state}"
-                )
+                raise RuntimeError(f"smart-contracts stopped before publishing the worker-admission marker: {state}")
         await asyncio.sleep(2)
     raise RuntimeError(
-        "Timed out waiting for local smart-contract worker admission readiness. "
-        f"Last error: {last_error}"
+        f"Timed out waiting for local smart-contract worker admission readiness. Last error: {last_error}"
     )
 
 
 def runtime_admission_is_ready() -> bool:
     try:
-        return (
-            read_runtime_mfs_marker("/runtime/admission-ready.json").get("status")
-            == "admission-ready"
-        )
+        return read_runtime_mfs_marker("/runtime/admission-ready.json").get("status") == "admission-ready"
     except (
         urllib.error.URLError,
         TimeoutError,
@@ -2833,9 +2750,8 @@ def training_phase_allows_setup(status: dict[str, Any]) -> bool:
 
 def training_phase_allows_exact_start_retry(status: dict[str, Any]) -> bool:
     """Allow only an exact retry of a roster that is already immutable on-chain."""
-    return (
-        str(status.get("training_phase") or "") == "bootstrap"
-        and bool((status.get("run_roster") or {}).get("committed"))
+    return str(status.get("training_phase") or "") == "bootstrap" and bool(
+        (status.get("run_roster") or {}).get("committed")
     )
 
 
@@ -2917,11 +2833,7 @@ async def collect_runtime_status() -> dict[str, Any]:
     ipfs_ready = probe_ipfs_ready(env_values)
     chain_contracts_ready = probe_contract_deployment(env_values) if anvil_ready else False
     current_round = read_chain_round(env_values) if chain_contracts_ready else None
-    completed_round_count = (
-        read_chain_completed_round_count(env_values)
-        if chain_contracts_ready
-        else None
-    )
+    completed_round_count = read_chain_completed_round_count(env_values) if chain_contracts_ready else None
     try:
         run_roster_state = (
             read_run_roster_state(env_values)
@@ -2935,10 +2847,7 @@ async def collect_runtime_status() -> dict[str, Any]:
     contract_completed_successfully = contract_state["status"] == "exited" and contract_state["exit_code"] == 0
     contract_failed = contract_state["status"] == "exited" and contract_state["exit_code"] not in {None, 0}
     contract_running = contract_state["running"]
-    contract_admission_ready = (
-        chain_contracts_ready
-        and runtime_admission_is_ready()
-    )
+    contract_admission_ready = chain_contracts_ready and runtime_admission_is_ready()
     # The MFS admission marker is an initial deployment hand-off only. Once the
     # process has exited successfully, deployed bytecode is the durable source
     # of truth; deleting mutable MFS metadata must not roll the lifecycle back.
@@ -3155,9 +3064,7 @@ async def initialize_contract_stack() -> dict[str, Any]:
             check=True,
         )
     )
-    admission_state = await wait_for_local_runtime_admission_ready(
-        CONTRACT_TIMEOUT_SECONDS
-    )
+    admission_state = await wait_for_local_runtime_admission_ready(CONTRACT_TIMEOUT_SECONDS)
     exit_state = await wait_for_service_exit_success(
         "smart-contracts",
         CONTRACT_TIMEOUT_SECONDS,
@@ -3212,9 +3119,7 @@ async def start_training_services(
         selected_addresses,
     )
     worker_environment = os.environ.copy()
-    worker_environment["ROUND"] = str(
-        worker_runtime_training_config(config)["rounds"]
-    )
+    worker_environment["ROUND"] = str(worker_runtime_training_config(config)["rounds"])
 
     base_services = [
         "anvil",
@@ -3333,9 +3238,7 @@ async def reset_training_services() -> dict[str, Any]:
             check=True,
         )
     )
-    admission_state = await wait_for_local_runtime_admission_ready(
-        CONTRACT_TIMEOUT_SECONDS
-    )
+    admission_state = await wait_for_local_runtime_admission_ready(CONTRACT_TIMEOUT_SECONDS)
     exit_state = await wait_for_service_exit_success(
         "smart-contracts",
         CONTRACT_TIMEOUT_SECONDS,
@@ -3405,9 +3308,7 @@ async def metrics() -> Response:
     append_transaction_cost_metrics(
         payload_lines,
         transaction_cost_records,
-        expected_worker_count=int(
-            training_config.get("worker_count") or len(_dynamic_worker_slots())
-        ),
+        expected_worker_count=int(training_config.get("worker_count") or len(_dynamic_worker_slots())),
     )
     payload_lines.extend(
         [
@@ -3449,28 +3350,14 @@ async def phala_runtime_status() -> dict[str, Any]:
         contract_state = missing_service_state("smart-contracts")
     env_values = runtime_contract_env_values()
     anvil_ready = probe_anvil_ready(env_values)
-    chain_contracts_ready = (
-        probe_contract_deployment(env_values) if anvil_ready else False
-    )
-    contract_admission_ready = (
-        chain_contracts_ready and runtime_admission_is_ready()
-    )
-    contract_completed_successfully = (
-        contract_state["status"] == "exited"
-        and contract_state["exit_code"] == 0
-    )
-    contract_failed = (
-        contract_state["status"] == "exited"
-        and contract_state["exit_code"] not in {None, 0}
-    )
+    chain_contracts_ready = probe_contract_deployment(env_values) if anvil_ready else False
+    contract_admission_ready = chain_contracts_ready and runtime_admission_is_ready()
+    contract_completed_successfully = contract_state["status"] == "exited" and contract_state["exit_code"] == 0
+    contract_failed = contract_state["status"] == "exited" and contract_state["exit_code"] not in {None, 0}
     # Do not make later status/recovery depend on a mutable MFS marker.
     contract_initialized = contract_completed_successfully and chain_contracts_ready
     current_round = read_chain_round(env_values) if chain_contracts_ready else None
-    completed_round_count = (
-        read_chain_completed_round_count(env_values)
-        if chain_contracts_ready
-        else None
-    )
+    completed_round_count = read_chain_completed_round_count(env_values) if chain_contracts_ready else None
     try:
         run_roster_state = (
             read_run_roster_state(env_values)
@@ -3479,11 +3366,7 @@ async def phala_runtime_status() -> dict[str, Any]:
         )
     except RuntimeError:
         run_roster_state = {"committed": None, "frozen": None, "digest": None, "roster": []}
-    current_aggregator = (
-        read_current_aggregator(env_values)
-        if chain_contracts_ready
-        else {"address": None, "vm": None}
-    )
+    current_aggregator = read_current_aggregator(env_values) if chain_contracts_ready else {"address": None, "vm": None}
     training_phase = training_lifecycle_phase(
         contracts_ready=contract_initialized,
         worker_count=deployed,
@@ -3571,10 +3454,7 @@ async def scale_phala_workers(request: Request, payload: dict[str, Any]) -> dict
         if worker_count != 0:
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    "A non-empty worker roster can only be created atomically "
-                    "through Start Training."
-                ),
+                detail=("A non-empty worker roster can only be created atomically through Start Training."),
             )
         try:
             return await asyncio.to_thread(
@@ -3758,10 +3638,7 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                 if not resume_committed_roster:
                     current_workers = await asyncio.to_thread(worker_controller.status)
                     deployed_before_commit = current_workers.get("deployed_worker_count")
-                    if (
-                        isinstance(deployed_before_commit, bool)
-                        or not isinstance(deployed_before_commit, int)
-                    ):
+                    if isinstance(deployed_before_commit, bool) or not isinstance(deployed_before_commit, int):
                         raise RuntimeError("Phala returned an invalid deployed worker count")
                     if deployed_before_commit != 0:
                         raise RuntimeError(
@@ -3789,32 +3666,22 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                     worker_config,
                 )
                 if (
-                    worker_status.get("deployed_worker_count")
-                    != normalized["worker_count"]
-                    or len(worker_status.get("workers") or [])
-                    != normalized["worker_count"]
+                    worker_status.get("deployed_worker_count") != normalized["worker_count"]
+                    or len(worker_status.get("workers") or []) != normalized["worker_count"]
                 ):
                     raise RuntimeError(
-                        "Phala did not return the exact requested worker set; "
-                        "the round-0 roster was not published"
+                        "Phala did not return the exact requested worker set; the round-0 roster was not published"
                     )
                 deployed_addresses = [
-                    str(worker.get("account_address", "")).lower()
-                    for worker in worker_status["workers"]
+                    str(worker.get("account_address", "")).lower() for worker in worker_status["workers"]
                 ]
-                if deployed_addresses != [
-                    address.lower() for address in selected_addresses
-                ]:
+                if deployed_addresses != [address.lower() for address in selected_addresses]:
                     raise RuntimeError(
-                        "Phala returned a different worker identity set than the "
-                        "committed DeviceRegistry run roster"
+                        "Phala returned a different worker identity set than the committed DeviceRegistry run roster"
                     )
                 await asyncio.to_thread(
                     publish_bootstrap_recipient_declaration,
-                    [
-                        worker["account_address"]
-                        for worker in worker_status["workers"]
-                    ],
+                    [worker["account_address"] for worker in worker_status["workers"]],
                 )
                 return {
                     "ok": True,

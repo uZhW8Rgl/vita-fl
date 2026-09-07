@@ -6,7 +6,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SHARD_DIR = REPO_ROOT / "data" / "chestmnist" / "training_data"
 TRAINING_SAMPLE_COUNT = 78_468

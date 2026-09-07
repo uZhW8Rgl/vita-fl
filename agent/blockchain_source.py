@@ -295,9 +295,7 @@ def eth_call_address(rpc_url: str, contract_address: str, method_signature: str)
 
 
 def read_device_public_key_der(rpc_url: str, registry_address: str, device_address: str) -> bytes:
-    return bytes(
-        read_device_record(rpc_url, registry_address, device_address)["public_key_der"]
-    )
+    return bytes(read_device_record(rpc_url, registry_address, device_address)["public_key_der"])
 
 
 def read_device_record(
@@ -338,8 +336,7 @@ def read_sello_receiver(
         [
             {
                 "to": registry_address,
-                "data": function_selector("getSelloReceiver(address)")
-                + encode_address_arg(participant_address),
+                "data": function_selector("getSelloReceiver(address)") + encode_address_arg(participant_address),
             },
             "latest",
         ],
@@ -461,9 +458,7 @@ def _decrypt_encrypted_bundle(
         "Encrypted global model key bundle",
     )
     if key_bundle_round != finalized_model_round:
-        raise RuntimeError(
-            "Encrypted global model key-bundle round does not match the finalized on-chain round."
-        )
+        raise RuntimeError("Encrypted global model key-bundle round does not match the finalized on-chain round.")
     wrapped_keys = key_bundle_doc.get("wrapped_keys_b64", {})
     wrapped_key_b64 = wrapped_keys.get(own_address)
     if not isinstance(wrapped_key_b64, str) or not wrapped_key_b64:
@@ -489,12 +484,8 @@ def _decrypt_encrypted_bundle(
         "Encrypted global model payload",
     )
     if payload_round != key_bundle_round:
-        raise RuntimeError(
-            "Encrypted global model payload round does not match the public key bundle."
-        )
-    plain_model_path.write_bytes(
-        _strict_base64(payload.get("model_b64"), "Encrypted global model payload model")
-    )
+        raise RuntimeError("Encrypted global model payload round does not match the public key bundle.")
+    plain_model_path.write_bytes(_strict_base64(payload.get("model_b64"), "Encrypted global model payload model"))
 
     signature_value = payload.get("signature_b64")
     if signature_value is None or signature_value == "":
@@ -518,9 +509,7 @@ def _decrypt_encrypted_bundle(
         if not isinstance(encrypted_evidence_b64, str) or not encrypted_evidence_b64:
             raise RuntimeError("Encrypted aggregation evidence is malformed.")
         if encrypted_evidence_b64 != public_evidence_b64:
-            raise RuntimeError(
-                "Public key-bundle aggregation evidence does not match the encrypted model payload."
-            )
+            raise RuntimeError("Public key-bundle aggregation evidence does not match the encrypted model payload.")
         evidence_bytes = base64.b64decode(encrypted_evidence_b64, validate=True)
         evidence_hash = hashlib.sha256(evidence_bytes).hexdigest()
         if (
@@ -531,23 +520,17 @@ def _decrypt_encrypted_bundle(
         evidence = json.loads(evidence_bytes.decode("utf-8"))
         if not isinstance(evidence, dict):
             raise RuntimeError("Aggregation evidence root must be an object.")
-        evidence_path = plain_model_path.with_name(
-            f"{plain_model_path.stem}.aggregation.json"
-        )
+        evidence_path = plain_model_path.with_name(f"{plain_model_path.stem}.aggregation.json")
         evidence_path.write_bytes(evidence_bytes)
     elif public_evidence_b64 is not None:
-        raise RuntimeError(
-            "Public key-bundle aggregation evidence is missing from the encrypted model payload."
-        )
+        raise RuntimeError("Public key-bundle aggregation evidence is missing from the encrypted model payload.")
     return {
         "encrypted": True,
         "round": payload_round,
         "finalized_model_round": finalized_model_round,
         "plaintext_signature_present": plaintext_signature_present,
         "plaintext_signature_policy": (
-            "unsigned-public-bootstrap"
-            if not plaintext_signature_present
-            else "aggregator-signed-model"
+            "unsigned-public-bootstrap" if not plaintext_signature_present else "aggregator-signed-model"
         ),
         "recipient_address": own_address,
         "private_key_source": private_key_source,
@@ -595,13 +578,9 @@ def fetch_onchain_bundle(
         decrypt_metadata.get("round"),
         "Decrypted global model metadata",
     )
-    plaintext_signature_present = decrypt_metadata.get(
-        "plaintext_signature_present"
-    )
+    plaintext_signature_present = decrypt_metadata.get("plaintext_signature_present")
     if not isinstance(plaintext_signature_present, bool):
-        raise RuntimeError(
-            "Decrypted global model metadata lacks plaintext-signature presence."
-        )
+        raise RuntimeError("Decrypted global model metadata lacks plaintext-signature presence.")
     manifest_path = out_dir / "onchain_bundle.json"
     manifest = {
         "source": "GMStorage",
@@ -681,31 +660,17 @@ def verify_download_with_registry(
             decryption.get("round"),
             "Decrypted global model metadata",
         )
-        if not (
-            finalized_model_round
-            == download_model_round
-            == decrypted_model_round
-        ):
-            raise RuntimeError(
-                "Finalized, downloaded, and decrypted global-model rounds do not match."
-            )
-        plaintext_signature_present = download.get(
-            "plaintext_signature_present"
-        )
+        if not (finalized_model_round == download_model_round == decrypted_model_round):
+            raise RuntimeError("Finalized, downloaded, and decrypted global-model rounds do not match.")
+        plaintext_signature_present = download.get("plaintext_signature_present")
         if not isinstance(plaintext_signature_present, bool):
-            raise RuntimeError(
-                "Downloaded global model metadata lacks plaintext-signature presence."
-            )
+            raise RuntimeError("Downloaded global model metadata lacks plaintext-signature presence.")
         if decryption.get("plaintext_signature_present") is not plaintext_signature_present:
-            raise RuntimeError(
-                "Downloaded and decrypted plaintext-signature metadata do not match."
-            )
+            raise RuntimeError("Downloaded and decrypted plaintext-signature metadata do not match.")
         signature_path = Path(download["signature_path"])
         signature_file_present = signature_path.exists() and signature_path.stat().st_size > 0
         if signature_file_present != plaintext_signature_present:
-            raise RuntimeError(
-                "Plaintext-signature metadata does not match the downloaded signature file."
-            )
+            raise RuntimeError("Plaintext-signature metadata does not match the downloaded signature file.")
         if not plaintext_signature_present and finalized_model_round != 1:
             raise RuntimeError(
                 f"Encrypted global model round {finalized_model_round} lacks its required plaintext model signature."

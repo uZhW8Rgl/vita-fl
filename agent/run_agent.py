@@ -21,8 +21,6 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 try:
     from .agent_skills import (
         describe_agent_skills,
-        format_selection_summary,
-        format_verified_bundle_summary,
         resolve_preferred_sample_index,
         zk_inference_enabled,
     )
@@ -41,8 +39,6 @@ try:
 except ImportError:
     from agent_skills import (
         describe_agent_skills,
-        format_selection_summary,
-        format_verified_bundle_summary,
         resolve_preferred_sample_index,
         zk_inference_enabled,
     )
@@ -899,8 +895,7 @@ class AgentRuntime:
                         if target_skill is not None:
                             _content, events = self._extract_agent_reply(chunk)
                             if any(
-                                event.get("type") == "tool" and event.get("label") == target_skill
-                                for event in events
+                                event.get("type") == "tool" and event.get("label") == target_skill for event in events
                             ):
                                 target_skill_completed = True
                                 break

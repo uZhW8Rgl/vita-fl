@@ -78,9 +78,7 @@ raise SystemExit(result)
 
     def test_normal_failure_does_not_expose_captured_state(self):
         with self.assertRaises(ValueError) as caught:
-            ci_deploy.checked(
-                [sys.executable, "-c", "print('private-state-value'); raise SystemExit(1)"], capture=True
-            )
+            ci_deploy.checked([sys.executable, "-c", "print('private-state-value'); raise SystemExit(1)"], capture=True)
         self.assertNotIn("private-state-value", str(caught.exception))
 
 

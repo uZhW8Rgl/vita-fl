@@ -90,9 +90,13 @@ class RuntimeBootstrapTests(unittest.TestCase):
                     )
                     terraform("apply", "-input=false", "-auto-approve", "-no-color")
                     rendered = json.loads(terraform("output", "-json"))["runtime_environment"]["value"]
-                    expected = "\n".join(
-                        f'DYNAMIC_WORKER_{endpoint.upper()}: "{values.get(endpoint) or ""}"' for endpoint in ENDPOINTS
-                    ) + "\n"
+                    expected = (
+                        "\n".join(
+                            f'DYNAMIC_WORKER_{endpoint.upper()}: "{values.get(endpoint) or ""}"'
+                            for endpoint in ENDPOINTS
+                        )
+                        + "\n"
+                    )
                     self.assertEqual(rendered, expected)
 
 

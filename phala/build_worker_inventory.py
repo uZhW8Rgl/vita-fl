@@ -46,9 +46,7 @@ def build_inventory(
         except ValueError as exc:
             raise ValueError(f"worker {slot} has a non-integer device ID") from exc
         if device_id != slot:
-            raise ValueError(
-                f"worker {slot} has device ID {device_id}; expected {slot}"
-            )
+            raise ValueError(f"worker {slot} has device ID {device_id}; expected {slot}")
         inventory.append(
             {
                 "slot": slot,
