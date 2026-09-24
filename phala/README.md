@@ -76,9 +76,10 @@ Configure the following in the selected private `.env.phala.anvil` profile:
 | `SELLO_SERVICE_REGISTRY` | Static receiver public keys; `{}` for TEE-only use |
 | `SELLO_SCITT_URL` | HTTPS destination for receiver-published receipts |
 
-Generate a coherent set with:
+Install the helper dependencies and generate a coherent set with:
 
 ```sh
+python -m pip install -r phala/requirements.txt
 python phala/generate_sello_env.py \
   --scitt-url https://CONTRACT_APP_ID-8000s.dstack-REGION.phala.network \
   --agent-subject master-thesis-agent

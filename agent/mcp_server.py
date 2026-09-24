@@ -172,9 +172,7 @@ def _remote_call(
             return result
     except urllib.error.HTTPError as exc:
         body_bytes = exc.read()
-        complete_receiver_call(
-            receiver_call, exc.headers, body_bytes, exc.code, receiver_base_url=ZK_INFERENCE_URL
-        )
+        complete_receiver_call(receiver_call, exc.headers, body_bytes, exc.code, receiver_base_url=ZK_INFERENCE_URL)
         body = body_bytes.decode("utf-8", errors="replace")
         raise RuntimeError(f"zk_inference service returned HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
@@ -186,9 +184,7 @@ def _remote_get_bytes(endpoint: str, timeout: int = 120) -> bytes:
         raise RuntimeError("ZK inference is disabled in this deployment. TEE model bundles use Worker 0.")
     if not ZK_INFERENCE_URL:
         raise RuntimeError("ZK_INFERENCE_URL is not set and local zk_inference tools are unavailable.")
-    receiver_call = begin_receiver_call(
-        "receipts:read", "zk-inference", b"", receiver_base_url=ZK_INFERENCE_URL
-    )
+    receiver_call = begin_receiver_call("receipts:read", "zk-inference", b"", receiver_base_url=ZK_INFERENCE_URL)
     request = urllib.request.Request(
         f"{ZK_INFERENCE_URL}/{endpoint.lstrip('/')}",
         headers=receiver_call.headers,

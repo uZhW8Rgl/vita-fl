@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+import cbor2
 from nacl.signing import SigningKey
 
 from agent_receipts.sello_v1 import (
@@ -88,6 +89,53 @@ class SelloV1Tests(unittest.TestCase):
         )
         self.assertEqual(verified.body["result-status"], "success")
         self.assertEqual(verified.log_url, "https://scitt.example")
+
+    def test_malformed_cose_arrays_and_fields_are_rejected(self) -> None:
+        # The decoder may expose the canonical wire array as a list (cbor2 5)
+        # or tuple (cbor2 6). Accepting either must not relax the COSE profile.
+        fields = list(cbor2.loads(self.emit()).value)
+        invalid_envelopes = {
+            "map instead of array": cbor2.CBORTag(18, dict(enumerate(fields))),
+            "missing signature": cbor2.CBORTag(18, fields[:3]),
+            "extra field": cbor2.CBORTag(18, [*fields, b""]),
+            "unprotected header": cbor2.CBORTag(18, [fields[0], {1: -8}, *fields[2:]]),
+            "protected header is not bytes": cbor2.CBORTag(18, [{}, *fields[1:]]),
+            "payload is not bytes": cbor2.CBORTag(18, [*fields[:2], {}, fields[3]]),
+            "signature is not bytes": cbor2.CBORTag(18, [*fields[:3], None]),
+            "wrong tag": cbor2.CBORTag(999, fields),
+            "missing tag": fields,
+        }
+        for name, value in invalid_envelopes.items():
+            with self.subTest(envelope=name), self.assertRaises(ReceiptVerificationError):
+                self.owner.verify(
+                    cbor2.dumps(value, canonical=True),
+                    self.token,
+                    expected_service="tee-inference",
+                    expected_action="fetch_latest_verified_tee_model_bundle",
+                    action_input=b"{}",
+                    action_output=b'{"ok":true}',
+                )
+
+    def test_cose_requires_canonical_encoding_and_valid_signature(self) -> None:
+        envelope = self.emit()
+        fields = list(cbor2.loads(envelope).value)
+        indefinite_array = b"\xd2\x9f" + b"".join(cbor2.dumps(field, canonical=True) for field in fields) + b"\xff"
+        invalid_signature = bytes([fields[3][0] ^ 1]) + fields[3][1:]
+        invalid_envelopes = {
+            "indefinite array": indefinite_array,
+            "trailing data": envelope + b"\x00",
+            "altered signature": cbor2.dumps(cbor2.CBORTag(18, [*fields[:3], invalid_signature]), canonical=True),
+        }
+        for name, value in invalid_envelopes.items():
+            with self.subTest(envelope=name), self.assertRaises(ReceiptVerificationError):
+                self.owner.verify(
+                    value,
+                    self.token,
+                    expected_service="tee-inference",
+                    expected_action="fetch_latest_verified_tee_model_bundle",
+                    action_input=b"{}",
+                    action_output=b'{"ok":true}',
+                )
 
     def test_tampered_output_is_rejected(self) -> None:
         with self.assertRaisesRegex(ReceiptVerificationError, "output hash"):

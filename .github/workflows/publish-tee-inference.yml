@@ -11,6 +11,8 @@ on:
       - "pki/**"
       - "transport_security/**"
       - ".dockerignore"
+      - "scripts/prepare_tee_build_context.py"
+      - "scripts/tests/test_docker_build_contexts.py"
       - "data/chestmnist/test_data/test-data.npz"
       - "dfl/neural_network/**"
       - "agent/blockchain_source.py"
@@ -73,25 +75,13 @@ jobs:
               assert dataset["labels"].shape[1] == 14
           PY
 
-      - name: Stage deterministic TEE build context
-        run: |
-          context=.github-build/tee-inference
-          rm -rf "$context"
-          mkdir -p "$context/agent" "$context/data/chestmnist/test_data" "$context/dfl"
-          cp .dockerignore "$context/.dockerignore"
-          cp -R tee_inference "$context/tee_inference"
-          cp -R agent_receipts "$context/agent_receipts"
-          cp -R pki "$context/pki"
-          cp -R transport_security "$context/transport_security"
-          cp -R dfl/neural_network "$context/dfl/neural_network"
-          cp agent/blockchain_source.py agent/ipfs_bundle.py "$context/agent/"
-          cp data/chestmnist/test_data/test-data.npz "$context/data/chestmnist/test_data/"
-          find "$context" -type d -name __pycache__ -prune -exec rm -rf {} +
-          test -s "$context/data/chestmnist/test_data/test-data.npz"
-          ls -lh "$context/data/chestmnist/test_data/test-data.npz"
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Validate image COPY inputs and stage deterministic TEE context
+        run: |
+          PYTHONPATH=. python -m unittest discover -s scripts/tests -p 'test_docker_build_contexts.py' -v
+          python scripts/prepare_tee_build_context.py --output .github-build/tee-inference
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

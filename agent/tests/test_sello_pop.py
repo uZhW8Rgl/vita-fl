@@ -134,9 +134,7 @@ def test_attacker_with_own_registered_key_cannot_use_stolen_victim_token(owner, 
         )
     # Even the locally held issuer seed cannot authorize the attacker's key to
     # masquerade as agent-a: the receiver's independent registry remains binding.
-    forged_identity_token = owner.token(
-        audience=ORIGIN, scopes=["run"], pop_thumbprint=attacker.thumbprint, now=NOW
-    )
+    forged_identity_token = owner.token(audience=ORIGIN, scopes=["run"], pop_thumbprint=attacker.thumbprint, now=NOW)
     with pytest.raises(ReceiptVerificationError, match="subject"):
         verify_authorization_token(
             forged_identity_token,
@@ -294,9 +292,9 @@ def test_pop_receipt_is_bound_to_the_original_verified_session(owner, identity, 
             register_session.assert_called_once_with(
                 session.evidence,
                 url="https://scitt.example",
-                transparent_statement_path=str(Path(audit["evidence_path"]).with_name(
-                    "attestation-session-transparent-statement.cose"
-                )),
+                transparent_statement_path=str(
+                    Path(audit["evidence_path"]).with_name("attestation-session-transparent-statement.cose")
+                ),
                 content_type="application/vnd.master-thesis.ratls-session+cbor",
                 identity=owner.subject,
             )
@@ -337,9 +335,10 @@ def test_mtls_receipt_keeps_existing_log_flow_without_session_registration(owner
     cert_identity = ClientIdentity(Path("/cert"), Path("/key"), identity.thumbprint)
     call = ReceiverCall("run", "tee-inference", authorization, b"input", cert_identity, receiver.public_key, ORIGIN)
     with (
-        patch("agent.sello_client.verify_publication_bundle", return_value={
-            "service_url": "https://scitt.example", "transaction_id": "legacy-1.1"
-        }),
+        patch(
+            "agent.sello_client.verify_publication_bundle",
+            return_value={"service_url": "https://scitt.example", "transaction_id": "legacy-1.1"},
+        ),
         patch("agent.sello_client.register_verified_evidence") as register_session,
         patch(
             "agent.transparency_index.record_transparency_entry", return_value={"record_id": "legacy-record"}

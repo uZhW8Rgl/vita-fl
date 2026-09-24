@@ -372,7 +372,9 @@ class SelloOwner:
         tagged = _loads_canonical_cbor(envelope, "receipt")
         if not isinstance(tagged, cbor2.CBORTag) or tagged.tag != COSE_SIGN1_TAG:
             raise ReceiptVerificationError("receipt is not tagged COSE_Sign1")
-        if not isinstance(tagged.value, list) or len(tagged.value) != 4:
+        # cbor2 6 decodes arrays inside semantic tags as immutable tuples;
+        # older versions return lists. Both encode the same CBOR array.
+        if not isinstance(tagged.value, (list, tuple)) or len(tagged.value) != 4:
             raise ReceiptVerificationError("receipt COSE_Sign1 shape is invalid")
         protected, unprotected, payload, signature = tagged.value
         if not all(isinstance(value, bytes) for value in (protected, payload, signature)) or unprotected != {}:

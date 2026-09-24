@@ -3,6 +3,10 @@
 !tee_inference/**
 !agent_receipts/
 !agent_receipts/**
+!pki/
+!pki/**
+!transport_security/
+!transport_security/**
 !dfl/
 !dfl/neural_network/
 !dfl/neural_network/**
@@ -13,3 +17,16 @@
 !data/chestmnist/
 !data/chestmnist/test_data/
 !data/chestmnist/test_data/test-data.npz
+
+# A Dockerfile-specific ignore file replaces the root policy. Keep its
+# credential/cache exclusions after the broad package inclusions above.
+**/__pycache__/
+**/.pytest_cache/
+**/*.pyc
+**/.env
+**/.env.*
+pki/state/
+pki/secrets/
+**/*.key
+**/private_key*.pem
+**/*enrollment-token*

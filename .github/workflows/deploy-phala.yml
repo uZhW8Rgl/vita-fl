@@ -58,6 +58,14 @@ jobs:
           terraform_version: "1.9.8"
           terraform_wrapper: false
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deployment helper dependencies
+        run: python3 -m pip install -r phala/requirements.txt
+
       - name: Test deployment helpers before accessing Phala
         run: PYTHONPATH=. python3 -m unittest discover -s phala -p 'test_*.py' -v
 

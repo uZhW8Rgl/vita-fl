@@ -1,0 +1,2 @@
+# Dependencies for the Phala configuration helpers and their tests.
+PyNaCl==1.6.2
