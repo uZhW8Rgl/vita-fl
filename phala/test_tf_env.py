@@ -154,6 +154,11 @@ class TerraformEnvironmentTests(unittest.TestCase):
         self.assertFalse(actual["pki_agent_enrolled"])
         self.assertEqual(json.loads(actual["agent_pop_registry"]), {"master-thesis-agent": "test-public-key"})
 
+    def test_new_ratls_deployment_does_not_require_a_reserved_worker_hostname(self):
+        actual, _ = self.invoke("plan", omit_env=("PKI_WORKER_DNS_NAME",))
+        self.assertIsNone(actual["pki_worker_dns_name"])
+        self.assertEqual(json.loads(actual["agent_pop_registry"]), {"master-thesis-agent": "test-public-key"})
+
     def test_missing_caller_registry_stops_before_terraform(self):
         result, _ = self.invoke("plan", omit_env=("AGENT_POP_REGISTRY",), check=False)
         self.assertNotEqual(result.returncode, 0)

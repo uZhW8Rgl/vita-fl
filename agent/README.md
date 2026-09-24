@@ -27,7 +27,7 @@ scoped to the authenticated subject. There is no anonymous inference mode or
 model actions, jobs and receipt retrieval remain protected.
 
 The application listens on a Unix socket behind nginx inside the TEE. Use the
-reserved Phala `-8443s` TLS-passthrough endpoint. Redirects and unexpected TLS
+registered Phala `-8443s` TLS-passthrough endpoint. Redirects and unexpected TLS
 connection changes fail closed. A new connection requires new evidence.
 
 ## Security configuration

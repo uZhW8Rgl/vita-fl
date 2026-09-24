@@ -94,7 +94,7 @@ services:
       PKI_ROOT_FINGERPRINT: "${pki_root_fingerprint}"
       PKI_SUBJECT: worker-0
       PKI_DNS_NAME: "${pki_worker_dns_name}"
-      TEE_INFERENCE_ORIGIN: "https://${pki_worker_dns_name}"
+      TEE_INFERENCE_ORIGIN: "${pki_worker_dns_name != "" ? "https://${pki_worker_dns_name}" : ""}"
       TEE_MODEL_DIR: /tmp/tee-inference/model
       TEE_JOB_DIR: /tmp/tee-inference/jobs
       CHESTMNIST_TEST_DATA: /dfl/config/chestmnist/test_data/test-data.npz

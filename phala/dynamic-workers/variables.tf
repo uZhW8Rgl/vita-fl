@@ -219,8 +219,8 @@ variable "pki_worker_dns_name" {
   type    = string
   default = ""
   validation {
-    condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+$", var.pki_worker_dns_name))
-    error_message = "pki_worker_dns_name must be the reserved Worker 0 TLS-passthrough DNS name."
+    condition     = var.pki_worker_dns_name == "" || can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+$", var.pki_worker_dns_name))
+    error_message = "pki_worker_dns_name must be empty for runtime discovery or a Worker 0 TLS-passthrough DNS name."
   }
 }
 variable "pki_worker_enrollment_token" {

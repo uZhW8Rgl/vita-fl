@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from itertools import product
 from pathlib import Path
 
 DIRECTORY = Path(__file__).resolve().parent
@@ -30,6 +31,16 @@ class RuntimeBootstrapTests(unittest.TestCase):
             "static": (DIRECTORY / "dstack-compose.worker.phala.tftpl").read_text(),
             "dynamic": (DIRECTORY / "dynamic-workers/worker-compose.tftpl").read_text(),
         }
+        declarations = []
+        for variables_path in (DIRECTORY / "variables.tf", DIRECTORY / "dynamic-workers/variables.tf"):
+            declaration = re.search(
+                r'^variable "pki_worker_dns_name" \{.*?^\}',
+                variables_path.read_text(),
+                re.MULTILINE | re.DOTALL,
+            )
+            self.assertIsNotNone(declaration)
+            declarations.append(declaration.group())
+        self.assertEqual(declarations[0], declarations[1])
         names = set()
         for template in templates.values():
             names.update(re.findall(r"(?<!\$)\$\{([A-Za-z_]\w*)\}", template))
@@ -55,11 +66,13 @@ class RuntimeBootstrapTests(unittest.TestCase):
             for name, template in templates.items():
                 (directory / f"{name}.tftpl").write_text(template)
             (directory / "main.tf").write_text(
+                declarations[0] + "\n"
                 'variable "inference_enabled" { type = bool }\n'
                 'locals { values = jsondecode(file("${path.module}/values.json")) }\n'
                 + "\n".join(
                     f'output "{name}" {{ value = templatefile("${{path.module}}/{name}.tftpl", '
-                    "merge(local.values, { inference_enabled = var.inference_enabled })) }"
+                    "merge(local.values, { inference_enabled = var.inference_enabled, "
+                    "pki_worker_dns_name = var.pki_worker_dns_name })) }"
                     for name in templates
                 )
             )
@@ -77,14 +90,15 @@ class RuntimeBootstrapTests(unittest.TestCase):
                 return result.stdout
 
             terraform("init", "-input=false", "-no-color")
-            for inference_enabled in (False, True):
-                with self.subTest(inference_enabled=inference_enabled):
+            for inference_enabled, hostname in product((False, True), ("", "worker.example.test")):
+                with self.subTest(inference_enabled=inference_enabled, hostname=hostname):
                     terraform(
                         "apply",
                         "-input=false",
                         "-auto-approve",
                         "-no-color",
                         f"-var=inference_enabled={str(inference_enabled).lower()}",
+                        f"-var=pki_worker_dns_name={hostname}",
                     )
                     rendered = json.loads(terraform("output", "-json"))
                     normalized = {}
@@ -97,9 +111,9 @@ class RuntimeBootstrapTests(unittest.TestCase):
                         ]
                         self.assertEqual('"8443:8443"' in compose, inference_enabled)
                         self.assertEqual('PKI_CA_URL: "https://ca.example.test:9443"' in compose, inference_enabled)
-                        self.assertEqual(
-                            'TEE_INFERENCE_ORIGIN: "https://worker.example.test"' in compose, inference_enabled
-                        )
+                        origin = "https://" + hostname if hostname else ""
+                        self.assertEqual(f'TEE_INFERENCE_ORIGIN: "{origin}"' in compose, inference_enabled)
+                        self.assertNotIn('TEE_INFERENCE_ORIGIN: "https://"', compose)
                         self.assertEqual('TEE_TRANSPORT_MODE: "ratls"' in compose, inference_enabled)
                         registry_line = "AGENT_POP_REGISTRY: " + json.dumps(values["agent_pop_registry"])
                         self.assertEqual(registry_line in compose, inference_enabled)

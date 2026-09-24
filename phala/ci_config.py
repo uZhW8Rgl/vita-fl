@@ -7,6 +7,18 @@ import subprocess
 import sys
 from pathlib import Path
 
+if __package__:
+    from .ratls_config import read_env_file, validate_ratls_config
+else:
+    from ratls_config import read_env_file, validate_ratls_config
+
+RATLS_MIGRATION_HINT = (
+    "Migrate the selected private deployment profile to RA-TLS, then update PHALA_ENV_CONTENT "
+    "or re-encrypt PHALA_ENV_ENCRYPTED_FILE (default: phala/deploy.env.gpg). "
+    "Preserve existing Sello, worker and state keys. "
+    "See phala/README.md#migrating-an-existing-deployment-to-ra-tls."
+)
+
 
 def prepare_config(environ: dict[str, str], root: Path) -> dict[str, Path]:
     """Write a private environment, supporting GitHub's 48 KB secret limit."""
@@ -22,41 +34,52 @@ def prepare_config(environ: dict[str, str], root: Path) -> dict[str, Path]:
     environment_file = temporary / "deployment.env"
     environment_file.touch(mode=0o600)
     environment_file.chmod(0o600)
-    if content:
-        environment_file.write_text(content, encoding="utf-8")
-    else:
-        source = root / environ.get("PHALA_ENV_ENCRYPTED_FILE", "phala/deploy.env.gpg")
-        if not environ.get("PHALA_ENV_ENCRYPTED_FILE"):
-            source = root / "phala/deploy.env.gpg"
-        source = source.resolve()
-        if not source.is_relative_to(root.resolve()) or not source.is_file():
-            raise ValueError("PHALA_ENV_ENCRYPTED_FILE must name an encrypted file in the checkout.")
-        # A passphrase argument would be exposed in the process list. GitHub
-        # does not mask values inside this large decrypted file automatically.
-        result = subprocess.run(
-            [
-                "gpg",
-                "--batch",
-                "--yes",
-                "--pinentry-mode",
-                "loopback",
-                "--passphrase-fd",
-                "0",
-                "--output",
-                str(environment_file),
-                "--decrypt",
-                str(source),
-            ],
-            input=passphrase + "\n",
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode:
-            environment_file.unlink(missing_ok=True)
-            raise ValueError("Could not decrypt the deployment environment; check file and passphrase.")
-    if not environment_file.stat().st_size:
-        raise ValueError("The deployment environment is empty.")
+    try:
+        if content:
+            environment_file.write_text(content, encoding="utf-8")
+        else:
+            source = root / environ.get("PHALA_ENV_ENCRYPTED_FILE", "phala/deploy.env.gpg")
+            if not environ.get("PHALA_ENV_ENCRYPTED_FILE"):
+                source = root / "phala/deploy.env.gpg"
+            source = source.resolve()
+            if not source.is_relative_to(root.resolve()) or not source.is_file():
+                raise ValueError("PHALA_ENV_ENCRYPTED_FILE must name an encrypted file in the checkout.")
+            # A passphrase argument would be exposed in the process list. GitHub
+            # does not mask values inside this large decrypted file automatically.
+            result = subprocess.run(
+                [
+                    "gpg",
+                    "--batch",
+                    "--yes",
+                    "--pinentry-mode",
+                    "loopback",
+                    "--passphrase-fd",
+                    "0",
+                    "--output",
+                    str(environment_file),
+                    "--decrypt",
+                    str(source),
+                ],
+                input=passphrase + "\n",
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode:
+                raise ValueError("Could not decrypt the deployment environment; check file and passphrase.")
+        if not environment_file.stat().st_size:
+            raise ValueError("The deployment environment is empty.")
+        try:
+            validate_ratls_config(read_env_file(environment_file))
+        except UnicodeError:
+            raise ValueError("The deployment environment must be valid UTF-8.") from None
+        except ValueError as error:
+            raise ValueError(f"{error}\n{RATLS_MIGRATION_HINT}") from None
+    except BaseException:
+        # GITHUB_ENV has not been written yet, so workflow cleanup cannot rely
+        # on PHALA_ENV_FILE when materialization or preflight fails here.
+        environment_file.unlink(missing_ok=True)
+        raise
     return {"PHALA_ENV_FILE": environment_file}
 
 

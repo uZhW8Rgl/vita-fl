@@ -155,7 +155,11 @@ class CombinedWorkerComposeTests(unittest.TestCase):
             self.assertNotIn('"8080:8080"', template)
             self.assertNotIn("SELLO_REQUIRED", template)
             self.assertTrue(
-                any('TEE_INFERENCE_ORIGIN: "https://${pki_worker_dns_name}"' in body for body in conditional_bodies)
+                any(
+                    'TEE_INFERENCE_ORIGIN: "${pki_worker_dns_name != "" ? "https://${pki_worker_dns_name}" : ""}"'
+                    in body
+                    for body in conditional_bodies
+                )
             )
             self.assertIn('- "8001:8001"', template)
             self.assertIn(

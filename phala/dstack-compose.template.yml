@@ -83,13 +83,13 @@ services:
       TEE_TRANSPORT_MODE: "ratls"
       # Replace this public key before deriving the admitted Compose policy.
       AGENT_POP_REGISTRY: '{"master-thesis-agent":"REPLACE_WITH_AGENT_POP_PUBLIC_KEY"}'
-      # Reserve the application hostname first; use the 8443s TLS-passthrough URL.
-      TEE_INFERENCE_ORIGIN: "https://REPLACE_WITH_WORKER_TLS_HOSTNAME"
+      # Empty resolves the local dstack app ID and gateway to its 8443s TLS-passthrough URL.
+      TEE_INFERENCE_ORIGIN: ""
       PKI_STATE_DIR: /var/lib/vita-fl/tls
       PKI_CA_URL: "https://REPLACE_WITH_CA_HOSTNAME"
       PKI_ROOT_FINGERPRINT: "REPLACE_WITH_ROOT_CA_SHA256"
       PKI_SUBJECT: worker-0
-      PKI_DNS_NAME: "REPLACE_WITH_WORKER_TLS_HOSTNAME"
+      PKI_DNS_NAME: ""
       EXPECTED_RUNTIME_RPC_URL: "REPLACE_WITH_RPC_URL"
       TEE_MODEL_DIR: /tmp/tee-inference/model
       TEE_JOB_DIR: /tmp/tee-inference/jobs

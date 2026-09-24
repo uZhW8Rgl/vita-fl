@@ -213,8 +213,7 @@ configure_phala_agent() {
   fi
   export TF_VAR_agent_pop_registry
   TF_VAR_agent_pop_registry=$(require_env_value "AGENT_POP_REGISTRY")
-  export TF_VAR_pki_worker_dns_name
-  TF_VAR_pki_worker_dns_name=$(require_env_value "PKI_WORKER_DNS_NAME")
+  append_var_if_set "pki_worker_dns_name" "PKI_WORKER_DNS_NAME"
   append_var_if_set "pki_worker_enrollment_token" "PKI_WORKER_ENROLLMENT_TOKEN"
   append_var_if_set "pki_agent_enrollment_token" "PKI_AGENT_ENROLLMENT_TOKEN"
   append_var_if_set "pki_agent_subject" "PKI_AGENT_SUBJECT"

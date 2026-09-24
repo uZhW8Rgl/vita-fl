@@ -63,7 +63,7 @@
 # HTTPS inference endpoint from DeviceRegistry. This override is for explicit
 # diagnostics only; it must match the authorized receiver record.
 # tee_inference_url_override = "https://reserved-worker-app-id-8443s.dstack-region.phala.network"
-# RA-TLS is explicit in the Phala templates; reserve the worker app/domain first.
+# RA-TLS is explicit in the Phala templates; the worker derives its own app hostname at startup.
 # agent_pop_registry = jsonencode({ "master-thesis-agent" = "APPROVED_POP_PUBLIC_KEY" })
 # ratls_allowed_platform_measurements = jsonencode([{ mrtd = "96_HEX", rtmr0 = "96_HEX", rtmr1 = "96_HEX", rtmr2 = "96_HEX" }])
 # phala_attestation_verify_url = "https://cloud-api.phala.com/api/v1/attestations/verify"
@@ -71,6 +71,7 @@
 # The private CA below applies only to the legacy mTLS/ZK path.
 # pki_ca_url = "https://ca.example.test:9000"
 # pki_root_fingerprint = "REPLACE_WITH_64_HEX_ROOT_CERTIFICATE_SHA256"
+# Optional hostname override; empty uses the local dstack app ID and gateway domain.
 # pki_worker_dns_name = "reserved-worker-app-id-8443s.dstack-region.phala.network"
 # pki_agent_subject = "master-thesis-agent"
 # Supply one-use PKI_WORKER_ENROLLMENT_TOKEN / PKI_AGENT_ENROLLMENT_TOKEN privately

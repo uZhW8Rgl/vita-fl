@@ -329,6 +329,22 @@ source "${RUNTIME_ENV_FILE}"
 rm -f "${RUNTIME_ENV_FILE}"
 RUNTIME_ENV_FILE=""
 
+# Resolve once before either public service starts: Node registers this exact
+# origin and the inference receiver binds the same origin into its evidence.
+if inference_enabled; then
+    transport_mode="${TEE_TRANSPORT_MODE:-mtls}"
+    transport_mode="${transport_mode#"${transport_mode%%[![:space:]]*}"}"
+    transport_mode="${transport_mode%"${transport_mode##*[![:space:]]}"}"
+    case "${transport_mode,,}" in
+        ratls)
+            TEE_INFERENCE_ORIGIN=$("${PYTHON_BIN}" -m pki.ratls_runtime origin)
+            export TEE_INFERENCE_ORIGIN
+            ;;
+        mtls) ;;
+        *) echo "TEE_TRANSPORT_MODE must be mtls or ratls" >&2; exit 1 ;;
+    esac
+fi
+
 # The Node process is the single owner of participant-key initialization. On
 # Phala it derives the wrapping key through dstack.sock, unseals or creates the
 # RSA key, and materializes only run-scoped PEM files for the co-located
@@ -372,7 +388,7 @@ if inference_enabled; then
         fi
         sleep 0.2
     done
-    echo "TEE inference service available through mandatory mTLS on port 8443."
+    echo "TEE inference service available through ${TEE_TRANSPORT_MODE:-mtls} on port 8443."
 fi
 
 if inference_enabled; then

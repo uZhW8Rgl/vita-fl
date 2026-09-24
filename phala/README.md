@@ -37,20 +37,16 @@ See the [Phala verification API](https://docs.phala.com/phala-cloud/phala-cloud-
 
 ### Provision the agent identity and TLS origin
 
-Reserve the Worker 0 application's exact **`-8443s` TLS-passthrough hostname**
-before creating the measured Compose policy, for example:
-
-```text
-reserved-worker-app-id-8443s.dstack-region.phala.network
-```
+Worker 0 uses its exact **`-8443s` TLS-passthrough hostname**. By default it
+builds this endpoint at startup from its local dstack app ID and gateway domain,
+so an empty Phala workspace needs no advance hostname reservation. Set
+`PKI_WORKER_DNS_NAME` only to override this with an already provisioned hostname.
 
 The `s` keeps TLS terminated by nginx inside the measured worker container. A
 normal HTTP-proxy endpoint terminates TLS outside that boundary and cannot
 satisfy the receiver-key binding. The application listens only on
-`/run/vita-fl/inference.sock`; nginx exposes port 8443. The configured hostname
-is retained under the compatibility name `PKI_WORKER_DNS_NAME` and determines
-`TEE_INFERENCE_ORIGIN` and the registered receiver endpoint. Maintaining this
-reserved origin remains an operator responsibility.
+`/run/vita-fl/inference.sock`; nginx exposes port 8443. The resolved
+`TEE_INFERENCE_ORIGIN` is shared by the node registration and inference service.
 
 The operator authorizes each agent subject and independently provisions its
 PoP public key. `AGENT_POP_REGISTRY` is embedded directly in measured Compose
@@ -64,7 +60,7 @@ Configure the following in the selected private `.env.phala.anvil` profile:
 
 | Variable | Purpose |
 | --- | --- |
-| `PKI_WORKER_DNS_NAME` | Reserved Worker 0 TLS-passthrough hostname |
+| `PKI_WORKER_DNS_NAME` | Optional explicit Worker 0 TLS-passthrough hostname; otherwise derived inside its TEE |
 | `PKI_AGENT_SUBJECT` | Authorized subject; also supplies `SELLO_OWNER_SUBJECT` |
 | `AGENT_POP_SIGNING_SEED` | Agent-only Ed25519 seed for signing request proofs |
 | `AGENT_POP_REGISTRY` | Measured JSON map from authorized subjects to base64url Ed25519 public keys |
@@ -94,6 +90,70 @@ into an allowlist merely to make a failed request pass. `[]` in the example is
 intentionally unusable. RTMR3 is checked separately against the event log and
 application policy. The image digest and configured chain/contract/RPC anchors
 remain required application-policy inputs.
+
+### Migrating an existing deployment to RA-TLS
+
+For the existing `dstack-dev-0.5.9` deployment, the repository already selects
+`data/dstack-dev-0.5.9-de9c74f0-reference-tdx-quote` as the owner-approved OS
+reference for the on-chain verifier. The matching RA-TLS allowlist is available
+in `phala/ratls-platform-policy.dstack-dev-0.5.9.json`. It contains only MRTD and
+RTMR0--2 extracted from that same reference; it does not add a new trusted OS or
+approve a current worker quote. The source file's SHA-256 is
+`5892e94af19d28a15c2b9d30a0c46224e801d095479838010a0a63dda9450e73`.
+Use this policy only with that explicitly selected base-runtime reference.
+
+Updating the code does not update `PHALA_ENV_CONTENT` or the encrypted
+`phala/deploy.env.gpg`. All image publishers use that same selected private
+profile. A missing `AGENT_POP_REGISTRY` therefore blocks every publisher's
+deployment even after its image was built successfully.
+
+Use the existing complete private profile and the matching independently
+approved OS measurement JSON file:
+
+```sh
+python -m pip install -r phala/requirements.txt
+python phala/migrate_ratls_env.py \
+  --env-file .env.phala.anvil \
+  --platform-measurements-file phala/ratls-platform-policy.dstack-dev-0.5.9.json
+python phala/migrate_ratls_env.py --env-file .env.phala.anvil --check
+```
+
+No app-ID reservation is needed for a new Phala deployment. Without an explicit
+`PKI_WORKER_DNS_NAME`, the worker derives its origin at startup from its local
+dstack `/Info` app ID and `DSTACK_GATEWAY_DOMAIN` (or the gateway suffix of its
+Compose-configured `KUBO_API`). The result is
+`https://<app-id>-8443s.<gateway-domain>`; the node registration, inference
+service and TLS certificate use that same origin. Invalid metadata stops
+startup. An existing reserved/custom hostname can still be supplied with
+`--worker-dns-name`; a configured origin is never silently replaced.
+
+The migration generates the enabled agent's independent PoP seed once, derives
+its public registry entry, and preserves existing Sello, HPKE, worker and state
+keys. It retains other registered agents and refuses to replace a conflicting
+identity. Repeating it does not rotate keys. It writes the complete validated
+profile atomically with private permissions and prints only changed variable
+names. A missing or invalid platform policy leaves the original profile
+untouched. When the bundled agent is disabled, provision the external agent's
+public registry explicitly; this helper does not invent an external identity.
+Do not use the full `generate_sello_env.py` output to migrate an existing profile:
+that generator creates new Sello and owner keys as well.
+
+For the encrypted configuration path, re-encrypt the updated private profile
+using the same environment passphrase already stored in GitHub. Generate a new
+ciphertext file first and replace the old one only if encryption succeeds:
+
+```sh
+gpg --symmetric --cipher-algo AES256 \
+  --output phala/deploy.env.gpg.new .env.phala.anvil && \
+  mv phala/deploy.env.gpg.new phala/deploy.env.gpg
+```
+
+Commit only the encrypted file, along with any code changes. With
+`PHALA_ENV_CONTENT`, replace that environment secret with the complete updated
+profile instead. The env passphrase and the shared-state passphrase are separate;
+no shared-state reset is required. CI now validates the decrypted RA-TLS policy
+before exporting its path or starting a deployment. Missing fields and invalid
+bindings are reported without printing keys or policy values.
 
 ### PKI compatibility, key changes and rollout
 

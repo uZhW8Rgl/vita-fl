@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import subprocess
@@ -12,6 +13,8 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
+
+from nacl.signing import SigningKey
 
 from phala import ci_config, ci_deploy
 from phala.github_state import GitHubState, StateError
@@ -260,11 +263,99 @@ class ConfigurationTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        agent_key = SigningKey(bytes.fromhex("11" * 32))
+        issuer_key = SigningKey(bytes.fromhex("22" * 32))
+        self.config = {
+            "PHALA_CLOUD_API_KEY": "private-value",
+            "ENABLE_PHALA_AGENT": "true",
+            "PKI_AGENT_SUBJECT": "master-thesis-agent",
+            "PKI_WORKER_DNS_NAME": "reserved-8443s.dstack-test.phala.network",
+            "AGENT_POP_SIGNING_SEED": bytes(agent_key).hex(),
+            "AGENT_POP_REGISTRY": json.dumps(
+                {
+                    "master-thesis-agent": base64.urlsafe_b64encode(bytes(agent_key.verify_key)).rstrip(b"=").decode(),
+                }
+            ),
+            "RATLS_ALLOWED_PLATFORM_MEASUREMENTS": json.dumps(
+                [{name: "ab" * 48 for name in ("mrtd", "rtmr0", "rtmr1", "rtmr2")}]
+            ),
+            "SELLO_TOKEN_ISSUER_SIGNING_SEED": bytes(issuer_key).hex(),
+            "SELLO_TOKEN_ISSUER_PUBLIC_KEY": bytes(issuer_key.verify_key).hex(),
+            "SELLO_OWNER_HPKE_PRIVATE_KEY": "33" * 32,
+            "SELLO_SCITT_URL": "https://scitt.example.test",
+        }
+        self.valid_content = "\n".join(f"{name}={value}" for name, value in self.config.items()) + "\n"
         self.environ = {
             "RUNNER_TEMP": str(self.root / "temporary"),
-            "PHALA_ENV_CONTENT": "PHALA_CLOUD_API_KEY=private-value\n",
+            "PHALA_ENV_CONTENT": self.valid_content,
             "PHALA_STATE_PASSPHRASE": "state-encryption-passphrase",
         }
+
+    def incomplete_content(self):
+        missing = {"AGENT_POP_REGISTRY", "AGENT_POP_SIGNING_SEED", "RATLS_ALLOWED_PLATFORM_MEASUREMENTS"}
+        return "\n".join(f"{name}={value}" for name, value in self.config.items() if name not in missing) + "\n"
+
+    def assert_safe_migration_error(self, message):
+        for name in ("AGENT_POP_REGISTRY", "AGENT_POP_SIGNING_SEED", "RATLS_ALLOWED_PLATFORM_MEASUREMENTS"):
+            self.assertIn(name, message)
+        self.assertIn("phala/README.md#migrating-an-existing-deployment-to-ra-tls", message)
+        self.assertIn("PHALA_ENV_CONTENT", message)
+        self.assertIn("PHALA_ENV_ENCRYPTED_FILE", message)
+        self.assertIn("Preserve existing Sello", message)
+        for private in ("private-value", "state-encryption-passphrase", "secret-passphrase", "22" * 32, "33" * 32):
+            self.assertNotIn(private, message)
+        self.assertFalse((Path(self.environ["RUNNER_TEMP"]) / "vita-fl-phala/deployment.env").exists())
+
+    def test_plain_incomplete_ratls_profile_reports_all_missing_values_and_removes_plaintext(self):
+        self.environ["PHALA_ENV_CONTENT"] = self.incomplete_content()
+        with self.assertRaises(ValueError) as raised:
+            ci_config.prepare_config(self.environ, self.root)
+        self.assert_safe_migration_error(str(raised.exception))
+
+    def test_encrypted_incomplete_ratls_profile_reports_all_missing_values_and_removes_plaintext(self):
+        ciphertext = self.root / "deployment.env.gpg"
+        ciphertext.write_text("encrypted")
+        self.environ.update(
+            PHALA_ENV_CONTENT="",
+            PHALA_ENV_PASSPHRASE="secret-passphrase",
+            PHALA_ENV_ENCRYPTED_FILE=ciphertext.name,
+        )
+
+        def decrypt(command, **kwargs):
+            Path(command[command.index("--output") + 1]).write_text(self.incomplete_content())
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with patch.object(ci_config.subprocess, "run", decrypt), self.assertRaises(ValueError) as raised:
+            ci_config.prepare_config(self.environ, self.root)
+        self.assert_safe_migration_error(str(raised.exception))
+        self.assertEqual(ciphertext.read_text(), "encrypted")
+
+    def test_cli_preflight_failure_does_not_export_github_environment_or_secret_values(self):
+        github_env = self.root / "github.env"
+        environment = dict(os.environ, **self.environ, GITHUB_ENV=str(github_env))
+        environment["PHALA_ENV_CONTENT"] = self.incomplete_content()
+        result = subprocess.run(
+            [sys.executable, str(Path(ci_config.__file__))],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertFalse(github_env.exists())
+        self.assert_safe_migration_error(result.stderr)
+
+    def test_invalid_private_seed_does_not_leak_its_value_and_removes_plaintext(self):
+        self.environ["PHALA_ENV_CONTENT"] = self.valid_content.replace(
+            "AGENT_POP_SIGNING_SEED=" + "11" * 32,
+            "AGENT_POP_SIGNING_SEED=do-not-print-this-private-input",
+        )
+        with self.assertRaises(ValueError) as raised:
+            ci_config.prepare_config(self.environ, self.root)
+        self.assertIn("AGENT_POP_SIGNING_SEED", str(raised.exception))
+        self.assertNotIn("do-not-print-this-private-input", str(raised.exception))
+        self.assertFalse((Path(self.environ["RUNNER_TEMP"]) / "vita-fl-phala/deployment.env").exists())
 
     def test_env_written_privately_without_backend_or_extra_files(self):
         result = ci_config.prepare_config(self.environ, self.root)
@@ -318,7 +409,9 @@ class ConfigurationTests(unittest.TestCase):
         def decrypt(command, **kwargs):
             self.assertNotIn("secret-passphrase", command)
             self.assertEqual(kwargs["input"], "secret-passphrase\n")
-            Path(command[command.index("--output") + 1]).write_text("LARGE_CONFIG=" + "x" * 100_000)
+            Path(command[command.index("--output") + 1]).write_text(
+                self.valid_content + "LARGE_CONFIG=" + "x" * 100_000
+            )
             return subprocess.CompletedProcess(command, 0, "", "")
 
         with patch.object(ci_config.subprocess, "run", decrypt):
