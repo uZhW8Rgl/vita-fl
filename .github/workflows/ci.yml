@@ -68,7 +68,7 @@ jobs:
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
           python -m pip install -r zk_inference/requirements.txt
           python -m pip install -r agent/requirements.txt
-          python -m pip install -r control_api/requirements.txt -r phala/requirements.txt
+          python -m pip install -r control_api/requirements-test.txt -r phala/requirements.txt
           python -m pip install -e dfl/neural_network
 
       - name: Run Ruff lint
