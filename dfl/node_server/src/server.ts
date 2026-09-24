@@ -452,12 +452,14 @@ function currentSelloReceiptKey() {
     return `0x${activeSelloReceiptPublicKey.toString("hex")}`;
 }
 
-function ownTeeInferenceEndpoint(appId) {
-    return dstackHttpsEndpoint({
-        appId,
-        port: 8080,
-        gatewayDomain: gatewayDomainFromEnvironment(),
-    });
+function ownTeeInferenceEndpoint(_appId) {
+    const configured = String(process.env.TEE_INFERENCE_ORIGIN || '').trim();
+    const endpoint = new URL(configured);
+    if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password ||
+        endpoint.search || endpoint.hash || (endpoint.pathname !== '/' && endpoint.pathname !== '')) {
+        throw new Error('TEE_INFERENCE_ORIGIN must pin an origin-only HTTPS mTLS endpoint');
+    }
+    return endpoint.origin;
 }
 
 async function uploadLocalModel(

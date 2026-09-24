@@ -14,6 +14,12 @@ from typing import Any
 from prometheus_client import Gauge
 
 from agent_receipts.scitt import public_registration
+from transport_security.client import open_receiver
+
+try:
+    from .sello_client import begin_receiver_call, complete_receiver_call, validate_receiver_security
+except ImportError:
+    from sello_client import begin_receiver_call, complete_receiver_call, validate_receiver_security
 
 try:
     from .agent_skills import (
@@ -140,16 +146,15 @@ def _remote_call(
         raise RuntimeError("ZK_INFERENCE_URL is not set and local zk_inference tools are unavailable.")
 
     data = json.dumps(payload).encode("utf-8")
-    receiver_call = None
-    if receipt_action is not None:
-        try:
-            from .sello_client import begin_receiver_call
-        except ImportError:
-            from sello_client import begin_receiver_call
-        receiver_call = begin_receiver_call(receipt_action, "zk-inference", receipt_input or data)
-    headers = {"Content-Type": "application/json"}
-    if receiver_call is not None:
-        headers.update(receiver_call.headers)
+    if receipt_action is None:
+        raise RuntimeError("Legacy receiver endpoints are unavailable; use the authenticated job tools")
+    receiver_call = begin_receiver_call(
+        receipt_action,
+        "zk-inference",
+        receipt_input if receipt_input is not None else data,
+        receiver_base_url=ZK_INFERENCE_URL,
+    )
+    headers = {"Content-Type": "application/json", **receiver_call.headers}
     request = urllib.request.Request(
         f"{ZK_INFERENCE_URL}/{endpoint.lstrip('/')}",
         data=data,
@@ -157,29 +162,19 @@ def _remote_call(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_receiver(request, timeout=timeout, identity=receiver_call.client_identity) as response:
             body = response.read()
-            receipt_result = None
-            if receiver_call is not None:
-                try:
-                    from .sello_client import complete_receiver_call
-                except ImportError:
-                    from sello_client import complete_receiver_call
-                receipt_result = complete_receiver_call(
-                    receiver_call, response.headers, body, response.status, receiver_base_url=ZK_INFERENCE_URL
-                )
+            receipt_result = complete_receiver_call(
+                receiver_call, response.headers, body, response.status, receiver_base_url=ZK_INFERENCE_URL
+            )
             result = json.loads(body.decode("utf-8"))
-            if receipt_result is not None:
-                result["tool_receipt"] = receipt_result
+            result["tool_receipt"] = receipt_result
             return result
     except urllib.error.HTTPError as exc:
         body_bytes = exc.read()
-        if receiver_call is not None:
-            try:
-                from .sello_client import complete_receiver_call
-            except ImportError:
-                from sello_client import complete_receiver_call
-            complete_receiver_call(receiver_call, exc.headers, body_bytes, exc.code, receiver_base_url=ZK_INFERENCE_URL)
+        complete_receiver_call(
+            receiver_call, exc.headers, body_bytes, exc.code, receiver_base_url=ZK_INFERENCE_URL
+        )
         body = body_bytes.decode("utf-8", errors="replace")
         raise RuntimeError(f"zk_inference service returned HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
@@ -191,12 +186,16 @@ def _remote_get_bytes(endpoint: str, timeout: int = 120) -> bytes:
         raise RuntimeError("ZK inference is disabled in this deployment. TEE model bundles use Worker 0.")
     if not ZK_INFERENCE_URL:
         raise RuntimeError("ZK_INFERENCE_URL is not set and local zk_inference tools are unavailable.")
+    receiver_call = begin_receiver_call(
+        "receipts:read", "zk-inference", b"", receiver_base_url=ZK_INFERENCE_URL
+    )
     request = urllib.request.Request(
         f"{ZK_INFERENCE_URL}/{endpoint.lstrip('/')}",
+        headers=receiver_call.headers,
         method="GET",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_receiver(request, timeout=timeout, identity=receiver_call.client_identity) as response:
             body = response.read()
             if response.headers.get_content_type() != "application/cbor":
                 raise RuntimeError("zk_inference transparency bundle is not CBOR")
@@ -532,4 +531,5 @@ def run_verified_tee_inference(
 
 
 if __name__ == "__main__":
+    validate_receiver_security()
     mcp.run()

@@ -149,9 +149,14 @@ class CombinedWorkerComposeTests(unittest.TestCase):
         for template in (self.static_template, self.dynamic_template):
             conditional_bodies = [match.group("body") for match in conditional_receiver.finditer(template)]
             self.assertTrue(any("/tmp/tee-inference:size=256m,mode=0700" in body for body in conditional_bodies))
-            self.assertTrue(any('"8080:8080"' in body for body in conditional_bodies))
+            self.assertTrue(any('"8443:8443"' in body for body in conditional_bodies))
             self.assertTrue(any('SELLO_SERVICE_KEY_PROVIDER: "dstack"' in body for body in conditional_bodies))
             self.assertNotIn("SELLO_SERVICE_SIGNING_SEED", template)
+            self.assertNotIn('"8080:8080"', template)
+            self.assertNotIn("SELLO_REQUIRED", template)
+            self.assertTrue(
+                any('TEE_INFERENCE_ORIGIN: "https://${pki_worker_dns_name}"' in body for body in conditional_bodies)
+            )
             self.assertIn('- "8001:8001"', template)
             self.assertIn(
                 'TEE_INFERENCE_ENABLED: "${inference_enabled ? 1 : 0}"',
@@ -288,20 +293,62 @@ class CombinedWorkerComposeTests(unittest.TestCase):
         )
         self.assertIsNotNone(match)
         body = match.group("body")
-        self.assertIn('"-8080."', body)
-        self.assertIn('}:8080"', body)
+        self.assertIn("var.pki_worker_dns_name", body)
+        self.assertNotIn("8080", body)
+        self.assertNotIn("phala_app.dfl_worker[0].endpoint", body)
+
+    def test_measured_worker_security_inputs_match_policy_references_and_live_workers(self) -> None:
+        root_module = (ROOT / "main.tf").read_text(encoding="utf-8")
+        dynamic_module = (ROOT / "dynamic-workers/main.tf").read_text(encoding="utf-8")
+        reference = re.search(
+            r"worker_policy_reference_inputs\s*=\s*\{(?P<body>.*?)\n  \}",
+            root_module,
+            re.DOTALL,
+        ).group("body")
+        for variable, environment_name in (
+            ("pki_ca_url", "PKI_CA_URL"),
+            ("pki_root_fingerprint", "PKI_ROOT_FINGERPRINT"),
+            ("pki_worker_dns_name", "PKI_DNS_NAME"),
+        ):
+            assignment = rf"{variable}\s*=\s*var\.{variable}"
+            self.assertRegex(reference, assignment)
+            self.assertRegex(dynamic_module, assignment)
+            for template in (self.static_template, self.dynamic_template):
+                self.assertIn(f'{environment_name}: "${{{variable}}}"', template)
+        self.assertRegex(reference, r"agent_pop_registry\s*=\s*var\.agent_pop_registry")
+        self.assertRegex(dynamic_module, r"agent_pop_registry\s*=\s*var\.agent_pop_registry")
+        for template in (self.static_template, self.dynamic_template):
+            self.assertIn('TEE_TRANSPORT_MODE: "ratls"', template)
+            self.assertIn("AGENT_POP_REGISTRY: ${jsonencode(agent_pop_registry)}", template)
+            self.assertNotIn("PKI_ENROLLMENT_TOKEN:", template)
+            self.assertNotIn("AGENT_POP_SIGNING_SEED", template)
+        self.assertNotIn("sello_required", root_module)
+        self.assertNotIn("sello_required", dynamic_module)
+
+    def test_worker_and_agent_start_through_pki_runtime(self) -> None:
+        supervisor = (REPOSITORY_ROOT / "dfl/start_node_neural_network.sh").read_text(encoding="utf-8")
+        contracts = (ROOT / "dstack-compose.contracts.phala.tftpl").read_text(encoding="utf-8")
+        dockerfile = (REPOSITORY_ROOT / "dfl/Dockerfile").read_text(encoding="utf-8")
+        self.assertIn('-m pki.runtime run worker -- "${PYTHON_BIN}" -m tee_inference.service', supervisor)
+        self.assertRegex(contracts, r"- pki.runtime\s+- run\s+- agent\s+- --\s+- python\s+- agent/run_agent.py")
+        self.assertIn('SELLO_OWNER_SUBJECT: "${pki_agent_subject}"', contracts)
+        self.assertIn('PKI_SUBJECT: "${pki_agent_subject}"', contracts)
+        self.assertIn("COPY transport_security", dockerfile)
+        self.assertIn("COPY pki", dockerfile)
+        self.assertIn("nginx", dockerfile)
 
     def test_image_healthcheck_uses_inference_after_key_materialization(self) -> None:
         dockerfile = (REPOSITORY_ROOT / "dfl/Dockerfile").read_text(encoding="utf-8")
         healthcheck = (REPOSITORY_ROOT / "dfl/container_healthcheck.sh").read_text(encoding="utf-8")
 
-        self.assertIn("EXPOSE 8001 8080", dockerfile)
+        self.assertIn("EXPOSE 8001 8443", dockerfile)
         self.assertIn('CMD ["/dfl/container_healthcheck.sh"]', dockerfile)
         self.assertIn(
             "${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH:-/run/vita-fl/participant-private.pem}",
             healthcheck,
         )
-        self.assertIn("http://127.0.0.1:8080/healthz", healthcheck)
+        self.assertIn("--unix-socket /run/vita-fl/inference.sock", healthcheck)
+        self.assertNotIn("127.0.0.1:8080", healthcheck)
         self.assertIn("http://127.0.0.1:8000/health", healthcheck)
 
 

@@ -64,7 +64,7 @@ jobs:
       - name: Install Python tooling and dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ruff
+          python -m pip install ruff pytest
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
           python -m pip install -r zk_inference/requirements.txt
           python -m pip install -r agent/requirements.txt
@@ -72,10 +72,10 @@ jobs:
           python -m pip install -e dfl/neural_network
 
       - name: Run Ruff lint
-        run: ruff check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log
+        run: ruff check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security
 
       - name: Check formatting
-        run: ruff format --check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log
+        run: ruff format --check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security
 
       - name: Python syntax smoke check
         run: |
@@ -106,6 +106,9 @@ jobs:
       - name: Run agent unit tests
         run: PYTHONPATH=. python -m unittest discover -s agent/tests -v
 
+      - name: Run inference authorization and receipt tests
+        run: PYTHONPATH=. python -m pytest -q tee_inference/tests
+
       - name: Run ZK inference unit tests
         run: PYTHONPATH=. python -m unittest discover -s zk_inference/tests -v
 
@@ -123,6 +126,51 @@ jobs:
 
       - name: Run DFL container integration tests
         run: PYTHONPATH=. python -m unittest discover -s dfl/tests -v
+
+  transport-pki:
+    name: RA-TLS, mTLS and Certificate Lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install transport test dependencies
+        run: |
+          python -m pip install pytest 'cryptography>=42' pynacl cbor2 fastapi httpx requests 'numpy>=2.0' 'pyhpke>=0.6.4,<0.7'
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nginx
+
+      - name: Install pinned Smallstep test binaries
+        run: |
+          mkdir -p "$RUNNER_TEMP/vita-pki/bin" "$RUNNER_TEMP/vita-pki/cli" "$RUNNER_TEMP/vita-pki/ca"
+          curl --fail --location --retry 3 \
+            https://github.com/smallstep/cli/releases/download/v0.28.7/step_linux_0.28.7_amd64.tar.gz \
+            --output "$RUNNER_TEMP/vita-pki/cli.tar.gz"
+          curl --fail --location --retry 3 \
+            https://github.com/smallstep/certificates/releases/download/v0.28.4/step-ca_linux_0.28.4_amd64.tar.gz \
+            --output "$RUNNER_TEMP/vita-pki/ca.tar.gz"
+          printf '%s  %s\n' \
+            52e586351a2e05342a53fbaa9f91ce7b11622872a8a7a68ec27e9198d2d03460 "$RUNNER_TEMP/vita-pki/cli.tar.gz" \
+            ddde5f7efb55913b6fee76056003e35424859e01cabebeaa7b8472bd7211996d "$RUNNER_TEMP/vita-pki/ca.tar.gz" \
+            | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/vita-pki/cli.tar.gz" -C "$RUNNER_TEMP/vita-pki/cli"
+          tar -xzf "$RUNNER_TEMP/vita-pki/ca.tar.gz" -C "$RUNNER_TEMP/vita-pki/ca"
+          install -m 0755 "$RUNNER_TEMP/vita-pki/cli/step_0.28.7/bin/step" "$RUNNER_TEMP/vita-pki/bin/step"
+          install -m 0755 "$RUNNER_TEMP/vita-pki/ca/step-ca" "$RUNNER_TEMP/vita-pki/bin/step-ca"
+          echo "$RUNNER_TEMP/vita-pki/bin" >> "$GITHUB_PATH"
+
+      - name: Test TLS, enrollment, renewal, and active revocation
+        run: |
+          command -v step
+          command -v step-ca
+          command -v nginx
+          PYTHONPATH=. python -m pytest -q transport_security/tests pki/tests
 
   node-server:
     name: Node Server
@@ -253,7 +301,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Start core runtime services
-        run: docker compose --env-file .env.example --env-file .env.phala.anvil.example -f compose.yml up -d --build anvil ipfs zk-inference
+        run: docker compose --env-file .env.example --env-file .env.phala.anvil.example -f compose.yml up -d --build anvil ipfs
 
       - name: Wait for Anvil JSON-RPC
         run: |
@@ -282,26 +330,13 @@ jobs:
           echo "IPFS API did not become ready in time."
           exit 1
 
-      - name: Wait for zk-inference health endpoint
-        run: |
-          for attempt in $(seq 1 30); do
-            if docker compose --env-file .env.example --env-file .env.phala.anvil.example -f compose.yml exec -T zk-inference \
-              curl -fsS http://127.0.0.1:8090/health >/tmp/zk-health.json; then
-              cat /tmp/zk-health.json
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "zk-inference HTTP service did not become ready in time."
-          exit 1
-
       - name: Show compose status
         if: always()
         run: docker compose --env-file .env.example --env-file .env.phala.anvil.example -f compose.yml ps
 
       - name: Show compose logs on failure
         if: failure()
-        run: docker compose --env-file .env.example --env-file .env.phala.anvil.example -f compose.yml logs --no-color anvil ipfs zk-inference
+        run: docker compose --env-file .env.example --env-file .env.phala.anvil.example -f compose.yml logs --no-color anvil ipfs
 
       - name: Tear down runtime services
         if: always()

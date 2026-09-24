@@ -27,21 +27,16 @@ def _key_bytes(value: str, name: str) -> bytes:
     return raw
 
 
-def receiver_from_environment(service_id: str) -> SelloReceiver | None:
+def receiver_from_environment(service_id: str) -> SelloReceiver:
     seed = os.environ.get("SELLO_SERVICE_SIGNING_SEED", "")
     issuer = os.environ.get("SELLO_TOKEN_ISSUER_PUBLIC_KEY", "")
-    required = os.environ.get("SELLO_REQUIRED", "0").lower() in {"1", "true", "yes"}
     if service_id == "tee-inference":
         if not issuer:
-            if required:
-                raise RuntimeError("Sello token issuer key is required but not configured")
-            return None
+            raise RuntimeError("Sello token issuer key is required but not configured")
         phala = os.environ.get("DOCKER", "").lower() == "phala"
         provider = os.environ.get("SELLO_SERVICE_KEY_PROVIDER", "dstack" if phala else "env").lower()
         if provider == "env" and not seed:
-            if required:
-                raise RuntimeError("Local Sello receiver key root is required but not configured")
-            return None
+            raise RuntimeError("Local Sello receiver key root is required but not configured")
         local_root = _key_bytes(seed, "SELLO_SERVICE_SIGNING_SEED") if provider == "env" else None
         derived_seed = tee_sello_signing_seed(os.environ, local_root=local_root)
         return SelloReceiver(
@@ -50,21 +45,18 @@ def receiver_from_environment(service_id: str) -> SelloReceiver | None:
             _key_bytes(issuer, "SELLO_TOKEN_ISSUER_PUBLIC_KEY"),
         )
     if not seed or not issuer:
-        if required:
-            raise RuntimeError("Sello receiver keys are required but not configured")
-        return None
-    return SelloReceiver(service_id, _key_bytes(seed, "SELLO_SERVICE_SIGNING_SEED"), _key_bytes(issuer, "SELLO_TOKEN_ISSUER_PUBLIC_KEY"))
+        raise RuntimeError("Sello receiver keys are required but not configured")
+    return SelloReceiver(
+        service_id, _key_bytes(seed, "SELLO_SERVICE_SIGNING_SEED"), _key_bytes(issuer, "SELLO_TOKEN_ISSUER_PUBLIC_KEY")
+    )
 
 
-def owner_from_environment() -> SelloOwner | None:
+def owner_from_environment() -> SelloOwner:
     issuer_seed = os.environ.get("SELLO_TOKEN_ISSUER_SIGNING_SEED", "")
     hpke_seed = os.environ.get("SELLO_OWNER_HPKE_PRIVATE_KEY", "")
     registry_raw = os.environ.get("SELLO_SERVICE_REGISTRY", "")
-    required = os.environ.get("SELLO_REQUIRED", "0").lower() in {"1", "true", "yes"}
     if not issuer_seed or not hpke_seed or not registry_raw:
-        if required:
-            raise RuntimeError("Sello owner keys and service registry are required but not configured")
-        return None
+        raise RuntimeError("Sello owner keys and service registry are required but not configured")
     try:
         registry_value = json.loads(registry_raw)
     except json.JSONDecodeError as exc:
@@ -75,7 +67,11 @@ def owner_from_environment() -> SelloOwner | None:
         str(service): VerifyKey(_key_bytes(str(public_key), f"SELLO_SERVICE_REGISTRY[{service}]"))
         for service, public_key in registry_value.items()
     }
-    logs = [url.strip() for url in os.environ.get("SELLO_LOG_URLS", os.environ.get("SCITT_URL", "")).split(",") if url.strip()]
+    logs = [
+        url.strip()
+        for url in os.environ.get("SELLO_LOG_URLS", os.environ.get("SCITT_URL", "")).split(",")
+        if url.strip()
+    ]
     if not logs:
         raise RuntimeError("SELLO_LOG_URLS or SCITT_URL must configure at least one log")
     return SelloOwner(

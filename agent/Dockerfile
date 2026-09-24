@@ -1,3 +1,5 @@
+FROM smallstep/step-cli:0.28.7 AS step-cli
+
 FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -11,6 +13,7 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
+        openssl \
         curl && \
     rm -rf /var/lib/apt/lists/*
 
@@ -30,10 +33,13 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
 
 COPY agent ./agent
 COPY agent_receipts ./agent_receipts
+COPY transport_security ./transport_security
+COPY pki ./pki
+COPY --from=step-cli /usr/local/bin/step /usr/local/bin/step
 COPY data/mnist ./data/mnist
 COPY data/chestmnist/test_data/test-data.npz ./data/chestmnist/test_data/test-data.npz
 COPY tee_inference/air ./tee_inference/air
 COPY tee_inference/protocol ./tee_inference/protocol
 COPY tee_inference/vectors ./tee_inference/vectors
 
-CMD ["python", "agent/run_agent.py", "--serve", "--llm", "--source", "contract", "--rpc-url", "http://anvil:8545", "--gm-storage-address", "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0", "--registry-address", "0x5FbDB2315678afecb367f032d93F642f64180aa3", "--ipfs-api-url", "http://ipfs:5001", "--skip-calibration"]
+CMD ["python", "-m", "pki.runtime", "run", "agent", "--", "python", "agent/run_agent.py", "--serve", "--llm", "--source", "contract", "--rpc-url", "http://anvil:8545", "--gm-storage-address", "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0", "--registry-address", "0x5FbDB2315678afecb367f032d93F642f64180aa3", "--ipfs-api-url", "http://ipfs:5001", "--skip-calibration"]

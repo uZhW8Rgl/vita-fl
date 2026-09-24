@@ -51,6 +51,8 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
 
 COPY zk_inference ./zk_inference
 COPY agent_receipts ./agent_receipts
+COPY transport_security ./transport_security
+COPY pki ./pki
 COPY dfl/neural_network ./dfl/neural_network
 COPY data/mnist_tools.py ./data/mnist_tools.py
 COPY data/chestmnist/test_data/test-data.npz ./data/chestmnist/test_data/test-data.npz
@@ -59,7 +61,8 @@ COPY tee_inference/service/__init__.py tee_inference/service/model_source.py ./t
 COPY agent/blockchain_source.py agent/ipfs_bundle.py ./agent/
 
 RUN python -m pip install -e dfl/neural_network
-RUN python -c "import nacl; import agent_receipts.environment; import zk_inference.server"
+RUN python -c "import nacl; import agent_receipts.environment; import transport_security.peer" && \
+    python -m py_compile zk_inference/server.py
 
 EXPOSE 8090
 

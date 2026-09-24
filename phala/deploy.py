@@ -431,7 +431,7 @@ class Terraform:
         path.chmod(0o600)
         return json.loads(self.run("show", "-json", str(path), capture=True))
 
-    def wire_runtime(self, endpoint: str | None, *, sello: bool = False) -> None:
+    def wire_runtime(self, endpoint: str | None, *, use_runtime_scitt: bool = False) -> None:
         self.runtime_vars = dict.fromkeys(RUNTIME_VARIABLES)
         if endpoint:
             endpoint = endpoint.rstrip("/")
@@ -441,7 +441,7 @@ class Terraform:
                 runtime_kubo_api_url_override=service_url(endpoint, 5001),
                 runtime_kubo_gateway_url_override=service_url(endpoint, 8080),
             )
-        if sello:
+        if use_runtime_scitt:
             self.runtime_vars["sello_scitt_url"] = (
                 service_url(endpoint, "8000s") if endpoint else "https://runtime-endpoint-not-configured.invalid"
             )
@@ -536,10 +536,8 @@ def execute_deployment(
         # previous chain. A deliberate external SCITT endpoint is preserved.
         endpoint = runtime_endpoint(state, cvms)
         scitt_host = urllib.parse.urlsplit(config.get("SELLO_SCITT_URL", "")).hostname or ""
-        sello = config.get("ENABLE_SELLO_RECEIPTS", "false").lower() in {"true", "1"} and (
-            not scitt_host or scitt_host.endswith(".phala.network")
-        )
-        terraform.wire_runtime(endpoint, sello=sello)
+        use_runtime_scitt = not scitt_host or scitt_host.endswith(".phala.network")
+        terraform.wire_runtime(endpoint, use_runtime_scitt=use_runtime_scitt)
         plan = terraform.plan(temporary_path / "preflight.tfplan", destroy=args.destroy)
         if not args.destroy:
             client.validate_os_images(plan)
@@ -551,11 +549,11 @@ def execute_deployment(
             # runtime. Its new endpoints are unknown, even when the initial
             # plan could use the existing runtime's healthy endpoints.
             print("Validating runtime bootstrap before resetting existing apps.", flush=True)
-            terraform.wire_runtime(None, sello=sello)
+            terraform.wire_runtime(None, use_runtime_scitt=use_runtime_scitt)
             try:
                 terraform.plan(temporary_path / "bootstrap-preflight.tfplan")
             finally:
-                terraform.wire_runtime(endpoint, sello=sello)
+                terraform.wire_runtime(endpoint, use_runtime_scitt=use_runtime_scitt)
         print(f"Deployment decision: {decision.reason}", flush=True)
         if decision.reset:
             print(
@@ -611,7 +609,7 @@ def execute_deployment(
                 ]
             )
             endpoint = None
-            terraform.wire_runtime(None, sello=sello)
+            terraform.wire_runtime(None, use_runtime_scitt=use_runtime_scitt)
         if args.destroy:
             print("Phala demo resources deleted.", flush=True)
             return
@@ -629,7 +627,7 @@ def execute_deployment(
             if endpoint is None:
                 raise DeploymentError("Runtime has no public endpoint; enable its gateway and rerun")
         for attempt in range(3):
-            terraform.wire_runtime(endpoint, sello=sello)
+            terraform.wire_runtime(endpoint, use_runtime_scitt=use_runtime_scitt)
             print("Applying the deployment with the current runtime endpoints.", flush=True)
             terraform.run("apply", "-input=false", "-auto-approve", "-no-color", "-lock-timeout=5m")
             final_state = terraform.state()

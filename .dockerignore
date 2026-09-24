@@ -14,6 +14,10 @@ dfl/node_server/.env
 .git/
 .tools/
 .github-build/
+pki/state/
+pki/secrets/
+**/*.key
+**/*enrollment-token*
 **/.terraform/
 phala/bin/*
 !phala/bin/terraform

@@ -125,11 +125,6 @@ variable "enable_phala_agent" {
 
 }
 
-variable "enable_sello_receipts" {
-  description = "Require receiver-signed, owner-encrypted Sello receipts for all six public MCP tool calls."
-  type        = bool
-  default     = false
-}
 
 variable "sello_token_issuer_signing_seed" {
   description = "Base64url or hexadecimal 32-byte Ed25519 seed used by the owner to issue tool authorization tokens."
@@ -170,8 +165,8 @@ variable "sello_scitt_url" {
   default     = ""
 
   validation {
-    condition     = !var.enable_sello_receipts || can(regex("^https://", var.sello_scitt_url))
-    error_message = "sello_scitt_url must be a public HTTPS URL when Sello receipts are enabled."
+    condition     = can(regex("^https://", var.sello_scitt_url))
+    error_message = "sello_scitt_url must be a public HTTPS URL for mandatory Sello receipts."
   }
 }
 
@@ -1076,5 +1071,90 @@ variable "deployment_image_revisions" {
       contains(["worker_image", "smart_contracts_image", "control_api_image", "ui_image", "agent_image", "transparency_log_image", "zk_inference_image"], name) && can(regex("^[0-9a-f]{40}$", revision))
     ])
     error_message = "Image revisions must map known image variables to full Git commit SHAs."
+  }
+}
+
+# Legacy mTLS provisioning; RA-TLS-only deployments do not use the CA.
+variable "pki_ca_url" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.pki_ca_url == "" || can(regex("^https://[^/]+", var.pki_ca_url))
+    error_message = "pki_ca_url must be the HTTPS URL of the approved certificate authority."
+  }
+}
+variable "pki_root_fingerprint" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.pki_root_fingerprint == "" || can(regex("^[0-9a-fA-F]{64}$", var.pki_root_fingerprint))
+    error_message = "pki_root_fingerprint must pin the SHA-256 root certificate fingerprint."
+  }
+}
+variable "pki_worker_dns_name" {
+  type    = string
+  default = ""
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+$", var.pki_worker_dns_name))
+    error_message = "pki_worker_dns_name must be the reserved Worker 0 TLS-passthrough DNS name."
+  }
+}
+variable "pki_worker_enrollment_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+variable "pki_agent_subject" {
+  type    = string
+  default = "master-thesis-agent"
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9._-]+$", var.pki_agent_subject))
+    error_message = "pki_agent_subject must be a simple registered agent identifier."
+  }
+}
+variable "pki_agent_enrollment_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+# The registry is public but authenticated by the admitted Compose policy.
+variable "agent_pop_registry" {
+  description = "JSON map of authorized agent subjects to base64url Ed25519 PoP public keys."
+  type        = string
+  default     = "{}"
+  validation {
+    condition     = can(keys(jsondecode(var.agent_pop_registry)))
+    error_message = "agent_pop_registry must be a JSON object; an inference receiver rejects an empty registry."
+  }
+}
+
+variable "agent_pop_signing_seed" {
+  description = "Agent-only Ed25519 PoP seed, distinct from the Sello token issuer."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "ratls_allowed_platform_measurements" {
+  description = "JSON array of approved mrtd/rtmr0/rtmr1/rtmr2 maps (48-byte hex values); empty fails closed in RA-TLS."
+  type        = string
+  default     = "[]"
+  validation {
+    condition = can([
+      for measurement in tolist(jsondecode(var.ratls_allowed_platform_measurements)) :
+      [for name in ["mrtd", "rtmr0", "rtmr1", "rtmr2"] : regex("^[0-9a-fA-F]{96}$", measurement[name])]
+    ])
+    error_message = "Each RA-TLS platform must specify mrtd, rtmr0, rtmr1 and rtmr2 as 96 hexadecimal characters."
+  }
+}
+
+variable "phala_attestation_verify_url" {
+  description = "Official Phala quote-verification endpoint; custom verifier hosts are not supported by this deployment."
+  type        = string
+  default     = "https://cloud-api.phala.com/api/v1/attestations/verify"
+  validation {
+    condition     = var.phala_attestation_verify_url == "https://cloud-api.phala.com/api/v1/attestations/verify"
+    error_message = "This deployment only supports the official Phala attestation verification endpoint."
   }
 }

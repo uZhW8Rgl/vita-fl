@@ -65,7 +65,10 @@ resource "phala_app" "worker" {
     msg_broker_ip                            = var.msg_broker_ip
     worker_count                             = length(var.workers)
     inference_enabled                        = var.workers[each.key].device_id == 0
-    sello_required                           = var.sello_required
+    pki_ca_url                               = var.pki_ca_url
+    pki_root_fingerprint                     = var.pki_root_fingerprint
+    pki_worker_dns_name                      = var.pki_worker_dns_name
+    agent_pop_registry                       = var.agent_pop_registry
     sello_scitt_url                          = var.sello_scitt_url
   })
   env = merge(

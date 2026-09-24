@@ -199,24 +199,48 @@ configure_phala_agent() {
   append_var_if_set "ollama_base_url_override" "OLLAMA_BASE_URL_OVERRIDE"
   append_var_if_set "tee_inference_url_override" "TEE_INFERENCE_URL_OVERRIDE"
   append_var_if_set "zk_inference_url_override" "ZK_INFERENCE_URL_OVERRIDE"
-  local sello_enabled
-  sello_enabled=$(read_env_value "ENABLE_SELLO_RECEIPTS")
-  sello_enabled="${sello_enabled:-false}"
-  export TF_VAR_enable_sello_receipts="${sello_enabled}"
-  if [ "${sello_enabled}" = "1" ] || [ "${sello_enabled}" = "true" ]; then
+  # Worker 0 uses RA-TLS. PKI remains required for the legacy ZK mTLS path.
+  local zk_enabled
+  zk_enabled=$(read_env_value "ENABLE_ZK_INFERENCE")
+  if [ "${zk_enabled}" = "1" ] || [ "${zk_enabled}" = "true" ]; then
+    export TF_VAR_pki_ca_url
+    TF_VAR_pki_ca_url=$(require_env_value "PKI_CA_URL")
+    export TF_VAR_pki_root_fingerprint
+    TF_VAR_pki_root_fingerprint=$(require_env_value "PKI_ROOT_FINGERPRINT")
+  else
+    append_var_if_set "pki_ca_url" "PKI_CA_URL"
+    append_var_if_set "pki_root_fingerprint" "PKI_ROOT_FINGERPRINT"
+  fi
+  export TF_VAR_agent_pop_registry
+  TF_VAR_agent_pop_registry=$(require_env_value "AGENT_POP_REGISTRY")
+  export TF_VAR_pki_worker_dns_name
+  TF_VAR_pki_worker_dns_name=$(require_env_value "PKI_WORKER_DNS_NAME")
+  append_var_if_set "pki_worker_enrollment_token" "PKI_WORKER_ENROLLMENT_TOKEN"
+  append_var_if_set "pki_agent_enrollment_token" "PKI_AGENT_ENROLLMENT_TOKEN"
+  append_var_if_set "pki_agent_subject" "PKI_AGENT_SUBJECT"
+  # Sello is a protocol requirement; no runtime/deployment off switch.
+  export TF_VAR_sello_token_issuer_public_key
+  TF_VAR_sello_token_issuer_public_key=$(require_env_value "SELLO_TOKEN_ISSUER_PUBLIC_KEY")
+  export TF_VAR_sello_scitt_url
+  TF_VAR_sello_scitt_url=${TF_VAR_sello_scitt_url-$(require_env_value "SELLO_SCITT_URL")}
+  if [ "${TF_VAR_enable_phala_agent:-false}" = "true" ] || [ "${TF_VAR_enable_phala_agent:-false}" = "1" ]; then
     export TF_VAR_sello_token_issuer_signing_seed
     TF_VAR_sello_token_issuer_signing_seed=$(require_env_value "SELLO_TOKEN_ISSUER_SIGNING_SEED")
     export TF_VAR_sello_owner_hpke_private_key
     TF_VAR_sello_owner_hpke_private_key=$(require_env_value "SELLO_OWNER_HPKE_PRIVATE_KEY")
-    export TF_VAR_sello_token_issuer_public_key
-    TF_VAR_sello_token_issuer_public_key=$(require_env_value "SELLO_TOKEN_ISSUER_PUBLIC_KEY")
-    export TF_VAR_sello_zk_service_signing_seed
-    TF_VAR_sello_zk_service_signing_seed=$(require_env_value "SELLO_ZK_SERVICE_SIGNING_SEED")
-    export TF_VAR_sello_service_registry
-    TF_VAR_sello_service_registry=$(require_env_value "SELLO_SERVICE_REGISTRY")
-    export TF_VAR_sello_scitt_url
-    TF_VAR_sello_scitt_url=${TF_VAR_sello_scitt_url-$(require_env_value "SELLO_SCITT_URL")}
+    append_var_if_set "sello_service_registry" "SELLO_SERVICE_REGISTRY"
+    export TF_VAR_agent_pop_signing_seed
+    TF_VAR_agent_pop_signing_seed=$(require_env_value "AGENT_POP_SIGNING_SEED")
+    export TF_VAR_ratls_allowed_platform_measurements
+    TF_VAR_ratls_allowed_platform_measurements=$(require_env_value "RATLS_ALLOWED_PLATFORM_MEASUREMENTS")
+    # The production deployment has one explicit verifier trust endpoint.
+    append_var_if_set "phala_attestation_verify_url" "PHALA_ATTESTATION_VERIFY_URL"
+    if [ "${TF_VAR_phala_attestation_verify_url:-https://cloud-api.phala.com/api/v1/attestations/verify}" != "https://cloud-api.phala.com/api/v1/attestations/verify" ]; then
+      echo "PHALA_ATTESTATION_VERIFY_URL must be the official Phala verification endpoint" >&2
+      exit 1
+    fi
   fi
+  append_var_if_set "sello_zk_service_signing_seed" "SELLO_ZK_SERVICE_SIGNING_SEED"
   if [ "${ollama_enabled}" = "1" ] || [ "${ollama_enabled}" = "true" ]; then
     export TF_VAR_ollama_api_token
     TF_VAR_ollama_api_token=$(require_env_value "OLLAMA_API_TOKEN")

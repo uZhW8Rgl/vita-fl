@@ -10,7 +10,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import secrets
 import time
+import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -29,6 +31,7 @@ SELLO_TOKEN_REF_LABEL = -70001
 SELLO_LOG_URL_LABEL = -70002
 HPKE_INFO = b"master-thesis/sello-v1/tool-receipt"
 MAX_CLOCK_SKEW_SECONDS = 60
+MAX_TOKEN_LIFETIME_SECONDS = 300
 
 
 class ReceiptVerificationError(ValueError):
@@ -86,24 +89,69 @@ def _hpke_private(raw: bytes):
     return KEMKey.from_pyca_cryptography_key(X25519PrivateKey.from_private_bytes(raw))
 
 
+def authorization_origin(value: str) -> str:
+    """Validate the exact HTTPS receiver origin used as token audience."""
+    if not isinstance(value, str):
+        raise ReceiptVerificationError("authorization audience must be an HTTPS origin")
+    parts = urllib.parse.urlsplit(value)
+    if (
+        parts.scheme != "https"
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+        or parts.path not in {"", "/"}
+    ):
+        raise ReceiptVerificationError("authorization audience must be an HTTPS origin")
+    return urllib.parse.urlunsplit(("https", parts.netloc.lower(), "", "", ""))
+
+
+def _certificate_thumbprint(value: str) -> str:
+    raw = b64url_decode(value)
+    if len(raw) != 32 or b64url_encode(raw) != value:
+        raise ReceiptVerificationError("authorization token has invalid certificate thumbprint")
+    return value
+
+
 def create_authorization_token(
     signing_key: SigningKey,
     owner_hpke_public_key: bytes,
     *,
     subject: str,
     log_urls: list[str],
-    lifetime_seconds: int = 3600,
+    audience: str,
+    cert_thumbprint: str | None = None,
+    pop_thumbprint: str | None = None,
+    scopes: list[str],
+    lifetime_seconds: int = MAX_TOKEN_LIFETIME_SECONDS,
     now: int | None = None,
 ) -> str:
     issued_at = int(time.time()) if now is None else int(now)
+    if not subject or not isinstance(subject, str):
+        raise ReceiptVerificationError("authorization token requires a subject")
+    if not isinstance(lifetime_seconds, int) or not 0 < lifetime_seconds <= MAX_TOKEN_LIFETIME_SECONDS:
+        raise ReceiptVerificationError("authorization token lifetime must be between 1 and 300 seconds")
+    if not scopes or not all(isinstance(scope, str) and scope for scope in scopes):
+        raise ReceiptVerificationError("authorization token requires explicit scopes")
+    if (cert_thumbprint is None) == (pop_thumbprint is None):
+        raise ReceiptVerificationError("authorization token requires exactly one client key binding")
+    confirmation = (
+        {"x5t#S256": _certificate_thumbprint(cert_thumbprint)}
+        if cert_thumbprint is not None
+        else {"jkt": _certificate_thumbprint(pop_thumbprint)}
+    )
     header = {"alg": "EdDSA", "typ": "JWT"}
     claims = {
+        "aud": authorization_origin(audience),
+        "cnf": confirmation,
         "exp": issued_at + lifetime_seconds,
         "iat": issued_at,
-        "jti": b64url_encode(hashlib.sha256(bytes(signing_key.verify_key) + issued_at.to_bytes(8, "big")).digest()[:16]),
+        "jti": b64url_encode(secrets.token_bytes(16)),
         "owner_hpke_pk": b64url_encode(owner_hpke_public_key),
         "sello_logs": log_urls,
         "sub": subject,
+        "scope": sorted(set(scopes)),
     }
     protected = b64url_encode(_canonical_json(header))
     payload = b64url_encode(_canonical_json(claims))
@@ -117,6 +165,11 @@ def verify_authorization_token(
     issuer_key: VerifyKey | bytes,
     *,
     now: int | None = None,
+    expected_audience: str | None = None,
+    required_scope: str | None = None,
+    expected_subject: str | None = None,
+    cert_thumbprint: str | None = None,
+    expected_pop_thumbprint: str | None = None,
 ) -> dict[str, Any]:
     parts = token.split(".")
     if len(parts) != 3:
@@ -135,15 +188,49 @@ def verify_authorization_token(
     except BadSignatureError as exc:
         raise ReceiptVerificationError("authorization token signature is invalid") from exc
     current = int(time.time()) if now is None else int(now)
-    if not isinstance(claims.get("iat"), int) or not isinstance(claims.get("exp"), int):
+    if type(claims.get("iat")) is not int or type(claims.get("exp")) is not int:
         raise ReceiptVerificationError("authorization token has invalid validity claims")
+    if not 0 < claims["exp"] - claims["iat"] <= MAX_TOKEN_LIFETIME_SECONDS:
+        raise ReceiptVerificationError("authorization token exceeds the permitted lifetime")
     if claims["iat"] > current + MAX_CLOCK_SKEW_SECONDS or claims["exp"] < current - MAX_CLOCK_SKEW_SECONDS:
         raise ReceiptVerificationError("authorization token is outside its validity window")
-    if not isinstance(claims.get("sub"), str) or not isinstance(claims.get("jti"), str):
+    if (
+        not isinstance(claims.get("sub"), str)
+        or not claims["sub"]
+        or not isinstance(claims.get("jti"), str)
+        or not claims["jti"]
+    ):
         raise ReceiptVerificationError("authorization token lacks subject or identifier")
+    audience = authorization_origin(claims.get("aud"))
+    if expected_audience is not None and audience != authorization_origin(expected_audience):
+        raise ReceiptVerificationError("authorization token audience does not match this receiver")
+    confirmation = claims.get("cnf")
+    if not isinstance(confirmation, dict) or set(confirmation) not in ({"x5t#S256"}, {"jkt"}):
+        raise ReceiptVerificationError("authorization token requires exactly one supported client key binding")
+    if cert_thumbprint is not None and expected_pop_thumbprint is not None:
+        raise ReceiptVerificationError("authorization verification requires one transport binding profile")
+    binding = next(iter(confirmation))
+    fingerprint = _certificate_thumbprint(confirmation[binding])
+    if cert_thumbprint is not None and (
+        binding != "x5t#S256" or not secrets.compare_digest(fingerprint, cert_thumbprint)
+    ):
+        raise ReceiptVerificationError("authorization token is bound to another client certificate")
+    if expected_pop_thumbprint is not None and (
+        binding != "jkt" or not secrets.compare_digest(fingerprint, expected_pop_thumbprint)
+    ):
+        raise ReceiptVerificationError("authorization token is bound to another agent PoP key")
+    if expected_subject is not None and claims["sub"] != expected_subject:
+        raise ReceiptVerificationError("authorization token subject does not match the authenticated agent")
+    scopes = claims.get("scope")
+    if not isinstance(scopes, list) or not scopes or not all(isinstance(scope, str) and scope for scope in scopes):
+        raise ReceiptVerificationError("authorization token requires explicit scopes")
+    if required_scope is not None and required_scope not in scopes:
+        raise ReceiptVerificationError("authorization token does not permit this operation")
     _hpke_public(b64url_decode(claims.get("owner_hpke_pk", "")))
-    if not isinstance(claims.get("sello_logs"), list) or not all(
-        isinstance(url, str) and url.startswith("https://") for url in claims["sello_logs"]
+    if (
+        not isinstance(claims.get("sello_logs"), list)
+        or not claims["sello_logs"]
+        or not all(isinstance(url, str) and url.startswith("https://") for url in claims["sello_logs"])
     ):
         raise ReceiptVerificationError("authorization token has invalid Sello log policy")
     return claims
@@ -164,7 +251,9 @@ class SelloReceiver:
     def __init__(self, service_id: str, signing_key: SigningKey | bytes, token_issuer_key: VerifyKey | bytes):
         self.service_id = service_id
         self.signing_key = signing_key if isinstance(signing_key, SigningKey) else SigningKey(signing_key)
-        self.token_issuer_key = token_issuer_key if isinstance(token_issuer_key, VerifyKey) else VerifyKey(token_issuer_key)
+        self.token_issuer_key = (
+            token_issuer_key if isinstance(token_issuer_key, VerifyKey) else VerifyKey(token_issuer_key)
+        )
         self.kid = hashlib.sha256(bytes(self.signing_key.verify_key)).digest()[:16]
 
     @property
@@ -197,9 +286,9 @@ class SelloReceiver:
                 "service-identifier": self.service_id,
                 **(service_defined_fields or {}),
             },
-            "timestamp": datetime.fromtimestamp(
-                int(time.time()) if now is None else int(now), timezone.utc
-            ).isoformat().replace("+00:00", "Z"),
+            "timestamp": datetime.fromtimestamp(int(time.time()) if now is None else int(now), timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
         }
         protected_map = {
             1: COSE_ALG_EDDSA,
@@ -229,7 +318,9 @@ class SelloOwner:
         subject: str,
         log_urls: list[str],
     ) -> None:
-        self.token_signing_key = token_signing_key if isinstance(token_signing_key, SigningKey) else SigningKey(token_signing_key)
+        self.token_signing_key = (
+            token_signing_key if isinstance(token_signing_key, SigningKey) else SigningKey(token_signing_key)
+        )
         self.hpke_private_key = hpke_private_key
         self.service_keys = {
             service: key if isinstance(key, VerifyKey) else VerifyKey(key) for service, key in service_keys.items()
@@ -246,12 +337,24 @@ class SelloOwner:
         private = X25519PrivateKey.from_private_bytes(self.hpke_private_key)
         return private.public_key().public_bytes_raw()
 
-    def token(self, *, now: int | None = None) -> str:
+    def token(
+        self,
+        *,
+        audience: str,
+        cert_thumbprint: str | None = None,
+        pop_thumbprint: str | None = None,
+        scopes: list[str],
+        now: int | None = None,
+    ) -> str:
         return create_authorization_token(
             self.token_signing_key,
             self.hpke_public_key,
             subject=self.subject,
             log_urls=self.log_urls,
+            audience=audience,
+            cert_thumbprint=cert_thumbprint,
+            pop_thumbprint=pop_thumbprint,
+            scopes=scopes,
             now=now,
         )
 

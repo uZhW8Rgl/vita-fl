@@ -361,24 +361,18 @@ if inference_enabled; then
     done
 
     mkdir -p "${TEE_MODEL_DIR:-/tmp/tee-inference/model}" "${TEE_JOB_DIR:-/tmp/tee-inference/jobs}"
-    "${PYTHON_BIN}" -m tee_inference.service &
+    "${PYTHON_BIN}" -m pki.runtime run worker -- "${PYTHON_BIN}" -m tee_inference.service &
     TEE_INFERENCE_PID=$!
 
-    "${PYTHON_BIN}" - <<'PY'
-import time
-import urllib.request
-
-deadline = time.time() + 60
-while time.time() < deadline:
-    try:
-        with urllib.request.urlopen("http://127.0.0.1:8080/healthz", timeout=2) as response:
-            if response.status == 200:
-                raise SystemExit(0)
-    except Exception:
-        time.sleep(1)
-raise SystemExit("TEE inference service did not become healthy")
-PY
-    echo "TEE inference service listening on http://0.0.0.0:8080 (model loading remains tool-triggered)."
+    inference_deadline=$((SECONDS + 90))
+    until curl --fail --silent --unix-socket /run/vita-fl/inference.sock http://localhost/healthz >/dev/null; do
+        if ! kill -0 "${TEE_INFERENCE_PID}" 2>/dev/null || [ "${SECONDS}" -ge "${inference_deadline}" ]; then
+            echo "Authenticated inference service failed to start." >&2
+            exit 1
+        fi
+        sleep 0.2
+    done
+    echo "TEE inference service available through mandatory mTLS on port 8443."
 fi
 
 if inference_enabled; then

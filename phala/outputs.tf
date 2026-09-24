@@ -76,13 +76,8 @@ output "tee_inference_primary_cvm_id" {
 }
 
 output "tee_inference_endpoint" {
-  description = "Port-8080 gateway endpoint for the combined W0 worker/inference app."
-  value = try(
-    can(regex("-[0-9]+\\.", trimsuffix(phala_app.dfl_worker[0].endpoint, "/")))
-    ? replace(trimsuffix(phala_app.dfl_worker[0].endpoint, "/"), "/-[0-9]+\\./", "-8080.")
-    : "${trimsuffix(phala_app.dfl_worker[0].endpoint, "/")}:8080",
-    null,
-  )
+  description = "Pinned end-to-end mTLS origin for the combined Worker 0 app."
+  value       = var.enable_phala_control_api ? null : "https://${var.pki_worker_dns_name}"
 }
 
 output "tee_inference_status" {

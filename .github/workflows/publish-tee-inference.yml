@@ -8,6 +8,9 @@ on:
     paths:
       - "tee_inference/**"
       - "agent_receipts/**"
+      - "pki/**"
+      - "transport_security/**"
+      - ".dockerignore"
       - "data/chestmnist/test_data/test-data.npz"
       - "dfl/neural_network/**"
       - "agent/blockchain_source.py"
@@ -51,9 +54,11 @@ jobs:
         run: |
           python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
           python -m pip install -r tee_inference/requirements.lock
+          python -m pip install pytest
 
       - name: Run TEE inference tests
-        run: PYTHONPATH=. python -m unittest discover -s tee_inference/tests -v
+        run: |
+          PYTHONPATH=. python -m pytest -q tee_inference/tests transport_security/tests
 
       - name: Verify ChestMNIST Docker input
         run: |
@@ -73,8 +78,11 @@ jobs:
           context=.github-build/tee-inference
           rm -rf "$context"
           mkdir -p "$context/agent" "$context/data/chestmnist/test_data" "$context/dfl"
+          cp .dockerignore "$context/.dockerignore"
           cp -R tee_inference "$context/tee_inference"
           cp -R agent_receipts "$context/agent_receipts"
+          cp -R pki "$context/pki"
+          cp -R transport_security "$context/transport_security"
           cp -R dfl/neural_network "$context/dfl/neural_network"
           cp agent/blockchain_source.py agent/ipfs_bundle.py "$context/agent/"
           cp data/chestmnist/test_data/test-data.npz "$context/data/chestmnist/test_data/"

@@ -18,6 +18,8 @@ class TerraformEnvironmentTests(unittest.TestCase):
         use_default=False,
         check=True,
         explicit_os=None,
+        omit_env=(),
+        extra_env=None,
     ):
         root = Path(__file__).resolve().parent
         with tempfile.TemporaryDirectory() as temporary:
@@ -51,7 +53,15 @@ class TerraformEnvironmentTests(unittest.TestCase):
                         "ENABLE_PHALA_UI=false",
                         "ENABLE_PHALA_AGENT=false",
                         "ENABLE_OLLAMA=false",
-                        "ENABLE_SELLO_RECEIPTS=false",
+                        "SELLO_TOKEN_ISSUER_PUBLIC_KEY=" + "11" * 32,
+                        "SELLO_SCITT_URL=https://scitt.example.test",
+                        'AGENT_POP_REGISTRY={"master-thesis-agent":"test-public-key"}',
+                        "PKI_CA_URL=https://ca.example.test:9443",
+                        "PKI_ROOT_FINGERPRINT=" + "22" * 32,
+                        "PKI_WORKER_DNS_NAME=worker.example.test",
+                        "PKI_WORKER_ENROLLMENT_TOKEN=test-worker-enrollment",
+                        "PKI_AGENT_ENROLLMENT_TOKEN=test-agent-enrollment",
+                        "PKI_AGENT_SUBJECT=master-thesis-agent",
                         "PHALA_RUNTIME_ENDPOINT_OVERRIDE=https://old-5001.example",
                         "PHALA_RUNTIME_RPC_URL=https://old-8545.example",
                         "WORKER_IMAGE=stale",
@@ -61,6 +71,11 @@ class TerraformEnvironmentTests(unittest.TestCase):
                     ]
                 )
             )
+            configured = dict(line.split("=", 1) for line in env_file.read_text().splitlines() if "=" in line)
+            configured.update(extra_env or {})
+            for name in omit_env:
+                configured.pop(name, None)
+            env_file.write_text("\n".join(f"{name}={value}" for name, value in configured.items()) + "\n")
             fake_terraform = directory / "terraform"
             fake_terraform.write_text(
                 "#!/usr/bin/env python3\nimport json, os, sys\n"
@@ -70,12 +85,28 @@ class TerraformEnvironmentTests(unittest.TestCase):
                 "'os': os.environ.get('TF_VAR_os_image'), "
                 "'runtime_os': os.environ.get('TF_VAR_contracts_os_image'), "
                 "'worker_os': os.environ.get('TF_VAR_dynamic_worker_os_image'), "
+                "'pki_ca_url': os.environ.get('TF_VAR_pki_ca_url'), "
+                "'pki_root_fingerprint': os.environ.get('TF_VAR_pki_root_fingerprint'), "
+                "'pki_worker_dns_name': os.environ.get('TF_VAR_pki_worker_dns_name'), "
+                "'pki_worker_enrolled': bool(os.environ.get('TF_VAR_pki_worker_enrollment_token')), "
+                "'pki_agent_enrolled': bool(os.environ.get('TF_VAR_pki_agent_enrollment_token')), "
+                "'pki_agent_subject': os.environ.get('TF_VAR_pki_agent_subject'), "
+                "'sello_issuer': os.environ.get('TF_VAR_sello_token_issuer_public_key'), "
+                "'sello_scitt_url': os.environ.get('TF_VAR_sello_scitt_url'), "
+                "'agent_pop_registry': os.environ.get('TF_VAR_agent_pop_registry'), "
+                "'agent_pop_seed': os.environ.get('TF_VAR_agent_pop_signing_seed'), "
+                "'ratls_policy': os.environ.get('TF_VAR_ratls_allowed_platform_measurements'), "
+                "'phala_verify_url': os.environ.get('TF_VAR_phala_attestation_verify_url'), "
                 "'wallet': os.environ.get('TF_VAR_eth_wallet_private_key')}))\n"
             )
             fake_terraform.chmod(0o700)
             images = directory / "images.tfvars.json"
             images.write_text("{}")
-            env = {key: value for key, value in os.environ.items() if not key.startswith(("TF_", "PHALA_"))}
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith(("TF_", "PHALA_", "PKI_", "TLS_", "SELLO_", "AGENT_POP_", "RATLS_"))
+            }
             env.update(
                 TERRAFORM_BIN=str(fake_terraform),
                 PHALA_IMAGE_VARS_FILE=str(images),
@@ -97,6 +128,82 @@ class TerraformEnvironmentTests(unittest.TestCase):
                 self.assertEqual(result.stderr, "")
                 return json.loads(result.stdout), str(images)
             return result, str(images)
+
+    def test_mandatory_receiver_security_configuration_reaches_terraform(self):
+        actual, _ = self.invoke("plan")
+        self.assertEqual(actual["sello_issuer"], "11" * 32)
+        self.assertEqual(actual["sello_scitt_url"], "https://scitt.example.test")
+        self.assertEqual(actual["pki_ca_url"], "https://ca.example.test:9443")
+        self.assertEqual(actual["pki_root_fingerprint"], "22" * 32)
+        self.assertEqual(actual["pki_worker_dns_name"], "worker.example.test")
+        self.assertTrue(actual["pki_worker_enrolled"])
+
+    def test_ratls_only_deployment_does_not_require_ca_enrollment(self):
+        actual, _ = self.invoke(
+            "plan",
+            omit_env=(
+                "PKI_CA_URL",
+                "PKI_ROOT_FINGERPRINT",
+                "PKI_WORKER_ENROLLMENT_TOKEN",
+                "PKI_AGENT_ENROLLMENT_TOKEN",
+            ),
+        )
+        self.assertIsNone(actual["pki_ca_url"])
+        self.assertIsNone(actual["pki_root_fingerprint"])
+        self.assertFalse(actual["pki_worker_enrolled"])
+        self.assertFalse(actual["pki_agent_enrolled"])
+        self.assertEqual(json.loads(actual["agent_pop_registry"]), {"master-thesis-agent": "test-public-key"})
+
+    def test_missing_caller_registry_stops_before_terraform(self):
+        result, _ = self.invoke("plan", omit_env=("AGENT_POP_REGISTRY",), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AGENT_POP_REGISTRY", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_agent_private_pop_seed_and_public_policy_forward_without_reuse(self):
+        policy = json.dumps([{name: "ab" * 48 for name in ("mrtd", "rtmr0", "rtmr1", "rtmr2")}])
+        config = {
+            "ENABLE_PHALA_AGENT": "true",
+            "SELLO_TOKEN_ISSUER_SIGNING_SEED": "issuer-test-seed",
+            "SELLO_OWNER_HPKE_PRIVATE_KEY": "owner-test-key",
+            "AGENT_POP_SIGNING_SEED": "independent-pop-test-seed",
+            "RATLS_ALLOWED_PLATFORM_MEASUREMENTS": policy,
+            "PHALA_ATTESTATION_VERIFY_URL": "https://cloud-api.phala.com/api/v1/attestations/verify",
+        }
+        actual, _ = self.invoke("plan", extra_env=config)
+        self.assertEqual(actual["agent_pop_seed"], config["AGENT_POP_SIGNING_SEED"])
+        self.assertEqual(actual["ratls_policy"], policy)
+        self.assertEqual(actual["phala_verify_url"], config["PHALA_ATTESTATION_VERIFY_URL"])
+        custom = {**config, "PHALA_ATTESTATION_VERIFY_URL": "https://other.example/api/v1/attestations/verify"}
+        result, _ = self.invoke("plan", extra_env=custom, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("official Phala", result.stderr)
+        self.assertEqual(result.stdout, "")
+        for missing in ("AGENT_POP_SIGNING_SEED", "RATLS_ALLOWED_PLATFORM_MEASUREMENTS"):
+            with self.subTest(missing=missing):
+                result, _ = self.invoke("plan", extra_env=config, omit_env=(missing,), check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(missing, result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_removed_sello_switch_cannot_disable_required_issuer(self):
+        result, _ = self.invoke(
+            "plan",
+            omit_env=("SELLO_TOKEN_ISSUER_PUBLIC_KEY",),
+            extra_env={"ENABLE_SELLO_RECEIPTS": "false"},
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SELLO_TOKEN_ISSUER_PUBLIC_KEY", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_missing_pki_trust_root_stops_legacy_zk_before_terraform(self):
+        result, _ = self.invoke(
+            "plan", omit_env=("PKI_ROOT_FINGERPRINT",), extra_env={"ENABLE_ZK_INFERENCE": "true"}, check=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("PKI_ROOT_FINGERPRINT", result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_single_selected_file_ignores_shared_values_and_uses_worker_wallet_fallback(self):
         for use_default in (False, True):

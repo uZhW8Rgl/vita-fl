@@ -1,3 +1,5 @@
+FROM smallstep/step-cli:0.28.7 AS step-cli
+
 FROM node:20-bookworm-slim AS node-runtime
 
 FROM python:3.12-slim-bookworm
@@ -24,7 +26,9 @@ WORKDIR /dfl
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
+        openssl \
         bash \
+        nginx \
         curl \
         libgomp1 && \
     rm -rf /var/lib/apt/lists/*
@@ -95,6 +99,9 @@ COPY dfl/container_healthcheck.sh ./container_healthcheck.sh
 WORKDIR /app
 COPY tee_inference ./tee_inference
 COPY agent_receipts ./agent_receipts
+COPY transport_security ./transport_security
+COPY pki ./pki
+COPY --from=step-cli /usr/local/bin/step /usr/local/bin/step
 COPY agent/blockchain_source.py agent/ipfs_bundle.py ./agent/
 COPY dfl/neural_network ./dfl/neural_network
 
@@ -117,7 +124,7 @@ RUN chmod +x /dfl/start_node_neural_network.sh /dfl/container_healthcheck.sh && 
 
 WORKDIR /dfl/node_server
 
-EXPOSE 8001 8080
+EXPOSE 8001 8443
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=4 \
     CMD ["/dfl/container_healthcheck.sh"]

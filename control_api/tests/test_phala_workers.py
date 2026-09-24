@@ -104,6 +104,13 @@ class WorkerInventoryTests(unittest.TestCase):
             "DYNAMIC_WORKER_KUBO_GATEWAY_URL": "https://runtime-8080.dstack.example",
             "DYNAMIC_WORKER_TELEMETRY_URL": "https://runtime-8091.dstack.example",
             "PHALA_NODE_ID": "18",
+            "DYNAMIC_WORKER_PKI_CA_URL": "https://ca.example.test:9443",
+            "DYNAMIC_WORKER_PKI_ROOT_FINGERPRINT": "ab" * 32,
+            "DYNAMIC_WORKER_PKI_WORKER_DNS_NAME": "worker.example.test",
+            "DYNAMIC_WORKER_PKI_ENROLLMENT_TOKEN": "test-worker-enrollment",
+            "DYNAMIC_WORKER_SELLO_SCITT_URL": "https://scitt.example.test",
+            "DYNAMIC_WORKER_SELLO_TOKEN_ISSUER_PUBLIC_KEY": "cd" * 32,
+            "DYNAMIC_WORKER_AGENT_POP_REGISTRY": '{"registered-agent":"public-key"}',
             "DFL_MODEL_SEED": "101",
             "DFL_TRAIN_SEED": "202",
             "DFL_TRAIN_OPTIMIZER": "adamw",
@@ -132,6 +139,12 @@ class WorkerInventoryTests(unittest.TestCase):
         self.assertEqual(values["dfl_pos_weight_cap"], "8")
         self.assertEqual(values["os_image"], "dstack-dev-0.5.9")
         self.assertEqual(values["node_id"], 18)
+        self.assertEqual(values["pki_ca_url"], "https://ca.example.test:9443")
+        self.assertEqual(values["pki_root_fingerprint"], "ab" * 32)
+        self.assertEqual(values["pki_worker_dns_name"], "worker.example.test")
+        self.assertEqual(values["pki_worker_enrollment_token"], "test-worker-enrollment")
+        self.assertEqual(values["sello_token_issuer_public_key"], "cd" * 32)
+        self.assertEqual(values["agent_pop_registry"], '{"registered-agent":"public-key"}')
         self.assertIsInstance(instance.capacity_guard, PhalaWorkspaceQuotaGuard)
 
     def test_deployment_tfvars_include_the_measured_contract_trust_root(self) -> None:
@@ -218,14 +231,21 @@ class WorkerInventoryTests(unittest.TestCase):
             expected_gm_storage_address="0x" + "33" * 20,
             expected_medical_signer_registry_address="0x" + "44" * 20,
             expected_chain_id=31337,
-            sello_required=True,
+            pki_ca_url="https://ca.example.test:9443",
+            pki_root_fingerprint="ab" * 32,
+            pki_worker_dns_name="worker.example.test",
+            pki_worker_enrollment_token="test-worker-enrollment",
             sello_scitt_url="https://scitt.example",
             sello_token_issuer_public_key="issuer-public-key",
         )
 
         values = config.terraform_values()
 
-        self.assertTrue(values["sello_required"])
+        self.assertNotIn("sello_required", values)
+        self.assertEqual(values["pki_ca_url"], "https://ca.example.test:9443")
+        self.assertEqual(values["pki_root_fingerprint"], "ab" * 32)
+        self.assertEqual(values["pki_worker_dns_name"], "worker.example.test")
+        self.assertEqual(values["pki_worker_enrollment_token"], "test-worker-enrollment")
         self.assertEqual(values["sello_scitt_url"], "https://scitt.example")
         self.assertNotIn("sello_tee_service_signing_seed", values)
 

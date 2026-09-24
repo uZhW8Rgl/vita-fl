@@ -77,7 +77,10 @@ locals {
     device_id                                = 0
     worker_count                             = var.max_dynamic_workers
     telemetry_url                            = "http://telemetry-policy-reference.invalid"
-    sello_required                           = var.enable_sello_receipts
+    pki_ca_url                               = var.pki_ca_url
+    pki_root_fingerprint                     = var.pki_root_fingerprint
+    pki_worker_dns_name                      = var.pki_worker_dns_name
+    agent_pop_registry                       = var.agent_pop_registry
     sello_scitt_url                          = var.sello_scitt_url
   }
 
@@ -171,6 +174,7 @@ locals {
     control_api_image                        = var.control_api_image
     enable_ui                                = var.enable_phala_ui
     ui_image                                 = var.ui_image
+    pki_agent_subject                        = var.pki_agent_subject
     enable_agent                             = var.enable_phala_agent
     agent_image                              = var.agent_image
     transparency_log_image                   = var.transparency_log_image
@@ -184,7 +188,7 @@ locals {
     expected_aggregator_address              = var.expected_aggregator_address
     expected_medical_signer_registry_address = var.expected_medical_signer_registry_address
     expected_runtime_rpc_url                 = local.worker_policy_runtime_rpc_url
-    enable_zk_inference = var.enable_zk_inference
+    enable_zk_inference                      = var.enable_zk_inference
     zk_inference_url = var.enable_zk_inference && var.zk_inference_url_override != null ? trimsuffix(
       var.zk_inference_url_override,
       "/",
@@ -200,7 +204,12 @@ locals {
     region                               = var.region
     os_image                             = var.dynamic_worker_os_image
     node_id                              = var.dynamic_worker_node_id == null ? "" : tostring(var.dynamic_worker_node_id)
-    sello_required                       = var.enable_sello_receipts ? "1" : "0"
+    pki_ca_url                           = var.pki_ca_url
+    pki_root_fingerprint                 = var.pki_root_fingerprint
+    pki_worker_dns_name                  = var.pki_worker_dns_name
+    agent_pop_registry                   = var.agent_pop_registry
+    ratls_allowed_platform_measurements  = var.ratls_allowed_platform_measurements
+    phala_attestation_verify_url         = var.phala_attestation_verify_url
     sello_scitt_url                      = var.sello_scitt_url
   })
 
@@ -269,15 +278,17 @@ resource "phala_app" "contract_runtime" {
     TRAINING_WORKER_POLICY_APP_COMPOSE_B64  = base64encode(local.training_worker_policy_app_compose)
     INFERENCE_WORKER_POLICY_APP_COMPOSE_B64 = base64encode(local.inference_worker_policy_app_compose)
     }, var.dynamic_worker_inventory_chunks, var.enable_phala_control_api ? {
-    PHALA_CLOUD_API_KEY            = var.phala_cloud_api_key
-    CONTROL_ADMIN_TOKEN            = var.control_admin_token
-    SELLO_TOKEN_ISSUER_PUBLIC_KEY  = var.sello_token_issuer_public_key
+    PHALA_CLOUD_API_KEY           = var.phala_cloud_api_key
+    CONTROL_ADMIN_TOKEN           = var.control_admin_token
+    SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
     } : {}, var.enable_phala_ui ? {
     UI_BASIC_AUTH_USERNAME = var.ui_basic_auth_username
     UI_BASIC_AUTH_PASSWORD = var.ui_basic_auth_password
     } : {}, var.enable_phala_agent ? {
+    PKI_AGENT_ENROLLMENT_TOKEN      = var.pki_agent_enrollment_token
     OLLAMA_API_TOKEN                = var.ollama_api_token
     SELLO_TOKEN_ISSUER_SIGNING_SEED = var.sello_token_issuer_signing_seed
+    AGENT_POP_SIGNING_SEED          = var.agent_pop_signing_seed
     SELLO_OWNER_HPKE_PRIVATE_KEY    = var.sello_owner_hpke_private_key
     SELLO_SERVICE_REGISTRY          = var.sello_service_registry
   } : {})
@@ -359,11 +370,14 @@ resource "phala_app" "dfl_worker" {
     device_id                                = 0
     worker_count                             = 1 + length(var.additional_workers)
     inference_enabled                        = true
-    sello_required                           = var.enable_sello_receipts
+    pki_ca_url                               = var.pki_ca_url
+    pki_root_fingerprint                     = var.pki_root_fingerprint
+    pki_worker_dns_name                      = var.pki_worker_dns_name
+    agent_pop_registry                       = var.agent_pop_registry
     sello_scitt_url                          = var.sello_scitt_url
   })
   env = {
-    PRIVATE_KEY                    = var.private_key
+    PRIVATE_KEY                   = var.private_key
     SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
   }
   size = var.worker_size
@@ -444,7 +458,10 @@ resource "phala_app" "dfl_worker_additional" {
     device_id                                = local.additional_worker_indices[each.key]
     worker_count                             = 1 + length(var.additional_workers)
     inference_enabled                        = false
-    sello_required                           = false
+    pki_ca_url                               = var.pki_ca_url
+    pki_root_fingerprint                     = var.pki_root_fingerprint
+    pki_worker_dns_name                      = var.pki_worker_dns_name
+    agent_pop_registry                       = var.agent_pop_registry
     sello_scitt_url                          = ""
   })
   env = {
@@ -490,7 +507,9 @@ resource "phala_app" "zk_inference" {
     expected_gm_storage_address      = var.expected_gm_storage_address
     expected_device_registry_address = var.expected_device_registry_address
     expected_chain_id                = var.expected_chain_id
-    sello_required                   = var.enable_sello_receipts ? "1" : "0"
+    pki_ca_url                       = var.pki_ca_url
+    pki_root_fingerprint             = var.pki_root_fingerprint
+    pki_worker_dns_name              = var.pki_worker_dns_name
     sello_scitt_url                  = var.sello_scitt_url
   })
   env = {
@@ -498,6 +517,7 @@ resource "phala_app" "zk_inference" {
     RSA_PUBLIC_KEY                = var.rsa_public_key
     SELLO_SERVICE_SIGNING_SEED    = var.sello_zk_service_signing_seed
     SELLO_TOKEN_ISSUER_PUBLIC_KEY = var.sello_token_issuer_public_key
+    PKI_ENROLLMENT_TOKEN          = var.pki_worker_enrollment_token
   }
   size      = var.zk_inference_size
   region    = var.region

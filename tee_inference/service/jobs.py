@@ -18,9 +18,14 @@ class JobError(RuntimeError):
     """A requested inference job cannot be created or executed."""
 
 
+class JobAccessError(JobError):
+    """The authenticated subject does not own the requested job."""
+
+
 @dataclass(frozen=True)
 class TeeInferenceJob:
     job_id: str
+    owner_subject: str
     source_index: int
     pixels: bytes
     ground_truth: bytes
@@ -56,7 +61,9 @@ class TeeJobStore:
         self._jobs: dict[str, TeeInferenceJob] = {}
         self._lock = threading.RLock()
 
-    def create(self, index: int | None, manifest_hash: bytes) -> TeeInferenceJob:
+    def create(self, index: int | None, manifest_hash: bytes, *, subject: str) -> TeeInferenceJob:
+        if not isinstance(subject, str) or not subject:
+            raise JobAccessError("an authenticated job owner is required")
         if len(manifest_hash) != 32:
             raise JobError("a prepared 32-byte model manifest hash is required")
         if not self.dataset_path.is_file():
@@ -76,6 +83,7 @@ class TeeJobStore:
 
         job = TeeInferenceJob(
             job_id=secrets.token_hex(16),
+            owner_subject=subject,
             source_index=selected,
             pixels=pixels,
             ground_truth=ground_truth,
@@ -88,22 +96,26 @@ class TeeJobStore:
             directory.mkdir(parents=True, exist_ok=False)
             (directory / "pixels.bin").write_bytes(job.pixels)
             (directory / "selection.json").write_text(
-                json.dumps(job.public_metadata(), sort_keys=True, separators=(",", ":")) + "\n",
+                json.dumps({**job.public_metadata(), "owner_subject": subject}, sort_keys=True, separators=(",", ":"))
+                + "\n",
                 encoding="utf-8",
             )
         return job
 
-    def get(self, job_id: str) -> TeeInferenceJob:
+    def get(self, job_id: str, *, subject: str) -> TeeInferenceJob:
         if len(job_id) != 32 or any(character not in "0123456789abcdef" for character in job_id):
             raise JobError("job_id must contain exactly 32 lowercase hexadecimal characters")
         with self._lock:
             try:
-                return self._jobs[job_id]
+                job = self._jobs[job_id]
             except KeyError as exc:
                 raise JobError("TEE inference job does not exist in this container run") from exc
+            if not subject or job.owner_subject != subject:
+                raise JobAccessError("inference job belongs to another agent")
+            return job
 
-    def store_evidence(self, job_id: str, evidence: bytes) -> Path:
-        self.get(job_id)
+    def store_evidence(self, job_id: str, evidence: bytes, *, subject: str) -> Path:
+        self.get(job_id, subject=subject)
         path = self.root / job_id / "evidence.cbor"
         temporary = path.with_suffix(".cbor.tmp")
         temporary.write_bytes(evidence)

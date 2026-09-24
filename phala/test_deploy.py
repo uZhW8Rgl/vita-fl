@@ -148,7 +148,7 @@ class RuntimeAndStateTests(unittest.TestCase):
         terraform.wire_runtime(None)
         terraform.run("apply", "-input=false")
         self.assertIsNone(captured[0][1]["runtime_endpoint_override"])
-        terraform.wire_runtime(NEW_ENDPOINT, sello=True)
+        terraform.wire_runtime(NEW_ENDPOINT, use_runtime_scitt=True)
         terraform.run("plan")
         self.assertEqual(captured[1][1]["runtime_rpc_url_override"], NEW_ENDPOINT.replace("5001", "8545"))
         self.assertEqual(captured[1][1]["sello_scitt_url"], NEW_ENDPOINT.replace("5001", "8000s"))
@@ -331,6 +331,13 @@ class LifecycleTests(unittest.TestCase):
         self.env_file.write_text(
             "PHALA_CLOUD_API_KEY=key\nENABLE_PHALA_CONTROL_API=true\n"
             "PHALA_RUNTIME_ENDPOINT_OVERRIDE=https://stale-5001.dstack-test.phala.network\n"
+            "SELLO_TOKEN_ISSUER_PUBLIC_KEY=" + "11" * 32 + "\n"
+            "SELLO_SCITT_URL=https://scitt.example.test\n"
+            'AGENT_POP_REGISTRY={"master-thesis-agent":"test-public-key"}\n'
+            "PKI_CA_URL=https://ca.example.test:9443\n"
+            "PKI_ROOT_FINGERPRINT=" + "22" * 32 + "\n"
+            "PKI_WORKER_DNS_NAME=worker.example.test\n"
+            "PKI_WORKER_ENROLLMENT_TOKEN=test-worker-enrollment\n"
         )
         self.events = []
         self.initial_state = state(resource())

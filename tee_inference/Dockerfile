@@ -1,3 +1,5 @@
+FROM smallstep/step-cli:0.28.7 AS step-cli
+
 FROM python:3.12-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -14,10 +16,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl libgomp1 && \
-    rm -rf /var/lib/apt/lists/* && \
-    groupadd --system --gid 10001 tee-inference && \
-    useradd --system --uid 10001 --gid tee-inference --home-dir /app tee-inference
+    apt-get install -y --no-install-recommends ca-certificates curl libgomp1 openssl nginx && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY tee_inference/requirements.lock /tmp/requirements.lock
 RUN python -m pip install --upgrade pip && \
@@ -25,19 +25,19 @@ RUN python -m pip install --upgrade pip && \
     python -m pip install -r /tmp/requirements.lock && \
     rm /tmp/requirements.lock
 
-COPY --chown=tee-inference:tee-inference tee_inference /app/tee_inference
-COPY --chown=tee-inference:tee-inference agent_receipts /app/agent_receipts
-COPY --chown=tee-inference:tee-inference dfl/neural_network /app/dfl/neural_network
-COPY --chown=tee-inference:tee-inference agent/blockchain_source.py agent/ipfs_bundle.py /app/agent/
-COPY --chown=tee-inference:tee-inference data/chestmnist/test_data/test-data.npz /app/data/chestmnist/test_data/test-data.npz
-RUN mkdir -p /tmp/tee-inference/model /tmp/tee-inference/jobs && \
-    chown -R tee-inference:tee-inference /tmp/tee-inference
+COPY tee_inference /app/tee_inference
+COPY agent_receipts /app/agent_receipts
+COPY transport_security /app/transport_security
+COPY pki /app/pki
+COPY --from=step-cli /usr/local/bin/step /usr/local/bin/step
+COPY dfl/neural_network /app/dfl/neural_network
+COPY agent/blockchain_source.py agent/ipfs_bundle.py /app/agent/
+COPY data/chestmnist/test_data/test-data.npz /app/data/chestmnist/test_data/test-data.npz
+RUN mkdir -p /tmp/tee-inference/model /tmp/tee-inference/jobs
 
-USER 10001:10001
-
-EXPOSE 8080
+EXPOSE 8443
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=4 \
-    CMD curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null || exit 1
+    CMD curl --fail --silent --unix-socket /run/vita-fl/inference.sock http://localhost/healthz >/dev/null || exit 1
 
-CMD ["python", "-m", "tee_inference.service"]
+CMD ["python", "-m", "pki.runtime", "run", "worker", "--", "python", "-m", "tee_inference.service"]

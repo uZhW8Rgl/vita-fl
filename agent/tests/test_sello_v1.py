@@ -4,7 +4,13 @@ import unittest
 
 from nacl.signing import SigningKey
 
-from agent_receipts.sello_v1 import ReceiptVerificationError, SelloOwner, SelloReceiver
+from agent_receipts.sello_v1 import (
+    ReceiptVerificationError,
+    SelloOwner,
+    SelloReceiver,
+    b64url_encode,
+    verify_authorization_token,
+)
 
 
 class SelloV1Tests(unittest.TestCase):
@@ -22,7 +28,44 @@ class SelloV1Tests(unittest.TestCase):
             self.receiver_key,
             self.owner.token_issuer_public_key,
         )
-        self.token = self.owner.token(now=1_800_000_000)
+        self.fingerprint = b64url_encode(bytes.fromhex("44" * 32))
+        self.token = self.owner.token(
+            audience="https://worker.example",
+            cert_thumbprint=self.fingerprint,
+            scopes=["fetch_latest_verified_tee_model_bundle", "receipts:read"],
+            now=1_800_000_000,
+        )
+
+    def test_http_authorization_requires_audience_scope_subject_and_certificate_match(self) -> None:
+        checks = {
+            "expected_audience": "https://worker.example",
+            "required_scope": "fetch_latest_verified_tee_model_bundle",
+            "expected_subject": "master-thesis-agent",
+            "cert_thumbprint": self.fingerprint,
+        }
+        claims = verify_authorization_token(self.token, self.owner.token_issuer_public_key, now=1_800_000_001, **checks)
+        self.assertEqual(claims["exp"] - claims["iat"], 300)
+        for key, replacement in {
+            "expected_audience": "https://another.example",
+            "required_scope": "run_and_verify_tee_inference",
+            "expected_subject": "another-agent",
+            "cert_thumbprint": b64url_encode(bytes.fromhex("55" * 32)),
+        }.items():
+            with self.subTest(claim=key), self.assertRaises(ReceiptVerificationError):
+                verify_authorization_token(
+                    self.token, self.owner.token_issuer_public_key, now=1_800_000_001, **{**checks, key: replacement}
+                )
+
+    def test_tokens_minted_in_same_second_have_distinct_identifiers(self) -> None:
+        second = self.owner.token(
+            audience="https://worker.example",
+            cert_thumbprint=self.fingerprint,
+            scopes=["fetch_latest_verified_tee_model_bundle", "receipts:read"],
+            now=1_800_000_000,
+        )
+        first_claims = verify_authorization_token(self.token, self.owner.token_issuer_public_key, now=1_800_000_000)
+        second_claims = verify_authorization_token(second, self.owner.token_issuer_public_key, now=1_800_000_000)
+        self.assertNotEqual(first_claims["jti"], second_claims["jti"])
 
     def emit(self) -> bytes:
         return self.receiver.issue(

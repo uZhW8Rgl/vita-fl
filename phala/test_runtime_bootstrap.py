@@ -25,6 +25,91 @@ ENDPOINTS = {
 
 @unittest.skipUnless(TERRAFORM, "Terraform is needed for the offline runtime bootstrap regression")
 class RuntimeBootstrapTests(unittest.TestCase):
+    def test_static_and_dynamic_worker_security_topology_render_identically(self):
+        templates = {
+            "static": (DIRECTORY / "dstack-compose.worker.phala.tftpl").read_text(),
+            "dynamic": (DIRECTORY / "dynamic-workers/worker-compose.tftpl").read_text(),
+        }
+        names = set()
+        for template in templates.values():
+            names.update(re.findall(r"(?<!\$)\$\{([A-Za-z_]\w*)\}", template))
+        values = {name: f"test-{name}" for name in names}
+        values.update(
+            {
+                "pki_ca_url": "https://ca.example.test:9443",
+                "pki_root_fingerprint": "ab" * 32,
+                "pki_worker_dns_name": "worker.example.test",
+                "worker_image": "ghcr.io/example/worker@sha256:" + "cd" * 32,
+                "telemetry_url": "",
+                "agent_pop_registry": json.dumps({"master-thesis-agent": "test-agent-pop-public-key"}),
+            }
+        )
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("TF_VAR_", "TF_CLI_ARGS")) and key not in {"TF_WORKSPACE", "TF_DATA_DIR"}
+        }
+        with tempfile.TemporaryDirectory(prefix="phala-worker-security-render-") as temporary:
+            directory = Path(temporary)
+            environment["TF_DATA_DIR"] = str(directory / ".terraform")
+            for name, template in templates.items():
+                (directory / f"{name}.tftpl").write_text(template)
+            (directory / "main.tf").write_text(
+                'variable "inference_enabled" { type = bool }\n'
+                'locals { values = jsondecode(file("${path.module}/values.json")) }\n'
+                + "\n".join(
+                    f'output "{name}" {{ value = templatefile("${{path.module}}/{name}.tftpl", '
+                    "merge(local.values, { inference_enabled = var.inference_enabled })) }"
+                    for name in templates
+                )
+            )
+            (directory / "values.json").write_text(json.dumps(values))
+
+            def terraform(*arguments):
+                result = subprocess.run(
+                    [TERRAFORM, f"-chdir={directory}", *arguments],
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return result.stdout
+
+            terraform("init", "-input=false", "-no-color")
+            for inference_enabled in (False, True):
+                with self.subTest(inference_enabled=inference_enabled):
+                    terraform(
+                        "apply",
+                        "-input=false",
+                        "-auto-approve",
+                        "-no-color",
+                        f"-var=inference_enabled={str(inference_enabled).lower()}",
+                    )
+                    rendered = json.loads(terraform("output", "-json"))
+                    normalized = {}
+                    for name in templates:
+                        compose = rendered[name]["value"]
+                        normalized[name] = [
+                            line.strip()
+                            for line in compose.splitlines()
+                            if line.strip() and not line.lstrip().startswith("#")
+                        ]
+                        self.assertEqual('"8443:8443"' in compose, inference_enabled)
+                        self.assertEqual('PKI_CA_URL: "https://ca.example.test:9443"' in compose, inference_enabled)
+                        self.assertEqual(
+                            'TEE_INFERENCE_ORIGIN: "https://worker.example.test"' in compose, inference_enabled
+                        )
+                        self.assertEqual('TEE_TRANSPORT_MODE: "ratls"' in compose, inference_enabled)
+                        registry_line = "AGENT_POP_REGISTRY: " + json.dumps(values["agent_pop_registry"])
+                        self.assertEqual(registry_line in compose, inference_enabled)
+                        self.assertNotIn("PKI_ENROLLMENT_TOKEN:", compose)
+                        self.assertNotIn("AGENT_POP_SIGNING_SEED", compose)
+                        self.assertNotIn("SELLO_REQUIRED", compose)
+                        self.assertNotIn('"8080:8080"', compose)
+                        self.assertEqual(sum(line.lstrip().startswith("image:") for line in compose.splitlines()), 1)
+                    self.assertEqual(normalized["static"], normalized["dynamic"])
+
     def test_runtime_compose_accepts_missing_and_explicit_endpoints(self):
         main = (DIRECTORY / "main.tf").read_text()
         variables = (DIRECTORY / "variables.tf").read_text()

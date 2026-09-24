@@ -1,0 +1,46 @@
+# TLS terminates inside the measured CVM. Only the challenge endpoint is public.
+user root;
+worker_processes 1;
+pid /run/vita-fl/nginx.pid;
+error_log /dev/stderr warn;
+events { worker_connections 256; }
+http {
+    access_log off;
+    client_body_temp_path /run/vita-fl/nginx-body;
+    proxy_temp_path /run/vita-fl/nginx-proxy;
+    limit_req_zone $server_name zone=attestation:1m rate=4r/s;
+    server {
+        listen 8443 ssl;
+        server_name _;
+        ssl_protocols TLSv1.3;
+        ssl_certificate __TLS_CERT_PATH__;
+        ssl_certificate_key __TLS_KEY_PATH__;
+        ssl_verify_client off;
+        ssl_session_cache off;
+        ssl_session_tickets off;
+        keepalive_timeout 65;
+        client_max_body_size 64m;
+        location = /v1/attestation {
+            limit_req zone=attestation burst=8 nodelay;
+            client_max_body_size 4k;
+            proxy_pass http://unix:/run/vita-fl/inference.sock:;
+            proxy_http_version 1.1;
+            proxy_set_header Connection close;
+            proxy_set_header X-Vita-Mtls-Verify "";
+            proxy_set_header X-Vita-Client-Cert "";
+            proxy_set_header X-Vita-Tls-Spki __TLS_SPKI_SHA256__;
+            proxy_read_timeout 30s;
+        }
+        location / {
+            proxy_pass http://unix:/run/vita-fl/inference.sock:;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header Connection close;
+            proxy_set_header X-Vita-Mtls-Verify "";
+            proxy_set_header X-Vita-Client-Cert "";
+            proxy_set_header X-Vita-Tls-Spki __TLS_SPKI_SHA256__;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_read_timeout 300s;
+        }
+    }
+}

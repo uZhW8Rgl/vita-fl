@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import cbor2
@@ -15,7 +16,6 @@ from agent.tee_inference_client import (
     TDX_REPORTDATA_OFFSET,
     TDX_RTMR3_OFFSET,
     TeeInferenceVerificationError,
-    _prepare_model,
     fetch_latest_verified_tee_model_bundle,
     generate_random_tee_chestmnist_image,
     resolve_tee_inference_url,
@@ -43,6 +43,8 @@ CONTRACT_POLICY_ENV = {
 class _JsonResponse:
     def __init__(self, value: dict[str, object]) -> None:
         self._body = json.dumps(value).encode()
+        self.headers = {}
+        self.status = 200
 
     def __enter__(self) -> "_JsonResponse":
         return self
@@ -64,6 +66,7 @@ class _CborResponse(_JsonResponse):
     def __init__(self, body: bytes) -> None:
         self._body = body
         self.headers = _Headers()
+        self.status = 200
 
 
 class TeeInferenceEndpointTests(unittest.TestCase):
@@ -256,8 +259,22 @@ class TeeInferenceBundleTests(unittest.TestCase):
             clear=False,
         )
         self.contract_policy.start()
+        # These tests exercise AIR and orchestration; transport/token semantics
+        # are checked independently with real certificates in the security tests.
+        self.authorization = patch(
+            "agent.tee_inference_client.begin_receiver_call",
+            return_value=SimpleNamespace(headers={"Authorization": "Bearer test-token"}, client_identity=object()),
+        )
+        self.receipts = patch(
+            "agent.tee_inference_client.complete_receiver_call",
+            return_value={"status": "receiver-published-and-scitt-receipt-verified"},
+        )
+        self.authorization.start()
+        self.receipts.start()
 
     def tearDown(self) -> None:
+        self.receipts.stop()
+        self.authorization.stop()
         self.contract_policy.stop()
 
     def test_combined_tee_tool_verifies_and_transparency_logs_job(self) -> None:
@@ -276,7 +293,7 @@ class TeeInferenceBundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with (
                 patch(
-                    "agent.tee_inference_client.urllib.request.urlopen",
+                    "agent.tee_inference_client.open_receiver",
                     side_effect=[metadata, _CborResponse(bundle)],
                 ),
                 patch(
@@ -330,7 +347,7 @@ class TeeInferenceBundleTests(unittest.TestCase):
                 }
             ),
         ]
-        with patch("agent.tee_inference_client.urllib.request.urlopen", side_effect=responses) as urlopen:
+        with patch("agent.tee_inference_client.open_receiver", side_effect=responses) as urlopen:
             model = fetch_latest_verified_tee_model_bundle(endpoint="https://tee.example")
             job = generate_random_tee_chestmnist_image(index=7, endpoint="https://tee.example")
         requests = [call.args[0] for call in urlopen.call_args_list]
@@ -338,16 +355,6 @@ class TeeInferenceBundleTests(unittest.TestCase):
         self.assertEqual(requests[1].full_url, "https://tee.example/v1/jobs")
         self.assertNotIn("path", model)
         self.assertEqual(job["job_id"], "ab" * 16)
-
-    def test_agent_prepares_current_model_within_tool_call(self) -> None:
-        manifest_hash = "12" * 32
-        response = _JsonResponse({"status": "ok", "model_loaded": True, "manifest_sha256": manifest_hash})
-        with patch("agent.tee_inference_client.urllib.request.urlopen", return_value=response) as urlopen:
-            result = _prepare_model("https://tee.example", 30)
-        request = urlopen.call_args.args[0]
-        self.assertEqual(request.full_url, "https://tee.example/v1/prepare")
-        self.assertEqual(request.get_method(), "POST")
-        self.assertEqual(result["manifest_sha256"], manifest_hash)
 
     def test_valid_bundle_verifies(self) -> None:
         request, bundle = valid_fixture()

@@ -15,6 +15,7 @@ from tee_inference.protocol.v1 import ProtocolError, decode_request, decode_resp
 from tee_inference.service.app import create_app, create_job_app, create_lazy_app
 from tee_inference.service.engine import ChestMnistTorchEngine, InferenceError
 from tee_inference.service.jobs import TeeJobStore
+from tee_inference.tests.sello_fixtures import AuthenticatedServiceTestCase
 
 ROOT = Path(__file__).resolve().parents[2]
 MODEL = ROOT / "agent" / "downloads" / "onchain-28945426c804-aggregated.bin"
@@ -36,7 +37,7 @@ class _FakeEmitter:
         return b"evidence:" + exact_request + response
 
 
-class LazyModelLoadingTests(unittest.TestCase):
+class LazyModelLoadingTests(AuthenticatedServiceTestCase):
     def test_job_api_keeps_dataset_and_evidence_inside_service_storage(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -51,7 +52,9 @@ class LazyModelLoadingTests(unittest.TestCase):
 
             async def call() -> tuple[httpx.Response, httpx.Response, httpx.Response, httpx.Response]:
                 transport = httpx.ASGITransport(app=app)
-                async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+                async with httpx.AsyncClient(
+                    transport=transport, base_url="http://test", headers=self.authorization_headers()
+                ) as client:
                     before_model = await client.post("/v1/jobs", json={"index": 1})
                     fetched = await client.post("/v1/models/fetch", json={})
                     created = await client.post("/v1/jobs", json={"index": 1})
@@ -80,19 +83,21 @@ class LazyModelLoadingTests(unittest.TestCase):
 
         async def call() -> tuple[httpx.Response, httpx.Response, httpx.Response, httpx.Response]:
             transport = httpx.ASGITransport(app=create_lazy_app(loader))
-            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test", headers=self.authorization_headers()
+            ) as client:
                 health_before = await client.get("/healthz")
                 infer_before = await client.post(
                     "/v1/infer", content=b"request", headers={"content-type": "application/cbor"}
                 )
-                first_prepare = await client.post("/v1/prepare")
-                second_prepare = await client.post("/v1/prepare")
+                first_prepare = await client.post("/v1/models/fetch", json={})
+                second_prepare = await client.post("/v1/models/fetch", json={})
                 return health_before, infer_before, first_prepare, second_prepare
 
         health, infer, first, second = asyncio.run(call())
         self.assertEqual(health.status_code, 200)
-        self.assertEqual(health.json(), {"status": "ok", "model_loaded": False})
-        self.assertEqual(infer.status_code, 503)
+        self.assertEqual(health.json(), {"status": "ok"})
+        self.assertEqual(infer.status_code, 404)
         self.assertEqual(first.status_code, 200)
         self.assertEqual(first.json()["manifest_sha256"], "22" * 32)
         self.assertEqual(second.status_code, 200)
@@ -110,22 +115,24 @@ class LazyModelLoadingTests(unittest.TestCase):
 
         async def call() -> tuple[httpx.Response, httpx.Response, httpx.Response]:
             transport = httpx.ASGITransport(app=create_lazy_app(loader))
-            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                first = await client.post("/v1/prepare")
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test", headers=self.authorization_headers()
+            ) as client:
+                first = await client.post("/v1/models/fetch", json={})
                 health = await client.get("/healthz")
-                second = await client.post("/v1/prepare")
+                second = await client.post("/v1/models/fetch", json={})
                 return first, health, second
 
         first, health, second = asyncio.run(call())
         self.assertEqual(first.status_code, 503)
         self.assertEqual(health.status_code, 200)
-        self.assertFalse(health.json()["model_loaded"])
+        self.assertEqual(health.json(), {"status": "ok"})
         self.assertEqual(second.status_code, 200)
         self.assertEqual(calls, 2)
 
 
 @unittest.skipUnless(MODEL.exists(), "local native DFL model is not present")
-class ChestMnistInferenceTests(unittest.TestCase):
+class ChestMnistInferenceTests(AuthenticatedServiceTestCase):
     @classmethod
     def setUpClass(cls) -> None:
         vector = json.loads(VECTOR.read_text(encoding="utf-8"))
@@ -184,29 +191,14 @@ class ChestMnistInferenceTests(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             decode_request(bad)
 
-    def test_http_cbor_endpoint(self) -> None:
-        async def call() -> httpx.Response:
-            transport = httpx.ASGITransport(app=create_app(self.engine))
-            async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-                return await client.post(
-                    "/v1/infer",
-                    content=self.request(),
-                    headers={"content-type": "application/cbor"},
-                )
-
-        result = asyncio.run(call())
-        self.assertEqual(result.status_code, 200)
-        self.assertEqual(result.headers["content-type"], "application/cbor")
-        decode_response(result.content)
-
-    def test_http_rejects_json(self) -> None:
+    def test_legacy_http_inference_route_is_removed(self) -> None:
         async def call() -> httpx.Response:
             transport = httpx.ASGITransport(app=create_app(self.engine))
             async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
                 return await client.post("/v1/infer", json={"pixels": []})
 
         result = asyncio.run(call())
-        self.assertEqual(result.status_code, 415)
+        self.assertEqual(result.status_code, 404)
 
 
 if __name__ == "__main__":

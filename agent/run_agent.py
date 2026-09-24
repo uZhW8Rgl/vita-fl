@@ -19,6 +19,11 @@ from typing import Any
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 try:
+    from .sello_client import validate_receiver_security
+except ImportError:
+    from sello_client import validate_receiver_security
+
+try:
     from .agent_skills import (
         describe_agent_skills,
         resolve_preferred_sample_index,
@@ -1257,6 +1262,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        validate_receiver_security()
         if args.serve:
             asyncio.run(serve_agent(args))
             return 0

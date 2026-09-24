@@ -19,10 +19,27 @@ import cbor2
 import numpy as np
 
 from agent_receipts.scitt import public_registration
+from transport_security.attestation import (
+    AttestationVerificationError,
+    VerifiedSession,
+    air_report_data,
+    parse_tdx_quote,
+    ratls_enabled,
+    verify_quote_with_phala,
+)
+from transport_security.client import open_receiver
+
+try:
+    from .sello_client import begin_receiver_call, complete_receiver_call
+except ImportError:
+    from sello_client import begin_receiver_call, complete_receiver_call
 from tee_inference.air.v1 import (
     ATTESTATION_DOC_HASH,
+    CWT_CTI,
+    ENCLAVE_MEASUREMENTS,
     MODEL_ID,
     MODEL_VERSION,
+    POLICY_VERSION,
     SEQUENCE_NUMBER,
     AirPolicy,
     verify_receipt,
@@ -121,21 +138,6 @@ def _read_limited(response: Any, limit: int, name: str) -> bytes:
     return raw
 
 
-def _prepare_model(base_url: str, timeout: int) -> dict[str, Any]:
-    request = urllib.request.Request(f"{base_url.rstrip('/')}/v1/prepare", data=b"", method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            value = json.loads(_read_limited(response, MAX_HEALTH_BYTES, "prepare response"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read(4096).decode("utf-8", errors="replace")
-        raise TeeInferenceVerificationError(f"TEE inference preparation returned HTTP {exc.code}: {body}") from exc
-    except (urllib.error.URLError, json.JSONDecodeError) as exc:
-        raise TeeInferenceVerificationError(f"TEE inference preparation failed: {exc}") from exc
-    if not isinstance(value, dict) or value.get("status") != "ok":
-        raise TeeInferenceVerificationError("TEE inference preparation response is not ready")
-    return value
-
-
 def _json_request(
     base_url: str,
     path: str,
@@ -146,20 +148,13 @@ def _json_request(
 ) -> dict[str, Any]:
     data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
     headers = {} if data is None else {"Content-Type": "application/json"}
-    receiver_call = None
-    if receipt_action is not None:
-        try:
-            from .sello_client import begin_receiver_call
-        except ImportError:
-            from sello_client import begin_receiver_call
-        receiver_call = begin_receiver_call(
-            receipt_action,
-            "tee-inference",
-            data or b"",
-            receiver_base_url=base_url,
-        )
-        if receiver_call is not None:
-            headers.update(receiver_call.headers)
+    receiver_call = begin_receiver_call(
+        receipt_action or "jobs:read",
+        "tee-inference",
+        data or b"",
+        receiver_base_url=base_url,
+    )
+    headers.update(receiver_call.headers)
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/{path.lstrip('/')}",
         data=data,
@@ -167,28 +162,32 @@ def _json_request(
         method="GET" if payload is None else "POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_receiver(request, timeout=timeout, identity=receiver_call.client_identity) as response:
             raw = _read_limited(response, MAX_HEALTH_BYTES, f"{path} response")
             receipt_result = None
-            if receiver_call is not None:
-                try:
-                    from .sello_client import complete_receiver_call
-                except ImportError:
-                    from sello_client import complete_receiver_call
+            if receipt_action is not None:
                 receipt_result = complete_receiver_call(
-                    receiver_call, response.headers, raw, response.status, receiver_base_url=base_url
+                    receiver_call,
+                    response.headers,
+                    raw,
+                    response.status,
+                    receiver_base_url=base_url,
+                    verified_session=getattr(response, "verified_session", None),
                 )
             value = json.loads(raw)
             if receipt_result is not None:
                 value["tool_receipt"] = receipt_result
     except urllib.error.HTTPError as exc:
         raw = exc.read(4096)
-        if receiver_call is not None:
-            try:
-                from .sello_client import complete_receiver_call
-            except ImportError:
-                from sello_client import complete_receiver_call
-            complete_receiver_call(receiver_call, exc.headers, raw, exc.code, receiver_base_url=base_url)
+        if receipt_action is not None:
+            complete_receiver_call(
+                receiver_call,
+                exc.headers,
+                raw,
+                exc.code,
+                receiver_base_url=base_url,
+                verified_session=getattr(exc, "verified_session", None),
+            )
         body = raw.decode("utf-8", errors="replace")
         raise TeeInferenceVerificationError(f"TEE inference {path} returned HTTP {exc.code}: {body}") from exc
     except (urllib.error.URLError, json.JSONDecodeError) as exc:
@@ -240,12 +239,10 @@ def generate_random_tee_chestmnist_image(
     }
 
 
-def _post_job_inference(base_url: str, job_id: str, timeout: int) -> tuple[bytes, dict[str, Any] | None]:
+def _post_job_inference(
+    base_url: str, job_id: str, timeout: int
+) -> tuple[bytes, dict[str, Any], VerifiedSession | None]:
     action_input = json.dumps({"job_id": job_id}, sort_keys=True, separators=(",", ":")).encode()
-    try:
-        from .sello_client import begin_receiver_call
-    except ImportError:
-        from sello_client import begin_receiver_call
     receiver_call = begin_receiver_call(
         "run_and_verify_tee_inference",
         "tee-inference",
@@ -253,8 +250,7 @@ def _post_job_inference(base_url: str, job_id: str, timeout: int) -> tuple[bytes
         receiver_base_url=base_url,
     )
     headers = {"Accept": "application/cbor"}
-    if receiver_call is not None:
-        headers.update(receiver_call.headers)
+    headers.update(receiver_call.headers)
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/v1/jobs/{job_id}/run",
         data=b"",
@@ -262,52 +258,33 @@ def _post_job_inference(base_url: str, job_id: str, timeout: int) -> tuple[bytes
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with open_receiver(request, timeout=timeout, identity=receiver_call.client_identity) as response:
             if response.headers.get_content_type() != "application/cbor":
                 raise TeeInferenceVerificationError("unexpected TEE job response content type")
             raw = _read_limited(response, MAX_EVIDENCE_BYTES, "TEE job evidence bundle")
-            receipt_result = None
-            if receiver_call is not None:
-                try:
-                    from .sello_client import complete_receiver_call
-                except ImportError:
-                    from sello_client import complete_receiver_call
-                receipt_result = complete_receiver_call(
-                    receiver_call, response.headers, raw, response.status, receiver_base_url=base_url
-                )
-            return raw, receipt_result
+            receipt_result = complete_receiver_call(
+                receiver_call,
+                response.headers,
+                raw,
+                response.status,
+                receiver_base_url=base_url,
+                verified_session=getattr(response, "verified_session", None),
+            )
+            return raw, receipt_result, getattr(response, "verified_session", None)
     except urllib.error.HTTPError as exc:
         raw = exc.read(4096)
-        if receiver_call is not None:
-            try:
-                from .sello_client import complete_receiver_call
-            except ImportError:
-                from sello_client import complete_receiver_call
-            complete_receiver_call(receiver_call, exc.headers, raw, exc.code, receiver_base_url=base_url)
+        complete_receiver_call(
+            receiver_call,
+            exc.headers,
+            raw,
+            exc.code,
+            receiver_base_url=base_url,
+            verified_session=getattr(exc, "verified_session", None),
+        )
         body = raw.decode("utf-8", errors="replace")
         raise TeeInferenceVerificationError(f"TEE inference job returned HTTP {exc.code}: {body}") from exc
     except urllib.error.URLError as exc:
         raise TeeInferenceVerificationError(f"TEE inference job request failed: {exc}") from exc
-
-
-def _post_inference(base_url: str, request_bytes: bytes, timeout: int) -> bytes:
-    request = urllib.request.Request(
-        f"{base_url.rstrip('/')}/v1/infer",
-        data=request_bytes,
-        headers={"Content-Type": "application/cbor", "Accept": "application/cbor"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            content_type = response.headers.get_content_type()
-            if content_type != "application/cbor":
-                raise TeeInferenceVerificationError(f"unexpected inference content type: {content_type}")
-            return _read_limited(response, MAX_EVIDENCE_BYTES, "evidence bundle")
-    except urllib.error.HTTPError as exc:
-        body = exc.read(4096).decode("utf-8", errors="replace")
-        raise TeeInferenceVerificationError(f"TEE inference returned HTTP {exc.code}: {body}") from exc
-    except urllib.error.URLError as exc:
-        raise TeeInferenceVerificationError(f"TEE inference request failed: {exc}") from exc
 
 
 def _decode_bundle(raw: bytes) -> dict[int, Any]:
@@ -315,12 +292,14 @@ def _decode_bundle(raw: bytes) -> dict[int, Any]:
         bundle = cbor2.loads(raw)
     except Exception as exc:
         raise TeeInferenceVerificationError(f"invalid evidence CBOR: {exc}") from exc
-    if not isinstance(bundle, dict) or set(bundle) != set(range(1, 11)):
-        raise TeeInferenceVerificationError("evidence bundle must contain exactly keys 1 through 10")
+    if not isinstance(bundle, dict):
+        raise TeeInferenceVerificationError("evidence bundle must be a map")
+    version = bundle.get(1)
+    expected_keys = set(range(1, 11 if version == 1 else 13))
+    if type(version) is not int or version not in {1, 2} or set(bundle) != expected_keys:
+        raise TeeInferenceVerificationError("evidence bundle has an unsupported version or field set")
     if encode_deterministic(bundle) != raw:
         raise TeeInferenceVerificationError("evidence bundle is not deterministic CBOR")
-    if bundle[1] != 1:
-        raise TeeInferenceVerificationError("unsupported evidence bundle version")
     return bundle
 
 
@@ -531,10 +510,20 @@ def verify_tee_inference_bundle(
     bundle_bytes: bytes,
     exact_request: bytes,
     expected_image_digest: str,
+    *,
+    verified_session: VerifiedSession | None = None,
 ) -> dict[str, Any]:
-    """Verify all locally checkable AIR, quote-binding, RTMR3, and image-policy claims."""
+    """Check AIR and deployment policy; RA-TLS additionally requires verified quotes."""
 
     bundle = _decode_bundle(bundle_bytes)
+    use_ratls = ratls_enabled()
+    if use_ratls:
+        if bundle[1] != 2 or not isinstance(verified_session, VerifiedSession):
+            raise TeeInferenceVerificationError("RA-TLS inference requires AIR v2 and a verified TLS session")
+        if bundle[11] != verified_session.evidence or bundle[12] != bytes.fromhex(verified_session.session_id):
+            raise TeeInferenceVerificationError("AIR evidence belongs to another RA-TLS session")
+    elif bundle[1] != 1 or verified_session is not None:
+        raise TeeInferenceVerificationError("legacy mTLS requires AIR v1 without RA-TLS session evidence")
     if bundle[2] != exact_request:
         raise TeeInferenceVerificationError("bundle request does not match the submitted request")
     request = decode_request(exact_request)
@@ -568,8 +557,20 @@ def verify_tee_inference_bundle(
         raise TeeInferenceVerificationError("receipt, key, quote, and REPORTDATA must be byte strings")
     if len(quote) < TDX_REPORTDATA_OFFSET + TDX_REPORTDATA_SIZE or int.from_bytes(quote[:2], "little") != 4:
         raise TeeInferenceVerificationError("evidence does not contain a complete TDX Quote V4")
-    identity_hash = hashlib.sha256(b"MasterThesis.AIR.key.v1" + public_key + manifest_digest).digest()
-    expected_report_data = identity_hash + request_digest
+    quote_verification = None
+    if use_ratls:
+        if public_key != verified_session.claims["air_public_key"]:
+            raise TeeInferenceVerificationError("AIR signing key differs from the attested TLS session key")
+        if request[5] != verified_session.claims["challenge"]:
+            raise TeeInferenceVerificationError("AIR nonce differs from the client TLS-session challenge")
+        try:
+            expected_report_data = air_report_data(public_key, manifest_digest, request_digest, verified_session)
+            quote_verification = verify_quote_with_phala(quote, expected_report_data)
+        except AttestationVerificationError as exc:
+            raise TeeInferenceVerificationError(f"AIR quote verification failed: {exc}") from exc
+    else:
+        identity_hash = hashlib.sha256(b"MasterThesis.AIR.key.v1" + public_key + manifest_digest).digest()
+        expected_report_data = identity_hash + request_digest
     quote_report_data = quote[TDX_REPORTDATA_OFFSET : TDX_REPORTDATA_OFFSET + TDX_REPORTDATA_SIZE]
     if report_data != expected_report_data or quote_report_data != expected_report_data:
         raise TeeInferenceVerificationError("REPORTDATA does not bind AIR key, manifest, and request to the quote")
@@ -593,6 +594,13 @@ def verify_tee_inference_bundle(
         raise TeeInferenceVerificationError("AIR model identity does not match the supplied manifest")
     if claims[ATTESTATION_DOC_HASH] != hashlib.sha256(quote).digest():
         raise TeeInferenceVerificationError("AIR receipt does not bind the supplied TDX quote")
+    if use_ratls:
+        if claims[CWT_CTI] != request[2] or claims[POLICY_VERSION] != "master-thesis-air-v2":
+            raise TeeInferenceVerificationError("AIR request identity or policy does not match the RA-TLS profile")
+        quote_fields = parse_tdx_quote(quote)
+        for pcr, name in enumerate(("mrtd", "rtmr0", "rtmr1", "rtmr2", "rtmr3")):
+            if claims[ENCLAVE_MEASUREMENTS].get(f"pcr{pcr}") != quote_fields[name]:
+                raise TeeInferenceVerificationError("AIR signed measurements differ from the verified quote")
 
     event_log = bundle[7]
     app_compose = bundle[8]
@@ -620,8 +628,20 @@ def verify_tee_inference_bundle(
         raise TeeInferenceVerificationError("decision vector does not follow the manifest threshold")
 
     return {
-        "verification_scope": ("air-signature-reportdata-rtmr3-compose-image-contract-endpoint-trust-root-policy"),
-        "dcap_collateral_verified": False,
+        "verification_scope": (
+            "air-signature-reportdata-rtmr3-compose-image-contract-endpoint-trust-root-policy"
+            + ("-ratls-session-phala-dcap" if use_ratls else "")
+        ),
+        "dcap_collateral_verified": use_ratls,
+        **(
+            {
+                "ratls_session_id": verified_session.session_id,
+                "quote_verification": quote_verification,
+                "cryptographic_quote_verified_by": "phala-api",
+            }
+            if use_ratls
+            else {}
+        ),
         "manifest_sha256": manifest_digest.hex(),
         "model_id": manifest[2].hex() if isinstance(manifest[2], bytes) else str(manifest[2]),
         "model_version": manifest[3],
@@ -676,7 +696,7 @@ def run_and_verify_tee_inference(
         raise TeeInferenceVerificationError("job_id must contain exactly 32 lowercase hexadecimal characters")
 
     metadata = _json_request(base_url, f"/v1/jobs/{job_id}", timeout_seconds)
-    bundle_bytes, tool_receipt = _post_job_inference(base_url, job_id, timeout_seconds)
+    bundle_bytes, tool_receipt, verified_session = _post_job_inference(base_url, job_id, timeout_seconds)
     bundle = _decode_bundle(bundle_bytes)
     exact_request = bundle[2]
     if not isinstance(exact_request, bytes):
@@ -685,6 +705,7 @@ def run_and_verify_tee_inference(
         bundle_bytes,
         exact_request,
         expected_image_digest or DEFAULT_TEE_IMAGE_DIGEST,
+        verified_session=verified_session,
     )
 
     try:

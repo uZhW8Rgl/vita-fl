@@ -166,10 +166,6 @@ variable "python_service_url" { type = string }
 variable "public_ip" { type = string }
 variable "msg_broker_ip" { type = string }
 
-variable "sello_required" {
-  type    = bool
-  default = false
-}
 
 variable "sello_scitt_url" {
   type    = string
@@ -200,4 +196,46 @@ variable "public_tcbinfo" {
 variable "wait_timeout_seconds" {
   type    = number
   default = 900
+}
+
+# Legacy mTLS provisioning; RA-TLS-only deployments do not use the CA.
+variable "pki_ca_url" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.pki_ca_url == "" || can(regex("^https://[^/]+", var.pki_ca_url))
+    error_message = "pki_ca_url must be the HTTPS URL of the approved certificate authority."
+  }
+}
+variable "pki_root_fingerprint" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.pki_root_fingerprint == "" || can(regex("^[0-9a-fA-F]{64}$", var.pki_root_fingerprint))
+    error_message = "pki_root_fingerprint must pin the SHA-256 root certificate fingerprint."
+  }
+}
+variable "pki_worker_dns_name" {
+  type    = string
+  default = ""
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9][a-zA-Z0-9.-]+$", var.pki_worker_dns_name))
+    error_message = "pki_worker_dns_name must be the reserved Worker 0 TLS-passthrough DNS name."
+  }
+}
+variable "pki_worker_enrollment_token" {
+  type      = string
+  sensitive = true
+  default   = ""
+}
+
+# The registry is public but authenticated by the admitted Compose policy.
+variable "agent_pop_registry" {
+  description = "JSON map of authorized agent subjects to base64url Ed25519 PoP public keys."
+  type        = string
+  default     = "{}"
+  validation {
+    condition     = can(keys(jsondecode(var.agent_pop_registry)))
+    error_message = "agent_pop_registry must be a JSON object; an inference receiver rejects an empty registry."
+  }
 }

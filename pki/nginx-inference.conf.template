@@ -1,0 +1,41 @@
+# Render with: python -m pki.runtime render-nginx OUTPUT
+# The application MUST listen only on /run/vita-fl/inference.sock, mode 0600.
+# Both trusted processes run as the image's root user; the socket is not public.
+user root;
+worker_processes 1;
+pid /run/vita-fl/nginx.pid;
+error_log /dev/stderr warn;
+events { worker_connections 256; }
+http {
+    access_log off;
+    client_body_temp_path /run/vita-fl/nginx-body;
+    proxy_temp_path /run/vita-fl/nginx-proxy;
+    server {
+        listen 8443 ssl;
+        server_name _;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_certificate __TLS_CERT_PATH__;
+        ssl_certificate_key __TLS_KEY_PATH__;
+        ssl_client_certificate __TLS_CLIENT_CA_CERT_PATH__;
+        # authenticated_peer checks the issuer-signed leaf CRL on EVERY request.
+        # nginx ssl_crl would require an additional offline-root CRL for the
+        # intermediate, so revocation is enforced in the private receiver.
+        ssl_verify_client on;
+        ssl_verify_depth 2;
+        # Force fresh verification on every new connection after revocation.
+        ssl_session_cache off;
+        ssl_session_tickets off;
+        keepalive_timeout 0;
+        client_max_body_size 64m;
+        location / {
+            proxy_pass http://unix:/run/vita-fl/inference.sock:;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header Connection close;
+            proxy_set_header X-Vita-Mtls-Verify $ssl_client_verify;
+            proxy_set_header X-Vita-Client-Cert $ssl_client_escaped_cert;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_read_timeout 300s;
+        }
+    }
+}

@@ -336,14 +336,35 @@ services:
       RSA_PRIVATE_KEY_FILE: /dfl/keys/private_key.pem
       RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key.pem
       AGENT_PORT: "8089"
-      TEE_INFERENCE_URL: ${TEE_INFERENCE_URL:-https://181195df89a143ecaf3d38b2cf0fcb8a30310f07-8080.dstack-pha-prod9.phala.network}
-      TEE_INFERENCE_IMAGE_DIGEST: ${TEE_INFERENCE_IMAGE_DIGEST:-sha256:aafa7a1897fc5f6f8d3c15c6b0d54c739d26c30b5e0142c7f1423c3b8c706115}
+      TEE_INFERENCE_URL: ${TEE_INFERENCE_URL:-}
+      # Local Compose has no dstack: RA-TLS is an explicit opt-in to a remote TEE.
+      TEE_TRANSPORT_MODE: ${TEE_TRANSPORT_MODE:-mtls}
+      AGENT_POP_SIGNING_SEED: ${AGENT_POP_SIGNING_SEED:-}
+      RATLS_ALLOWED_PLATFORM_MEASUREMENTS: ${RATLS_ALLOWED_PLATFORM_MEASUREMENTS:-[]}
+      PHALA_ATTESTATION_VERIFY_URL: "https://cloud-api.phala.com/api/v1/attestations/verify"
+      TEE_INFERENCE_IMAGE_DIGEST: ${TEE_INFERENCE_IMAGE_DIGEST:-}
+      SELLO_TOKEN_ISSUER_SIGNING_SEED: ${SELLO_TOKEN_ISSUER_SIGNING_SEED:-}
+      SELLO_OWNER_HPKE_PRIVATE_KEY: ${SELLO_OWNER_HPKE_PRIVATE_KEY:-}
+      # The TEE receiver's signing key is resolved from DeviceRegistry.
+      SELLO_SERVICE_REGISTRY: "{}"
+      SELLO_OWNER_SUBJECT: ${PKI_AGENT_SUBJECT:-master-thesis-agent}
+      PKI_STATE_DIR: /var/lib/vita-fl-agent-tls
+      PKI_CA_URL: ${PKI_CA_URL:-}
+      PKI_ROOT_FINGERPRINT: ${PKI_ROOT_FINGERPRINT:-}
+      PKI_SUBJECT: ${PKI_AGENT_SUBJECT:-master-thesis-agent}
+      PKI_ENROLLMENT_TOKEN: ${PKI_AGENT_ENROLLMENT_TOKEN:-}
       SCITT_URL: https://transparency-log:8000
       SCITT_DEVELOPMENT: "1"
       SCITT_SIGNER_DIR: /app/agent/state/scitt
       SCITT_TRANSPARENT_STATEMENT_PATH: /app/tee_inference/out/latest-transparent-statement.cose
       TEE_INFERENCE_EVIDENCE_PATH: /app/tee_inference/out/latest-evidence.cbor
     command:
+      - python
+      - -m
+      - pki.runtime
+      - run
+      - agent
+      - --
       - python
       - agent/run_agent.py
       - --serve
@@ -366,6 +387,7 @@ services:
       - ./data/rsa_keys:/dfl/keys:ro
       - ./tee_inference/out:/app/tee_inference/out
       - agent-scitt-state:/app/agent/state/scitt
+      - agent-tls-state:/var/lib/vita-fl-agent-tls
 
   control-api:
     build:
@@ -427,6 +449,7 @@ services:
     environment:
       DATASET_NAME: ${DATASET_NAME:-mnist}
       PYTHONUNBUFFERED: "1"
+      TEE_TRANSPORT_MODE: "mtls"
       ZK_INFERENCE_HOST: 0.0.0.0
       ZK_INFERENCE_PORT: "8090"
     volumes:
@@ -520,4 +543,5 @@ services:
 
 volumes:
   agent-scitt-state:
+  agent-tls-state:
   scitt-data:

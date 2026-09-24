@@ -211,7 +211,7 @@ class CombinedWorkerScriptTests(unittest.TestCase):
                     server,
                 )
 
-    def _healthcheck_url(self, enabled: str, *, participant_key_ready: bool = False) -> str:
+    def _healthcheck_arguments(self, enabled: str, *, participant_key_ready: bool = False) -> list[str]:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fake_bin = root / "bin"
@@ -237,23 +237,22 @@ class CombinedWorkerScriptTests(unittest.TestCase):
                 }
             )
             subprocess.run(["bash", str(HEALTHCHECK)], env=environment, check=True)
-            return record.read_text(encoding="utf-8").splitlines()[-1]
+            return record.read_text(encoding="utf-8").splitlines()
 
     def test_healthcheck_uses_internal_ml_service_for_training_only_worker(self) -> None:
         self.assertEqual(
-            self._healthcheck_url("0"),
+            self._healthcheck_arguments("0")[-1],
             "http://127.0.0.1:8000/health",
         )
 
-    def test_healthcheck_uses_public_inference_service_for_combined_worker(self) -> None:
-        self.assertEqual(
-            self._healthcheck_url("true", participant_key_ready=True),
-            "http://127.0.0.1:8080/healthz",
-        )
+    def test_healthcheck_uses_private_inference_socket_for_combined_worker(self) -> None:
+        arguments = self._healthcheck_arguments("true", participant_key_ready=True)
+        self.assertEqual(arguments[-1], "http://localhost/healthz")
+        self.assertEqual(arguments[arguments.index("--unix-socket") + 1], "/run/vita-fl/inference.sock")
 
     def test_healthcheck_accepts_initializing_combined_worker(self) -> None:
         self.assertEqual(
-            self._healthcheck_url("true"),
+            self._healthcheck_arguments("true")[-1],
             "http://127.0.0.1:8000/health",
         )
 

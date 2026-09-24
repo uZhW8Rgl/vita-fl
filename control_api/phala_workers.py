@@ -123,9 +123,13 @@ class WorkerDeploymentConfig:
     python_service_url: str = "http://127.0.0.1:8000"
     public_ip: str = "127.0.0.1"
     msg_broker_ip: str = "127.0.0.1"
-    sello_required: bool = False
+    pki_ca_url: str = ""
+    pki_root_fingerprint: str = ""
+    pki_worker_dns_name: str = ""
+    pki_worker_enrollment_token: str = ""
     sello_scitt_url: str = ""
     sello_token_issuer_public_key: str = ""
+    agent_pop_registry: str = "{}"
 
     def terraform_values(self) -> dict[str, Any]:
         values = asdict(self)
@@ -685,8 +689,12 @@ def controller_from_environment() -> PhalaWorkerController:
         python_service_url=os.environ.get("PYTHON_SERVICE_URL", "http://127.0.0.1:8000"),
         public_ip=os.environ.get("PUBLIC_IP", "127.0.0.1"),
         msg_broker_ip=os.environ.get("MSG_BROKER_IP", "127.0.0.1"),
-        sello_required=os.environ.get("DYNAMIC_WORKER_SELLO_REQUIRED", "0").lower() in {"1", "true", "yes"},
+        pki_ca_url=os.environ.get("DYNAMIC_WORKER_PKI_CA_URL", ""),
+        pki_root_fingerprint=os.environ.get("DYNAMIC_WORKER_PKI_ROOT_FINGERPRINT", ""),
+        pki_worker_dns_name=os.environ.get("DYNAMIC_WORKER_PKI_WORKER_DNS_NAME", ""),
+        pki_worker_enrollment_token=os.environ.get("DYNAMIC_WORKER_PKI_ENROLLMENT_TOKEN", ""),
         sello_scitt_url=os.environ.get("DYNAMIC_WORKER_SELLO_SCITT_URL", ""),
+        agent_pop_registry=os.environ.get("DYNAMIC_WORKER_AGENT_POP_REGISTRY", "{}"),
         sello_token_issuer_public_key=os.environ.get(
             "DYNAMIC_WORKER_SELLO_TOKEN_ISSUER_PUBLIC_KEY",
             "",

@@ -5,6 +5,119 @@ DFL worker TEEs. Worker 0 additionally serves TEE inference from the same
 digest-pinned `dfl-worker` image and the same CVM; there is no separate
 TEE-inference Phala app.
 
+## Mandatory inference authentication
+
+Phala templates explicitly select `TEE_TRANSPORT_MODE=ratls` for Worker 0 and
+its agent. Worker 0 authenticates the caller with a registered Ed25519
+proof-of-possession (PoP) key plus a signed Sello token. The agent authenticates
+the receiver through fresh TDX evidence bound to the actual TLS connection.
+The legacy `mtls` mode remains available for PKI-based transports; the separate
+ZK receiver is still disabled in the supported Phala deployment.
+
+The RA-TLS profile uses a fresh `/v1/attestation` exchange over the established
+TLS connection, before transmitting authorization headers or inference inputs.
+Evidence is carried outside the X.509 certificate, rather than in a quote
+extension. The worker generates an ephemeral local TLS key and self-signed
+certificate at process startup. A verifier challenge binds the quote to that
+TLS key and to the AIR and Sello identities. The client checks the evidence
+and keeps the verified connection for the protected request; a new connection
+requires fresh verification. A self-signed certificate alone is never trusted.
+
+The agent submits the raw quote to the official Phala verifier over ordinary
+certificate-verified HTTPS. It also enforces its own approved MRTD/RTMR0–2
+policy, RTMR3 event-log replay, measured Compose/image policy, registered
+receiver origin, and key bindings. Phala's API is a trusted online quote
+verifier, not the source of the workload allowlist. Its documented JSON
+response is not a separately signed offline attestation certificate. API
+failures, missing evidence and policy mismatches fail closed; there is no
+fallback to unverified HTTPS or a learned-on-first-contact measurement policy.
+The separate per-inference AIR quote is also checked through Phala and bound
+to the verified session, TLS public key, AIR key, manifest and request.
+See the [Phala verification API](https://docs.phala.com/phala-cloud/phala-cloud-api/attestations).
+
+### Provision the agent identity and TLS origin
+
+Reserve the Worker 0 application's exact **`-8443s` TLS-passthrough hostname**
+before creating the measured Compose policy, for example:
+
+```text
+reserved-worker-app-id-8443s.dstack-region.phala.network
+```
+
+The `s` keeps TLS terminated by nginx inside the measured worker container. A
+normal HTTP-proxy endpoint terminates TLS outside that boundary and cannot
+satisfy the receiver-key binding. The application listens only on
+`/run/vita-fl/inference.sock`; nginx exposes port 8443. The configured hostname
+is retained under the compatibility name `PKI_WORKER_DNS_NAME` and determines
+`TEE_INFERENCE_ORIGIN` and the registered receiver endpoint. Maintaining this
+reserved origin remains an operator responsibility.
+
+The operator authorizes each agent subject and independently provisions its
+PoP public key. `AGENT_POP_REGISTRY` is embedded directly in measured Compose
+and in the matching admission-policy reference, including the dynamic worker
+path. A key provided by an incoming request is not an authorization registry.
+Only the agent receives `AGENT_POP_SIGNING_SEED`, through the private encrypted
+app environment. This seed is distinct from the Sello issuer seed, TLS key,
+and all worker keys. A copied token alone cannot authorize a protected request.
+
+Configure the following in the selected private `.env.phala.anvil` profile:
+
+| Variable | Purpose |
+| --- | --- |
+| `PKI_WORKER_DNS_NAME` | Reserved Worker 0 TLS-passthrough hostname |
+| `PKI_AGENT_SUBJECT` | Authorized subject; also supplies `SELLO_OWNER_SUBJECT` |
+| `AGENT_POP_SIGNING_SEED` | Agent-only Ed25519 seed for signing request proofs |
+| `AGENT_POP_REGISTRY` | Measured JSON map from authorized subjects to base64url Ed25519 public keys |
+| `RATLS_ALLOWED_PLATFORM_MEASUREMENTS` | Agent-only JSON allowlist of approved OS measurements |
+| `PHALA_ATTESTATION_VERIFY_URL` | Fixed supported value: `https://cloud-api.phala.com/api/v1/attestations/verify`; custom endpoints are rejected |
+| `SELLO_TOKEN_ISSUER_PUBLIC_KEY` | Receiver's trusted Sello token issuer |
+| `SELLO_TOKEN_ISSUER_SIGNING_SEED` | Issuer seed supplied only to the agent |
+| `SELLO_OWNER_HPKE_PRIVATE_KEY` | Owner's receipt-decryption key |
+| `SELLO_SERVICE_REGISTRY` | Static receiver public keys; `{}` for TEE-only use |
+| `SELLO_SCITT_URL` | HTTPS destination for receiver-published receipts |
+
+Generate a coherent set with:
+
+```sh
+python phala/generate_sello_env.py \
+  --scitt-url https://CONTRACT_APP_ID-8000s.dstack-REGION.phala.network \
+  --agent-subject master-thesis-agent
+```
+
+The command prints secrets; save its output only in the private deployment
+profile. The platform-policy shape is
+`[{"mrtd":"96 hex characters","rtmr0":"96 hex characters","rtmr1":"96 hex characters","rtmr2":"96 hex characters"}]`.
+Each value represents 48 bytes. Obtain expected values from an independently
+approved dstack OS reference; do not copy a candidate receiver's measurements
+into an allowlist merely to make a failed request pass. `[]` in the example is
+intentionally unusable. RTMR3 is checked separately against the event log and
+application policy. The image digest and configured chain/contract/RPC anchors
+remain required application-policy inputs.
+
+### PKI compatibility, key changes and rollout
+
+A TEE-only RA-TLS agent needs no CA enrollment. `pki.runtime` remains the process
+supervisor and starts the local RA-TLS receiver, or the RA-only agent, without
+PKI enrollment. An agent configured with a legacy ZK mTLS target still requires
+its normal PKI credentials. The [PKI operator guide](../pki/README.md) documents
+that mode's enrollment, renewal and revocation. Local `compose.yml` defaults
+to `mtls` because it has no dstack hardware; selecting `ratls` requires a remote
+TEE and a complete explicit policy.
+
+Agent PoP key revocation is a registry/policy update, not a CA CRL event. Publish
+new worker and agent images, update expected image digests, regenerate the
+training/inference role-policy hashes for the changed measured Compose, and
+start a newly admitted run. Registry rotation also requires updating the
+measured worker policy. Preserve the TLS-passthrough origin and provision the
+new private agent seed only to the agent. Existing remote images are not
+upgraded by a local source edit.
+
+The change needs an end-to-end run against a configured, admitted Phala worker
+and the live quote-verification API. Local tests use mock quotes/verifier
+responses for failure cases and local TLS for connection binding; they do not
+establish successful hardware attestation. No live deployment or key
+provisioning is performed by the test suite.
+
 ## Terraform Deployment
 
 The supported entry point is `bash phala/start.sh`, run from the repository root.
@@ -487,12 +600,12 @@ Notes:
   It is distinct from the secp256k1 action key that authorizes Ethereum
   transactions. The AIR evidence signing key remains a third,
   domain-separated dstack-derived key.
-- Worker 0 exposes port 8080 from the same `dfl-worker` container and CVM.
+- Worker 0 exposes its attestation-bound TLS proxy on port 8443 from the same `dfl-worker` container and CVM.
   Model retrieval remains tool-triggered: container startup does not fetch or
   load the current model. The agent normally reads Worker 0's authorized,
   REPORTDATA-bound HTTPS endpoint from `DeviceRegistry.public_ip`; an explicit
-  `tee_inference_url_override` is only a diagnostic or compatibility escape
-  hatch. Tool-triggered model loading uses the same compose-bound GMStorage,
+  `tee_inference_url_override` is only a diagnostic override and must still
+  match the attestation-bound receiver origin. Tool-triggered model loading uses the same compose-bound GMStorage,
   Registry, RPC endpoint, and chain ID as the worker. A present contract
   manifest is validated, but a missing MFS copy does not disable inference
   after a valid Worker 0 reboot.
@@ -747,13 +860,14 @@ OLLAMA_SIZE=tdx.medium
 OLLAMA_API_TOKEN=replace-with-at-least-24-url-safe-characters
 ```
 
-The agent itself does not wait for inference readiness: chat becomes ready as
-soon as Ollama has loaded the model. For TEE tool calls it reads Worker 0's
+The agent enrolls or restores its own TLS certificate and validates its Sello
+configuration before startup. It then does not wait for inference readiness:
+chat becomes ready once Ollama has loaded the model. For TEE tool calls it reads Worker 0's
 current record from `DeviceRegistry` and uses the registered HTTPS endpoint.
-Set `TEE_INFERENCE_URL_OVERRIDE` only to deliberately bypass that discovery for
-diagnostics.
+An explicit `TEE_INFERENCE_URL_OVERRIDE` skips endpoint discovery but must
+still match the authorized receiver record.
 
-For receiver-attested confidential receipts on all six public MCP tools,
+For the mandatory receiver-attested confidential receipts on the TEE MCP tools,
 generate the owner, issuer, and ZK-receiver key material once and add its
 output to `.env.phala.anvil`:
 
@@ -767,8 +881,8 @@ derives the managed runtime's SCITT endpoint on deployment.
 
 The legacy separate ZK receiver configuration uses an operator-generated signing
 seed and the owner's static service registry, but that Phala app is currently
-disabled pending attested participant-key delegation. With
-`ENABLE_SELLO_RECEIPTS=true`, Worker 0 does not receive a TEE-receiver seed. Its
+disabled pending attested participant-key delegation and an authenticated
+network entrypoint. Worker 0 does not receive a TEE-receiver seed. Its
 measured compose fixes `SELLO_SERVICE_KEY_PROVIDER=dstack`, and the receiver derives its
 domain-separated Ed25519 key inside the active dstack CVM. The token-issuer
 public key is the only Sello key material provisioned to Worker 0. The agent

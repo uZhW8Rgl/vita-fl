@@ -103,3 +103,24 @@ sealed document, and exposes the plaintext PEM to the two co-located processes
 through `/run/vita-fl` tmpfs. The two processes intentionally share one
 container, image measurement, and secret boundary; the inference process does
 not use a separately provisioned participant or Ethereum identity.
+
+## Attestation-bound transport
+
+Worker 0's Phala templates select `TEE_TRANSPORT_MODE=ratls`. The receiver
+serves only through its local TLS proxy and Unix socket. A fresh public
+`/v1/attestation` challenge binds the actual TLS key and the AIR/Sello keys;
+the agent validates this evidence with Phala and an explicit local policy
+before sending protected data on that same TLS connection. This is an
+attestation-bound TLS profile with an external evidence exchange, not a quote
+embedded in an X.509 extension.
+
+The receiver requires `AGENT_POP_REGISTRY`, an operator-provisioned subject to
+Ed25519 public-key map embedded in measured Compose. Each protected call needs
+both a signed Sello token and a proof from the matching private agent key.
+Neither the Sello token issuer seed nor the agent PoP seed belongs on the
+receiver. See [deployment configuration and limits](../phala/README.md#mandatory-inference-authentication).
+
+AIR continues to bind the inference evidence; Sello continues to authorize and
+record the tool interaction. HPKE encrypts only the Sello receipt: the separately
+published AIR bundle still contains plaintext request and response bytes.
+RA-TLS changes neither log persistence nor the correctness of model predictions.

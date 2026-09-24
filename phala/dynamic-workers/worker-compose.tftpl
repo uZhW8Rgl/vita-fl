@@ -14,7 +14,7 @@ services:
     ports:
       - "8001:8001"
 %{ if inference_enabled ~}
-      - "8080:8080"
+      - "8443:8443"
 %{ endif ~}
     environment:
       DOCKER: phala
@@ -79,10 +79,17 @@ services:
       TEE_INFERENCE_ENABLED: "${inference_enabled ? 1 : 0}"
 %{ if inference_enabled ~}
       EXPECTED_RUNTIME_RPC_URL: "${rpc_url}"
+      TEE_TRANSPORT_MODE: "ratls"
+      AGENT_POP_REGISTRY: ${jsonencode(agent_pop_registry)}
+      PKI_STATE_DIR: /var/lib/vita-fl/tls
+      PKI_CA_URL: "${pki_ca_url}"
+      PKI_ROOT_FINGERPRINT: "${pki_root_fingerprint}"
+      PKI_SUBJECT: worker-0
+      PKI_DNS_NAME: "${pki_worker_dns_name}"
+      TEE_INFERENCE_ORIGIN: "https://${pki_worker_dns_name}"
       TEE_MODEL_DIR: /tmp/tee-inference/model
       TEE_JOB_DIR: /tmp/tee-inference/jobs
       CHESTMNIST_TEST_DATA: /dfl/config/chestmnist/test_data/test-data.npz
-      SELLO_REQUIRED: "${sello_required ? 1 : 0}"
       SELLO_SERVICE_KEY_PROVIDER: "dstack"
       SELLO_TOKEN_ISSUER_PUBLIC_KEY: "$${SELLO_TOKEN_ISSUER_PUBLIC_KEY}"
       SCITT_URL: "${sello_scitt_url}"
