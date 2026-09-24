@@ -103,20 +103,8 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         bytes32 outputModelHash,
         bytes32 outputBundleHash
     ) private view returns (bytes memory) {
-        (
-            ,
-            bool closed,
-            ,
-            ,
-            ,
-            uint32 accepted,
-            ,
-            bytes32 algorithmHash,
-            ,
-            ,
-            bytes32 policyHash,
-            bytes32 inputRoot
-        ) = aggregationPolicy.getRoundPolicy(sourceRound);
+        (, bool closed,,,, uint32 accepted,, bytes32 algorithmHash,,, bytes32 policyHash, bytes32 inputRoot) =
+            aggregationPolicy.getRoundPolicy(sourceRound);
         require(closed, "test round must be closed");
         bytes32 publicationHash = keccak256(abi.encode(model, signatureCid, keyBundle));
         uint256 nonce = aggregationPolicy.aggregationNonces(publisher);
@@ -150,22 +138,11 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         bytes32 outputModelHash = keccak256(abi.encodePacked("plaintext:", suffix));
         bytes32 outputBundleHash = keccak256(abi.encodePacked("bundle:", suffix));
         bytes memory actionSignature = _statementSignature(
-            publisher,
-            sourceRound,
-            model,
-            signatureCid,
-            keyBundle,
-            outputModelHash,
-            outputBundleHash
+            publisher, sourceRound, model, signatureCid, keyBundle, outputModelHash, outputBundleHash
         );
         vm.prank(publisher);
         gmStorage.finalizeRoundWithAggregation(
-            model,
-            signatureCid,
-            keyBundle,
-            outputModelHash,
-            outputBundleHash,
-            actionSignature
+            model, signatureCid, keyBundle, outputModelHash, outputBundleHash, actionSignature
         );
     }
 
@@ -174,14 +151,7 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         selection.setSelectionRound(1);
         vm.prank(publisher);
         gmStorage.openModelSubmissions(1);
-        _recordSignedModelSubmission(
-            gmStorage,
-            publisher,
-            publisher,
-            worker,
-            1,
-            keccak256("worker-round-one")
-        );
+        _recordSignedModelSubmission(gmStorage, publisher, publisher, worker, 1, keccak256("worker-round-one"));
     }
 
     function testAtomicFinalizationPublishesAdvancesAndRewardsExactlyOnce() public {
@@ -215,15 +185,16 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         assertEq(gmStorage.getCompletedRoundCount(), 0);
         assertFalse(gmStorage.globalModelPublished(0));
 
-        (bool legacyBootstrapSucceeded,) = address(gmStorage).call(
-            abi.encodeWithSignature(
-                "initializeEncryptedBootstrap(string,string,string,bytes)",
-                "replacement",
-                "replacement-signature",
-                "replacement-key-bundle",
-                bytes("replacement-publisher-key")
-            )
-        );
+        (bool legacyBootstrapSucceeded,) = address(gmStorage)
+            .call(
+                abi.encodeWithSignature(
+                    "initializeEncryptedBootstrap(string,string,string,bytes)",
+                    "replacement",
+                    "replacement-signature",
+                    "replacement-key-bundle",
+                    bytes("replacement-publisher-key")
+                )
+            );
         assertFalse(legacyBootstrapSucceeded);
 
         vm.expectRevert(bytes("Initial model CID is empty"));
@@ -271,16 +242,44 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         assertEq(gmStorage.getGlobalModelKeyBundle(), "");
     }
 
-    function testNonBootstrapRoundRequiresConfiguredMinimum() public {
+    function testNonBootstrapRoundCannotCloseWithoutContributions() public {
         _finalizeCurrentRound(aggregator, "round-zero");
         selection.setSelectionRound(1);
         vm.prank(aggregator);
         gmStorage.openModelSubmissions(1);
 
-        vm.expectRevert(bytes("required submissions not reached"));
+        vm.expectRevert(bytes("no accepted submissions"));
         vm.prank(aggregator);
         gmStorage.closeModelSubmissions(1);
         assertFalse(gmStorage.modelSubmissionsClosed(1));
+    }
+
+    function testAuthorizedAggregatorFinalizesPartialSetWithoutBlockTimeAdvance() public {
+        _finalizeCurrentRound(aggregator, "round-zero");
+        aggregationPolicy.configureDefaultPolicy(2, 3600);
+        _openAndSubmitRoundOne(aggregator);
+        (,,, uint64 deadline, uint32 target, uint32 acceptedSubmissions,,,,,, bytes32 inputRoot) =
+            aggregationPolicy.getRoundPolicy(1);
+        assertEq(target, 2);
+        assertEq(acceptedSubmissions, 1);
+        uint256 unchangedTimestamp = block.timestamp;
+        assertLt(unchangedTimestamp, deadline);
+
+        _finalizeCurrentRound(aggregator, "partial-round-one");
+        assertEq(block.timestamp, unchangedTimestamp);
+
+        assertTrue(gmStorage.modelSubmissionsClosed(1));
+        assertTrue(gmStorage.roundCompleted(1));
+        assertTrue(gmStorage.globalModelPublished(1));
+        assertEq(gmStorage.getRound(), 2);
+        assertEq(gmStorage.getCompletedRoundCount(), 2);
+        assertEq(gmStorage.getContribution(aggregator), 2);
+        assertEq(gmStorage.getGlobalModel(), "model-partial-round-one");
+        (bool published,,,, bytes32 recordedRoot, uint256 inputCount,,,,,,,) =
+            aggregationPolicy.getAggregationEvidence(1);
+        assertTrue(published);
+        assertEq(inputCount, 1);
+        assertEq(recordedRoot, inputRoot);
     }
 
     function testLegacyPublishAndIncrementSelectorsCannotBypassStatement() public {
@@ -324,20 +323,11 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
 
         bytes32 wrongModelHash = keccak256("wrong-model");
         bytes32 bundleHash = keccak256("bundle");
-        bytes memory signature = _statementSignature(
-            aggregator,
-            0,
-            "model",
-            "signature",
-            "keys",
-            keccak256("different-model"),
-            bundleHash
-        );
+        bytes memory signature =
+            _statementSignature(aggregator, 0, "model", "signature", "keys", keccak256("different-model"), bundleHash);
         vm.expectRevert(bytes("invalid aggregation statement"));
         vm.prank(aggregator);
-        gmStorage.finalizeRoundWithAggregation(
-            "model", "signature", "keys", wrongModelHash, bundleHash, signature
-        );
+        gmStorage.finalizeRoundWithAggregation("model", "signature", "keys", wrongModelHash, bundleHash, signature);
 
         assertEq(gmStorage.getRound(), 0);
         assertEq(gmStorage.getContribution(aggregator), 0);
@@ -349,15 +339,12 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         gmStorage.closeModelSubmissions(0);
         bytes32 modelHash = keccak256("model");
         bytes32 bundleHash = keccak256("bundle");
-        bytes memory signature =
-            _statementSignature(aggregator, 0, "model", "signature", "keys", modelHash, bundleHash);
+        bytes memory signature = _statementSignature(aggregator, 0, "model", "signature", "keys", modelHash, bundleHash);
         registry.setAuthorized(aggregator, false);
 
         vm.expectRevert(bytes("participant is not authorized"));
         vm.prank(aggregator);
-        gmStorage.finalizeRoundWithAggregation(
-            "model", "signature", "keys", modelHash, bundleHash, signature
-        );
+        gmStorage.finalizeRoundWithAggregation("model", "signature", "keys", modelHash, bundleHash, signature);
         assertEq(gmStorage.getRound(), 0);
     }
 }

@@ -30,6 +30,8 @@ contract AggregationPolicy {
     struct RoundPolicy {
         uint64 openedAt;
         uint64 deadline;
+        // Local early-start target; the admitted aggregator enforces timing.
+        // The deadline remains a coordination reference for timeout recovery.
         uint32 requiredSubmissions;
         uint32 acceptedSubmissions;
         uint64 configurationVersion;
@@ -204,7 +206,6 @@ contract AggregationPolicy {
         RoundPolicy storage policy = roundPolicies[round];
         require(policy.opened, "round aggregation policy is not open");
         require(!policy.closed, "round inputs are closed");
-        require(block.timestamp <= policy.deadline, "round submission deadline passed");
         require(worker != address(0), "worker is zero");
         require(submissionCommitment != bytes32(0), "submission commitment is zero");
         require(policy.acceptedSubmissions < MAX_REQUIRED_SUBMISSIONS, "too many submissions");
@@ -224,7 +225,11 @@ contract AggregationPolicy {
             return;
         }
         require(reportedSubmissionCount == policy.acceptedSubmissions, "input count mismatch");
-        require(policy.acceptedSubmissions >= policy.requiredSubmissions, "required submissions not reached");
+        // The authorized aggregator decides when its local collection window ends.
+        // Closing is the ledger cutoff; later new submissions remain forbidden.
+        if (round != 0) {
+            require(policy.acceptedSubmissions > 0, "no accepted submissions");
+        }
         policy.closed = true;
         emit RoundAggregationInputsClosed(round, policy.acceptedSubmissions, policy.inputRoot);
     }

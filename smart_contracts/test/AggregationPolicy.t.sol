@@ -18,8 +18,7 @@ contract AggregationPolicyTest is Test {
     bytes32 private constant OUTPUT_MODEL_HASH = keccak256("output-model");
     bytes32 private constant OUTPUT_BUNDLE_HASH = keccak256("output-bundle");
     bytes32 private constant PUBLICATION_HASH = keccak256("publication");
-    string private constant FEDERATED_AVERAGING_V1_PREIMAGE =
-        "VITA-FL:fedavg:torch-state-dict:float64:equal-weight:v1";
+    string private constant FEDERATED_AVERAGING_V1_PREIMAGE = "VITA-FL:fedavg:torch-state-dict:float64:equal-weight:v1";
 
     function setUp() public {
         aggregator = makeAddr("aggregator");
@@ -57,7 +56,7 @@ contract AggregationPolicyTest is Test {
         );
     }
 
-    function testRoundSnapshotsConfiguredDeadlineMinimumAndAlgorithm() public {
+    function testRoundSnapshotsConfiguredDeadlineTargetAndAlgorithm() public {
         vm.warp(1000);
         policy.openRound(1);
 
@@ -172,11 +171,16 @@ contract AggregationPolicyTest is Test {
         policy.configureDefaultPolicy(1, 1);
     }
 
-    function testCloseBeforeRequiredSubmissionCountReverts() public {
+    function testOnlyGMStorageCanMutateAcceptedInputSet() public {
         policy.openRound(1);
+        address outsider = makeAddr("outsider");
+        vm.expectRevert(bytes("caller is not GMStorage"));
+        vm.prank(outsider);
         policy.recordSubmission(1, workerOne, keccak256("submission-one"));
 
-        vm.expectRevert(bytes("required submissions not reached"));
+        policy.recordSubmission(1, workerOne, keccak256("submission-one"));
+        vm.expectRevert(bytes("caller is not GMStorage"));
+        vm.prank(outsider);
         policy.closeRound(1, 1);
 
         (bool opened, bool closed,,,, uint32 acceptedSubmissions,,,,,,) = policy.getRoundPolicy(1);
@@ -185,17 +189,114 @@ contract AggregationPolicyTest is Test {
         assertEq(acceptedSubmissions, 1);
     }
 
-    function testSubmissionAfterDeadlineReverts() public {
+    function testTargetReachedBeforeDeadlineClosesImmediately() public {
+        vm.warp(1000);
+        policy.openRound(1);
+        policy.recordSubmission(1, workerOne, keccak256("submission-one"));
+        policy.recordSubmission(1, workerTwo, keccak256("submission-two"));
+        policy.closeRound(1, 2);
+
+        (, bool closed,, uint64 deadline,, uint32 acceptedSubmissions,,,,,,) = policy.getRoundPolicy(1);
+        assertTrue(closed);
+        assertEq(acceptedSubmissions, 2);
+        assertLt(block.timestamp, deadline);
+    }
+
+    function testSubmissionAtDeadlineCanReachTargetAndClose() public {
+        policy.openRound(1);
+        policy.recordSubmission(1, workerOne, keccak256("submission-one"));
+        (,,, uint64 deadline,,,,,,,,) = policy.getRoundPolicy(1);
+        vm.warp(deadline);
+        policy.recordSubmission(1, workerTwo, keccak256("submission-two"));
+        policy.closeRound(1, 2);
+
+        (, bool closed,,,, uint32 acceptedSubmissions,,,,,,) = policy.getRoundPolicy(1);
+        assertTrue(closed);
+        assertEq(acceptedSubmissions, 2);
+    }
+
+    function testAuthorizedPartialSetClosesBeforeCoordinationDeadlineWithExactCount() public {
+        policy.openRound(1);
+        bytes32 commitment = keccak256("submission-one");
+        policy.recordSubmission(1, workerOne, commitment);
+        (,,, uint64 deadline,,,,,,,, bytes32 inputRoot) = policy.getRoundPolicy(1);
+        assertLt(block.timestamp, deadline);
+        vm.expectRevert(bytes("input count mismatch"));
+        policy.closeRound(1, 2);
+        policy.closeRound(1, 1);
+        policy.closeRound(1, 1);
+        vm.expectRevert(bytes("closed input count mismatch"));
+        policy.closeRound(1, 2);
+        vm.expectRevert(bytes("round inputs are closed"));
+        policy.recordSubmission(1, workerTwo, keccak256("late-submission"));
+
+        (, bool closed,,, uint32 target, uint32 acceptedSubmissions,,,,,, bytes32 finalRoot) = policy.getRoundPolicy(1);
+        assertTrue(closed);
+        assertEq(target, 2);
+        assertEq(acceptedSubmissions, 1);
+        assertEq(finalRoot, inputRoot);
+        assertEq(finalRoot, keccak256(abi.encode(policy.INPUT_ROOT_SEED(), workerOne, commitment)));
+    }
+
+    function testEmptyTrainingRoundCannotCloseAfterDeadline() public {
+        policy.openRound(1);
+        (,,, uint64 deadline,,,,,,,,) = policy.getRoundPolicy(1);
+        vm.warp(uint256(deadline) + 1);
+        vm.expectRevert(bytes("no accepted submissions"));
+        policy.closeRound(1, 0);
+
+        (, bool closed,,,, uint32 acceptedSubmissions,,,,,,) = policy.getRoundPolicy(1);
+        assertFalse(closed);
+        assertEq(acceptedSubmissions, 0);
+        vm.expectRevert(bytes("round inputs are not closed"));
+        publish(1, hex"00");
+    }
+
+    function testPartialPublicationBindsActualInputCountAndRoot() public {
+        policy.openRound(1);
+        policy.recordSubmission(1, workerOne, keccak256("submission-one"));
+        (,,,,,,, bytes32 algorithmHash,,, bytes32 policyHash, bytes32 inputRoot) = policy.getRoundPolicy(1);
+        policy.closeRound(1, 1);
+
+        for (uint256 index; index < 2; index++) {
+            bytes32 digest = policy.aggregationStatementDigest(
+                1,
+                aggregator,
+                index == 0 ? inputRoot : keccak256("different-input-root"),
+                index == 0 ? 2 : 1,
+                algorithmHash,
+                policyHash,
+                OUTPUT_MODEL_HASH,
+                OUTPUT_BUNDLE_HASH,
+                PUBLICATION_HASH,
+                0
+            );
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(actionPrivateKey, digest);
+            vm.expectRevert(bytes("invalid aggregation statement"));
+            publish(1, abi.encodePacked(r, s, v));
+        }
+        publish(1, signStatement(1, 0, actionPrivateKey));
+        (bool published,,,, bytes32 recordedRoot, uint256 inputCount,,,,,,,) = policy.getAggregationEvidence(1);
+        assertTrue(published);
+        assertEq(inputCount, 1);
+        assertEq(recordedRoot, inputRoot);
+        assertEq(policy.aggregationNonces(aggregator), 1);
+    }
+
+    function testSubmissionCutoffUsesClosedStateRatherThanBlockDeadline() public {
         vm.warp(1000);
         policy.openRound(1);
         (,,, uint64 deadline,,,,,,,,) = policy.getRoundPolicy(1);
         vm.warp(uint256(deadline) + 1);
 
-        vm.expectRevert(bytes("round submission deadline passed"));
-        policy.recordSubmission(1, workerOne, keccak256("late-submission"));
+        policy.recordSubmission(1, workerOne, keccak256("submission-after-coordination-deadline"));
+        policy.closeRound(1, 1);
+        vm.expectRevert(bytes("round inputs are closed"));
+        policy.recordSubmission(1, workerTwo, keccak256("submission-after-close"));
 
-        (,,,,, uint32 acceptedSubmissions,,,,,,) = policy.getRoundPolicy(1);
-        assertEq(acceptedSubmissions, 0);
+        (, bool closed,,,, uint32 acceptedSubmissions,,,,,,) = policy.getRoundPolicy(1);
+        assertTrue(closed);
+        assertEq(acceptedSubmissions, 1);
     }
 
     function testInputRootCommitsToOrderedWorkersAndCommitments() public {

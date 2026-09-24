@@ -527,10 +527,13 @@ and GMStorage backlink. A readable `/runtime/contracts.json` is cross-checked,
 but losing this mutable hand-off after the deployment container exits cannot
 block setup recovery. The Control API then uses the encrypted Anvil-owner
 `ETH_WALLET_PRIVATE_KEY` against the internal `RPC_URL` to configure the policy
-and commit the exact ordered roster. The required submission count is the selected
-`client_limit`; the submission window is
-`ceil(MODEL_SUBMISSION_DEADLINE_MS / 1000)` seconds. Both transactions must be
-mined successfully before any worker is created. If deployment is interrupted
+and commit the exact ordered roster. The early-start contribution target is
+selected with **Client Limit**, and **Submission timeout (s)** independently
+sets the collection window. The API stores `model_submission_deadline_ms` in
+`MODEL_SUBMISSION_DEADLINE_MS`; the policy snapshots a window of
+`ceil(MODEL_SUBMISSION_DEADLINE_MS / 1000)` seconds. The selected UI value takes
+precedence over an inherited runtime environment default. Both transactions
+must be mined successfully before any worker is created. If deployment is interrupted
 after commitment, **Resume Start** may reapply only the same saved
 configuration and exact roster; a different roster requires a reset.
 
@@ -539,6 +542,22 @@ contract-runtime/Control-API inputs, not measured Worker-Compose security
 inputs. Workers obtain the immutable per-round threshold and deadline from the
 AggregationPolicy reached through the compose-measured GMStorage contract.
 `EPOCH` and `ROUND` remain measured worker inputs.
+
+The aggregator uses its local clock against the fixed round deadline. It starts
+aggregation when the client target is reached, or processes the nonempty valid
+input set received by expiry even if fewer clients contributed. This timer does
+not wait for new blockchain blocks. After a restart, the fixed round deadline
+is reused rather than giving that round a fresh window. The receiver rejects
+late new uploads, drains fully received uploads and closes the exact accepted
+set on-chain. The actual closed count, signatures and input root remain binding
+through model averaging and atomic publication. An empty training set cannot
+be aggregated; it remains unsuccessful and uses the existing recovery path.
+
+Timing enforcement belongs to the admitted aggregator workload. The contract
+keeps the policy snapshot and authorizes closing a nonempty input set; it does
+not independently enforce the local early-start target or elapsed time.
+The separate timeout-report/recovery protocol retains its block-time and quorum
+checks. The normal aggregation path requires no interval-mining configuration.
 
 The Training Setup view can export the current evaluation and transaction-cost
 data as a ZIP archive of CSV tables. In Phala mode, non-transaction runtime

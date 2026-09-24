@@ -437,7 +437,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "RPC_URL": "http://anvil:8545",
                     "ETH_WALLET_PRIVATE_KEY": "0x" + "88" * 32,
-                    "MODEL_SUBMISSION_DEADLINE_MS": "20001",
+                    "MODEL_SUBMISSION_DEADLINE_MS": "60000",
                 },
                 clear=False,
             ),
@@ -453,7 +453,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 return_value="0xdeadbeef",
             ) as sign_transaction,
         ):
-            result = server.configure_default_aggregation_policy(3)
+            result = server.configure_default_aggregation_policy(3, model_submission_deadline_ms=20001)
 
         transaction = sign_transaction.call_args.args[0]
         expected_arguments = (3).to_bytes(32, "big") + (21).to_bytes(32, "big")
@@ -466,6 +466,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(transaction["nonce"], 4)
         self.assertEqual(transaction["gas"], 60_000)
         self.assertEqual(result["address"], checksummed_policy_address)
+        self.assertEqual(result["model_submission_deadline_ms"], 20001)
         self.assertEqual(result["submission_window_seconds"], 21)
         self.assertEqual(result["transaction_hash"], transaction_hash)
         self.assertTrue(all(call[0] == "http://anvil:8545" for call in rpc_calls))
@@ -557,6 +558,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "epoch": 2,
             "worker_count": 2,
             "client_limit": 1,
+            "model_submission_deadline_ms": 45001,
         }
         workers = [
             {
@@ -576,7 +578,8 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         def preflight_workers(*_args):
             operation_order.append("preflight")
 
-        def configure_policy(_client_limit: int):
+        def configure_policy(_client_limit: int, *, model_submission_deadline_ms: int):
+            self.assertEqual(model_submission_deadline_ms, 45001)
             operation_order.append("policy")
             return {"transaction_hash": "0x" + "22" * 32}
 
@@ -885,6 +888,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "epoch": 2,
             "worker_count": 2,
             "client_limit": 1,
+            "model_submission_deadline_ms": 77001,
         }
         operation_order: list[str] = []
 
@@ -892,7 +896,8 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             operation_order.append("reset:" + ",".join(targets))
             return []
 
-        def configure_policy(_client_limit):
+        def configure_policy(_client_limit, *, model_submission_deadline_ms):
+            self.assertEqual(model_submission_deadline_ms, 77001)
             operation_order.append("policy")
             return {"transaction_hash": "0x" + "22" * 32}
 

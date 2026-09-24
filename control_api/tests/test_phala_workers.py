@@ -297,7 +297,7 @@ class WorkerInventoryTests(unittest.TestCase):
     def test_only_worker_measured_training_configuration_is_forwarded_to_terraform(self) -> None:
         instance, runner = controller()
 
-        instance.scale(2, {"rounds": 7, "epoch": 3, "client_limit": 1})
+        instance.scale(2, {"rounds": 7, "epoch": 3, "client_limit": 1, "model_submission_deadline_ms": 45000})
 
         self.assertEqual(runner.training_config, {"rounds": 7, "epoch": 3})
 
@@ -376,11 +376,11 @@ class WorkerInventoryTests(unittest.TestCase):
 
         self.assertEqual(capacity_guard.calls, [])
 
-    def test_on_chain_client_limit_does_not_mutate_worker_compose(self) -> None:
+    def test_on_chain_round_policy_does_not_mutate_worker_compose(self) -> None:
         instance, runner = controller()
-        instance.scale(2, {"rounds": 2, "epoch": 1, "client_limit": 1})
+        instance.scale(2, {"rounds": 2, "epoch": 1, "client_limit": 1, "model_submission_deadline_ms": 45000})
 
-        instance.scale(2, {"rounds": 2, "epoch": 1, "client_limit": 2})
+        instance.scale(2, {"rounds": 2, "epoch": 1, "client_limit": 2, "model_submission_deadline_ms": 120000})
 
         self.assertEqual(runner.training_config, {"rounds": 2, "epoch": 1})
 

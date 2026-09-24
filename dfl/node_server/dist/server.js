@@ -5,7 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getCommittedRunRosterState, getDevicePublicKey, getDeviceActionKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, isGlobalModelPublished, isRoundCompleted, isRoundAborted, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
 import { getCurrentModel, getFileFromIPFS, updateGM } from "./ipfs.js";
-import { deriveTimingConfig, nextAggregatorTimeoutTracker, selectionGapRecoveryNeeded, validateTimingConfig } from "./state_timing.js";
+import { canCloseRoundInputs, deriveTimingConfig, nextAggregatorTimeoutTracker, requireClosedRoundInputs, selectionGapRecoveryNeeded, shouldDeferAggregatorTimeout, validateTimingConfig, waitForRoundInputs } from "./state_timing.js";
 import { loadParticipantKey, materializeParticipantPrivateKey, PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH, } from "./participant_key.js";
 import { loadParticipantActionSigner, } from "./action_key.js";
 import { loadSelloReceiptPublicKey } from "./sello_key.js";
@@ -15,7 +15,7 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import { DstackClient, TappdClient, getComposeHash } from '@phala/dstack-sdk';
 import crypto from 'crypto';
-import http from 'http';
+import { createDrainingUploadServer } from "./upload_drain.js";
 import { emitTelemetryEvent } from "./telemetry.js";
 import { buildRoundZeroBootstrapSnapshot, createCommittedRunRosterBinding, frozenRecipientsForCommittedRoster, normalizeBootstrapPublicKey, normalizeRunRosterDigest, requireFrozenRecipientKeysMatchRegistry, } from "./bootstrap_snapshot.js";
 import { reconcileFetchedGlobalModel } from "./model_bundle.js";
@@ -27,8 +27,8 @@ const deviceID = process.env.DEVICE_ID;
 let currentState = "";
 let aggregatorServerRunning = false;
 let modelUploadServer;
+let drainModelUploads;
 let modelUploadQueue = Promise.resolve();
-const activeModelUploadHandlers = new Set();
 // A round marked aborted cannot later become a successful finalized round.
 // Cache only positive confirmations so repeated parent preparation (TRAINING
 // and AGGREGATING) does not re-read the full immutable abort gap each time.
@@ -84,9 +84,12 @@ async function recordMissedAggregatorProgress(expectedRound, expectedAggregator,
         expectedAggregator,
         maxLoops: gmUpdateTimeoutLoops,
     });
+    const closedObserved = aggregatorTimeoutTracker.contextKey === next.contextKey
+        && Boolean(aggregatorTimeoutTracker.closedObserved);
     aggregatorTimeoutTracker = {
         contextKey: next.contextKey,
         missedLoops: next.missedLoops,
+        closedObserved,
     };
     console.warn(`Aggregator ${next.expectedAggregator} made no observable progress for round ${next.expectedRound} ` +
         `(${reason}); failure ${next.failureCount}/${gmUpdateTimeoutLoops}.`);
@@ -98,16 +101,23 @@ async function recordMissedAggregatorProgress(expectedRound, expectedAggregator,
         missed_loops: next.failureCount,
         error: error ? (error?.message || String(error)) : undefined,
     });
-    if (!next.shouldReportTimeout) {
-        return;
-    }
     try {
         const policy = await getRoundAggregationPolicy(next.expectedRound);
-        if (policy.opened
-            && !policy.closed
-            && policy.chainTimestamp <= policy.deadline) {
+        if (policy.closed && !closedObserved) {
+            // Collection and aggregation are distinct progress phases. Misses
+            // accumulated while collecting must not immediately abort an
+            // aggregator that just reached its early-start target.
+            aggregatorTimeoutTracker.closedObserved = true;
+            aggregatorTimeoutTracker.missedLoops = 0;
+            console.log(`Round ${next.expectedRound} input closure observed; restarting the aggregation progress budget.`);
+            return;
+        }
+        if (!next.shouldReportTimeout)
+            return;
+        if (shouldDeferAggregatorTimeout(policy, timingConfig.aggregationUpdateEstimateMs)) {
+            aggregatorTimeoutTracker.missedLoops = 0;
             console.warn(`Deferring timeout report: round ${next.expectedRound} remains inside ` +
-                `its immutable on-chain submission window ending at ${policy.deadline}.`);
+                `its submission window or the aggregation allowance after deadline ${policy.deadline}.`);
             return;
         }
     }
@@ -281,14 +291,12 @@ async function callPythonService(endpoint, payload = {}, { timeoutMs = 0 } = {})
     }
 }
 async function stopAggregatorServer() {
-    const server = modelUploadServer;
-    modelUploadServer = undefined;
-    if (server) {
-        await new Promise((resolve, reject) => {
-            server.close((error) => error ? reject(error) : resolve());
-        });
-        while (activeModelUploadHandlers.size > 0) {
-            await Promise.allSettled(Array.from(activeModelUploadHandlers));
+    const drain = drainModelUploads;
+    if (drain) {
+        await drain();
+        if (drainModelUploads === drain) {
+            modelUploadServer = undefined;
+            drainModelUploads = undefined;
         }
         console.log("Authenticated model upload server stopped.");
     }
@@ -474,6 +482,7 @@ async function handleModelUpload(request, response) {
                 throw new Error('model upload exceeds size limit');
             chunks.push(chunk);
         }
+        const receivedAtMs = Date.now();
         const payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         const previousUpload = modelUploadQueue;
         modelUploadQueue = new Promise((resolve) => {
@@ -520,7 +529,13 @@ async function handleModelUpload(request, response) {
         if (!/^0x[0-9a-fA-F]{40}$/.test(deviceId) || !(await isAuthorized(deviceId))) {
             return reply(403, { ok: false, error: 'device is not authorized' });
         }
-        const alreadySubmitted = await hasSubmittedModel(expectedRound, deviceId);
+        const [alreadySubmitted, roundPolicy] = await Promise.all([
+            hasSubmittedModel(expectedRound, deviceId),
+            getRoundAggregationPolicy(expectedRound),
+        ]);
+        if (!alreadySubmitted && (roundPolicy.closed || receivedAtMs >= roundPolicy.deadline * 1000)) {
+            return reply(409, { ok: false, error: 'model submission window has ended' });
+        }
         const recordedModelHash = alreadySubmitted
             ? normalizeHashHex(await getModelSubmissionHash(expectedRound, deviceId), 32, "recorded decrypted model SHA-256")
             : null;
@@ -593,22 +608,19 @@ async function handleModelUpload(request, response) {
 async function startModelUploadServer() {
     if (modelUploadServer)
         return;
-    const server = http.createServer((request, response) => {
-        const task = handleModelUpload(request, response).catch((error) => {
-            console.error("Unhandled authenticated model-upload error:", error);
-            if (!response.headersSent && !response.destroyed) {
-                const body = Buffer.from(JSON.stringify({ ok: false, error: error?.message || String(error) }));
-                response.writeHead(500, {
-                    'Content-Type': 'application/json',
-                    'Content-Length': body.length,
-                });
-                response.end(body);
-            }
-        });
-        activeModelUploadHandlers.add(task);
-        void task.finally(() => activeModelUploadHandlers.delete(task));
+    const { server, drain } = createDrainingUploadServer(handleModelUpload, (error, request, response) => {
+        console.error("Unhandled authenticated model-upload error:", error);
+        if (!response.headersSent && !response.destroyed) {
+            const body = Buffer.from(JSON.stringify({ ok: false, error: error?.message || String(error) }));
+            response.writeHead(500, {
+                'Content-Type': 'application/json',
+                'Content-Length': body.length,
+            });
+            response.end(body);
+        }
     });
     modelUploadServer = server;
+    drainModelUploads = drain;
     try {
         await new Promise((resolve, reject) => {
             server.once('error', reject);
@@ -616,8 +628,10 @@ async function startModelUploadServer() {
         });
     }
     catch (error) {
-        if (modelUploadServer === server)
+        if (modelUploadServer === server) {
             modelUploadServer = undefined;
+            drainModelUploads = undefined;
+        }
         throw error;
     }
     console.log(`Authenticated model upload server listening on port ${modelUploadPort}.`);
@@ -1591,8 +1605,8 @@ const stateMachine = async () => {
                         }
                         const expected = openedPolicy.requiredSubmissions;
                         const remainingMs = Math.max(0, (openedPolicy.deadline * 1000) - Date.now());
-                        console.log(`Waiting for ${expected} policy-required model submissions ` +
-                            `until on-chain deadline ${openedPolicy.deadline}.`);
+                        console.log(`Waiting for ${expected} model submissions or the deadline ` +
+                            `until local cutoff ${openedPolicy.deadline}.`);
                         await runtimeEvent("aggregator.wait_for_models.started", {
                             role: "aggregator",
                             expected_models: expected,
@@ -1600,30 +1614,39 @@ const stateMachine = async () => {
                             remaining_ms: remainingMs,
                             policy_hash: openedPolicy.policyHash,
                         });
-                        const present = await runOperation("aggregator.wait_for_models", {
+                        await runOperation("aggregator.wait_for_models", {
                             role: "aggregator",
                             expected_models: expected,
                             deadline_unix_seconds: openedPolicy.deadline,
                             remaining_ms: remainingMs,
-                        }, () => waitForModels(expected, {
-                            dir: srcModelsDir,
+                        }, () => waitForRoundInputs({
+                            round: currentRound,
+                            readPolicy: getRoundAggregationPolicy,
+                            countModels: countAuthorizedModelFiles,
                             pollMs: 2000,
-                            timeoutMs: remainingMs,
                         }));
-                        const latestPolicy = await getRoundAggregationPolicy(currentRound);
+                        // Stop new requests and finish uploads received within
+                        // the local window before freezing their exact set.
+                        await stopAggregatorServer();
+                        const [present, latestPolicy] = await Promise.all([
+                            countAuthorizedModelFiles(),
+                            getRoundAggregationPolicy(currentRound),
+                        ]);
                         await runtimeEvent("aggregator.wait_for_models.finished", {
                             role: "aggregator",
                             expected_models: expected,
                             present_models: present,
                             accepted_models: latestPolicy.acceptedSubmissions,
                         });
-                        if (latestPolicy.acceptedSubmissions < expected || present < expected) {
-                            console.log(`Aggregation threshold not reached: local=${present}, ` +
-                                `on-chain=${latestPolicy.acceptedSubmissions}, required=${expected}. ` +
-                                "The aggregator cannot close or publish this round.");
+                        if (!canCloseRoundInputs(latestPolicy, present)) {
+                            console.log(`Round input set cannot close: local=${present}, ` +
+                                `on-chain=${latestPolicy.acceptedSubmissions}, early-start target=${expected}. ` +
+                                "An empty or locally incomplete input set must await recovery.");
                             await sleep(5000);
                             continue;
                         }
+                        console.log(`Closing round ${currentRound} with ${latestPolicy.acceptedSubmissions} accepted model(s): ` +
+                            (latestPolicy.acceptedSubmissions >= expected ? "client target reached." : "submission deadline expired."));
                         await closeModelSubmissions(currentRound);
                         await setCurrentState("AGGREGATING");
                         continue;
@@ -1810,15 +1833,7 @@ const stateMachine = async () => {
                             await prepareAggregatorParentModel(currentRound, "AGGREGATING");
                         }
                         const aggregationPolicy = await getRoundAggregationPolicy(currentRound);
-                        if (!aggregationPolicy.opened || !aggregationPolicy.closed) {
-                            throw new Error(`Round ${currentRound} aggregation inputs are not immutably closed.`);
-                        }
-                        if (aggregationPolicy.acceptedSubmissions
-                            < aggregationPolicy.requiredSubmissions) {
-                            throw new Error(`Round ${currentRound} has ${aggregationPolicy.acceptedSubmissions} ` +
-                                `accepted submissions but requires ${aggregationPolicy.requiredSubmissions}.`);
-                        }
-                        const expected = aggregationPolicy.acceptedSubmissions;
+                        const expected = requireClosedRoundInputs(aggregationPolicy, currentRound);
                         console.log(`Closed round ${currentRound} commits to ${expected} accepted model(s).`, {
                             inputRoot: aggregationPolicy.inputRoot,
                             policyHash: aggregationPolicy.policyHash,
@@ -2303,21 +2318,6 @@ async function countBinFiles(dir) {
 async function countAuthorizedModelFiles() {
     const files = await receivedWorkerModelFiles();
     return files.filter(file => file.authorized).length;
-}
-async function waitForModels(expected, { dir, pollMs = 2000, timeoutMs = 10 * 60 * 1000 } = {}) {
-    const start = Date.now();
-    while (true) {
-        const n = dir === srcModelsDir ? await countAuthorizedModelFiles() : await countBinFiles(dir);
-        if (n >= expected) {
-            console.log(`Received ${n}/${expected} TEE-authorized model files.`);
-            return n; // Anzahl zurückgeben
-        }
-        if (Date.now() - start > timeoutMs) {
-            console.warn(`Timeout waiting for ${expected} TEE-authorized models. Proceeding with ${n} present in ${dir}.`);
-            return n; // mit aktueller Anzahl fortfahren
-        }
-        await sleep(pollMs);
-    }
 }
 async function waitForGMUpdate(prevCid, { pollMs = 3000, timeoutMs = 10 * 60 * 1000 } = {}) {
     const start = Date.now();

@@ -3,6 +3,7 @@ import Web3 from "web3";
 import fs from "fs";
 import 'dotenv/config';
 import { emitTelemetryEvent } from "./telemetry.js";
+import { requireClosedRoundInputs } from "./state_timing.js";
 import { normalizePublisherPublicKeyDerHex } from "./model_publisher.js";
 import { signRawDigest, } from "./action_key.js";
 import { deriveAggregationStatementDigest, deriveModelSubmissionDigest, derivePublicationHash, deriveRoundAggregationPolicyHash, } from "./protocol_digest.js";
@@ -381,10 +382,7 @@ export const getPreviousAggregatorFromGMStorage = async () => {
 };
 export const getRoundAggregationPolicy = async (expectedRound) => {
     const { address, contract } = await getAggregationPolicyContract();
-    const [result, latestBlock] = await Promise.all([
-        contract.methods.getRoundPolicy(expectedRound).call(),
-        web3.eth.getBlock("latest"),
-    ]);
+    const result = await contract.methods.getRoundPolicy(expectedRound).call();
     const policy = {
         contractAddress: address,
         opened: Boolean(result.opened ?? result[0]),
@@ -401,7 +399,6 @@ export const getRoundAggregationPolicy = async (expectedRound) => {
         maxLossIncreaseBps: Number(result.maxLossIncreaseBps ?? result[9] ?? 0),
         policyHash: String(result.policyHash ?? result[10]),
         inputRoot: String(result.inputRoot ?? result[11]),
-        chainTimestamp: Number(latestBlock.timestamp),
     };
     if (policy.opened) {
         const derivedPolicyHash = deriveRoundAggregationPolicyHash({
@@ -456,13 +453,7 @@ export const isRoundAborted = async (sourceRound) => {
 };
 export const createAggregationStatement = async ({ sourceRound, modelCid, signatureCid, keyBundleCid, outputModelHash, outputBundleHash, }) => {
     const policy = await getRoundAggregationPolicy(sourceRound);
-    if (!policy.opened || !policy.closed) {
-        throw new Error(`Cannot sign aggregation statement for round ${sourceRound}: inputs are not closed.`);
-    }
-    if (policy.acceptedSubmissions < policy.requiredSubmissions) {
-        throw new Error(`Aggregation policy for round ${sourceRound} requires ` +
-            `${policy.requiredSubmissions} submissions but records ${policy.acceptedSubmissions}.`);
-    }
+    requireClosedRoundInputs(policy, sourceRound);
     const state = await getCurrentState();
     const aggregator = String(state[1]);
     if (!sameAddress(aggregator, process.env.ACCOUNT_ADDRESS)) {

@@ -840,8 +840,17 @@
                       <button class="training-step-btn" data-training-field="client_limit" data-training-delta="1" type="button">+</button>
                     </div>
                   </div>
+                  <div class="training-item">
+                    <div class="training-item-label">Submission timeout (s)</div>
+                    <div class="training-stepper">
+                      <button class="training-step-btn" data-training-field="model_submission_deadline_ms" data-training-delta="-1000" type="button">-</button>
+                      <input class="training-step-value" id="training-submission-timeout" data-training-input="model_submission_deadline_ms" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="20" aria-label="Submission timeout in seconds">
+                      <button class="training-step-btn" data-training-field="model_submission_deadline_ms" data-training-delta="1000" type="button">+</button>
+                    </div>
+                  </div>
                 </div>
-                <div class="training-note" id="training-note">The training runner will use the values from the local environment file.</div>
+                <div class="training-note">Client limit starts aggregation early once enough valid contributions arrive. When the submission timeout expires, all valid contributions received so far are used. With no valid contributions, aggregation does not run.</div>
+                <div class="training-note" id="training-note">Choose the training setup, then start the run.</div>
                 <div class="training-actions">
                   <button class="training-action-btn primary" id="training-start" type="button">Start Training</button>
                   <button class="training-action-btn" id="training-reset" type="button">Reset</button>
@@ -1023,6 +1032,7 @@
       epoch: 1,
       worker_count: 6,
       client_limit: 5,
+      model_submission_deadline_ms: 20000,
       max_worker_count: 6,
       available_workers: []
     };
@@ -1241,6 +1251,9 @@
 
     function clampTrainingField(field, value, config = trainingConfig) {
       const parsed = positiveInt(value, positiveInt(config[field], 1));
+      if (field === "model_submission_deadline_ms") {
+        return Math.max(1, Math.min(parsed, 604800000));
+      }
       if (field === "worker_count") {
         const maxWorkerCount = Math.max(2, positiveInt(config.max_worker_count, 2));
         return Math.max(2, Math.min(parsed, maxWorkerCount));
@@ -1259,6 +1272,9 @@
         epoch: positiveInt(config?.epoch, fallback.epoch || 1),
         worker_count: positiveInt(config?.worker_count, fallback.worker_count || 2),
         client_limit: positiveInt(config?.client_limit, fallback.client_limit || 1),
+        model_submission_deadline_ms: positiveInt(
+          config?.model_submission_deadline_ms, fallback.model_submission_deadline_ms || 20000
+        ),
         max_worker_count: maxWorkerCount,
         available_workers: Array.isArray(config?.available_workers)
           ? config.available_workers.slice()
@@ -1266,6 +1282,9 @@
       };
       nextConfig.worker_count = clampTrainingField("worker_count", nextConfig.worker_count, nextConfig);
       nextConfig.client_limit = clampTrainingField("client_limit", nextConfig.client_limit, nextConfig);
+      nextConfig.model_submission_deadline_ms = clampTrainingField(
+        "model_submission_deadline_ms", nextConfig.model_submission_deadline_ms, nextConfig
+      );
       nextConfig.requested_training_rounds = nextConfig.rounds;
       nextConfig.bootstrap_completion_count = 1;
       nextConfig.worker_target_completed_round_count = nextConfig.rounds + 1;
@@ -1300,7 +1319,10 @@
       if (!input) {
         return;
       }
-      if (field === "worker_count") {
+      if (field === "model_submission_deadline_ms") {
+        input.min = "1";
+        input.max = "604800";
+      } else if (field === "worker_count") {
         input.min = "2";
         input.max = String(Math.max(2, positiveInt(trainingConfig.max_worker_count, 2)));
       } else if (field === "client_limit") {
@@ -1311,7 +1333,7 @@
         input.removeAttribute("max");
       }
       if (document.activeElement !== input) {
-        input.value = String(value);
+        input.value = String(field === "model_submission_deadline_ms" ? Math.ceil(value / 1000) : value);
       }
     }
 
@@ -1337,7 +1359,11 @@
         return;
       }
       const rawValue = input.value.trim();
-      const nextValue = rawValue ? rawValue : trainingConfig[field];
+      const nextValue = rawValue
+        ? (field === "model_submission_deadline_ms"
+          ? positiveInt(rawValue, Math.ceil(trainingConfig[field] / 1000)) * 1000
+          : rawValue)
+        : trainingConfig[field];
       setTrainingConfigValue(field, nextValue, options);
     }
 
@@ -1412,6 +1438,7 @@
       setTrainingInputValue("epoch", trainingConfig.epoch);
       setTrainingInputValue("worker_count", trainingConfig.worker_count);
       setTrainingInputValue("client_limit", trainingConfig.client_limit);
+      setTrainingInputValue("model_submission_deadline_ms", trainingConfig.model_submission_deadline_ms);
       if (!contractsReady()) {
         trainingNoteEl.textContent = "Initialize the smart contracts first to unlock the training controls.";
       } else if (trainingPhase() === "bootstrap") {
@@ -1423,7 +1450,7 @@
       } else if (trainingPhase() === "completed") {
         trainingNoteEl.textContent = `${trainingConfig.rounds} / ${trainingConfig.rounds} federated rounds completed. The finalized model remains available for inference; reset before starting another run.`;
       } else if (trainingDraftDirty) {
-        trainingNoteEl.textContent = `Draft kept locally. Start Training will run ${trainingConfig.rounds} federated rounds after one bootstrap completion (${trainingConfig.worker_target_completed_round_count} successful completions in total), with epoch=${trainingConfig.epoch}, workers=${trainingConfig.worker_count}, and client limit=${trainingConfig.client_limit}.`;
+        trainingNoteEl.textContent = `Draft kept locally. Start Training will run ${trainingConfig.rounds} federated rounds after one bootstrap completion (${trainingConfig.worker_target_completed_round_count} successful completions in total), with epoch=${trainingConfig.epoch}, workers=${trainingConfig.worker_count}, client limit=${trainingConfig.client_limit}, and submission timeout=${Math.ceil(trainingConfig.model_submission_deadline_ms / 1000)} s.`;
       } else {
         trainingNoteEl.textContent = `${trainingConfig.rounds} federated rounds are selected. Round 0 is a separate bootstrap, so workers stop after ${trainingConfig.worker_target_completed_round_count} successful completions. Available Phala worker slots: ${trainingConfig.max_worker_count}.`;
       }
@@ -1499,7 +1526,9 @@
       if (!trainingConfigLoaded || trainingBusy || contractBusy || !contractsReady() || trainingRunActive()) {
         return;
       }
-      const currentValue = Number(trainingConfig[field] || 1);
+      const currentValue = field === "model_submission_deadline_ms"
+        ? Math.ceil(trainingConfig[field] / 1000) * 1000
+        : Number(trainingConfig[field] || 1);
       setTrainingConfigValue(field, currentValue + delta);
     }
 
@@ -1534,7 +1563,8 @@
             rounds: trainingConfig.rounds,
             epoch: trainingConfig.epoch,
             worker_count: trainingConfig.worker_count,
-            client_limit: trainingConfig.client_limit
+            client_limit: trainingConfig.client_limit,
+            model_submission_deadline_ms: trainingConfig.model_submission_deadline_ms
           })
         });
         const payload = await readJsonResponse(response, "Training restart failed.");

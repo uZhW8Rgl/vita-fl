@@ -49,10 +49,64 @@ export function validateTimingConfig(config) {
     }
     return warnings;
 }
-export function shouldStartAggregation({ expectedModels, presentModels, elapsedMs, deadlineMs }) {
-    if (expectedModels <= 0)
+export function shouldStartAggregation({ expectedModels, presentModels, elapsedMs, deadlineMs, deadlineExpired = elapsedMs >= deadlineMs, }) {
+    // Only the bootstrap may close an empty input set. The client target is
+    // an early-start trigger; a timed-out training round still needs input.
+    if (expectedModels === 0)
         return true;
-    return presentModels >= expectedModels || elapsedMs >= deadlineMs;
+    if (presentModels <= 0)
+        return false;
+    return presentModels >= expectedModels || deadlineExpired;
+}
+export function canCloseRoundInputs(policy, presentModels, nowMs = Date.now()) {
+    if (!policy.opened || policy.closed)
+        return false;
+    // Every accepted commitment must have its authenticated local model file.
+    if (presentModels < policy.acceptedSubmissions)
+        return false;
+    return shouldStartAggregation({
+        expectedModels: policy.requiredSubmissions,
+        presentModels: policy.acceptedSubmissions,
+        // The admitted aggregator owns the timer. A stalled latest block
+        // must not prevent a locally expired window from being processed.
+        deadlineExpired: nowMs >= policy.deadline * 1000,
+    });
+}
+export async function waitForRoundInputs({ round, readPolicy, countModels, pollMs = 2000, nowMs = () => Date.now(), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), }) {
+    while (true) {
+        const [present, policy] = await Promise.all([countModels(), readPolicy(round)]);
+        if (!policy.opened)
+            throw new Error(`Round ${round} submission window is not open.`);
+        const now = nowMs();
+        if (canCloseRoundInputs(policy, present, now) || policy.closed || now >= policy.deadline * 1000) {
+            return { present, policy };
+        }
+        // Local wall-clock countdown, independent of block production. Also
+        // wake precisely at the cutoff rather than overshooting by a poll.
+        await sleep(Math.min(pollMs, Math.max(1, policy.deadline * 1000 - now)));
+    }
+}
+export function requireClosedRoundInputs(policy, round) {
+    if (!policy.opened || !policy.closed) {
+        throw new Error(`Round ${round} aggregation inputs are not immutably closed.`);
+    }
+    const count = policy.acceptedSubmissions;
+    if (!Number.isSafeInteger(count) || count < 0 || (Number(round) > 0 && count === 0)) {
+        throw new Error(`Round ${round} has no valid nonempty aggregation input set.`);
+    }
+    // The admitted aggregator chose when to close. The ledger fixes the
+    // actual closed count, not the early-start target, for publication.
+    return count;
+}
+export function shouldDeferAggregatorTimeout(policy, aggregationGraceMs, nowMs = Date.now()) {
+    if (!policy.opened)
+        return false;
+    if (!policy.closed && nowMs < policy.deadline * 1000)
+        return true;
+    // UI-selected windows can outlast the fixed progress polling budget.
+    // Give a deadline-triggered aggregation its normal processing allowance.
+    return nowMs >= policy.deadline * 1000
+        && nowMs < policy.deadline * 1000 + aggregationGraceMs;
 }
 export function nextGMTimeoutState({ missedLoops, maxLoops }) {
     const nextMissedLoops = missedLoops + 1;

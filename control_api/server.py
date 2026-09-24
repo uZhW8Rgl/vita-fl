@@ -59,6 +59,7 @@ TRAINING_CONFIG_KEYS = (
     "EPOCH",
     "WORKER_COUNT",
     "CLIENT_LIMIT",
+    "MODEL_SUBMISSION_DEADLINE_MS",
 )
 CONTRACT_TIMEOUT_SECONDS = 600
 OBSERVABILITY_VOLUME_NAMES = (
@@ -1132,10 +1133,31 @@ def training_config_with_round_plan(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def validate_model_submission_deadline_ms(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("model_submission_deadline_ms must be a positive integer")
+    if isinstance(value, str) and not re.fullmatch(r"[0-9]+", value.strip()):
+        raise ValueError("model_submission_deadline_ms must be a positive integer")
+    deadline_ms = int(value)
+    maximum = MAX_AGGREGATION_SUBMISSION_WINDOW_SECONDS * 1000
+    if not 1 <= deadline_ms <= maximum:
+        raise ValueError(f"model_submission_deadline_ms must be between 1 and {maximum}")
+    return deadline_ms
+
+
+def configured_model_submission_deadline_ms(values: dict[str, str]) -> int:
+    return validate_model_submission_deadline_ms(
+        values.get("MODEL_SUBMISSION_DEADLINE_MS")
+        or os.environ.get("MODEL_SUBMISSION_DEADLINE_MS")
+        or DEFAULT_MODEL_SUBMISSION_DEADLINE_MS
+    )
+
+
 def read_training_config(
     env_file: Path = TRAINING_ENV_FILE, compose_file: Path = TRAINING_COMPOSE_FILE
 ) -> dict[str, Any]:
     values = read_env_values(env_file)
+    deadline_ms = configured_model_submission_deadline_ms(values)
 
     if phala_runtime_mode():
         maximum = max(
@@ -1183,6 +1205,7 @@ def read_training_config(
                 ),
                 "worker_count": worker_count,
                 "client_limit": client_limit,
+                "model_submission_deadline_ms": deadline_ms,
                 "max_worker_count": maximum,
                 "available_workers": [f"worker{slot}" for slot in range(maximum)],
             }
@@ -1211,6 +1234,7 @@ def read_training_config(
             "epoch": max(1, _safe_int(values.get("EPOCH"), 1)),
             "worker_count": worker_count,
             "client_limit": client_limit,
+            "model_submission_deadline_ms": deadline_ms,
             "max_worker_count": max_worker_count,
             "available_workers": available_workers,
         }
@@ -1229,12 +1253,19 @@ def normalize_training_config(payload: dict[str, Any]) -> dict[str, int]:
     worker_count = max(2, min(_safe_int(payload.get("worker_count"), int(current["worker_count"])), max_worker_count))
     max_client_limit = max(1, worker_count - 1)
     client_limit = max(1, min(_safe_int(payload.get("client_limit"), int(current["client_limit"])), max_client_limit))
+    deadline_ms = validate_model_submission_deadline_ms(
+        payload.get(
+            "model_submission_deadline_ms",
+            current.get("model_submission_deadline_ms", DEFAULT_MODEL_SUBMISSION_DEADLINE_MS),
+        )
+    )
 
     return {
         "rounds": rounds,
         "epoch": epoch,
         "worker_count": worker_count,
         "client_limit": client_limit,
+        "model_submission_deadline_ms": deadline_ms,
     }
 
 
@@ -1265,6 +1296,11 @@ def write_training_config(config: dict[str, int], env_file: Path = TRAINING_ENV_
         "EPOCH": str(config["epoch"]),
         "WORKER_COUNT": str(config["worker_count"]),
         "CLIENT_LIMIT": str(config["client_limit"]),
+        "MODEL_SUBMISSION_DEADLINE_MS": str(
+            validate_model_submission_deadline_ms(config["model_submission_deadline_ms"])
+            if "model_submission_deadline_ms" in config
+            else configured_model_submission_deadline_ms(read_env_values(env_file))
+        ),
     }
 
     for line in existing_lines:
@@ -2068,7 +2104,9 @@ def commit_run_roster(addresses: list[str]) -> dict[str, Any]:
     }
 
 
-def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
+def configure_default_aggregation_policy(
+    client_limit: int, model_submission_deadline_ms: int | None = None
+) -> dict[str, Any]:
     if (
         isinstance(client_limit, bool)
         or not isinstance(client_limit, int)
@@ -2077,20 +2115,12 @@ def configure_default_aggregation_policy(client_limit: int) -> dict[str, Any]:
         raise ValueError(f"client_limit must be an integer between 1 and {MAX_DYNAMIC_WORKERS}")
 
     runtime_values = verified_setup_contract_env_values()
-    deadline_value = (
-        os.environ.get("MODEL_SUBMISSION_DEADLINE_MS", "").strip()
-        or runtime_values.get("MODEL_SUBMISSION_DEADLINE_MS", "").strip()
-        or str(DEFAULT_MODEL_SUBMISSION_DEADLINE_MS)
+    deadline_ms = (
+        validate_model_submission_deadline_ms(model_submission_deadline_ms)
+        if model_submission_deadline_ms is not None
+        else configured_model_submission_deadline_ms(runtime_values)
     )
-    try:
-        deadline_ms = int(deadline_value)
-    except ValueError as exc:
-        raise ValueError("MODEL_SUBMISSION_DEADLINE_MS must be an integer") from exc
-    if deadline_ms <= 0:
-        raise ValueError("MODEL_SUBMISSION_DEADLINE_MS must be positive")
     submission_window_seconds = (deadline_ms + 999) // 1000
-    if submission_window_seconds > MAX_AGGREGATION_SUBMISSION_WINDOW_SECONDS:
-        raise ValueError("MODEL_SUBMISSION_DEADLINE_MS exceeds the AggregationPolicy maximum")
 
     raw_policy_address = runtime_values.get("AGGREGATION_POLICY_ADDRESS", "").strip()
     try:
@@ -3113,6 +3143,9 @@ async def start_training_services(
         aggregation_policy = await asyncio.to_thread(
             configure_default_aggregation_policy,
             config["client_limit"],
+            model_submission_deadline_ms=config.get(
+                "model_submission_deadline_ms", DEFAULT_MODEL_SUBMISSION_DEADLINE_MS
+            ),
         )
     run_roster_commitment = await asyncio.to_thread(
         commit_run_roster,
@@ -3609,11 +3642,18 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
         if not training_phase_allows_setup(status) and not resume_committed_roster:
             require_training_setup_phase(status)
         try:
-            normalized = normalize_training_config(payload)
+            try:
+                normalized = normalize_training_config(payload)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             if resume_committed_roster:
                 persisted = read_training_config()
-                fields = ("rounds", "epoch", "worker_count", "client_limit")
-                if any(int(persisted[field]) != int(normalized[field]) for field in fields):
+                fields = ("rounds", "epoch", "worker_count", "client_limit", "model_submission_deadline_ms")
+                if any(
+                    int(persisted.get(field, DEFAULT_MODEL_SUBMISSION_DEADLINE_MS))
+                    != int(normalized.get(field, DEFAULT_MODEL_SUBMISSION_DEADLINE_MS))
+                    for field in fields
+                ):
                     raise HTTPException(
                         status_code=409,
                         detail=(
@@ -3653,6 +3693,9 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                     aggregation_policy = await asyncio.to_thread(
                         configure_default_aggregation_policy,
                         normalized["client_limit"],
+                        model_submission_deadline_ms=normalized.get(
+                            "model_submission_deadline_ms", DEFAULT_MODEL_SUBMISSION_DEADLINE_MS
+                        ),
                     )
                 else:
                     aggregation_policy = {"resumed": True, "transaction_hash": None}

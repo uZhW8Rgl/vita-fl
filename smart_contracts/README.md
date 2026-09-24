@@ -150,13 +150,29 @@ the submission or increasing its score. The aggregator can therefore neither
 invent another worker's accepted contribution nor replay it for a different
 round, model lineage or package. Exact retries are idempotent.
 
-`AggregationPolicy` additionally snapshots the configured minimum submission
-count, absolute deadline, deterministic `FEDERATED_AVERAGING_V1_HASH`, and a
-domain-separated v2 policy hash when a non-bootstrap round opens. The retained
-validation-data and loss-gate extension fields are set to zero for this
-baseline. Every accepted worker commitment extends an ordered on-chain input
-root; closing the round fixes that root and count and is impossible below the
-snapshotted minimum.
+`AggregationPolicy` snapshots the configured local early-start target
+(`requiredSubmissions`, supplied by `client_limit`), an absolute coordination
+deadline, deterministic `FEDERATED_AVERAGING_V1_HASH`, and a domain-separated v2
+policy hash when a non-bootstrap round opens. The collection-window duration is
+preserved by the snapshotted `deadline - openedAt`. The retained validation-data
+and loss-gate extension fields are set to zero for this baseline. Every accepted
+worker commitment extends an ordered on-chain input root.
+
+The admitted aggregator enforces the target and elapsed collection time locally.
+Normal submission and closure do not depend on block-time progress: the ledger
+accepts contributions from the authorized aggregator while the input set is open,
+and permits that aggregator to close any nonempty training set. It does not
+independently prove that the local timer expired; this timing claim relies on the
+approved aggregator workload and its action-key authority. The snapshotted
+on-chain deadline remains a timeout-recovery coordination reference, not an
+aggregation-release or submission-admission condition.
+
+Closing is the ledger cutoff for new contributions and fixes the actual input
+root and count, even below the early-start target. An empty training round cannot
+close or publish, while round-zero bootstrap retains its empty-input exception.
+The worker receiver must enforce its local collection cutoff before requesting
+closure. Timeout recovery retains its separate block-time and reporting-quorum
+conditions; local aggregation timing does not remove those dependencies.
 
 The admitted aggregator applies equal-weight model averaging to the closed
 input set. Publication requires its current TEE action key to sign an EIP-712
