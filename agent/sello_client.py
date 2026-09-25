@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_receipts.environment import RECEIPT_HEADER, decode_receipt_header, owner_from_environment
+from agent_receipts.owner_audit import CONTEXT_CONTENT_TYPE, seal_audit_context
 from agent_receipts.receiver_log import SCITT_BUNDLE_URL_HEADER, SCITT_TRANSACTION_HEADER
 from agent_receipts.scitt import (
     encode_publication_bundle,
@@ -243,6 +244,7 @@ def complete_receiver_call(
     except Exception:
         pass
     session_audit = None
+    owner_audit = None
     if pop_call:
         session_digest = hashlib.sha256(verified_session.evidence).hexdigest()
         if verified_session.session_id != session_digest:
@@ -290,6 +292,51 @@ def complete_receiver_call(
             "transaction_id": session_registration["transaction_id"],
             "transparency_record_id": session_record["record_id"],
         }
+    if pop_call and call.service == "tee-inference":
+        # Only RA-TLS TEE calls publish owner-encrypted context, never plaintext.
+        context = seal_audit_context(
+            envelope,
+            owner.hpke_public_key,
+            authorization_token=call.token,
+            action_input=call.action_input,
+            action_output=response_body,
+        )
+        context_digest = hashlib.sha256(context).hexdigest()
+        context_path = directory / "owner-verification-context.cbor"
+        context_path.write_bytes(context)
+        context_registration = register_verified_evidence(
+            context,
+            url=verified.log_url,
+            transparent_statement_path=str(directory / "owner-verification-context-transparent-statement.cose"),
+            content_type=CONTEXT_CONTENT_TYPE,
+            identity=owner.subject,
+        )
+        if context_registration.get("evidence_sha256") != context_digest:
+            raise RuntimeError("SCITT owner context statement does not bind the encrypted audit context")
+        if context_registration.get("service_url", "").rstrip("/") != verified.log_url.rstrip("/"):
+            raise RuntimeError("SCITT owner context publication violates the verified receipt log policy")
+        (directory / "owner-verification-context-publication.cbor").write_bytes(
+            encode_publication_bundle(context_registration)
+        )
+        context_record = record_transparency_entry(
+            evidence_type="sello-verification-context",
+            job_id=call_id,
+            model_id=model_id,
+            transparency=context_registration,
+            verification={
+                "receiver_receipt_sha256": verified.envelope_sha256,
+                "token_ref": verified.token_ref.hex(),
+                "session_id": verified_session.session_id,
+                "encryption": "HPKE-X25519-HKDF-SHA256-ChaCha20Poly1305",
+            },
+        )
+        owner_audit = {
+            "transaction_id": context_registration["transaction_id"],
+            "transparency_record_id": context_record["record_id"],
+            "evidence_sha256": context_digest,
+            "receipt_sha256": verified.envelope_sha256,
+            "content_type": CONTEXT_CONTENT_TYPE,
+        }
     record = record_transparency_entry(
         evidence_type="agent-tool-receipt",
         job_id=call_id,
@@ -305,6 +352,7 @@ def complete_receiver_call(
             "output_sha256": hashlib.sha256(response_body).hexdigest(),
             "receiver_receipt_sha256": verified.envelope_sha256,
             **({"attestation_session": session_audit} if session_audit is not None else {}),
+            **({"owner_audit": owner_audit} if owner_audit is not None else {}),
         },
     )
     return {
@@ -316,4 +364,5 @@ def complete_receiver_call(
         "transaction_id": transparency["transaction_id"],
         "transparency_record_id": record["record_id"],
         **({"attestation_session": session_audit} if session_audit is not None else {}),
+        **({"owner_audit": owner_audit} if owner_audit is not None else {}),
     }

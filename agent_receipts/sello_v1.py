@@ -306,7 +306,108 @@ class SelloReceiver:
         return _canonical_cbor(cbor2.CBORTag(COSE_SIGN1_TAG, [protected, {}, payload, signature]))
 
 
-class SelloOwner:
+def verify_receipt_signature(
+    envelope: bytes,
+    service_key: VerifyKey | bytes,
+    *,
+    log_urls: list[str],
+    token_ref: bytes | None = None,
+) -> dict[str, Any]:
+    """Verify the public COSE envelope without a token or owner private key."""
+    tagged = _loads_canonical_cbor(envelope, "receipt")
+    if not isinstance(tagged, cbor2.CBORTag) or tagged.tag != COSE_SIGN1_TAG:
+        raise ReceiptVerificationError("receipt is not tagged COSE_Sign1")
+    if not isinstance(tagged.value, (list, tuple)) or len(tagged.value) != 4:
+        raise ReceiptVerificationError("receipt COSE_Sign1 shape is invalid")
+    protected, unprotected, payload, signature = tagged.value
+    if not all(isinstance(value, bytes) for value in (protected, payload, signature)) or unprotected != {}:
+        raise ReceiptVerificationError("receipt COSE fields are invalid")
+    headers = _loads_canonical_cbor(protected, "protected header")
+    if (
+        not isinstance(headers, dict)
+        or headers.get(1) != COSE_ALG_EDDSA
+        or headers.get(SELLO_VERSION_LABEL) != SELLO_VERSION
+    ):
+        raise ReceiptVerificationError("receipt protected profile is unsupported")
+    key = service_key if isinstance(service_key, VerifyKey) else VerifyKey(service_key)
+    kid = hashlib.sha256(bytes(key)).digest()[:16]
+    if headers.get(4) != kid:
+        raise ReceiptVerificationError("receipt key identifier does not match the receiver")
+    signed_token_ref = headers.get(SELLO_TOKEN_REF_LABEL)
+    if not isinstance(signed_token_ref, bytes) or len(signed_token_ref) != 32:
+        raise ReceiptVerificationError("receipt token reference is invalid")
+    if token_ref is not None and signed_token_ref != token_ref:
+        raise ReceiptVerificationError("receipt is bound to another authorization token")
+    log_url = headers.get(SELLO_LOG_URL_LABEL)
+    if not isinstance(log_url, str) or log_url not in log_urls:
+        raise ReceiptVerificationError("receipt log URL violates owner policy")
+    try:
+        key.verify(_canonical_cbor(["Signature1", protected, b"", payload]), signature)
+    except BadSignatureError as exc:
+        raise ReceiptVerificationError("receiver receipt signature is invalid") from exc
+    return {"protected": protected, "payload": payload, "kid": kid, "token_ref": signed_token_ref, "log_url": log_url}
+
+
+class SelloVerifier:
+    """Read-only owner verification; possession of an issuer signing key is unnecessary."""
+
+    def __init__(self, hpke_private_key: bytes, service_keys: dict[str, VerifyKey | bytes], *, log_urls: list[str]):
+        self.hpke_private_key = hpke_private_key
+        self.service_keys = service_keys
+        self.log_urls = log_urls
+
+    @property
+    def hpke_public_key(self) -> bytes:
+        return X25519PrivateKey.from_private_bytes(self.hpke_private_key).public_key().public_bytes_raw()
+
+    def verify(
+        self,
+        envelope: bytes,
+        token: str,
+        *,
+        expected_service: str,
+        expected_action: str,
+        action_input: bytes,
+        action_output: bytes,
+        trusted_service_key: VerifyKey | bytes | None = None,
+    ) -> VerifiedReceipt:
+        service_key = (
+            trusted_service_key if trusted_service_key is not None else self.service_keys.get(expected_service)
+        )
+        if service_key is None:
+            raise ReceiptVerificationError("receiver service is absent from the trusted registry")
+        signed = verify_receipt_signature(
+            envelope, service_key, log_urls=self.log_urls, token_ref=hashlib.sha256(token.encode("ascii")).digest()
+        )
+        protected, payload = signed["protected"], signed["payload"]
+        kid, token_ref, log_url = signed["kid"], signed["token_ref"], signed["log_url"]
+        encrypted = _loads_canonical_cbor(payload, "encrypted payload")
+        if not isinstance(encrypted, dict) or set(encrypted) != {1, 2}:
+            raise ReceiptVerificationError("receipt HPKE payload is invalid")
+        recipient = _suite().create_recipient_context(
+            encrypted[1], _hpke_private(self.hpke_private_key), info=HPKE_INFO
+        )
+        plaintext = recipient.open(encrypted[2], aad=protected)
+        body = _loads_canonical_cbor(plaintext, "receipt body")
+        if not isinstance(body, dict) or body.get("action-type") != expected_action:
+            raise ReceiptVerificationError("receipt action type does not match the tool call")
+        if body.get("action-input-hash") != hashlib.sha256(action_input).digest():
+            raise ReceiptVerificationError("receipt input hash does not match the exact request")
+        if body.get("action-output-hash") != hashlib.sha256(action_output).digest():
+            raise ReceiptVerificationError("receipt output hash does not match the exact response")
+        fields = body.get("service-defined-fields")
+        if not isinstance(fields, dict) or fields.get("service-identifier") != expected_service:
+            raise ReceiptVerificationError("receipt service identity does not match the receiver")
+        return VerifiedReceipt(
+            body=body,
+            kid=kid,
+            token_ref=token_ref,
+            log_url=log_url,
+            envelope_sha256=hashlib.sha256(envelope).hexdigest(),
+        )
+
+
+class SelloOwner(SelloVerifier):
     """Agent-owner token creation and receiver-receipt verification."""
 
     def __init__(
@@ -356,75 +457,4 @@ class SelloOwner:
             pop_thumbprint=pop_thumbprint,
             scopes=scopes,
             now=now,
-        )
-
-    def verify(
-        self,
-        envelope: bytes,
-        token: str,
-        *,
-        expected_service: str,
-        expected_action: str,
-        action_input: bytes,
-        action_output: bytes,
-        trusted_service_key: VerifyKey | bytes | None = None,
-    ) -> VerifiedReceipt:
-        tagged = _loads_canonical_cbor(envelope, "receipt")
-        if not isinstance(tagged, cbor2.CBORTag) or tagged.tag != COSE_SIGN1_TAG:
-            raise ReceiptVerificationError("receipt is not tagged COSE_Sign1")
-        # cbor2 6 decodes arrays inside semantic tags as immutable tuples;
-        # older versions return lists. Both encode the same CBOR array.
-        if not isinstance(tagged.value, (list, tuple)) or len(tagged.value) != 4:
-            raise ReceiptVerificationError("receipt COSE_Sign1 shape is invalid")
-        protected, unprotected, payload, signature = tagged.value
-        if not all(isinstance(value, bytes) for value in (protected, payload, signature)) or unprotected != {}:
-            raise ReceiptVerificationError("receipt COSE fields are invalid")
-        headers = _loads_canonical_cbor(protected, "protected header")
-        if headers.get(1) != COSE_ALG_EDDSA or headers.get(SELLO_VERSION_LABEL) != SELLO_VERSION:
-            raise ReceiptVerificationError("receipt protected profile is unsupported")
-        service_key = (
-            trusted_service_key
-            if isinstance(trusted_service_key, VerifyKey)
-            else VerifyKey(trusted_service_key)
-            if trusted_service_key is not None
-            else self.service_keys.get(expected_service)
-        )
-        if service_key is None:
-            raise ReceiptVerificationError("receiver service is absent from the trusted registry")
-        kid = hashlib.sha256(bytes(service_key)).digest()[:16]
-        if headers.get(4) != kid:
-            raise ReceiptVerificationError("receipt key identifier does not match the receiver")
-        token_ref = hashlib.sha256(token.encode("ascii")).digest()
-        if headers.get(SELLO_TOKEN_REF_LABEL) != token_ref:
-            raise ReceiptVerificationError("receipt is bound to another authorization token")
-        try:
-            service_key.verify(_canonical_cbor(["Signature1", protected, b"", payload]), signature)
-        except BadSignatureError as exc:
-            raise ReceiptVerificationError("receiver receipt signature is invalid") from exc
-        encrypted = _loads_canonical_cbor(payload, "encrypted payload")
-        if not isinstance(encrypted, dict) or set(encrypted) != {1, 2}:
-            raise ReceiptVerificationError("receipt HPKE payload is invalid")
-        recipient = _suite().create_recipient_context(
-            encrypted[1], _hpke_private(self.hpke_private_key), info=HPKE_INFO
-        )
-        plaintext = recipient.open(encrypted[2], aad=protected)
-        body = _loads_canonical_cbor(plaintext, "receipt body")
-        if not isinstance(body, dict) or body.get("action-type") != expected_action:
-            raise ReceiptVerificationError("receipt action type does not match the tool call")
-        if body.get("action-input-hash") != hashlib.sha256(action_input).digest():
-            raise ReceiptVerificationError("receipt input hash does not match the exact request")
-        if body.get("action-output-hash") != hashlib.sha256(action_output).digest():
-            raise ReceiptVerificationError("receipt output hash does not match the exact response")
-        fields = body.get("service-defined-fields")
-        if not isinstance(fields, dict) or fields.get("service-identifier") != expected_service:
-            raise ReceiptVerificationError("receipt service identity does not match the receiver")
-        log_url = headers.get(SELLO_LOG_URL_LABEL)
-        if not isinstance(log_url, str) or log_url not in self.log_urls:
-            raise ReceiptVerificationError("receipt log URL violates owner policy")
-        return VerifiedReceipt(
-            body=body,
-            kid=kid,
-            token_ref=token_ref,
-            log_url=log_url,
-            envelope_sha256=hashlib.sha256(envelope).hexdigest(),
         )

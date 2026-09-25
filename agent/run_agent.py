@@ -1115,7 +1115,7 @@ async def langchain_agent(args: argparse.Namespace) -> dict[str, Any]:
 async def serve_agent(args: argparse.Namespace) -> None:
     try:
         from fastapi import FastAPI, HTTPException, Response
-        from fastapi.responses import HTMLResponse
+        from fastapi.responses import HTMLResponse, JSONResponse
         import uvicorn
     except ImportError as exc:
         raise RuntimeError("Server mode requires FastAPI and uvicorn in agent/requirements.txt") from exc
@@ -1145,6 +1145,20 @@ async def serve_agent(args: argparse.Namespace) -> None:
     @app.get("/transparency/", response_class=HTMLResponse)
     async def transparency_view() -> str:
         return TRANSPARENCY_VIEW_HTML
+
+    @app.get("/api/transparency/trust-anchors")
+    async def transparency_trust_anchors():
+        try:
+            from .transparency_trust import TrustAnchorError, fetch_scitt_trust_anchors
+        except ImportError:
+            from transparency_trust import TrustAnchorError, fetch_scitt_trust_anchors
+        try:
+            anchors = await asyncio.to_thread(fetch_scitt_trust_anchors)
+        except TrustAnchorError as exc:
+            raise HTTPException(
+                status_code=503, detail="SCITT trust anchors unavailable", headers={"Cache-Control": "no-store"}
+            ) from exc
+        return JSONResponse(anchors, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/transparency/records")
     async def transparency_records(limit: int = 100, token_ref: str | None = None) -> dict[str, Any]:

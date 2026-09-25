@@ -11,6 +11,7 @@ from nacl.signing import SigningKey
 
 from agent.sello_client import ReceiverCall, begin_receiver_call, complete_receiver_call, validate_receiver_security
 from agent_receipts.environment import RECEIPT_HEADER, receipt_header
+from agent_receipts.owner_audit import CONTEXT_CONTENT_TYPE, open_audit_context
 from agent_receipts.sello_v1 import (
     ReceiptVerificationError,
     SelloOwner,
@@ -212,6 +213,9 @@ def test_ratls_startup_requires_pop_key_instead_of_mtls_credentials(owner, ident
         "registration_failure",
         "registered_digest",
         "registered_log",
+        "context_registration_failure",
+        "context_registered_digest",
+        "context_registered_log",
     ],
 )
 def test_pop_receipt_is_bound_to_the_original_verified_session(owner, identity, monkeypatch, mismatch):
@@ -253,6 +257,22 @@ def test_pop_receipt_is_bound_to_the_original_verified_session(owner, identity, 
         "_signed_statement": b"agent-signed-session-statement",
         "_transparent_statement": b"session-inclusion-evidence",
     }
+
+    def register_evidence(raw, **options):
+        if options["content_type"] != CONTEXT_CONTENT_TYPE:
+            if mismatch == "registration_failure":
+                raise RuntimeError("session registration unavailable")
+            return registration
+        if mismatch == "context_registration_failure":
+            raise RuntimeError("owner context registration unavailable")
+        return {
+            **registration,
+            "transaction_id": "context-1.4",
+            "service_url": "https://wrong.example" if mismatch == "context_registered_log" else "https://scitt.example",
+            "evidence_sha256": "f" * 64 if mismatch == "context_registered_digest" else hashlib.sha256(raw).hexdigest(),
+            "content_type": CONTEXT_CONTENT_TYPE,
+        }
+
     with (
         patch(
             "agent.sello_client.verify_publication_bundle",
@@ -260,14 +280,15 @@ def test_pop_receipt_is_bound_to_the_original_verified_session(owner, identity, 
         ) as verify_log,
         patch(
             "agent.sello_client.register_verified_evidence",
-            return_value=registration,
-            side_effect=(
-                RuntimeError("session registration unavailable") if mismatch == "registration_failure" else None
-            ),
+            side_effect=register_evidence,
         ) as register_session,
         patch(
             "agent.transparency_index.record_transparency_entry",
-            side_effect=[{"record_id": "session-record"}, {"record_id": "tool-record"}],
+            side_effect=[
+                {"record_id": "session-record"},
+                {"record_id": "context-record"},
+                {"record_id": "tool-record"},
+            ],
         ) as record_entry,
     ):
         options = {
@@ -289,7 +310,8 @@ def test_pop_receipt_is_bound_to_the_original_verified_session(owner, identity, 
             publication = cbor2.loads(Path(audit["publication_bundle_path"]).read_bytes())
             assert publication[1] == registration["_signed_statement"]
             assert publication[2] == registration["_transparent_statement"]
-            register_session.assert_called_once_with(
+            assert register_session.call_count == 2
+            register_session.assert_any_call(
                 session.evidence,
                 url="https://scitt.example",
                 transparent_statement_path=str(
@@ -299,7 +321,31 @@ def test_pop_receipt_is_bound_to_the_original_verified_session(owner, identity, 
                 identity=owner.subject,
             )
             assert record_entry.call_args_list[0].kwargs["evidence_type"] == "attestation-session"
-            assert record_entry.call_args_list[1].kwargs["verification"]["attestation_session"] == audit
+            context_registration = register_session.call_args_list[1]
+            assert context_registration.kwargs["content_type"] == CONTEXT_CONTENT_TYPE
+            opened = open_audit_context(
+                context_registration.args[0], owner.hpke_private_key, hashlib.sha256(receipt).hexdigest()
+            )
+            assert opened == {
+                "authorization_token": authorization,
+                "action_input": b"input",
+                "action_output": b"output",
+            }
+            context_audit = result["owner_audit"]
+            assert context_audit["receipt_sha256"] == hashlib.sha256(receipt).hexdigest()
+            assert context_audit["evidence_sha256"] == hashlib.sha256(context_registration.args[0]).hexdigest()
+            assert context_audit["transparency_record_id"] == "context-record"
+            assert context_audit["transaction_id"] == "context-1.4"
+            assert record_entry.call_args_list[1].kwargs["evidence_type"] == "sello-verification-context"
+            assert record_entry.call_args_list[2].kwargs["verification"]["attestation_session"] == audit
+            assert record_entry.call_args_list[2].kwargs["verification"]["owner_audit"] == context_audit
+            assert authorization not in json.dumps(result)
+        elif mismatch.startswith("context_"):
+            with pytest.raises(RuntimeError, match="context"):
+                complete_receiver_call(call, {RECEIPT_HEADER: receipt_header(receipt)}, b"output", 200, **options)
+            assert register_session.call_count == 2
+            assert record_entry.call_count == 1
+            assert record_entry.call_args.kwargs["evidence_type"] == "attestation-session"
         else:
             with pytest.raises(RuntimeError, match="session"):
                 complete_receiver_call(call, {RECEIPT_HEADER: receipt_header(receipt)}, b"output", 200, **options)
@@ -354,5 +400,6 @@ def test_mtls_receipt_keeps_existing_log_flow_without_session_registration(owner
         )
     assert result["transaction_id"] == "legacy-1.1"
     assert "attestation_session" not in result
+    assert "owner_audit" not in result
     register_session.assert_not_called()
     record.assert_called_once()
