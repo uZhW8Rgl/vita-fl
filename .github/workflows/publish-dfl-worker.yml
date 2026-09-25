@@ -60,8 +60,15 @@ jobs:
         working-directory: dfl/node_server
         run: npm ci
 
+      - name: Install Foundry for transaction integration tests
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.3.1
+
       - name: Build and test worker Node.js service
         working-directory: dfl/node_server
+        env:
+          REQUIRE_ANVIL_TESTS: "1"
         run: |
           npm run build
           npm test

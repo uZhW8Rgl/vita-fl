@@ -724,7 +724,15 @@ export const reportAggregatorTimeout = async (expectedRound, expectedAggregator)
     }
     const gasPrice = await web3.eth.getGasPrice();
     const method = contract.methods.reportAggregatorTimeout(reportedRound, reportedAggregator);
-    const gasEstimate = await method.estimateGas({ from: signer.address });
+    const data = method.encodeABI();
+    // Web3 contract-method estimates hard-code "latest". On an idle Anvil
+    // chain that block can predate the submission deadline indefinitely;
+    // estimate the block that would include this transaction instead.
+    const gasEstimate = await web3.eth.estimateGas({
+        from: signer.address,
+        to: address,
+        data,
+    }, "pending");
     const tx = {
         from: signer.address,
         to: address,
@@ -732,11 +740,16 @@ export const reportAggregatorTimeout = async (expectedRound, expectedAggregator)
         gasPrice: gasPrice,
         nonce: await web3.eth.getTransactionCount(signer.address, "pending"),
         chainId: expectedChainId().toString(),
-        data: method.encodeABI(),
+        data,
     };
     try {
         const rawTransaction = await signer.signTransaction(tx);
-        const receipt = await web3.eth.sendSignedTransaction(rawTransaction);
+        // The pending estimate above already checks for reverts. Web3's
+        // additional send preflight uses "latest" and would repeat the stale
+        // deadline failure before the transaction reaches the node.
+        const receipt = await web3.eth.sendSignedTransaction(rawTransaction, undefined, {
+            checkRevertBeforeSending: false,
+        });
         logTransactionCost("worker", "contract_transaction", receipt, gasPrice);
         const currentAggregator = await contract.methods.getCurrentAggregator().call();
         if (String(currentAggregator).toLowerCase() !== String(reportedAggregator).toLowerCase()) {

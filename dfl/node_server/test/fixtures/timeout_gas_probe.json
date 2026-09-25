@@ -1,0 +1,94 @@
+{
+  "compiler": "solc 0.8.33, optimizer 200, evmVersion paris",
+  "source_name": "TimeoutGasProbe.sol",
+  "source": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.19;\n\n// Minimal integration fixture for the production timeout call's time guard.\ncontract TimeoutGasProbe {\n    uint256 public immutable deadline;\n    address public immutable aggregator;\n    uint256 public reports;\n\n    constructor(uint256 deadline_, address aggregator_) {\n        deadline = deadline_;\n        aggregator = aggregator_;\n    }\n\n    function reportAggregatorTimeout(uint256 expectedRound, address expectedAggregator) external {\n        require(expectedRound == 1 && expectedAggregator == aggregator, \"wrong timeout context\");\n        require(block.timestamp > deadline, \"submission window is still active\");\n        reports++;\n    }\n\n    function getCurrentAggregator() external view returns (address) {\n        return aggregator;\n    }\n}\n",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "deadline_",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "aggregator_",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "aggregator",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "deadline",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getCurrentAggregator",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "expectedRound",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "expectedAggregator",
+          "type": "address"
+        }
+      ],
+      "name": "reportAggregatorTimeout",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "reports",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x60c060405234801561001057600080fd5b5060405161038738038061038783398101604081905261002f91610046565b6080919091526001600160a01b031660a052610083565b6000806040838503121561005957600080fd5b825160208401519092506001600160a01b038116811461007857600080fd5b809150509250929050565b60805160a0516102cd6100ba6000396000818160610152818160ec015261012601526000818160a501526101a501526102cd6000f3fe608060405234801561001057600080fd5b50600436106100575760003560e01c8063245a7bfc1461005c57806329dcb0cf146100a05780638723a499146100d5578063b0fa5f84146100ea578063ea55de8b14610110575b600080fd5b6100837f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b0390911681526020015b60405180910390f35b6100c77f000000000000000000000000000000000000000000000000000000000000000081565b604051908152602001610097565b6100e86100e3366004610234565b610119565b005b7f0000000000000000000000000000000000000000000000000000000000000000610083565b6100c760005481565b81600114801561015a57507f00000000000000000000000000000000000000000000000000000000000000006001600160a01b0316816001600160a01b0316145b6101a35760405162461bcd60e51b81526020600482015260156024820152741ddc9bdb99c81d1a5b595bdd5d0818dbdb9d195e1d605a1b60448201526064015b60405180910390fd5b7f0000000000000000000000000000000000000000000000000000000000000000421161021c5760405162461bcd60e51b815260206004820152602160248201527f7375626d697373696f6e2077696e646f77206973207374696c6c2061637469766044820152606560f81b606482015260840161019a565b60008054908061022b83610270565b91905055505050565b6000806040838503121561024757600080fd5b8235915060208301356001600160a01b038116811461026557600080fd5b809150509250929050565b60006001820161029057634e487b7160e01b600052601160045260246000fd5b506001019056fea2646970667358221220c6906167c43efddf9aeb208b324eeae3399987e1188bd794b0beb999fd6728d164736f6c63430008210033"
+}
