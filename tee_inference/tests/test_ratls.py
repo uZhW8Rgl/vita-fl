@@ -76,6 +76,41 @@ def test_session_available_before_model_load_and_binds_real_certificate(manager)
     assert manager.dstack.calls == ["/GetKey", "/GetQuote", "/Info"]
 
 
+def test_session_preserves_dstack_quote_with_70_bytes_of_zero_padding(manager):
+    manager.dstack.base_quote += bytes(70)
+    evidence = manager.store.create_session(b"c" * 32)
+    session = manager.store.require_session(hashlib.sha256(evidence).hexdigest())
+    value = a.decode_session_evidence(session.evidence)
+    expected_quote = bytearray(manager.dstack.base_quote)
+    expected_quote[568:632] = a.session_report_data(dict(session.claims))
+    assert value["quote"] == bytes(expected_quote)
+    assert value["quote"][-70:] == bytes(70)
+    assert len(value["quote"]) == 636 + int.from_bytes(value["quote"][632:636], "little") + 70
+
+
+@pytest.mark.parametrize("fault", ["truncated", "nonzero-padding", "empty-signature"])
+def test_session_rejects_invalid_dstack_quote_without_caching(manager, monkeypatch, fault):
+    original_call = manager.dstack.call
+
+    def malformed_quote(path, payload):
+        response = original_call(path, payload)
+        if path == "/GetQuote":
+            quote = bytes.fromhex(response["quote"])
+            if fault == "truncated":
+                quote = quote[:-1]
+            elif fault == "nonzero-padding":
+                quote += bytes(69) + b"\x01"
+            else:
+                quote = quote[:632] + bytes(4) + quote[636:]
+            response["quote"] = quote.hex()
+        return response
+
+    monkeypatch.setattr(manager.dstack, "call", malformed_quote)
+    with pytest.raises(a.AttestationVerificationError, match="invalid session evidence"):
+        manager.store.create_session(b"c" * 32)
+    assert not manager.store._sessions
+
+
 def test_capacity_preserves_active_sessions_and_rejects_before_quote(manager):
     sessions = []
     for index in range(2):
@@ -169,9 +204,16 @@ def air_bundle(tmp_path, monkeypatch):
     evidence = manager.create_session(b"c" * 32)
     session = manager.require_session(hashlib.sha256(evidence).hexdigest())
 
+    verified_quotes = {}
+
     def api_open(request, timeout):
+        if request.get_method() == "GET":
+            checksum = request.full_url.rsplit("/", 1)[-1]
+            return ApiResponse(verified_quotes[checksum], "application/octet-stream")
         quote = bytes.fromhex(json.loads(request.data)["hex"])
-        return ApiResponse(api_value(quote))
+        value = api_value(quote)
+        verified_quotes[value["checksum"]] = quote
+        return ApiResponse(value)
 
     monkeypatch.setattr(a.urllib.request, "build_opener", lambda *args: SimpleNamespace(open=api_open))
 

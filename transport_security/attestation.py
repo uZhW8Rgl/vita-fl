@@ -182,8 +182,14 @@ def parse_tdx_quote(quote: bytes) -> dict[str, Any]:
     if int.from_bytes(quote[2:4], "little") != 2:
         raise AttestationVerificationError("unsupported TDX attestation key type")
     signature_size = int.from_bytes(quote[632:636], "little")
-    if signature_size == 0 or 636 + signature_size != len(quote):
+    signature_end = 636 + signature_size
+    if signature_size == 0 or signature_end > len(quote):
         raise AttestationVerificationError("TDX quote signature length is inconsistent")
+    # dstack can return a zero-padded quote buffer. Match the on-chain V4Parser:
+    # only zero bytes may follow the declared signature section. Keep the full
+    # original quote for evidence hashes and cryptographic verification.
+    if any(quote[signature_end:]):
+        raise AttestationVerificationError("TDX quote contains nonzero trailing data")
     attributes = int.from_bytes(quote[TDX_HEADER_SIZE + 120 : TDX_HEADER_SIZE + 128], "little")
     if attributes & 1:
         raise AttestationVerificationError("debug TDX guests are forbidden")
@@ -271,6 +277,28 @@ def _hex_field(value: Any, size: int, name: str) -> bytes:
     return bytes.fromhex(value.removeprefix("0x"))
 
 
+def _read_phala_response(opener, request, *, deadline: float, media_type: str, limit: int, operation: str) -> bytes:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise AttestationVerificationError("Phala quote verification deadline exceeded")
+    try:
+        with opener.open(request, timeout=remaining) as response:
+            if response.status != 200:
+                raise AttestationVerificationError(f"{operation} returned HTTP {response.status}")
+            if response.headers.get_content_type() != media_type:
+                raise AttestationVerificationError(f"{operation} returned an unexpected content type")
+            raw = response.read(limit + 1)
+    except urllib.error.HTTPError as exc:
+        raise AttestationVerificationError(f"{operation} is unavailable (HTTP {exc.code})") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise AttestationVerificationError(f"{operation} is unavailable") from exc
+    if time.monotonic() >= deadline:
+        raise AttestationVerificationError("Phala quote verification deadline exceeded")
+    if len(raw) > limit:
+        raise AttestationVerificationError(f"{operation} response exceeds the size limit")
+    return raw
+
+
 def verify_quote_with_phala(quote: bytes, expected_report_data: bytes) -> dict[str, Any]:
     fields = parse_tdx_quote(quote)
     if not hmac.compare_digest(fields["reportdata"], _bytes(expected_report_data, 64, "expected REPORTDATA")):
@@ -279,10 +307,15 @@ def verify_quote_with_phala(quote: bytes, expected_report_data: bytes) -> dict[s
     if not any(all(hmac.compare_digest(fields[name], digest) for name, digest in entry.items()) for entry in allowed):
         raise AttestationVerificationError("TDX base measurements violate the platform allowlist")
     endpoint, timeout = _api_configuration()
+    deadline = time.monotonic() + timeout
     request = urllib.request.Request(
         endpoint,
         data=json.dumps({"hex": quote.hex()}, separators=(",", ":")).encode(),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "vita-fl-attestation/1",
+        },
         method="POST",
     )
     opener = urllib.request.build_opener(
@@ -290,15 +323,14 @@ def verify_quote_with_phala(quote: bytes, expected_report_data: bytes) -> dict[s
         urllib.request.HTTPSHandler(context=ssl.create_default_context()),
         _NoRedirect(),
     )
-    try:
-        with opener.open(request, timeout=timeout) as response:
-            if response.status != 200 or response.headers.get_content_type() != "application/json":
-                raise AttestationVerificationError("Phala verifier returned an unsuccessful or non-JSON response")
-            raw = response.read(MAX_API_RESPONSE_BYTES + 1)
-    except (urllib.error.URLError, OSError) as exc:
-        raise AttestationVerificationError("Phala quote verification is unavailable") from exc
-    if len(raw) > MAX_API_RESPONSE_BYTES:
-        raise AttestationVerificationError("Phala verifier response exceeds the size limit")
+    raw = _read_phala_response(
+        opener,
+        request,
+        deadline=deadline,
+        media_type="application/json",
+        limit=MAX_API_RESPONSE_BYTES,
+        operation="Phala quote verification",
+    )
     try:
         value = json.loads(raw, object_pairs_hook=_unique_json)
     except (ValueError, UnicodeError) as exc:
@@ -308,8 +340,7 @@ def verify_quote_with_phala(quote: bytes, expected_report_data: bytes) -> dict[s
     verified_quote = value.get("quote")
     if not isinstance(verified_quote, dict) or verified_quote.get("verified") is not True:
         raise AttestationVerificationError("Phala did not cryptographically verify the quote")
-    if not hmac.compare_digest(_hex_field(value.get("checksum"), 32, "checksum"), hashlib.sha256(quote).digest()):
-        raise AttestationVerificationError("Phala response checksum refers to another quote")
+    provider_checksum = _hex_field(value.get("checksum"), 32, "checksum").hex()
     body = verified_quote.get("body")
     if not isinstance(body, dict):
         raise AttestationVerificationError("Phala response lacks the verified quote body")
@@ -317,11 +348,34 @@ def verify_quote_with_phala(quote: bytes, expected_report_data: bytes) -> dict[s
         actual = _hex_field(body.get(name), len(expected), name)
         if not hmac.compare_digest(actual, expected):
             raise AttestationVerificationError(f"Phala verified {name} differs from the submitted quote")
+    # The provider checksum is an opaque lookup identifier, not necessarily the
+    # SHA-256 of the submitted bytes. Bind its verified record to the exact quote
+    # through the provider's raw endpoint on the same approved HTTPS origin.
+    parsed_endpoint = urllib.parse.urlsplit(endpoint)
+    raw_url = urllib.parse.urlunsplit(
+        (parsed_endpoint.scheme, parsed_endpoint.netloc, f"/api/v1/attestations/raw/{provider_checksum}", "", "")
+    )
+    raw_request = urllib.request.Request(
+        raw_url,
+        headers={"Accept": "application/octet-stream", "User-Agent": "vita-fl-attestation/1"},
+        method="GET",
+    )
+    verified_raw = _read_phala_response(
+        opener,
+        raw_request,
+        deadline=deadline,
+        media_type="application/octet-stream",
+        limit=MAX_QUOTE_BYTES,
+        operation="Phala raw quote retrieval",
+    )
+    if not hmac.compare_digest(verified_raw, quote):
+        raise AttestationVerificationError("Phala verified raw quote differs from the submitted quote")
     return {
         "provider": "phala",
         "endpoint": endpoint,
         "verified": True,
         "quote_sha256": hashlib.sha256(quote).hexdigest(),
+        "provider_checksum": provider_checksum,
         "verified_at": int(time.time()),
         "platform_measurements": {name: value.hex() for name, value in fields.items() if name != "reportdata"},
     }

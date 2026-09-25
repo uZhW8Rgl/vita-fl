@@ -17,9 +17,15 @@ The legacy `mtls` mode and the ZK receiver retain certificate authentication.
    a fresh TDX Quote V4, event log and application Compose. Claims bind the
    challenge, actual TLS SPKI hash, AIR key, Sello key, origin and bounded lifetime.
    Quote `REPORTDATA` is SHA-512 of the versioned domain and canonical claims.
+   dstack may append zero padding after the declared V4 signature section. The
+   verifier accepts only zero padding, matching the on-chain V4 parser, and
+   retains the original bytes in evidence and quote hashes.
 4. The agent verifies the actual peer SPKI, its challenge, the admitted Sello
    key, origin and lifetime. Phala's official HTTPS API checks quote cryptography;
-   the agent checks the returned checksum and parsed quote fields. It also
+   the agent retrieves the raw quote identified by the returned checksum from
+   the same allowed HTTPS service and requires an exact byte match, then checks
+   the parsed quote fields. The checksum is treated as a service identifier,
+   not assumed to equal the local SHA-256 of the uploaded bytes. It also
    rejects debug mode and enforces explicit MRTD/RTMR0–2, RTMR3, Compose, image
    and contract/RPC policy. No protected headers or body have been sent yet.
 5. On that same connection the agent sends the Sello token and a signed

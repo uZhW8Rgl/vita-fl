@@ -70,7 +70,11 @@ def ratls_server(tmp_path, monkeypatch):
                     claims.update(issued_at=now - 600, expires_at=now - 300)
                 evidence = attestation.encode_session_evidence(claims, b"test quote", "[]", "{}")
                 state["session_id"] = hashlib.sha256(evidence).hexdigest()
-                self.send_response(200)
+                if state["fault"] == "unavailable":
+                    evidence = b"remote diagnostic details must not reach the client error"
+                if state["fault"] == "oversized":
+                    evidence = b"x" * (ratls_client.MAX_SESSION_EVIDENCE + 1)
+                self.send_response(503 if state["fault"] == "unavailable" else 200)
                 self.send_header("Content-Type", "application/cbor")
                 self.send_header("Content-Length", str(len(evidence)))
                 if state["fault"] == "close":
@@ -163,6 +167,29 @@ def test_failed_attestation_never_sends_protected_http(ratls_server, fault):
         open_receiver(request_for(identity), identity=identity, timeout=3)
     assert len(state["events"]) == 1
     assert "Authorization" not in state["events"][0][1]
+
+
+@pytest.mark.parametrize(
+    "fault,message",
+    [
+        ("unavailable", "RA-TLS session attestation returned HTTP 503"),
+        ("oversized", "RA-TLS session attestation exceeds 262144 bytes"),
+    ],
+)
+def test_attestation_response_errors_are_distinct_and_send_no_credentials(ratls_server, fault, message):
+    state, identity = ratls_server
+    state["fault"] = fault
+    with pytest.raises(ValueError) as error:
+        open_receiver(request_for(identity), identity=identity, timeout=3)
+    assert str(error.value) == message
+    assert state["verified"] is False
+    assert len(state["events"]) == 1
+    path, headers, body, verified = state["events"][0]
+    assert path == "/v1/attestation"
+    assert "Authorization" not in headers
+    assert "X-Vita-PoP" not in headers
+    assert len(body) == 32 and body != b"private input"
+    assert verified is False
 
 
 def test_error_response_retains_attested_session_and_owns_socket(ratls_server):

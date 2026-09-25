@@ -152,8 +152,10 @@ def open_attested(request, timeout: float, identity: PoPIdentity):
         )
         bootstrap = connection.getresponse()
         evidence = bootstrap.read(MAX_SESSION_EVIDENCE + 1)
-        if bootstrap.status != 200 or len(evidence) > MAX_SESSION_EVIDENCE:
-            raise ValueError("RA-TLS session attestation failed or exceeds its size limit")
+        if bootstrap.status != 200:
+            raise ValueError(f"RA-TLS session attestation returned HTTP {bootstrap.status}")
+        if len(evidence) > MAX_SESSION_EVIDENCE:
+            raise ValueError(f"RA-TLS session attestation exceeds {MAX_SESSION_EVIDENCE} bytes")
         if bootstrap.will_close or connection.sock is not socket:
             raise ValueError("RA-TLS peer closed the attestation connection")
         session = verify_session_evidence(
