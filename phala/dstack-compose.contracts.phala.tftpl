@@ -148,6 +148,7 @@ ${dynamic_worker_inventory_environment}
       - "8091:8091"
     environment:
       CONTROL_RUNTIME_MODE: phala
+      EVALUATION_GATES_ENABLED: "${evaluation_gates_enabled}"
       TRAINING_WORKSPACE_ROOT: /workspace
       TRAINING_CONFIG_FILE: /run/master-thesis/training.env
       CONTROL_API_PORT: "8091"

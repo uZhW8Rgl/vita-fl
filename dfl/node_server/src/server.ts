@@ -23,6 +23,7 @@ import { DstackClient, TappdClient, getComposeHash } from '@phala/dstack-sdk';
 import crypto from 'crypto';
 import { createDrainingUploadServer } from "./upload_drain.js";
 import { emitTelemetryEvent } from "./telemetry.js";
+import { evaluationUploadDecision } from "./evaluation_gate.js";
 import {
     buildRoundZeroBootstrapSnapshot,
     createCommittedRunRosterBinding,
@@ -687,6 +688,23 @@ async function handleModelUpload(request, response) {
         });
         if (!crypto.verify('sha256', signingPayload, publicKey, signature)) {
             return reply(403, { ok: false, error: 'invalid model package signature' });
+        }
+        // Cooperative evaluation fault, explicitly enabled in measured Compose.
+        // Authorization/signature and the ordinary deadline above remain unchanged.
+        try {
+            const gate = await evaluationUploadDecision({
+                round: expectedRound,
+                aggregator: String(process.env.ACCOUNT_ADDRESS).toLowerCase(),
+                participant: deviceId,
+            });
+            if (!gate.allow) {
+                await runtimeEvent("evaluation.upload_blocked", {
+                    run_id: gate.run_id, round: expectedRound, participant: deviceId,
+                });
+                return reply(503, { ok: false, error: 'evaluation upload gate is active' });
+            }
+        } catch {
+            return reply(503, { ok: false, error: 'evaluation upload gate decision unavailable' });
         }
         const acceptedModel = await callPythonService('/model/receive', {
             device_id: deviceId,
@@ -1962,6 +1980,12 @@ const stateMachine = async () => {
                     try {
                         if (!aggregatorServerRunning) {
                             const identity = await currentPhalaIdentity();
+                            if (currentRound === 1 && process.env.DFL_EVALUATION_GATE_RUN_ID) {
+                                await runtimeEvent("evaluation.receiver_ready", {
+                                    run_id: process.env.DFL_EVALUATION_GATE_RUN_ID,
+                                    round: currentRound,
+                                });
+                            }
                             await startModelUploadServer();
                             const endpoint = ownModelUploadEndpoint(identity.appId);
                             if (String(await getAggregatorEndpoint()) !== endpoint) {

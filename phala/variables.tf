@@ -1158,3 +1158,9 @@ variable "phala_attestation_verify_url" {
     error_message = "This deployment only supports the official Phala attestation verification endpoint."
   }
 }
+
+variable "evaluation_gates_enabled" {
+  description = "Enable cooperative evaluation-only upload fault injection; disabled for normal deployments."
+  type        = bool
+  default     = false
+}

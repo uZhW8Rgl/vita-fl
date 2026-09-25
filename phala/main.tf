@@ -77,6 +77,8 @@ locals {
     device_id                                = 0
     worker_count                             = var.max_dynamic_workers
     telemetry_url                            = "http://telemetry-policy-reference.invalid"
+    evaluation_gate_url                      = var.evaluation_gates_enabled && var.runtime_rpc_url_override != null ? replace(var.runtime_rpc_url_override, "/-[0-9]+\\./", "-8091.") : ""
+    evaluation_gate_run_id                   = ""
     pki_ca_url                               = var.pki_ca_url
     pki_root_fingerprint                     = var.pki_root_fingerprint
     pki_worker_dns_name                      = var.pki_worker_dns_name
@@ -199,6 +201,7 @@ locals {
     dynamic_worker_rpc_url               = var.runtime_rpc_url_override == null ? "" : var.runtime_rpc_url_override
     dynamic_worker_kubo_api_url          = var.runtime_kubo_api_url_override == null ? "" : var.runtime_kubo_api_url_override
     dynamic_worker_kubo_gateway_url      = var.runtime_kubo_gateway_url_override == null ? "" : var.runtime_kubo_gateway_url_override
+    evaluation_gates_enabled             = var.evaluation_gates_enabled
     max_dynamic_workers                  = var.max_dynamic_workers
     initial_dynamic_worker_count         = min(var.initial_dynamic_worker_count, var.max_dynamic_workers)
     region                               = var.region
@@ -369,6 +372,8 @@ resource "phala_app" "dfl_worker" {
     msg_broker_ip                            = var.msg_broker_ip
     device_id                                = 0
     worker_count                             = 1 + length(var.additional_workers)
+    evaluation_gate_url                      = local.worker_policy_reference_inputs.evaluation_gate_url
+    evaluation_gate_run_id                   = ""
     inference_enabled                        = true
     pki_ca_url                               = var.pki_ca_url
     pki_root_fingerprint                     = var.pki_root_fingerprint
@@ -457,6 +462,8 @@ resource "phala_app" "dfl_worker_additional" {
     msg_broker_ip                            = var.msg_broker_ip
     device_id                                = local.additional_worker_indices[each.key]
     worker_count                             = 1 + length(var.additional_workers)
+    evaluation_gate_url                      = local.worker_policy_reference_inputs.evaluation_gate_url
+    evaluation_gate_run_id                   = ""
     inference_enabled                        = false
     pki_ca_url                               = var.pki_ca_url
     pki_root_fingerprint                     = var.pki_root_fingerprint

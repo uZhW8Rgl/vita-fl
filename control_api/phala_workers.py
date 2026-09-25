@@ -130,6 +130,8 @@ class WorkerDeploymentConfig:
     sello_scitt_url: str = ""
     sello_token_issuer_public_key: str = ""
     agent_pop_registry: str = "{}"
+    evaluation_gate_url: str = ""
+    evaluation_gate_run_id: str = ""
 
     def terraform_values(self) -> dict[str, Any]:
         values = asdict(self)
@@ -374,10 +376,25 @@ class SubprocessTerraformRunner:
         return environment
 
     def configure(self, training_config: dict[str, int]) -> None:
+        run_id = str(training_config.get("evaluation_gate_run_id", ""))
+        if run_id:
+            endpoint = urllib.parse.urlsplit(self.config.evaluation_gate_url)
+            if (
+                not re.fullmatch(r"[a-zA-Z0-9_-]{32,128}", run_id)
+                or endpoint.scheme != "https"
+                or not endpoint.hostname
+                or endpoint.username
+                or endpoint.password
+                or endpoint.path not in {"", "/"}
+                or endpoint.query
+                or endpoint.fragment
+            ):
+                raise WorkerConfigurationError("evaluation gate requires a pinned run and HTTPS control origin")
         self.config = replace(
             self.config,
             round=training_config.get("rounds", self.config.round),
             epoch=training_config.get("epoch", self.config.epoch),
+            evaluation_gate_run_id=str(training_config.get("evaluation_gate_run_id", "")),
         )
 
     def current_training_config(self) -> dict[str, int]:
@@ -387,12 +404,22 @@ class SubprocessTerraformRunner:
                 return {
                     "rounds": int(persisted["round"]),
                     "epoch": int(persisted["epoch"]),
+                    **(
+                        {"evaluation_gate_run_id": persisted["evaluation_gate_run_id"]}
+                        if persisted.get("evaluation_gate_run_id")
+                        else {}
+                    ),
                 }
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 pass
         return {
             "rounds": self.config.round,
             "epoch": self.config.epoch,
+            **(
+                {"evaluation_gate_run_id": self.config.evaluation_gate_run_id}
+                if self.config.evaluation_gate_run_id
+                else {}
+            ),
         }
 
     def _run(self, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -509,6 +536,8 @@ class PhalaWorkerController:
             "rounds": int(training_config.get("rounds", configured.get("rounds", 1))),
             "epoch": int(training_config.get("epoch", configured.get("epoch", 1))),
         }
+        if "evaluation_gate_run_id" in training_config or "evaluation_gate_run_id" in configured:
+            requested["evaluation_gate_run_id"] = str(training_config.get("evaluation_gate_run_id", ""))
         current = self.runner.status() if deployments is None else deployments
         if current and requested != configured:
             raise WorkerConfigurationError(
@@ -636,6 +665,9 @@ def controller_from_environment() -> PhalaWorkerController:
         kubo_api_url=required["DYNAMIC_WORKER_KUBO_API_URL"],
         kubo_gateway_url=required["DYNAMIC_WORKER_KUBO_GATEWAY_URL"],
         telemetry_url=telemetry_url,
+        evaluation_gate_url=(
+            telemetry_url if os.environ.get("EVALUATION_GATES_ENABLED", "false").lower() in {"1", "true"} else ""
+        ),
         expected_device_registry_address=os.environ.get(
             "DYNAMIC_WORKER_EXPECTED_DEVICE_REGISTRY_ADDRESS",
             "0x5FbDB2315678afecb367f032d93F642f64180aa3",

@@ -187,3 +187,15 @@ test("training and inference compose roles derive distinct policies", () => {
         deriveWorkerPolicyIdentity(inference).workerPolicyHash,
     );
 });
+
+
+test("evaluation generation is variable but the gate origin is fixed by admission policy", () => {
+    const compose = (origin, run) => appCompose([
+        "    environment:",
+        `      DFL_EVALUATION_GATE_URL: "${origin}"`,
+        `      DFL_EVALUATION_GATE_RUN_ID: "${run}"`,
+    ]);
+    const policy = (origin, run) => deriveWorkerPolicyIdentity(compose(origin, run)).workerPolicyHash;
+    assert.equal(policy("https://control.example", ""), policy("https://control.example", "a".repeat(32)));
+    assert.notEqual(policy("https://control.example", "a".repeat(32)), policy("https://other.example", "a".repeat(32)));
+});

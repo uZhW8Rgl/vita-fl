@@ -148,6 +148,9 @@ configure_phala_control_api() {
   enabled=$(read_env_value "ENABLE_PHALA_CONTROL_API")
   enabled="${enabled:-false}"
   export TF_VAR_enable_phala_control_api="${enabled}"
+  export TF_VAR_evaluation_gates_enabled
+  TF_VAR_evaluation_gates_enabled=$(read_env_value "EVALUATION_GATES_ENABLED")
+  TF_VAR_evaluation_gates_enabled="${TF_VAR_evaluation_gates_enabled:-false}"
 
   if [ "${enabled}" != "1" ] && [ "${enabled}" != "true" ]; then
     return

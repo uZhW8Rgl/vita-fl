@@ -25,6 +25,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
 
+from control_api.evaluation_gate import GateError, UploadGate
+from control_api.evaluation_gate import enabled as evaluation_gates_enabled
 from control_api.phala_workers import WorkerCapacityError
 
 WORKSPACE_ROOT = Path(os.environ.get("TRAINING_WORKSPACE_ROOT", "/workspace")).resolve()
@@ -125,6 +127,9 @@ STATIC_CONTAINER_NAMES = {
 app = FastAPI(title="Master Thesis Control API")
 operation_lock = asyncio.Lock()
 _phala_worker_controller: Any | None = None
+_evaluation_gate = UploadGate(
+    Path(os.environ.get("EVALUATION_GATE_STATE_PATH", "/run/master-thesis/evaluation-upload-gate.json"))
+)
 _telemetry_lock = threading.Lock()
 _telemetry_records: list[dict[str, Any]] = []
 _telemetry_nonces: dict[str, int] = {}
@@ -347,6 +352,14 @@ def _record_telemetry(payload: dict[str, Any], signature: str) -> None:
             _telemetry_nonces.pop(seen_nonce, None)
         if nonce in _telemetry_nonces:
             raise ValueError("telemetry nonce was already used")
+        if event in {"evaluation.upload_blocked", "evaluation.receiver_ready"}:
+            if not evaluation_gates_enabled():
+                raise ValueError("evaluation gates are disabled")
+            context = evaluation_gate_chain_context()
+            if event == "evaluation.upload_blocked":
+                _evaluation_gate.record_block(account, attributes, **context)
+            else:
+                _evaluation_gate.record_ready(account, attributes, **context)
         if event == "worker.transaction_cost":
             transaction_hash = str(attributes.get("transactionHash", "")).strip().lower()
             gas_used = _prometheus_quantity(attributes.get("gasUsed"))
@@ -3040,6 +3053,7 @@ async def reset_grafana_view_values() -> list[dict[str, Any]]:
 
 
 async def initialize_contract_stack() -> dict[str, Any]:
+    _evaluation_gate.reset()
     if phala_runtime_mode():
         worker_status = await asyncio.to_thread(phala_worker_controller().scale, 0)
         reset_runtime_telemetry()
@@ -3291,6 +3305,80 @@ async def reset_training_services() -> dict[str, Any]:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def require_evaluation_gates() -> None:
+    if not evaluation_gates_enabled():
+        raise HTTPException(status_code=404, detail="evaluation gates are disabled")
+
+
+def evaluation_gate_chain_context() -> dict[str, Any]:
+    values = runtime_contract_env_values()
+    roster = read_run_roster_state(values)
+    gate = _evaluation_gate.status()
+    if (
+        not roster.get("committed")
+        or not roster.get("frozen")
+        or [x.lower() for x in roster["roster"]] != gate.get("roster")
+    ):
+        raise GateError("evaluation gate is not bound to the current frozen registry roster")
+    round_number = read_chain_round(values)
+    aggregator = read_current_aggregator(values).get("address")
+    if type(round_number) is not int or not isinstance(aggregator, str):
+        raise GateError("evaluation gate chain state is unavailable")
+    return {"chain_round": round_number, "chain_aggregator": aggregator.lower()}
+
+
+@app.post("/api/evaluation/upload-gate")
+async def configure_evaluation_upload_gate(request: Request, payload: dict[str, Any]) -> dict[str, Any]:
+    require_evaluation_gates()
+    require_control_admin(request)
+    if not phala_runtime_mode():
+        raise HTTPException(status_code=409, detail="evaluation upload gates require dynamic Phala workers")
+    if operation_lock.locked():
+        raise HTTPException(status_code=409, detail="another control operation is running")
+    async with operation_lock:
+        try:
+            if payload.get("operation") == "release":
+                return _evaluation_gate.release(payload.get("run_id"))
+            if payload.get("operation") != "arm" or set(payload) != {"operation", "run_id", "round", "allowed_clients"}:
+                raise GateError("expected arm or release gate operation")
+            state = await current_training_runtime_status()
+            if state.get("training_phase") != "setup" or (state.get("run_roster") or {}).get("committed"):
+                raise GateError("prearm requires a clean training setup before roster commitment")
+            config = read_training_config()
+            return _evaluation_gate.arm(
+                payload["run_id"], payload["round"], payload["allowed_clients"], config["worker_count"]
+            )
+        except GateError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/evaluation/upload-gate")
+async def evaluation_upload_gate_status(request: Request, response: Response) -> dict[str, Any]:
+    require_evaluation_gates()
+    require_control_admin(request)
+    response.headers["Cache-Control"] = "no-store"
+    gate = _evaluation_gate.status()
+    if gate.get("roster"):
+        try:
+            return _evaluation_gate.status(**await asyncio.to_thread(evaluation_gate_chain_context))
+        except GateError:
+            pass
+    return gate
+
+
+@app.get("/api/evaluation/upload-gate/decision")
+async def evaluation_upload_gate_decision(
+    response: Response, run_id: str, round: int, aggregator: str, participant: str
+) -> dict[str, Any]:
+    require_evaluation_gates()
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        context = await asyncio.to_thread(evaluation_gate_chain_context)
+        return _evaluation_gate.decision(run_id, round, aggregator.lower(), participant.lower(), **context)
+    except GateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/telemetry/events", status_code=202)
@@ -3665,6 +3753,12 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                 write_training_config(normalized)
             if phala_runtime_mode():
                 worker_config = worker_runtime_training_config(normalized)
+                gate = _evaluation_gate.status()
+                if gate.get("armed"):
+                    if not evaluation_gates_enabled():
+                        raise GateError("upload gate generation requires evaluation deployment opt-in")
+                    # Release changes decisions, never an already attested worker Compose.
+                    worker_config["evaluation_gate_run_id"] = gate["run_id"]
                 worker_controller = phala_worker_controller()
                 await asyncio.to_thread(
                     worker_controller.preflight_scale,
@@ -3703,6 +3797,8 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                     commit_run_roster,
                     selected_addresses,
                 )
+                if gate.get("active"):
+                    await asyncio.to_thread(_evaluation_gate.bind_roster, selected_addresses)
                 worker_status = await asyncio.to_thread(
                     worker_controller.scale,
                     normalized["worker_count"],

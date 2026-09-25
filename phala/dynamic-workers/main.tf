@@ -25,6 +25,8 @@ resource "phala_app" "worker" {
     kubo_api_url                             = var.kubo_api_url
     kubo_gateway_url                         = var.kubo_gateway_url
     telemetry_url                            = var.telemetry_url
+    evaluation_gate_url                      = var.evaluation_gate_url
+    evaluation_gate_run_id                   = var.evaluation_gate_run_id
     expected_device_registry_address         = var.expected_device_registry_address
     expected_aggregator_address              = var.expected_aggregator_address
     expected_gm_storage_address              = var.expected_gm_storage_address

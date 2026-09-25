@@ -235,6 +235,23 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertEq(registry.workerPolicyHash(changedRuntimeValues), registry.workerPolicyHash(sameKeysDifferentValues));
     }
 
+    function testEvaluationRunIdentifierIsVariableButGateOriginIsFixed() public view {
+        bytes memory referenceCompose = _appCompose(
+            "worker-0", _digestPinnedImage(IMAGE_HEX),
+            "DFL_EVALUATION_GATE_URL: \\\"https://control.example\\\"\\n      DFL_EVALUATION_GATE_RUN_ID: \\\"\\\"\\n"
+        );
+        bytes memory activeCompose = _appCompose(
+            "worker-0", _digestPinnedImage(IMAGE_HEX),
+            "DFL_EVALUATION_GATE_URL: \\\"https://control.example\\\"\\n      DFL_EVALUATION_GATE_RUN_ID: \\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\"\\n"
+        );
+        bytes memory wrongOrigin = _appCompose(
+            "worker-0", _digestPinnedImage(IMAGE_HEX),
+            "DFL_EVALUATION_GATE_URL: \\\"https://other.example\\\"\\n      DFL_EVALUATION_GATE_RUN_ID: \\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\"\\n"
+        );
+        assertEq(registry.workerPolicyHash(referenceCompose), registry.workerPolicyHash(activeCompose));
+        assertTrue(registry.workerPolicyHash(referenceCompose) != registry.workerPolicyHash(wrongOrigin));
+    }
+
     function testUnknownEnvironmentValueChangesPolicyAndIsRejected() public {
         bytes memory dangerous = _appCompose(
             "worker-0",

@@ -239,3 +239,20 @@ variable "agent_pop_registry" {
     error_message = "agent_pop_registry must be a JSON object; an inference receiver rejects an empty registry."
   }
 }
+
+variable "evaluation_gate_url" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.evaluation_gate_url == "" || can(regex("^https://[^/@?#]+/?$", var.evaluation_gate_url))
+    error_message = "evaluation_gate_url must be an origin-only HTTPS control endpoint."
+  }
+}
+variable "evaluation_gate_run_id" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.evaluation_gate_run_id == "" || can(regex("^[a-zA-Z0-9_-]{32,128}$", var.evaluation_gate_run_id))
+    error_message = "evaluation_gate_run_id must pin the administrator-prearmed run."
+  }
+}

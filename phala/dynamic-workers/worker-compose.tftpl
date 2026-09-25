@@ -76,6 +76,8 @@ services:
       PYTHON_SERVICE_URL: "${python_service_url}"
       MODEL_UPLOAD_PORT: "8001"
       DFL_TELEMETRY_URL: "${telemetry_url}"
+      DFL_EVALUATION_GATE_URL: "${evaluation_gate_url}"
+      DFL_EVALUATION_GATE_RUN_ID: "${evaluation_gate_run_id}"
       TEE_INFERENCE_ENABLED: "${inference_enabled ? 1 : 0}"
 %{ if inference_enabled ~}
       EXPECTED_RUNTIME_RPC_URL: "${rpc_url}"

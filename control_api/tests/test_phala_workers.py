@@ -126,6 +126,10 @@ class WorkerInventoryTests(unittest.TestCase):
         with mock.patch.dict(os.environ, environment, clear=True):
             instance = controller_from_environment()
 
+        self.assertEqual(instance.runner.config.evaluation_gate_url, "")
+        with mock.patch.dict(os.environ, {**environment, "EVALUATION_GATES_ENABLED": "true"}, clear=True):
+            evaluation_instance = controller_from_environment()
+        self.assertEqual(evaluation_instance.runner.config.evaluation_gate_url, "https://runtime-8091.dstack.example")
         values = instance.runner.config.terraform_values()
         self.assertEqual(values["dfl_model_seed"], "101")
         self.assertEqual(values["dfl_train_seed"], "202")
@@ -576,6 +580,21 @@ class TerraformReconciliationTests(unittest.TestCase):
             module_dir=state_dir / "module",
             state_dir=state_dir,
         )
+
+    def test_evaluation_generation_requires_https_origin_and_clears_for_normal_run(self) -> None:
+        from dataclasses import replace
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            instance = self.runner(Path(temporary_directory))
+            with self.assertRaises(WorkerConfigurationError):
+                instance.configure({"rounds": 6, "epoch": 1, "evaluation_gate_run_id": "a" * 32})
+            instance.config = replace(instance.config, evaluation_gate_url="https://control.example")
+            instance.configure({"rounds": 6, "epoch": 1, "evaluation_gate_run_id": "a" * 32})
+            self.assertEqual(instance.current_training_config()["evaluation_gate_run_id"], "a" * 32)
+            self.assertEqual(instance.config.terraform_values()["evaluation_gate_url"], "https://control.example")
+            instance.configure({"rounds": 6, "epoch": 1})
+            self.assertEqual(instance.config.evaluation_gate_run_id, "")
+            self.assertNotIn("evaluation_gate_run_id", instance.current_training_config())
 
     def test_reconcile_uses_refresh_only_before_reading_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

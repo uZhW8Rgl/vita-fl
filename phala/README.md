@@ -492,6 +492,25 @@ evaluation metrics, and worker transaction costs even though every worker has
 its own isolated CVM filesystem. These operational signatures are not a
 replacement for the worker's TDX/DCAP registration proof.
 
+Evaluation deployments may explicitly set `EVALUATION_GATES_ENABLED=true`
+(default: `false`) before deployment. The admin-only
+`POST /api/evaluation/upload-gate` prearms round 1 after reset with a fresh
+`run_id` and `allowed_clients`; the first N committed non-aggregator accounts
+remain allowed. Training start pins that generation in each worker's measured
+Compose. The fixed HTTPS Control origin is part of the approved worker policy;
+only the per-run identifier is normalized as a runtime value. An empty identifier
+selects an ordinary run on an evaluation-capable deployment.
+
+This is **cooperative receiver fault injection**, not transparent network fault
+injection: after authenticating an upload, the receiver consults the read-only
+Control decision and returns retryable HTTP 503 for suppressed clients. A pinned
+generation fails closed if its Control decision cannot be validated. Deadlines,
+aggregation rules, and quorum timeout voting remain unchanged. Signed receiver
+readiness and rejection events populate bounded audit counters, exposed through
+admin-only `GET /api/evaluation/upload-gate`; public decision queries never alter
+them. Release is idempotent and generation-bound. Release the gate before reset;
+reset rejects an active gate. The TD journal supports release after interruption.
+
 The contract-runtime app persists only the dynamic-worker Terraform ownership
 state in the `dynamic-worker-state` volume. This does not preserve Anvil,
 training, Prometheus, or Grafana run data. It allows the Control API to find,
