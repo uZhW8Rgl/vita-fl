@@ -72,10 +72,13 @@ jobs:
           python -m pip install -e dfl/neural_network
 
       - name: Run Ruff lint
-        run: ruff check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security
+        run: ruff check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security ui_redirect
 
       - name: Check formatting
-        run: ruff format --check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security
+        run: ruff format --check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security ui_redirect
+
+      - name: Test stable UI redirect
+        run: PYTHONPATH=. python -m unittest ui_redirect.test_pages -v
 
       - name: Python syntax smoke check
         run: |

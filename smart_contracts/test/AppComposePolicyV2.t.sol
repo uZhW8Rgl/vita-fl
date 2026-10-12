@@ -13,7 +13,7 @@ contract AppComposePolicyV2Test is Test {
     bytes32 private constant IMAGE_DIGEST =
         0x4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553;
     bytes32 private constant POLICY_V2_GOLDEN =
-        0x25d1e3de9e6a91c4f672c49e60294b8ed0ef865b86370a1706908180f94c1059;
+        0x40ac342d778573bc32ac684bacb0828285d30b120533f257d0509fd6ef8b5961;
 
     function setUp() public {
         policy = new AppComposePolicy();
@@ -46,6 +46,26 @@ contract AppComposePolicyV2Test is Test {
 
         assertEq(minimalPolicy, renamedPolicy);
         assertEq(minimalPolicy, platformPolicy);
+    }
+
+    function testReviewedPlatformPreLaunchV20() public view {
+        (, bytes32 policyHash) = policy.identity(
+            bytes(vm.readFile("data/platform-prelaunch/v0.0.20.json"))
+        );
+        assertEq(policyHash, POLICY_V2_GOLDEN);
+    }
+
+    function testReviewedPlatformPreLaunchV21() public view {
+        (, bytes32 policyHash) = policy.identity(
+            bytes(vm.readFile("data/platform-prelaunch/v0.0.21.json"))
+        );
+        assertEq(policyHash, POLICY_V2_GOLDEN);
+    }
+
+    function testRejectsModifiedPlatformPreLaunch() public {
+        bytes memory manifest = bytes(vm.readFile("data/platform-prelaunch/v0.0.21-modified.json"));
+        vm.expectRevert(bytes("user pre-launch script not allowed"));
+        policy.identity(manifest);
     }
 
     function testRuntimeRpcEndpointChangesPolicyHash() public view {

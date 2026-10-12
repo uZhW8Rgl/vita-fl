@@ -1,0 +1,86 @@
+name: Publish Phala UI Redirect
+
+on:
+  push:
+    branches: [phala_app_key]
+    paths:
+      - ".github/workflows/phala-ui-pages.yml"
+      - "ui_redirect/**"
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Publish Phala Agent
+      - Publish Phala Control API
+      - Publish DFL Worker Image
+      - Publish Smart Contracts Image
+      - Publish TEE Inference Image
+      - Publish Phala Transparency Log
+      - Publish Phala UI
+      - Publish ZK Inference Image
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phala-ui-pages
+  # Every run reads the current deployment, including when several publishers
+  # finish together. A newer run can supersede a pending redirect update.
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == (vars.PHALA_DEPLOY_BRANCH || 'phala_app_key'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out trusted redirect builder
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test redirect selection
+        run: PYTHONPATH=. python3 -m unittest ui_redirect.test_pages -v
+
+      - name: Resolve and check the latest deployed UI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PHALA_DEPLOY_BRANCH: ${{ vars.PHALA_DEPLOY_BRANCH || 'phala_app_key' }}
+        run: python3 -m ui_redirect.pages --output "$RUNNER_TEMP/phala-ui-pages"
+
+      - name: Upload only the public redirect
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/phala-ui-pages
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Publish stable UI entry point
+        id: deployment
+        uses: actions/deploy-pages@v4

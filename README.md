@@ -126,3 +126,35 @@ flowchart TB
 
   Artifacts --> MCP
 ```
+
+## Stable UI address through GitHub Pages
+
+The `Publish Phala UI Redirect` workflow publishes a small redirect at
+`https://uzhw8rgl.github.io/vita-fl/`. It runs after successful Phala image
+publish/deploy workflows and reads the latest successful deployment's public
+UI endpoint from its Actions logs. Deployment completion time determines the
+target, so builds that finish out of order cannot select an older runtime.
+Stale-build skips do not supply a new endpoint. Before publishing, the workflow
+checks `/ui-health`; an unavailable UI leaves the existing Pages deployment in
+place and fails the redirect workflow.
+
+One-time setup, after pushing the redirect workflow to the default branch:
+
+1. Open **Settings → Pages → Build and deployment** and select **GitHub Actions**
+   as the source.
+2. In **Actions → Publish Phala UI Redirect**, choose **Run workflow** to publish
+   the current UI without redeploying Phala. Pushing changes to the redirect
+   builder also starts this workflow.
+3. Use `https://uzhw8rgl.github.io/vita-fl/` as the stable entry point. The browser
+   then switches to the current Phala URL; the existing UI login still applies.
+
+The artifact contains only `index.html`, `endpoint.json`, and `.nojekyll`.
+It contains no deployment configuration, Terraform state, credentials or logs.
+No DuckDNS token or additional cloud server is needed. Redirect code changes
+are outside the Phala image publishers' path filters, so updating this entry
+point does not itself deploy or reset the runtime. GitHub Pages changes can
+take a few minutes to propagate, and a fresh Phala runtime can be unavailable
+during recreation. Local deployments require a separate Pages workflow run;
+this redirect discovers deployments completed through GitHub Actions.
+
+See [GitHub Pages custom workflows](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).

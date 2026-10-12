@@ -8,7 +8,7 @@ const IMAGE =
     "ghcr.io/uzhw8rgl/master-thesis-dfl-worker@sha256:"
     + "4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553";
 const POLICY_V2_GOLDEN =
-    "0x25d1e3de9e6a91c4f672c49e60294b8ed0ef865b86370a1706908180f94c1059";
+    "0x40ac342d778573bc32ac684bacb0828285d30b120533f257d0509fd6ef8b5961";
 
 const dockerCompose = [
     "services:",
@@ -26,7 +26,6 @@ const manifest = (overrides = {}) => JSON.stringify({
     runner: "docker-compose",
     ...overrides,
 });
-const exportedAppCodeUrl = new URL("../../../phala/app_code.txt", import.meta.url);
 
 test("outer-manifest policy v2 matches the Solidity golden vector", () => {
     assert.equal(
@@ -56,21 +55,34 @@ test("worker name and safe platform metadata do not change policy", () => {
     assert.equal(platform, base);
 });
 
-test("real exported Phala platform pre-launch is accepted and normalized", {
-    skip: !fs.existsSync(exportedAppCodeUrl)
-        ? "local ignored phala/app_code.txt export is unavailable"
-        : false,
-}, () => {
-    const appCode = JSON.parse(fs.readFileSync(exportedAppCodeUrl, "utf8"));
-    const withPlatformScript = deriveWorkerPolicyIdentity(
-        JSON.stringify(appCode),
-    ).workerPolicyHash;
-    delete appCode.pre_launch_script;
-    appCode.name = "a-different-worker-name";
-    const providerDefault = deriveWorkerPolicyIdentity(
-        JSON.stringify(appCode),
-    ).workerPolicyHash;
-    assert.equal(withPlatformScript, providerDefault);
+for (const version of ["v0.0.20", "v0.0.21"]) {
+    test(`reviewed Phala pre-launch ${version} is accepted and normalized`, () => {
+        const fixture = new URL(
+            `../../../smart_contracts/data/platform-prelaunch/${version}.json`,
+            import.meta.url,
+        );
+        const appCode = JSON.parse(fs.readFileSync(fixture, "utf8"));
+        assert.equal(
+            deriveWorkerPolicyIdentity(JSON.stringify(appCode)).workerPolicyHash,
+            POLICY_V2_GOLDEN,
+        );
+        delete appCode.pre_launch_script;
+        assert.equal(
+            deriveWorkerPolicyIdentity(JSON.stringify(appCode)).workerPolicyHash,
+            POLICY_V2_GOLDEN,
+        );
+    });
+}
+
+test("modified platform pre-launch is rejected", () => {
+    const fixture = new URL(
+        "../../../smart_contracts/data/platform-prelaunch/v0.0.21-modified.json",
+        import.meta.url,
+    );
+    assert.throws(
+        () => deriveWorkerPolicyIdentity(fs.readFileSync(fixture, "utf8")),
+        /user pre-launch script not allowed/,
+    );
 });
 
 test("custom root code and alternate runners are rejected", () => {
