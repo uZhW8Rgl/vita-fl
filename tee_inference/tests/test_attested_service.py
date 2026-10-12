@@ -258,7 +258,6 @@ class ModelAuthorizationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "RSA_PRIVATE_KEY_FILE or RSA_PRIVATE_KEY"):
                 _private_key_pem_from_environment()
 
-    @unittest.skipUnless(MODEL.exists(), "native model fixture unavailable")
     def test_rejects_failed_aggregator_signature(self) -> None:
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         env = {

@@ -148,6 +148,7 @@ ${dynamic_worker_inventory_environment}
       - "8091:8091"
     environment:
       CONTROL_RUNTIME_MODE: phala
+      TF_CLI_ARGS_apply: "-parallelism=2"
       EVALUATION_GATES_ENABLED: "${evaluation_gates_enabled}"
       TRAINING_WORKSPACE_ROOT: /workspace
       TRAINING_CONFIG_FILE: /run/master-thesis/training.env

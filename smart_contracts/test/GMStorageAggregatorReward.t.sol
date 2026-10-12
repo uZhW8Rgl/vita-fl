@@ -347,4 +347,41 @@ contract GMStorageAggregatorRewardTest is ActionKeyTest {
         gmStorage.finalizeRoundWithAggregation("model", "signature", "keys", modelHash, bundleHash, signature);
         assertEq(gmStorage.getRound(), 0);
     }
+
+    function testSignedLatePublicationAfterAbortCannotReplaceModelOrReceiveCredit() public {
+        _finalizeCurrentRound(aggregator, "round-zero");
+        _openAndSubmitRoundOne(aggregator);
+        vm.prank(aggregator);
+        gmStorage.closeModelSubmissions(1);
+        bytes32 modelHash = keccak256("late-model");
+        bytes32 bundleHash = keccak256("late-bundle");
+        bytes memory validOldSignature =
+            _statementSignature(aggregator, 1, "late-model", "late-signature", "late-keys", modelHash, bundleHash);
+        uint256 previousNonce = aggregationPolicy.aggregationNonces(aggregator);
+        uint256 previousWorkerCredit = gmStorage.getContribution(worker);
+
+        vm.prank(address(selection));
+        gmStorage.abortRound(aggregator);
+        selection.setAggregator(replacementAggregator);
+        selection.setSelectionRound(2);
+        vm.prank(replacementAggregator);
+        gmStorage.openModelSubmissions(2);
+
+        vm.expectRevert(bytes("Caller is not the current aggregator"));
+        vm.prank(aggregator);
+        gmStorage.finalizeRoundWithAggregation(
+            "late-model", "late-signature", "late-keys", modelHash, bundleHash, validOldSignature
+        );
+        assertEq(gmStorage.getRound(), 2);
+        assertTrue(gmStorage.roundAborted(1));
+        assertFalse(gmStorage.roundCompleted(1));
+        assertFalse(gmStorage.globalModelPublished(1));
+        assertEq(gmStorage.getGlobalModel(), "model-round-zero");
+        assertEq(gmStorage.getGlobalModelSignature(), "signature-round-zero");
+        assertEq(gmStorage.getGlobalModelKeyBundle(), "key-bundle-round-zero");
+        assertEq(gmStorage.getContribution(aggregator), 1);
+        assertEq(gmStorage.getContribution(worker), previousWorkerCredit);
+        assertEq(aggregationPolicy.aggregationNonces(aggregator), previousNonce);
+        assertTrue(gmStorage.modelSubmitted(1, worker));
+    }
 }

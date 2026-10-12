@@ -487,6 +487,16 @@ def _mean_defined(values: Iterable[float | None]) -> float | None:
     return float(sum(defined) / len(defined))
 
 
+def _label_metric_coverage(rows: list[dict[str, Any]]) -> dict[str, int | float | None]:
+    f1 = [float(row["f1"]) for row in rows if row["f1"] is not None and np.isfinite(row["f1"])]
+    auroc = [row["auroc"] for row in rows if row["auroc"] is not None and np.isfinite(row["auroc"])]
+    return {
+        "macro_f1_finite_label_count": len(f1),
+        "macro_auroc_finite_label_count": len(auroc),
+        "macro_f1_zero_handled": sum(f1) / len(rows) if rows else None,
+    }
+
+
 def _json_ready(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): _json_ready(v) for k, v in value.items()}
@@ -515,6 +525,14 @@ def _append_csv_rows(path: Path, fieldnames: list[str], rows: Iterable[dict[str,
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not path.exists() or path.stat().st_size == 0
+    if not write_header:
+        # Existing experiments keep their header. Newly introduced metrics are
+        # still present in JSONL; do not append wider rows beneath an old CSV.
+        with path.open(newline="", encoding="utf-8") as existing:
+            header = next(csv.reader(existing))
+        if not header or len(set(header)) != len(header) or set(header) - set(fieldnames):
+            raise ValueError("existing metric CSV has an unsupported header")
+        fieldnames = header
     with path.open("a", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         if write_header:
@@ -600,6 +618,9 @@ def _summary_fieldnames() -> list[str]:
         "micro_f1",
         "macro_f1",
         "macro_auroc",
+        "macro_f1_finite_label_count",
+        "macro_auroc_finite_label_count",
+        "macro_f1_zero_handled",
         "label_metrics_path",
         "sample_metrics_path",
     ]
@@ -737,6 +758,7 @@ def _evaluate_multilabel(
         "micro_f1": micro_f1,
         "macro_f1": _mean_defined(row["f1"] for row in label_rows),
         "macro_auroc": _mean_defined(row["auroc"] for row in label_rows),
+        **_label_metric_coverage(label_rows),
     }
 
     sample_rows: list[dict[str, Any]] = []
@@ -835,6 +857,7 @@ def _evaluate_multiclass(
         "micro_f1": micro_f1,
         "macro_f1": _mean_defined(row["f1"] for row in label_rows),
         "macro_auroc": _mean_defined(row["auroc"] for row in label_rows),
+        **_label_metric_coverage(label_rows),
     }
 
     sample_rows: list[dict[str, Any]] = []

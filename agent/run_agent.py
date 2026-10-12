@@ -871,6 +871,8 @@ class AgentRuntime:
             if not isinstance(job, dict) or not job.get("job_id"):
                 raise RuntimeError("No TEE inference job exists; run the TEE model and image tools first.")
             detail = run_and_verify_tee_inference(job_id=str(job["job_id"]))
+            result = json.loads(detail)
+            session_state["tee_reverification"] = result.get("reverification")
             return self._assistant_response(
                 self._tool_event_summary({"type": "tool", "label": skill_name, "detail": detail}),
                 [{"type": "tool", "label": skill_name, "detail": detail}],
@@ -912,6 +914,30 @@ class AgentRuntime:
                 if callable(close):
                     await close()
         return latest_response, timed_out, target_skill_completed
+
+    async def verify_tee_evidence(self, session_id: str, job_id: str, candidate: bytes) -> dict[str, Any]:
+        try:
+            from .evaluation_context import require_context, verify_candidate
+        except ImportError:
+            from evaluation_context import require_context, verify_candidate
+
+        session = self.get_session(session_id)
+        if session.get("busy"):
+            raise ValueError("session is busy")
+        context = require_context(job_id, session["state"].get("tee_reverification"))
+        session["busy"] = True
+        try:
+            result = await asyncio.to_thread(verify_candidate, context, candidate)
+            result["audit_event_id"] = uuid.uuid4().hex
+            session["messages"].append({
+                "role": "assistant",
+                "content": "Evidence re-verification completed.",
+                "events": [{"type": "verification", "label": "verify_tee_inference_evidence",
+                            "detail": json.dumps(result, separators=(",", ":"))}],
+            })
+            return result
+        finally:
+            session["busy"] = False
 
     def create_session(self, title: str | None = None) -> dict[str, Any]:
         for existing_id, existing in list(self._sessions.items()):
@@ -1197,6 +1223,71 @@ async def serve_agent(args: argparse.Namespace) -> None:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Unknown session") from exc
         return {"session": runtime._public_session(session)}
+
+    @app.post("/api/sessions/{session_id}/tee-inference/verify")
+    async def verify_tee_evidence(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        import base64
+        import binascii
+        try:
+            from .evaluation_context import EvaluationUnavailable, MAX_EVIDENCE_BYTES, enabled
+        except ImportError:
+            from evaluation_context import EvaluationUnavailable, MAX_EVIDENCE_BYTES, enabled
+
+        if not enabled():
+            raise HTTPException(status_code=404, detail="Evaluation interface disabled")
+        if (set(payload) != {"job_id", "evidence_base64"}
+                or not isinstance(payload["job_id"], str)
+                or not re.fullmatch(r"[a-f0-9]{32}", payload["job_id"])):
+            raise HTTPException(status_code=400, detail="Invalid evaluation request")
+        encoded = payload["evidence_base64"]
+        if not isinstance(encoded, str) or len(encoded) > 4 * ((MAX_EVIDENCE_BYTES + 2) // 3):
+            raise HTTPException(status_code=413, detail="Evidence size limit")
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+            return await runtime.verify_tee_evidence(session_id, payload["job_id"], raw)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown session") from None
+        except (EvaluationUnavailable, ValueError, binascii.Error):
+            raise HTTPException(status_code=400, detail="Invalid or expired evaluation context") from None
+        except Exception:
+            raise HTTPException(status_code=503, detail="Evaluation could not complete") from None
+
+    @app.post("/api/sessions/{session_id}/evaluation/transport/{case}")
+    async def transport_probe(session_id: str, case: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            from .evaluation_context import enabled
+            from .evaluation_transport import run_case
+        except ImportError:
+            from evaluation_context import enabled
+            from evaluation_transport import run_case
+        if not enabled():
+            raise HTTPException(status_code=404, detail="Evaluation interface disabled")
+        allowed = {"valid_request", "same_proof_twice", "concurrent_same_proof", "changed_body", "changed_method",
+                   "changed_url", "changed_token", "changed_session", "expired_proof", "expired_token",
+                   "expired_session", "restart_old_session"}
+        if (case not in allowed or set(payload) != {"challenge"}
+                or not re.fullmatch(r"[a-f0-9]{64}", str(payload["challenge"]))):
+            raise HTTPException(status_code=400, detail="Invalid probe request")
+        try:
+            session = runtime.get_session(session_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown session") from None
+        job = session["state"].get("latest_tee_job")
+        if session.get("busy") or not isinstance(job, dict) or not job.get("job_id"):
+            raise HTTPException(status_code=409, detail="Prepared idle session required")
+        session["busy"] = True
+        try:
+            code, facts = await asyncio.to_thread(run_case, case, str(job["job_id"]), session["state"])
+            result = {"schema_version": 1, "execution_mode": "deployed-probe", "case": case,
+                      "challenge": payload["challenge"], "code": code, "facts": facts}
+            session["messages"].append({"role": "assistant", "content": "Transport probe completed.",
+                "events": [{"type": "verification", "label": "evaluation_transport",
+                            "detail": json.dumps(result, separators=(",", ":"))}]})
+            return result
+        except Exception:
+            raise HTTPException(status_code=503, detail="Transport probe could not complete") from None
+        finally:
+            session["busy"] = False
 
     @app.post("/api/chat")
     async def chat(payload: dict[str, Any]) -> dict[str, Any]:

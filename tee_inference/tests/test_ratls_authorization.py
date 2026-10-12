@@ -217,3 +217,53 @@ class RatlsAuthorizationTests(AuthenticatedServiceTestCase):
         self.assertEqual(response.status_code, 503)
         self.assertNotIn(RECEIPT_HEADER, response.headers)
         self.assertEqual(self.loads, 1)
+
+    def test_job_creation_before_prepare_is_rejected_without_creating_a_job(self):
+        response, _ = self.authorized_call("POST", "/v1/jobs")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("model is not prepared", response.json()["error"])
+        self.assertEqual((self.loads, self.inferences), (0, 0))
+        prepared, _ = self.authorized_call("POST", "/v1/models/fetch")
+        self.assertEqual(prepared.status_code, 200)
+        created, _ = self.authorized_call("POST", "/v1/jobs")
+        self.assertEqual(created.status_code, 200)
+
+    def test_model_change_rejects_old_job_before_forward_and_new_job_recovers(self):
+        self.authorized_call("POST", "/v1/models/fetch")
+        created, _ = self.authorized_call("POST", "/v1/jobs")
+        old_job = created.json()["job_id"]
+        self.model_manifest_hash = b"n" * 32
+        self.authorized_call("POST", "/v1/models/fetch")
+        response, _ = self.authorized_call("POST", f"/v1/jobs/{old_job}/run", b"")
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("different prepared model", response.json()["error"])
+        self.assertEqual(self.inferences, 0)
+        created, _ = self.authorized_call("POST", "/v1/jobs")
+        response, _ = self.authorized_call("POST", f'/v1/jobs/{created.json()["job_id"]}/run', b"")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.inferences, 1)
+
+    def test_unknown_pre_restart_session_is_rejected_before_model_load(self):
+        headers = self.pop_headers("POST", "/v1/models/fetch", b"{}")
+        self.session = replace(self.session, session_id="b" * 64)
+        response = self.call("POST", "/v1/models/fetch", body=b"{}", headers=headers)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"], "Invalid attested agent authorization")
+        self.assertEqual(self.loads, 0)
+        restored, _ = self.authorized_call("POST", "/v1/models/fetch")
+        self.assertEqual(restored.status_code, 200)
+
+    def test_log_failure_after_forward_withholds_receipt_then_restored_log_recovers(self):
+        self.authorized_call("POST", "/v1/models/fetch")
+        created, _ = self.authorized_call("POST", "/v1/jobs")
+        job_id = created.json()["job_id"]
+        self.publish.side_effect = RuntimeError("log unavailable")
+        response, _ = self.authorized_call("POST", f"/v1/jobs/{job_id}/run", b"")
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn(RECEIPT_HEADER, response.headers)
+        self.assertNotEqual(response.content, b"test-air-evidence")
+        self.assertEqual(self.inferences, 1)  # withholding is not rollback
+        self.publish.side_effect = None
+        restored, _ = self.authorized_call("POST", f"/v1/jobs/{job_id}/run", b"")
+        self.assertEqual(restored.status_code, 200)
+        self.assertIn(RECEIPT_HEADER, restored.headers)

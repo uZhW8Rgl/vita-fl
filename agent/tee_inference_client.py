@@ -749,7 +749,16 @@ def run_and_verify_tee_inference(
             "image_reference": verified["image_reference"],
         },
     )
+    try:
+        from .evaluation_context import remember
+    except ImportError:
+        from evaluation_context import remember
+    evaluation = remember(
+        job_id, bundle_bytes, exact_request, verified_session,
+        expected_image_digest or DEFAULT_TEE_IMAGE_DIGEST,
+    )
     return {
+        **({"reverification": evaluation} if evaluation is not None else {}),
         "skill": "run_and_verify_tee_inference",
         "stage": "verified-and-transparency-logged",
         "ok": True,
