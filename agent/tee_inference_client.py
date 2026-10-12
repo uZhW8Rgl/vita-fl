@@ -754,7 +754,10 @@ def run_and_verify_tee_inference(
     except ImportError:
         from evaluation_context import remember
     evaluation = remember(
-        job_id, bundle_bytes, exact_request, verified_session,
+        job_id,
+        bundle_bytes,
+        exact_request,
+        verified_session,
         expected_image_digest or DEFAULT_TEE_IMAGE_DIGEST,
     )
     return {

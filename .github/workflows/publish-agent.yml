@@ -54,7 +54,10 @@ jobs:
         run: |
           python -m pip install -r agent/requirements.txt
           python -m pip install pytest
-          PYTHONPATH=. python -m unittest discover -s agent/tests -v
+          # Receiver/AIR fixtures use the native engine; this is a runner-only
+          # dependency and does not add Torch to the published agent image.
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0
+          PYTHONPATH=. python -m pytest -q agent/tests
           PYTHONPATH=. python -m pytest -q transport_security/tests
 
       - name: Set up Docker Buildx

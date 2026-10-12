@@ -929,12 +929,19 @@ class AgentRuntime:
         try:
             result = await asyncio.to_thread(verify_candidate, context, candidate)
             result["audit_event_id"] = uuid.uuid4().hex
-            session["messages"].append({
-                "role": "assistant",
-                "content": "Evidence re-verification completed.",
-                "events": [{"type": "verification", "label": "verify_tee_inference_evidence",
-                            "detail": json.dumps(result, separators=(",", ":"))}],
-            })
+            session["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": "Evidence re-verification completed.",
+                    "events": [
+                        {
+                            "type": "verification",
+                            "label": "verify_tee_inference_evidence",
+                            "detail": json.dumps(result, separators=(",", ":")),
+                        }
+                    ],
+                }
+            )
             return result
         finally:
             session["busy"] = False
@@ -1228,6 +1235,7 @@ async def serve_agent(args: argparse.Namespace) -> None:
     async def verify_tee_evidence(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         import base64
         import binascii
+
         try:
             from .evaluation_context import EvaluationUnavailable, MAX_EVIDENCE_BYTES, enabled
         except ImportError:
@@ -1235,9 +1243,11 @@ async def serve_agent(args: argparse.Namespace) -> None:
 
         if not enabled():
             raise HTTPException(status_code=404, detail="Evaluation interface disabled")
-        if (set(payload) != {"job_id", "evidence_base64"}
-                or not isinstance(payload["job_id"], str)
-                or not re.fullmatch(r"[a-f0-9]{32}", payload["job_id"])):
+        if (
+            set(payload) != {"job_id", "evidence_base64"}
+            or not isinstance(payload["job_id"], str)
+            or not re.fullmatch(r"[a-f0-9]{32}", payload["job_id"])
+        ):
             raise HTTPException(status_code=400, detail="Invalid evaluation request")
         encoded = payload["evidence_base64"]
         if not isinstance(encoded, str) or len(encoded) > 4 * ((MAX_EVIDENCE_BYTES + 2) // 3):
@@ -1262,11 +1272,25 @@ async def serve_agent(args: argparse.Namespace) -> None:
             from evaluation_transport import run_case
         if not enabled():
             raise HTTPException(status_code=404, detail="Evaluation interface disabled")
-        allowed = {"valid_request", "same_proof_twice", "concurrent_same_proof", "changed_body", "changed_method",
-                   "changed_url", "changed_token", "changed_session", "expired_proof", "expired_token",
-                   "expired_session", "restart_old_session"}
-        if (case not in allowed or set(payload) != {"challenge"}
-                or not re.fullmatch(r"[a-f0-9]{64}", str(payload["challenge"]))):
+        allowed = {
+            "valid_request",
+            "same_proof_twice",
+            "concurrent_same_proof",
+            "changed_body",
+            "changed_method",
+            "changed_url",
+            "changed_token",
+            "changed_session",
+            "expired_proof",
+            "expired_token",
+            "expired_session",
+            "restart_old_session",
+        }
+        if (
+            case not in allowed
+            or set(payload) != {"challenge"}
+            or not re.fullmatch(r"[a-f0-9]{64}", str(payload["challenge"]))
+        ):
             raise HTTPException(status_code=400, detail="Invalid probe request")
         try:
             session = runtime.get_session(session_id)
@@ -1278,11 +1302,27 @@ async def serve_agent(args: argparse.Namespace) -> None:
         session["busy"] = True
         try:
             code, facts = await asyncio.to_thread(run_case, case, str(job["job_id"]), session["state"])
-            result = {"schema_version": 1, "execution_mode": "deployed-probe", "case": case,
-                      "challenge": payload["challenge"], "code": code, "facts": facts}
-            session["messages"].append({"role": "assistant", "content": "Transport probe completed.",
-                "events": [{"type": "verification", "label": "evaluation_transport",
-                            "detail": json.dumps(result, separators=(",", ":"))}]})
+            result = {
+                "schema_version": 1,
+                "execution_mode": "deployed-probe",
+                "case": case,
+                "challenge": payload["challenge"],
+                "code": code,
+                "facts": facts,
+            }
+            session["messages"].append(
+                {
+                    "role": "assistant",
+                    "content": "Transport probe completed.",
+                    "events": [
+                        {
+                            "type": "verification",
+                            "label": "evaluation_transport",
+                            "detail": json.dumps(result, separators=(",", ":")),
+                        }
+                    ],
+                }
+            )
             return result
         except Exception:
             raise HTTPException(status_code=503, detail="Transport probe could not complete") from None

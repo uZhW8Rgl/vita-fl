@@ -122,7 +122,7 @@ jobs:
         run: PYTHONPATH=. python -m unittest discover -s phala -p 'test_*.py' -v
 
       - name: Run DFL neural-network and provenance tests
-        run: PYTHONPATH=. python -m unittest discover -s dfl/neural_network/tests -v
+        run: PYTHONPATH=. python -m pytest -q dfl/neural_network/tests
 
       - name: Run DFL container integration tests
         run: PYTHONPATH=. python -m unittest discover -s dfl/tests -v
