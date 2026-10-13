@@ -28,6 +28,17 @@ METADATA = {
 
 
 class DomainRoutingTests(unittest.TestCase):
+    def test_gateway_follows_managed_endpoint_across_nodes(self):
+        for suffix in ("dstack-pha-prod9.phala.network", "dstack-pha-prod5.phala.network"):
+            self.assertEqual(ui_domain.gateway_for_endpoint(f"https://{APP}-443.{suffix}"), "gateway." + suffix)
+        for endpoint in (
+            "http://" + APP + "-443.dstack-pha-prod9.phala.network",
+            "https://unrelated.example.org",
+            "https://" + APP + "-443.dstack-pha-prod9.phala.network/redirect",
+        ):
+            with self.subTest(endpoint=endpoint), self.assertRaises(ValueError):
+                ui_domain.gateway_for_endpoint(endpoint)
+
     def test_only_verified_runtime_identity_is_used(self):
         self.assertEqual(ui_domain.routing_target(METADATA, APP, GATEWAY), INSTANCE + ":443")
         for field, wrong in (

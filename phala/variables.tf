@@ -383,7 +383,7 @@ variable "ui_domain" {
 }
 
 variable "ui_gateway_domain" {
-  description = "Gateway CNAME from the runtime CVM metadata; required when ui_domain is set."
+  description = "Bootstrap gateway fallback; the launcher overrides it from the managed runtime's actual endpoint."
   type        = string
   default     = ""
   validation {

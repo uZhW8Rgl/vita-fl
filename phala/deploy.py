@@ -30,10 +30,10 @@ from typing import Any
 
 if __package__:
     from .github_state import GitHubState, StateError
-    from .ui_domain import configure_dns, validate_settings, wait_for_https
+    from .ui_domain import configure_dns, gateway_for_endpoint, validate_settings, wait_for_https
 else:
     from github_state import GitHubState, StateError
-    from ui_domain import configure_dns, validate_settings, wait_for_https
+    from ui_domain import configure_dns, gateway_for_endpoint, validate_settings, wait_for_https
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 API_PREFIX = "https://cloud-api.phala.com/api/v1"
@@ -472,6 +472,7 @@ class Terraform:
         self.environment = environment
         self.runtime_vars: dict[str, Any] = {}
         self.state_store: GitHubState | None = None
+        self.ui_domain_enabled = False
 
     def run(self, *args: str, capture: bool = False) -> str:
         arguments = list(args)
@@ -528,6 +529,11 @@ class Terraform:
                 runtime_kubo_api_url_override=service_url(endpoint, 5001),
                 runtime_kubo_gateway_url_override=service_url(endpoint, 8080),
             )
+            if self.ui_domain_enabled:
+                # Phala can place a replacement CVM on another gateway within
+                # the same region. Pin the measured ingress to this runtime's
+                # actual endpoint, not the former instance's gateway.
+                self.runtime_vars["ui_gateway_domain"] = gateway_for_endpoint(endpoint)
         if use_runtime_scitt:
             self.runtime_vars["sello_scitt_url"] = (
                 service_url(endpoint, "8000s") if endpoint else "https://runtime-endpoint-not-configured.invalid"
@@ -595,6 +601,7 @@ def execute_deployment(
     if ui_domain and not args.destroy:
         validate_settings(ui_domain, config.get("PHALA_UI_GATEWAY_DOMAIN", ""), config.get("DUCKDNS_TOKEN", ""))
     terraform = Terraform(directory, environment)
+    terraform.ui_domain_enabled = bool(ui_domain)
     terraform.state_store = state_store
     terraform.run("init", "-input=false", "-no-color")
     if args.init_only:
@@ -736,7 +743,7 @@ def execute_deployment(
                 cvm_id=values["primary_cvm_id"],
                 app_id=app_id(values["app_id"]),
                 domain=ui_domain,
-                gateway=config["PHALA_UI_GATEWAY_DOMAIN"],
+                gateway=gateway_for_endpoint(endpoint),
                 token=config["DUCKDNS_TOKEN"],
             )
             wait_for_https(ui_domain)

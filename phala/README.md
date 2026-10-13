@@ -358,8 +358,11 @@ additional apps or discarding the saved state.
 ### Stable DuckDNS UI hostname
 
 Optional `PHALA_UI_DOMAIN`, `PHALA_UI_GATEWAY_DOMAIN` and `DUCKDNS_TOKEN`
-settings enable direct HTTPS access under a DuckDNS hostname. The gateway name
-must equal the runtime CVM's `gateway.cname`. The launcher checks the selected
+settings enable direct HTTPS access under a DuckDNS hostname. The configured
+gateway is the bootstrap fallback. Once the runtime endpoint exists, the
+launcher derives its actual gateway, overrides the ingress configuration and
+requires it to equal the selected CVM's `gateway.cname`. This also handles
+placement on another gateway within the same region. The launcher checks the selected
 CVM's name, application ID and instance ID before updating DNS. It publishes
 the gateway's public address and `_dstack-app-address.<domain>` routing TXT
 value `<instance-id>:443`, then waits for trusted HTTPS and the UI authentication

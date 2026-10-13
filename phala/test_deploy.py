@@ -116,6 +116,15 @@ class DecisionTests(unittest.TestCase):
 
 
 class RuntimeAndStateTests(unittest.TestCase):
+    def test_ui_gateway_is_wired_from_actual_runtime_and_cleared_for_bootstrap(self):
+        terraform = deploy.Terraform(Path("/unused"), {})
+        terraform.ui_domain_enabled = True
+        endpoint = "https://" + "a" * 40 + "-443.dstack-pha-prod5.phala.network"
+        terraform.wire_runtime(endpoint)
+        self.assertEqual(terraform.runtime_vars["ui_gateway_domain"], "gateway.dstack-pha-prod5.phala.network")
+        terraform.wire_runtime(None)
+        self.assertNotIn("ui_gateway_domain", terraform.runtime_vars)
+
     def test_gateway_ports_and_tls_passthrough(self):
         self.assertEqual(deploy.service_url(OLD_ENDPOINT + "/", 8545), OLD_ENDPOINT.replace("5001", "8545"))
         self.assertEqual(deploy.service_url(OLD_ENDPOINT, "8000s"), OLD_ENDPOINT.replace("5001", "8000s"))

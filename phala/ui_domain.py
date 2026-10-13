@@ -25,6 +25,14 @@ TOKEN = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 IDENTITY = re.compile(r"[0-9a-f]{40}")
 
 
+def gateway_for_endpoint(endpoint: str) -> str:
+    parsed = urllib.parse.urlsplit(endpoint)
+    match = re.fullmatch(r"[0-9a-f]{40}-[0-9]+[sg]?\.([a-z0-9-]+\.phala\.network)", parsed.netloc)
+    if parsed.scheme != "https" or parsed.path not in {"", "/"} or parsed.query or parsed.fragment or not match:
+        raise ValueError("Custom UI routing requires the managed runtime's HTTPS Phala endpoint.")
+    return "gateway." + match[1]
+
+
 def validate_settings(domain: str, gateway: str, token: str) -> None:
     if not DOMAIN.fullmatch(domain):
         raise ValueError("PHALA_UI_DOMAIN must be a single DuckDNS subdomain.")
