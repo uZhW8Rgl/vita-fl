@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -191,8 +192,8 @@ class PhalaClient:
                 raise DeploymentError("Phala inventory ended before its last page; retry")
         raise DeploymentError("Phala inventory pagination exceeded the safety limit")
 
-    def validate_os_images(self, plan: dict[str, Any]) -> None:
-        """Check planned placements against the current read-only node catalog."""
+    def validate_os_images(self, plan: dict[str, Any], *, existing_cvms: Sequence[Cvm] = ()) -> None:
+        """Check image compatibility, including quota-full replacement deployments."""
         requested = [
             (resource.get("address", "phala_app"), resource.get("values", {})) for resource in managed_apps(plan)
         ]
@@ -227,6 +228,24 @@ class PhalaClient:
         if not isinstance(payload, dict) or not isinstance(payload.get("nodes"), list):
             raise DeploymentError("Phala returned an invalid node/OS image catalog; refusing deployment")
         nodes = payload["nodes"]
+        capacity = payload.get("capacity", {})
+        quota_full = isinstance(capacity, dict) and any(
+            type(capacity.get(key)) in (int, float) and capacity[key] == 0
+            for key in ("max_instances", "max_vcpu", "max_memory", "max_disk")
+        )
+        if not nodes and quota_full:
+            # /teepods/available filters by remaining account capacity. A full
+            # demo can still replace its own VMs after releasing those resources.
+            # Query their actual node-specific/KMS-filtered upgrade catalogs;
+            # never infer compatibility from a stored OS name or change the pin.
+            names = {values["name"] for _, values in requested if isinstance(values.get("name"), str)}
+            nodes = self._existing_os_nodes([cvm for cvm in existing_cvms if cvm.deployment_name in names])
+            if not nodes:
+                raise DeploymentError(
+                    "Phala account capacity is exhausted and no owned planned VM can validate OS compatibility; "
+                    "free capacity or inspect the deployment before retrying"
+                )
+            print("Account capacity is exhausted; validating OS images against existing deployment nodes.", flush=True)
         for node in nodes:
             if (
                 not isinstance(node, dict)
@@ -262,6 +281,44 @@ class PhalaClient:
                     f"OS image {values['image']} for {address} is unavailable or disabled on "
                     f"{placement}region {values['region']}; choose an enabled image before retrying"
                 )
+
+    def _existing_os_nodes(self, cvms: list[Cvm]) -> list[dict[str, Any]]:
+        nodes = []
+        for cvm in cvms:
+            identifier = urllib.parse.quote(cvm.identifier, safe="")
+            metadata = self.request("GET", f"/cvms/{identifier}")
+            if (
+                not isinstance(metadata, dict)
+                or metadata.get("id") != cvm.identifier
+                or app_id(metadata.get("app_id")) != cvm.app_id
+                or metadata.get("name") != cvm.name
+            ):
+                raise DeploymentError("Existing VM identity changed during OS preflight; refusing deployment")
+            node = metadata.get("node_info")
+            if (
+                not isinstance(node, dict)
+                or type(node.get("id")) is not int
+                or node["id"] <= 0
+                or not isinstance(node.get("region"), str)
+                or not node["region"]
+                or node.get("status") != "ONLINE"
+            ):
+                raise DeploymentError("Existing VM has invalid or offline node information; refusing deployment")
+            catalog = self.request("GET", f"/cvms/{identifier}/available-os-images")
+            if not isinstance(catalog, list):
+                raise DeploymentError("Phala returned an invalid VM OS image catalog; refusing deployment")
+            images = []
+            for release in catalog:
+                if not isinstance(release, dict):
+                    raise DeploymentError("Phala returned an invalid VM OS image catalog; refusing deployment")
+                for variant in ("prod", "dev"):
+                    image = release.get(variant)
+                    if image is not None:
+                        if not isinstance(image, dict):
+                            raise DeploymentError("Phala returned an invalid VM OS image catalog; refusing deployment")
+                        images.append(image)
+            nodes.append({"teepod_id": node["id"], "region_identifier": node["region"], "images": images})
+        return nodes
 
     def delete(self, cvms: list[Cvm], timeout: float = 300) -> None:
         """Wait until concrete CVM IDs disappear before reusing their names."""
@@ -540,7 +597,7 @@ def execute_deployment(
         terraform.wire_runtime(endpoint, use_runtime_scitt=use_runtime_scitt)
         plan = terraform.plan(temporary_path / "preflight.tfplan", destroy=args.destroy)
         if not args.destroy:
-            client.validate_os_images(plan)
+            client.validate_os_images(plan, existing_cvms=cvms)
         decision = decide(state, plan, cvms, recreate=args.recreate, destroy=args.destroy)
         cvms = client.inventory(decision.names, decision.app_ids)
         decision = decide(state, plan, cvms, recreate=args.recreate, destroy=args.destroy)

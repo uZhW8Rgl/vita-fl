@@ -404,7 +404,13 @@ phase therefore aborts before existing apps or workers are deleted.
 
 The launcher also checks the requested OS images against Phala's available
 nodes before applying or resetting apps. Disabled or unavailable images abort
-the deployment, including `--dry-run`. The shared app OS defaults to
+the deployment, including `--dry-run`. When the account has no remaining VM,
+CPU, memory or disk capacity, the available-node list can be empty. For a
+replacement deployment, the launcher then checks the live node information
+and enabled OS-upgrade catalogs of existing VMs belonging to the planned
+deployment. This preserves the region/node/image checks without mistaking a
+full account for a disabled OS image. It does not reserve provisioning capacity.
+The shared app OS defaults to
 `dstack-dev-0.5.9`; override it with `PHALA_OS_IMAGE` in the selected env profile.
 `PHALA_CONTRACTS_OS_IMAGE` can override the contract runtime separately.
 Dynamic workers retain their explicit `PHALA_DYNAMIC_WORKER_OS_IMAGE` and

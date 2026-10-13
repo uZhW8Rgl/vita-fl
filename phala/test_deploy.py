@@ -320,6 +320,87 @@ class OsImagePreflightTests(unittest.TestCase):
         self.client.validate_os_images(self.plan)
 
 
+class QuotaFullOsPreflightTests(unittest.TestCase):
+    def setUp(self):
+        self.client = deploy.PhalaClient("secret")
+        self.vm = deploy.Cvm("runtime-cvm", RUNTIME_NAME, "runtime")
+        self.metadata = {
+            "id": self.vm.identifier,
+            "name": self.vm.name,
+            "app_id": self.vm.app_id,
+            "node_info": {"id": 18, "region": "US-WEST-1", "status": "ONLINE"},
+        }
+        self.images = [
+            {"dev": {"name": "dstack-dev-0.5.9", "slug": "dstack-dev-0.5.9-hash", "enabled": True}, "prod": None}
+        ]
+        self.capacity = {"max_instances": 0, "max_disk": 0}
+        self.plan = plan("update")
+
+        def request(method, path):
+            self.assertEqual(method, "GET")
+            if path == "/teepods/available":
+                return {"capacity": self.capacity, "nodes": []}
+            if path == "/cvms/runtime-cvm":
+                return self.metadata
+            if path == "/cvms/runtime-cvm/available-os-images":
+                return self.images
+            raise AssertionError(f"Unexpected read: {path}")
+
+        self.client.request = Mock(side_effect=request)
+
+    def test_full_account_uses_live_existing_image_catalog_without_changing_pin(self):
+        self.client.validate_os_images(self.plan, existing_cvms=[self.vm])
+        self.assertEqual(
+            self.plan["planned_values"]["root_module"]["resources"][0]["values"]["image"], "dstack-dev-0.5.9"
+        )
+        self.assertEqual(self.client.request.call_args_list[-1].args, ("GET", "/cvms/runtime-cvm/available-os-images"))
+
+    def test_full_account_still_rejects_disabled_image(self):
+        self.images[0]["dev"]["enabled"] = False
+        with self.assertRaisesRegex(deploy.DeploymentError, "unavailable or disabled"):
+            self.client.validate_os_images(self.plan, existing_cvms=[self.vm])
+
+    def test_live_catalog_does_not_relax_region_or_node_pins(self):
+        values = self.plan["planned_values"]["root_module"]["resources"][0]["values"]
+        for override in ({"region": "EU-WEST-1", "node_id": None}, {"region": "US-WEST-1", "node_id": 26}):
+            with self.subTest(override=override):
+                values.update(override)
+                with self.assertRaisesRegex(deploy.DeploymentError, "unavailable or disabled"):
+                    self.client.validate_os_images(self.plan, existing_cvms=[self.vm])
+
+    def test_identity_change_stops_before_reading_image_permissions(self):
+        self.metadata["app_id"] = "another-application"
+        with self.assertRaisesRegex(deploy.DeploymentError, "identity changed"):
+            self.client.validate_os_images(self.plan, existing_cvms=[self.vm])
+        self.assertEqual(self.client.request.call_count, 2)
+
+    def test_unrelated_vms_are_not_used_as_deployment_witnesses(self):
+        other = deploy.Cvm("other-cvm", "other-application", "other")
+        with self.assertRaisesRegex(deploy.DeploymentError, "capacity is exhausted"):
+            self.client.validate_os_images(self.plan, existing_cvms=[other])
+        self.client.request.assert_called_once_with("GET", "/teepods/available")
+
+    def test_missing_permission_status_and_offline_node_fail_closed(self):
+        del self.images[0]["dev"]["enabled"]
+        with self.assertRaisesRegex(deploy.DeploymentError, "invalid node/OS image catalog"):
+            self.client.validate_os_images(self.plan, existing_cvms=[self.vm])
+        self.metadata["node_info"]["status"] = "OFFLINE"
+        with self.assertRaisesRegex(deploy.DeploymentError, "offline node"):
+            self.client.validate_os_images(self.plan, existing_cvms=[self.vm])
+
+    def test_dynamic_workers_still_require_their_exact_os_pin(self):
+        self.plan["variables"] = {
+            "enable_phala_control_api": {"value": True},
+            "dynamic_worker_os_image": {"value": "dstack-dev-0.5.8"},
+            "dynamic_worker_node_id": {"value": None},
+            "region": {"value": "US-WEST-1"},
+        }
+        with self.assertRaisesRegex(deploy.DeploymentError, "dynamic UI workers"):
+            self.client.validate_os_images(self.plan, existing_cvms=[self.vm])
+        self.plan["variables"]["dynamic_worker_os_image"]["value"] = "dstack-dev-0.5.9"
+        self.client.validate_os_images(self.plan, existing_cvms=[self.vm])
+
+
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
