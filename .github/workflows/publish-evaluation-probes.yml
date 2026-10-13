@@ -1,4 +1,6 @@
 name: Publish Dedicated Evaluation Probes
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 on:
   push:
     branches: [phala_app_key]
@@ -35,6 +37,7 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: VARIANT=${{ matrix.variant }}
-          tags: ghcr.io/uzhw8rgl/master-thesis-key-probe:${{ matrix.variant }}-${{ github.sha }}
+          # Reuse the existing public package; these tags are never deployment pins.
+          tags: ghcr.io/uzhw8rgl/master-thesis-dfl-worker:chapter7-probe-${{ matrix.variant }}-${{ github.sha }}
       - name: Record immutable image reference
-        run: echo "PROBE_IMAGE_${{ matrix.variant }}=ghcr.io/uzhw8rgl/master-thesis-key-probe@${{ steps.build.outputs.digest }}"
+        run: echo "PROBE_IMAGE_${{ matrix.variant }}=ghcr.io/uzhw8rgl/master-thesis-dfl-worker@${{ steps.build.outputs.digest }}"

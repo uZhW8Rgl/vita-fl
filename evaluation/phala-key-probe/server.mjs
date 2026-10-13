@@ -5,16 +5,19 @@ import http from 'node:http';
 import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
 import {probeKey} from '../../dfl/node_server/dist/evaluation_key_probe.js';
+import {allKeyObservation,securityReport,probeParticipantKey} from './security.mjs';
 const require = createRequire(new URL('../../dfl/node_server/package.json', import.meta.url));
 const {DstackClient} = await import(require.resolve('@phala/dstack-sdk'));
 
 export async function observation(challenge, options = {}) {
     const client = options.client || new DstackClient('/var/run/dstack.sock');
+    const additional = process.env.EVALUATION_ALL_KEYS === 'true' ? await (options.allKeyObservation||allKeyObservation)(challenge) : {};
     const base = await (options.probe || probeKey)(challenge, {
         ...options.probeOptions,
+        ...(process.env.EVALUATION_ALL_KEYS === 'true' ? {initializeKey:probeParticipantKey} : {}),
         quote: async () => ({quote: '', event_log: ''}),
     });
-    const claims = {...base.claims, schema_version: base.claims.schema_version >= 3 ? 4 : 2,
+    const claims = {...base.claims, ...additional, schema_version: process.env.EVALUATION_ALL_KEYS === 'true' ? 5 : base.claims.schema_version >= 3 ? 4 : 2,
         process_instance_id: options.processInstance,
         system_boot_id: options.bootId || (await fs.readFile('/proc/sys/kernel/random/boot_id', 'utf8')).trim()};
     const claimsJson = JSON.stringify(claims);
@@ -45,10 +48,21 @@ export function serve(options = {}) {
         if (busy) {send(409, {error:'BUSY'}); return;}
         busy = true;
         try {
-            if (req.url === '/v1/evaluation/key') {
+            if (req.url === '/v1/evaluation/key' || req.url === '/v1/evaluation/security') {
                 const chunks=[]; let size=0;
                 for await (const chunk of req) {size+=chunk.length; if(size>64) throw new Error('size'); chunks.push(chunk);}
-                const value = await observation(Buffer.concat(chunks).toString('ascii'), {...options,processInstance});
+                const challenge=Buffer.concat(chunks).toString('ascii');
+                const value = await observation(challenge, {...options,processInstance});
+                if(req.url === '/v1/evaluation/security') {
+                    const report=await securityReport(challenge);
+                    const digest=crypto.createHash('sha256').update(JSON.stringify(report)).digest('hex');
+                    const claims={...value.claims,security_report_sha256:digest};
+                    const claims_json=JSON.stringify(claims);
+                    const client=options.client||new DstackClient('/var/run/dstack.sock');
+                    const quote=await client.getQuote(crypto.createHash('sha512').update('VITA-FL:key-evaluation:v1\0').update(claims_json).digest());
+                    send(200,{...value,claims,claims_json,quote:quote.quote,event_log:quote.event_log,security_report:report});
+                    return;
+                }
                 send(200, value);
             } else if (req.url === '/v1/evaluation/process-restart') {
                 send(200, {restarting:true, process_instance_id:processInstance});

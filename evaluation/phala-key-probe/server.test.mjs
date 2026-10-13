@@ -15,6 +15,21 @@ test('public observations bind the real process/boot identifiers into quote REPO
     assert.deepEqual(report,crypto.createHash('sha512').update('VITA-FL:key-evaluation:v1\0').update(r.claims_json).digest());
     assert.deepEqual(Object.keys(r),['claims','claims_json','quote','event_log','app_compose']);
 });
+test('four-key measurements and custody facts are bound to the fresh quote',async()=>{
+    process.env.EVALUATION_ALL_KEYS='true';
+    try {
+        const fields={action_public_key_sha256:'a'.repeat(64),sello_public_key_sha256:'b'.repeat(64),
+            air_public_key_sha256:'c'.repeat(64),python_keys_match:true,no_swap:true};
+        let quoted;
+        const result=await observation('ab'.repeat(32),{processInstance:'process',bootId:'boot',
+            allKeyObservation:async()=>fields,
+            probe:async()=>({claims:{schema_version:3,rsa_public_key_sha256:'d'.repeat(64)},app_compose:'{}'}),
+            client:{getQuote:async report=>{quoted=report;return {quote:'synthetic',event_log:'synthetic'};}}});
+        assert.equal(result.claims.schema_version,5);
+        for(const [name,value] of Object.entries(fields)) assert.equal(result.claims[name],value);
+        assert.deepEqual(quoted,crypto.createHash('sha512').update('VITA-FL:key-evaluation:v1\0').update(result.claims_json).digest());
+    }finally{delete process.env.EVALUATION_ALL_KEYS;}
+});
 test('lifecycle operations require authorization and restore ciphertext without exporting it',async()=>{
     process.env.EVALUATION_GATES_ENABLED='true';
     const dir=await fs.mkdtemp(path.join(os.tmpdir(),'probe-'));const state=path.join(dir,'sealed.json');
