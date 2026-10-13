@@ -167,6 +167,8 @@ configure_phala_ui() {
   enabled=$(read_env_value "ENABLE_PHALA_UI")
   enabled="${enabled:-false}"
   export TF_VAR_enable_phala_ui="${enabled}"
+  append_var_if_set "ui_domain" "PHALA_UI_DOMAIN"
+  append_var_if_set "ui_gateway_domain" "PHALA_UI_GATEWAY_DOMAIN"
 
   if [ "${enabled}" != "1" ] && [ "${enabled}" != "true" ]; then
     return

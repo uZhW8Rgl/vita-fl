@@ -372,6 +372,26 @@ variable "enable_phala_ui" {
   }
 }
 
+variable "ui_domain" {
+  description = "Optional stable DuckDNS UI hostname, served by TLS ingress inside the runtime CVM."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.ui_domain == "" || (var.enable_phala_ui && can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.duckdns\\.org$", var.ui_domain)))
+    error_message = "ui_domain requires the Phala UI and a single DuckDNS hostname."
+  }
+}
+
+variable "ui_gateway_domain" {
+  description = "Gateway CNAME from the runtime CVM metadata; required when ui_domain is set."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.ui_domain == "" || can(regex("^gateway\\.[a-z0-9-]+\\.phala\\.network$", var.ui_gateway_domain))
+    error_message = "ui_gateway_domain must name the current runtime's Phala gateway."
+  }
+}
+
 variable "ui_image" {
   description = "Digest-pinned browser UI image."
   type        = string

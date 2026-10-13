@@ -22,6 +22,11 @@ output "ui_endpoint" {
   ) : null
 }
 
+output "ui_custom_endpoint" {
+  description = "Stable UI hostname; DNS and certificate readiness are checked by the deployment launcher."
+  value       = var.ui_domain == "" ? null : "https://${var.ui_domain}"
+}
+
 output "grafana_endpoint" {
   description = "Basic-auth-protected Grafana path proxied through the Phala UI."
   value = var.enable_phala_ui ? (

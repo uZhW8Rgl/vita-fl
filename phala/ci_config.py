@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 if __package__:
+    from .github_state import crypt
     from .ratls_config import read_env_file, validate_ratls_config
+    from .ui_domain import validate_settings
 else:
+    from github_state import crypt
     from ratls_config import read_env_file, validate_ratls_config
+    from ui_domain import validate_settings
 
 RATLS_MIGRATION_HINT = (
     "Migrate the selected private deployment profile to RA-TLS, then update PHALA_ENV_CONTENT "
@@ -18,6 +23,32 @@ RATLS_MIGRATION_HINT = (
     "Preserve existing Sello, worker and state keys. "
     "See phala/README.md#migrating-an-existing-deployment-to-ra-tls."
 )
+
+
+def ui_domain_settings(environ: dict[str, str], root: Path) -> dict[str, str]:
+    """Optional account-specific supplement, encrypted with the state secret."""
+    source = root / "phala/ui-domain.env.gpg"
+    if not source.is_file():
+        return {}
+    try:
+        if source.stat().st_size > 16384:
+            raise ValueError
+        document = json.loads(crypt(source.read_bytes(), environ["PHALA_STATE_PASSPHRASE"], decrypt=True))
+        if (
+            document.get("format") != 1
+            or document.get("repository") != environ.get("PHALA_STATE_REPOSITORY")
+            or set(document) != {"format", "repository", "domain", "gateway", "token"}
+        ):
+            raise ValueError
+        validate_settings(document["domain"], document["gateway"], document["token"])
+        return {
+            "PHALA_UI_DOMAIN": document["domain"],
+            "PHALA_UI_GATEWAY_DOMAIN": document["gateway"],
+            "DUCKDNS_TOKEN": document["token"],
+        }
+    except Exception:
+        # Do not expose either the decrypted object or GPG's diagnostics.
+        raise ValueError("Could not decrypt or validate the private UI domain settings.") from None
 
 
 def prepare_config(environ: dict[str, str], root: Path) -> dict[str, Path]:
@@ -69,6 +100,10 @@ def prepare_config(environ: dict[str, str], root: Path) -> dict[str, Path]:
                 raise ValueError("Could not decrypt the deployment environment; check file and passphrase.")
         if not environment_file.stat().st_size:
             raise ValueError("The deployment environment is empty.")
+        supplement = ui_domain_settings(environ, root)
+        if supplement:
+            with environment_file.open("a", encoding="utf-8") as output:
+                output.write("\n" + "\n".join(f"{name}={value}" for name, value in supplement.items()) + "\n")
         try:
             validate_ratls_config(read_env_file(environment_file))
         except UnicodeError:

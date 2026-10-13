@@ -237,6 +237,79 @@ class PhalaClientTests(unittest.TestCase):
         with patch.object(deploy.urllib.request, "urlopen", side_effect=error):
             self.assertIsNone(self.client.request("DELETE", "/cvms/123"))
 
+    def test_rate_limit_recovers_after_original_four_attempt_limit(self):
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read.return_value = b'{"items": []}'
+        error = urllib.error.HTTPError("https://example.org", 429, "secret detail", {}, None)
+        with (
+            patch.object(deploy.urllib.request, "urlopen", side_effect=[error] * 4 + [response]) as send,
+            patch.object(deploy.time, "sleep") as sleep,
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertEqual(self.client.request("GET", "/cvms/paginated"), {"items": []})
+        self.assertEqual(send.call_count, 5)
+        for delay in (15, 30, 60):
+            self.assertIn(unittest.mock.call(delay), sleep.call_args_list)
+        self.assertNotIn("secret", output.getvalue())
+
+    def test_rate_limit_honors_retry_after_seconds_and_http_date(self):
+        for header in ("90", "Thu, 01 Jan 1970 00:01:30 GMT"):
+            with self.subTest(header=header):
+                client = deploy.PhalaClient("secret")
+                error = urllib.error.HTTPError("https://example.org", 429, "limited", {"Retry-After": header}, None)
+                absent = urllib.error.HTTPError("https://example.org", 404, "absent", {}, None)
+                with (
+                    patch.object(deploy.urllib.request, "urlopen", side_effect=[error, absent]),
+                    patch.object(deploy.time, "time", return_value=0),
+                    patch.object(deploy.time, "sleep") as sleep,
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    self.assertIsNone(client.request("DELETE", "/cvms/123"))
+                self.assertIn(unittest.mock.call(90), sleep.call_args_list)
+
+    def test_invalid_retry_after_uses_backoff(self):
+        error = urllib.error.HTTPError("https://example.org", 429, "limited", {"Retry-After": "invalid"}, None)
+        absent = urllib.error.HTTPError("https://example.org", 404, "absent", {}, None)
+        with (
+            patch.object(deploy.urllib.request, "urlopen", side_effect=[error, absent]),
+            patch.object(deploy.time, "sleep") as sleep,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertIsNone(self.client.request("DELETE", "/cvms/123"))
+        self.assertIn(unittest.mock.call(15), sleep.call_args_list)
+
+    def test_persistent_rate_limit_fails_instead_of_confirming_deletion(self):
+        error = urllib.error.HTTPError("https://example.org", 429, "secret detail", {}, None)
+        with (
+            patch.object(deploy.urllib.request, "urlopen", side_effect=error) as send,
+            patch.object(deploy.time, "sleep"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            with self.assertRaisesRegex(deploy.DeploymentError, "HTTP 429"):
+                self.client.delete([deploy.Cvm("123", "worker", "app")])
+        self.assertEqual(send.call_count, 8)
+
+    def test_excessive_retry_after_stops_for_later_retry(self):
+        error = urllib.error.HTTPError("https://example.org", 429, "limited", {"Retry-After": "600"}, None)
+        with patch.object(deploy.urllib.request, "urlopen", side_effect=error) as send:
+            with self.assertRaisesRegex(deploy.DeploymentError, "retry deployment later"):
+                self.client.request("GET", "/cvms/paginated")
+        send.assert_called_once()
+
+    def test_consecutive_requests_are_paced(self):
+        absent = urllib.error.HTTPError("https://example.org", 404, "absent", {}, None)
+        with (
+            patch.object(deploy.urllib.request, "urlopen", side_effect=absent),
+            patch.object(deploy.time, "monotonic", return_value=100),
+            patch.object(deploy.time, "sleep") as sleep,
+        ):
+            self.client.request("DELETE", "/cvms/1")
+            self.client.request("DELETE", "/cvms/2")
+        self.assertEqual(sleep.call_count, 1)
+        self.assertAlmostEqual(sleep.call_args.args[0], 2.1)
+
 
 class OsImagePreflightTests(unittest.TestCase):
     def setUp(self):

@@ -347,6 +347,47 @@ review. Failed builds never reach deployment. Terraform failures fail the deploy
 job and retain the state for a retry; they do not report a successful rollout or
 restore an already destroyed training run.
 
+The launcher's Phala API calls are spaced by at least 2.1 seconds. HTTP 429
+responses use up to eight attempts with a 15–60 second backoff and respect
+`Retry-After` (seconds or an HTTP date). A requested wait longer than five
+minutes stops the deployment for a later retry. Cleanup confirms that the
+selected CVM IDs have disappeared before proceeding; a persistent API error
+fails the job. After a partial cleanup, rerun the deployment rather than deleting
+additional apps or discarding the saved state.
+
+### Stable DuckDNS UI hostname
+
+Optional `PHALA_UI_DOMAIN`, `PHALA_UI_GATEWAY_DOMAIN` and `DUCKDNS_TOKEN`
+settings enable direct HTTPS access under a DuckDNS hostname. The gateway name
+must equal the runtime CVM's `gateway.cname`. The launcher checks the selected
+CVM's name, application ID and instance ID before updating DNS. It publishes
+the gateway's public address and `_dstack-app-address.<domain>` routing TXT
+value `<instance-id>:443`, then waits for trusted HTTPS and the UI authentication
+gate. DuckDNS applies its TXT value to subdomains too; this deployment therefore
+uses TLS-ALPN-01, which does not overwrite that routing value for ACME challenges.
+
+The digest-pinned official dstack-ingress 2.6 runs inside the runtime CVM,
+terminates TLS there and forwards to `ui:8080`. Its DNS check accepts an A/AAAA
+record matching the gateway, so DuckDNS does not need a CNAME. It receives no
+DuckDNS token. The existing Phala UI endpoint remains available as a fallback.
+Certificates and the ACME account use dedicated volumes; participant-key
+lifecycle rules remain separate. A new runtime instance updates the routing TXT
+during deployment. Gateway IP changes between deployments require another DNS
+reconciliation; this is not a continuous DDNS daemon.
+
+For GitHub Actions, the optional `phala/ui-domain.env.gpg` contains a JSON
+supplement encrypted using the existing `PHALA_STATE_PASSPHRASE`. Its schema is
+`format: 1`, `repository`, `domain`, `gateway`, `token`. `ci_config.py` checks its
+repository binding and merges it only into the private runner environment file.
+Never commit the plaintext supplement. Remove the encrypted supplement to
+disable this account-specific CI configuration. Use a dedicated encryption
+secret if separating domain and state secret access becomes necessary.
+
+Changing the measured runtime Compose triggers the launcher's usual fresh-run
+reset. DNS updates occur after the final runtime apply, not during an active
+training run. A failed DNS/certificate check fails the deployment job and can be
+retried with the saved state.
+
 Before changing or deleting cloud apps, Terraform records the desired images
 and source revisions in an independent `deployment_manifest` state resource.
 A reset preserves that record, so CI retries retain the intended image set even

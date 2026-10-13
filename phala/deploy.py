@@ -24,13 +24,16 @@ import urllib.parse
 import urllib.request
 from collections.abc import Sequence
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
 if __package__:
     from .github_state import GitHubState, StateError
+    from .ui_domain import configure_dns, validate_settings, wait_for_https
 else:
     from github_state import GitHubState, StateError
+    from ui_domain import configure_dns, validate_settings, wait_for_https
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 API_PREFIX = "https://cloud-api.phala.com/api/v1"
@@ -139,6 +142,7 @@ class PhalaClient:
             raise DeploymentError("PHALA_CLOUD_API_PREFIX must be an HTTPS URL")
         self.api_key = api_key
         self.api_prefix = api_prefix.rstrip("/")
+        self._next_request_at = 0.0
 
     def request(self, method: str, path: str) -> Any:
         request = urllib.request.Request(
@@ -151,8 +155,12 @@ class PhalaClient:
                 "User-Agent": "vita-fl-deploy/1",
             },
         )
-        for attempt in range(4):
+        for attempt in range(8):
             try:
+                delay = self._next_request_at - time.monotonic()
+                if delay > 0:
+                    time.sleep(delay)
+                self._next_request_at = time.monotonic() + 2.1
                 with urllib.request.urlopen(request, timeout=30) as response:
                     raw = response.read()
                 return json.loads(raw) if raw else None
@@ -161,7 +169,29 @@ class PhalaClient:
                     method == "DELETE" or (method == "GET" and path.startswith("/apps/") and path.endswith("/cvms"))
                 ):
                     return None
-                if error.code in {429, 500, 502, 503, 504} and attempt < 3:
+                if error.code == 429 and attempt < 7:
+                    # Cleanup sends several DELETEs and inventory GETs. A
+                    # short burst backoff can exhaust all retries within the
+                    # same API rate-limit window.
+                    delay = min(15 * 2**attempt, 60)
+                    retry_after = error.headers.get("Retry-After") if error.headers else None
+                    if retry_after:
+                        try:
+                            server_delay = float(retry_after)
+                        except ValueError:
+                            try:
+                                server_delay = parsedate_to_datetime(retry_after).timestamp() - time.time()
+                            except (TypeError, ValueError, OverflowError):
+                                server_delay = 0
+                        if server_delay > 300:
+                            raise DeploymentError(
+                                "Phala rate limit requires a longer wait; retry deployment later"
+                            ) from error
+                        delay = max(delay, server_delay)
+                    print(f"Phala rate limit reached; retrying {method} in {delay:g}s", flush=True)
+                    time.sleep(delay)
+                    continue
+                if error.code in {500, 502, 503, 504} and attempt < 3:
                     time.sleep(2**attempt)
                     continue
                 raise DeploymentError(f"Phala {method} failed with HTTP {error.code}") from error
@@ -561,6 +591,9 @@ def execute_deployment(
     environment: dict[str, str],
     state_store: GitHubState | None = None,
 ) -> None:
+    ui_domain = config.get("PHALA_UI_DOMAIN", "")
+    if ui_domain and not args.destroy:
+        validate_settings(ui_domain, config.get("PHALA_UI_GATEWAY_DOMAIN", ""), config.get("DUCKDNS_TOKEN", ""))
     terraform = Terraform(directory, environment)
     terraform.state_store = state_store
     terraform.run("init", "-input=false", "-no-color")
@@ -695,6 +728,18 @@ def execute_deployment(
                 raise DeploymentError("Runtime endpoint did not stabilize; inspect the Phala app and rerun")
             endpoint = current_endpoint
         print(f"Phala resources applied. Runtime: {endpoint}", flush=True)
+        if ui_domain:
+            runtime = next(resource for resource in managed_apps(final_state) if resource["address"] == RUNTIME_ADDRESS)
+            values = runtime["values"]
+            configure_dns(
+                client,
+                cvm_id=values["primary_cvm_id"],
+                app_id=app_id(values["app_id"]),
+                domain=ui_domain,
+                gateway=config["PHALA_UI_GATEWAY_DOMAIN"],
+                token=config["DUCKDNS_TOKEN"],
+            )
+            wait_for_https(ui_domain)
         ui_endpoint = final_state.get("values", {}).get("outputs", {}).get("ui_endpoint", {}).get("value")
         if ui_endpoint:
             print(f"UI: {ui_endpoint}", flush=True)

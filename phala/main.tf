@@ -175,6 +175,8 @@ locals {
     enable_control_api                       = var.enable_phala_control_api
     control_api_image                        = var.control_api_image
     enable_ui                                = var.enable_phala_ui
+    ui_domain                                = var.ui_domain
+    ui_gateway_domain                        = var.ui_gateway_domain
     ui_image                                 = var.ui_image
     pki_agent_subject                        = var.pki_agent_subject
     enable_agent                             = var.enable_phala_agent
