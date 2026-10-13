@@ -100,16 +100,16 @@ def prepare_config(environ: dict[str, str], root: Path) -> dict[str, Path]:
                 raise ValueError("Could not decrypt the deployment environment; check file and passphrase.")
         if not environment_file.stat().st_size:
             raise ValueError("The deployment environment is empty.")
-        supplement = ui_domain_settings(environ, root)
-        if supplement:
-            with environment_file.open("a", encoding="utf-8") as output:
-                output.write("\n" + "\n".join(f"{name}={value}" for name, value in supplement.items()) + "\n")
         try:
             validate_ratls_config(read_env_file(environment_file))
         except UnicodeError:
             raise ValueError("The deployment environment must be valid UTF-8.") from None
         except ValueError as error:
             raise ValueError(f"{error}\n{RATLS_MIGRATION_HINT}") from None
+        supplement = ui_domain_settings(environ, root)
+        if supplement:
+            with environment_file.open("a", encoding="utf-8") as output:
+                output.write("\n" + "\n".join(f"{name}={value}" for name, value in supplement.items()) + "\n")
     except BaseException:
         # GITHUB_ENV has not been written yet, so workflow cleanup cannot rely
         # on PHALA_ENV_FILE when materialization or preflight fails here.
