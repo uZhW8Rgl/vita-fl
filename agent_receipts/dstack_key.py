@@ -1,61 +1,19 @@
-"""Application-bound Sello receiver key derivation for the combined Worker 0 TEE."""
+"""Sello runtime-key adapter; deterministic derivation is local-test-only."""
 
 from __future__ import annotations
 
 import hashlib
 import hmac
-import http.client
-import json
 import os
 import re
-import socket
-from pathlib import Path
 from typing import Mapping
+
+from .runtime_keys import SELLO_RUNTIME_KEY, read_runtime_signing_seed
 
 SELLO_TEE_KEY_PATH = "vita-fl/sello/tee-inference/v1"
 SELLO_TEE_KEY_PURPOSE = "ed25519-cose-sign1"
 SELLO_TEE_KEY_DERIVATION_DOMAIN = b"MasterThesis.sello.tee-inference.app-bound.v1"
 DEFAULT_DSTACK_SOCKET = "/var/run/dstack.sock"
-
-
-class _UnixConnection(http.client.HTTPConnection):
-    def __init__(self, socket_path: str) -> None:
-        super().__init__("localhost", timeout=30)
-        self.socket_path = socket_path
-
-    def connect(self) -> None:
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(self.timeout)
-        self.sock.connect(self.socket_path)
-
-
-def _dstack_get_key(socket_path: str = DEFAULT_DSTACK_SOCKET) -> bytes:
-    if not Path(socket_path).is_socket():
-        raise RuntimeError(f"dstack socket is unavailable: {socket_path}")
-    connection = _UnixConnection(socket_path)
-    body = json.dumps(
-        {"path": SELLO_TEE_KEY_PATH, "purpose": SELLO_TEE_KEY_PURPOSE},
-        separators=(",", ":"),
-    ).encode()
-    try:
-        connection.request("POST", "/GetKey", body=body, headers={"Content-Type": "application/json"})
-        response = connection.getresponse()
-        raw = response.read()
-    finally:
-        connection.close()
-    if response.status != 200:
-        raise RuntimeError(f"dstack /GetKey returned HTTP {response.status}")
-    value = json.loads(raw)
-    if not isinstance(value, dict) or value.get("error"):
-        raise RuntimeError(f"dstack /GetKey failed: {value.get('error') if isinstance(value, dict) else value!r}")
-    key_text = str(value.get("key", "")).removeprefix("0x")
-    try:
-        root = bytes.fromhex(key_text)
-    except ValueError as exc:
-        raise RuntimeError("dstack /GetKey returned a non-hex key") from exc
-    if len(root) != 32:
-        raise RuntimeError("dstack /GetKey must return exactly 32 bytes for the Sello key")
-    return root
 
 
 def _address_bytes(value: str, name: str) -> bytes:
@@ -98,17 +56,17 @@ def tee_sello_signing_seed(
     environment: Mapping[str, str] | None = None,
     *,
     local_root: bytes | None = None,
-    dstack_get_key=_dstack_get_key,
+    runtime_key_reader=read_runtime_signing_seed,
 ) -> bytes:
     env = os.environ if environment is None else environment
     phala = str(env.get("DOCKER", "")).lower() == "phala"
-    provider = str(env.get("SELLO_SERVICE_KEY_PROVIDER") or ("dstack" if phala else "env")).lower()
-    if phala and provider != "dstack":
-        raise RuntimeError("Phala Sello receivers require SELLO_SERVICE_KEY_PROVIDER=dstack")
+    provider = str(env.get("SELLO_SERVICE_KEY_PROVIDER") or ("ephemeral" if phala else "env")).lower()
+    if phala and provider != "ephemeral":
+        raise RuntimeError("Phala Sello receivers require SELLO_SERVICE_KEY_PROVIDER=ephemeral")
     if not phala and provider != "env":
         raise RuntimeError("Local Sello receivers only support the env test provider")
-    if provider == "dstack":
-        root = dstack_get_key()
+    if provider == "ephemeral":
+        return runtime_key_reader(SELLO_RUNTIME_KEY)
     else:
         if str(env.get("LOCAL_TDX_MOCK", "")) != "1":
             raise RuntimeError("An environment-provided Sello key is only allowed with LOCAL_TDX_MOCK=1")

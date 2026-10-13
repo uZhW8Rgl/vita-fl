@@ -52,12 +52,8 @@ class CombinedWorkerScriptTests(unittest.TestCase):
 
     def test_round_zero_bootstrap_survives_worker_restart_in_updating(self) -> None:
         server = NODE_SERVER_SOURCE.read_text(encoding="utf-8")
-        ipfs = (ROOT / "dfl" / "node_server" / "src" / "ipfs.ts").read_text(
-            encoding="utf-8"
-        )
-        snapshot = (
-            ROOT / "dfl" / "node_server" / "src" / "bootstrap_snapshot.ts"
-        ).read_text(encoding="utf-8")
+        ipfs = (ROOT / "dfl" / "node_server" / "src" / "ipfs.ts").read_text(encoding="utf-8")
+        snapshot = (ROOT / "dfl" / "node_server" / "src" / "bootstrap_snapshot.ts").read_text(encoding="utf-8")
         self.assertIn("round-0-bootstrap-recipients.json", server)
         self.assertIn("PARTICIPANT_KEY_STATE_PATH", server)
         self.assertIn("public_key_der_hex", snapshot)
@@ -75,35 +71,28 @@ class CombinedWorkerScriptTests(unittest.TestCase):
             server,
         )
         snapshot_reuse = server[
-            server.index("const existing = JSON.parse(await fs.readFile(snapshotPath"):
-            server.index("const frozen = await waitForRegisteredBootstrapRecipients()")
+            server.index("const existing = JSON.parse(await fs.readFile(snapshotPath") : server.index(
+                "const frozen = await waitForRegisteredBootstrapRecipients()"
+            )
         ]
         self.assertNotIn("readRuntimeMfsJson", snapshot_reuse)
         self.assertNotIn("validateBootstrapDeclarationAgainstCommittedRoster", snapshot_reuse)
         self.assertIn("requireFrozenRecipientKeysMatchRegistry", snapshot_reuse)
 
     def test_updating_recovery_does_not_treat_aborted_round_as_finalized(self) -> None:
-        client = (
-            ROOT / "dfl" / "node_server" / "src" / "bc_client.ts"
-        ).read_text(encoding="utf-8")
+        client = (ROOT / "dfl" / "node_server" / "src" / "bc_client.ts").read_text(encoding="utf-8")
         server = NODE_SERVER_SOURCE.read_text(encoding="utf-8")
         self.assertIn("roundCompleted(sourceRound)", client)
         self.assertIn("isGlobalModelPublished(finalization.sourceRound)", server)
         self.assertIn("isRoundCompleted(finalization.sourceRound)", server)
         self.assertIn("isExplicitlyFinalizedSourceRound", server)
-        ipfs = (
-            ROOT / "dfl" / "node_server" / "src" / "ipfs.ts"
-        ).read_text(encoding="utf-8")
+        ipfs = (ROOT / "dfl" / "node_server" / "src" / "ipfs.ts").read_text(encoding="utf-8")
         self.assertIn("isRoundCompleted(intendedSourceRound)", ipfs)
         self.assertIn("isRoundCompleted(sourceRound)", ipfs)
 
     def test_worker_binds_decrypted_model_to_atomic_finalized_bundle_round(self) -> None:
-        client = (
-            ROOT / "dfl" / "node_server" / "src" / "bc_client.ts"
-        ).read_text(encoding="utf-8")
-        crypto_source = (
-            ROOT / "dfl" / "node_server" / "src" / "gm_crypto.ts"
-        ).read_text(encoding="utf-8")
+        client = (ROOT / "dfl" / "node_server" / "src" / "bc_client.ts").read_text(encoding="utf-8")
+        crypto_source = (ROOT / "dfl" / "node_server" / "src" / "gm_crypto.ts").read_text(encoding="utf-8")
         server = NODE_SERVER_SOURCE.read_text(encoding="utf-8")
         self.assertIn("getFinalizedModelBundle().call()", client)
         self.assertIn("modelRound", client)
@@ -113,7 +102,7 @@ class CombinedWorkerScriptTests(unittest.TestCase):
     def test_local_file_provider_preserves_the_configured_fixture_key_source(self) -> None:
         script = START_SCRIPT.read_text(encoding="utf-8")
         self.assertIn(
-            'PARTICIPANT_RSA_PRIVATE_KEY_FILE:-${RSA_PRIVATE_KEY_FILE:-}',
+            "PARTICIPANT_RSA_PRIVATE_KEY_FILE:-${RSA_PRIVATE_KEY_FILE:-}",
             script,
         )
 
@@ -148,9 +137,7 @@ class CombinedWorkerScriptTests(unittest.TestCase):
         )
 
         cleanup_start = script.index("# Runtime model artifacts are derived state.")
-        bootstrap_copy = script.index(
-            'cp "${BOOTSTRAP_MODEL_SRC}" /dfl/node_server/data/random_start.bin'
-        )
+        bootstrap_copy = script.index('cp "${BOOTSTRAP_MODEL_SRC}" /dfl/node_server/data/random_start.bin')
         cleanup = script[cleanup_start:bootstrap_copy]
         self.assertLess(cleanup_start, bootstrap_copy)
         self.assertNotIn("/dfl/initial_gm", cleanup)
@@ -162,16 +149,14 @@ class CombinedWorkerScriptTests(unittest.TestCase):
                 self.assertIn(runtime_path, cleanup)
                 self.assertIn(build_path, dockerignore)
 
-    def test_completed_training_exits_once_and_cleanup_releases_services(self) -> None:
+    def test_completed_training_keeps_inference_without_a_restart(self) -> None:
         script = START_SCRIPT.read_text(encoding="utf-8")
-        completion = script.index(
-            'echo "DFL training process completed; exiting once so Docker reboots the combined worker."'
-        )
-        completion_branch = script[completion:script.index("\nfi", completion)]
-        self.assertIn("exit 0", completion_branch)
-        self.assertNotIn('wait "${TEE_INFERENCE_PID}"', completion_branch)
+        completion = script.index('echo "DFL training completed; inference continues in the same admitted workload."')
+        completion_branch = script[completion : script.index("\nfi", completion)]
+        self.assertIn('wait -n "${PYTHON_PID}" "${TEE_INFERENCE_PID}"', completion_branch)
+        self.assertNotIn("exit 0", completion_branch)
 
-        cleanup = script[script.index("cleanup() {"):script.index("terminate() {")]
+        cleanup = script[script.index("cleanup() {") : script.index("terminate() {")]
         self.assertIn(
             'for pid in "${NODE_PID}" "${TEE_INFERENCE_PID}" "${PYTHON_PID}"',
             cleanup,
@@ -181,7 +166,7 @@ class CombinedWorkerScriptTests(unittest.TestCase):
 
     def test_combined_receiver_keeps_key_until_container_cleanup(self) -> None:
         start_script = START_SCRIPT.read_text(encoding="utf-8")
-        cleanup = start_script[start_script.index("cleanup() {"):start_script.index("terminate() {")]
+        cleanup = start_script[start_script.index("cleanup() {") : start_script.index("terminate() {")]
         self.assertIn(
             "${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH:-/run/vita-fl/participant-private.pem}",
             cleanup,
@@ -222,8 +207,7 @@ class CombinedWorkerScriptTests(unittest.TestCase):
                 participant_key.write_text("test-key", encoding="utf-8")
             fake_curl = fake_bin / "curl"
             fake_curl.write_text(
-                "#!/usr/bin/env bash\n"
-                "printf '%s\\n' \"$@\" > \"${HEALTHCHECK_TEST_RECORD}\"\n",
+                '#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "${HEALTHCHECK_TEST_RECORD}"\n',
                 encoding="utf-8",
             )
             fake_curl.chmod(0o755)

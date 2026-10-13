@@ -13,29 +13,26 @@ class CombinedWorkerComposeTests(unittest.TestCase):
         self.static_template = (ROOT / "dstack-compose.worker.phala.tftpl").read_text(encoding="utf-8")
         self.dynamic_template = (ROOT / "dynamic-workers/worker-compose.tftpl").read_text(encoding="utf-8")
 
-    def test_worker_templates_keep_sealed_state_and_plaintext_keys_separate(self) -> None:
+    def test_worker_templates_keep_all_participant_secrets_volatile(self) -> None:
         required = (
             "- /var/run/dstack.sock:/var/run/dstack.sock",
-            "- participant-key-state:/var/lib/vita-fl",
             "- /run/vita-fl:size=16m,mode=0700",
-            "PARTICIPANT_KEY_STATE_PATH: /var/lib/vita-fl/participant-rsa.v1.sealed.json",
             "PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH: /run/vita-fl/participant-private.pem",
             "PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH: /run/vita-fl/participant-public.pem",
-            "volumes:\n  participant-key-state:",
         )
         for template in (self.static_template, self.dynamic_template):
             for entry in required:
                 with self.subTest(template=template[:20], entry=entry):
                     self.assertIn(entry, template)
 
-    def test_worker_templates_reboot_without_policy_split(self) -> None:
+    def test_worker_templates_disable_automatic_restart(self) -> None:
         for template in (self.static_template, self.dynamic_template):
             with self.subTest(template=template[:20]):
-                self.assertIn("restart: unless-stopped", template)
+                self.assertIn('restart: "no"', template)
                 self.assertNotIn("restart: on-failure", template)
 
         compatibility_compose = (ROOT / "dstack-compose.template.yml").read_text(encoding="utf-8")
-        self.assertIn("restart: unless-stopped", compatibility_compose)
+        self.assertIn('restart: "no"', compatibility_compose)
         self.assertNotIn("restart: on-failure", compatibility_compose)
 
     def test_dynamic_worker_os_image_uses_provider_canonical_slug(self) -> None:
@@ -127,12 +124,12 @@ class CombinedWorkerComposeTests(unittest.TestCase):
             with self.subTest(environment_name=environment_name):
                 self.assertIn(f"      {environment_name}:", contracts_template)
 
-    def test_completed_training_reboots_once_then_keeps_worker_idle(self) -> None:
+    def test_completed_training_retains_same_workload_for_inference(self) -> None:
         supervisor = (REPOSITORY_ROOT / "dfl/start_node_neural_network.sh").read_text(encoding="utf-8")
         worker = (REPOSITORY_ROOT / "dfl/node_server/src/server.ts").read_text(encoding="utf-8")
 
         self.assertIn(
-            "exiting once so Docker reboots the combined worker",
+            "inference continues in the same admitted workload",
             supervisor,
         )
         self.assertNotIn("Keeping only the TEE inference receiver available", supervisor)
@@ -150,7 +147,7 @@ class CombinedWorkerComposeTests(unittest.TestCase):
             conditional_bodies = [match.group("body") for match in conditional_receiver.finditer(template)]
             self.assertTrue(any("/tmp/tee-inference:size=256m,mode=0700" in body for body in conditional_bodies))
             self.assertTrue(any('"8443:8443"' in body for body in conditional_bodies))
-            self.assertTrue(any('SELLO_SERVICE_KEY_PROVIDER: "dstack"' in body for body in conditional_bodies))
+            self.assertTrue(any('SELLO_SERVICE_KEY_PROVIDER: "ephemeral"' in body for body in conditional_bodies))
             self.assertNotIn("SELLO_SERVICE_SIGNING_SEED", template)
             self.assertNotIn('"8080:8080"', template)
             self.assertNotIn("SELLO_REQUIRED", template)

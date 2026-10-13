@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Child-process dumps must not persist private run-scoped key material.
+ulimit -c 0
 
 PYTHON_PID=""
 TEE_INFERENCE_PID=""
@@ -23,6 +25,7 @@ cleanup() {
     if [ -n "${RUNTIME_ENV_FILE}" ]; then
         rm -f "${RUNTIME_ENV_FILE}"
     fi
+    rm -f /run/vita-fl/sello-signing.seed /run/vita-fl/air-signing.seed
     rm -f \
         "${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH:-/run/vita-fl/participant-private.pem}" \
         "${PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH:-/run/vita-fl/participant-public.pem}"
@@ -49,6 +52,7 @@ if [ "${DOCKER:-}" != "phala" ] && [ "${PARTICIPANT_KEY_PROVIDER:-}" = "file" ];
     export PARTICIPANT_RSA_PRIVATE_KEY_FILE=${PARTICIPANT_RSA_PRIVATE_KEY_FILE:-${RSA_PRIVATE_KEY_FILE:-}}
 fi
 rm -f "${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH}" "${PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH}"
+rm -f /run/vita-fl/sello-signing.seed /run/vita-fl/air-signing.seed
 
 DATASET_NAME=${DATASET_NAME:-mnist}
 BOOTSTRAP_MODEL_SRC=${BOOTSTRAP_MODEL_SRC:-/dfl/initial_gm/${DATASET_NAME}/aggregated.bin}
@@ -158,8 +162,8 @@ if any(missing(value) for value in expected_contracts.values()) or missing(expec
 
 # The Compose-measured RPC endpoint and EXPECTED_* addresses are the durable
 # recovery configuration. MFS documents are an optional deployment hand-off;
-# losing them must not prevent an otherwise valid worker from rebooting and
-# reconciling its deterministic on-chain registration.
+# they are not an authority to reuse an earlier participant registration.
+# Every new workload start creates fresh keys and requires fresh admission.
 if not rpc_url:
     raise SystemExit("Compose-measured RPC_URL is required")
 for env_name, expected_address in expected_contracts.items():
@@ -345,11 +349,14 @@ if inference_enabled; then
     esac
 fi
 
-# The Node process is the single owner of participant-key initialization. On
-# Phala it derives the wrapping key through dstack.sock, unseals or creates the
-# RSA key, and materializes only run-scoped PEM files for the co-located
-# services. Local development follows the same runtime-file boundary after
-# loading its explicitly configured fixture key.
+# Seeds are generated once for this complete workload, before any public service
+# starts. Co-located processes read the same private tmpfs files. There is no
+# dstack GetKey derivation or persistent backup of participant secrets.
+if [ "${DOCKER:-}" = "phala" ]; then
+    node /dfl/node_server/dist/runtime_keys.js
+fi
+# Node owns the fresh RSA initialization and shares only run-scoped PEM files
+# with the co-located services. Local fixtures remain explicit test inputs.
 export RSA_PRIVATE_KEY_FILE="${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH}"
 export RSA_PUBLIC_KEY_FILE="${PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH}"
 
@@ -420,8 +427,13 @@ if inference_enabled; then
         exit "${first_status}"
     fi
 
-    echo "DFL training process completed; exiting once so Docker reboots the combined worker."
-    exit 0
+    echo "DFL training completed; inference continues in the same admitted workload."
+    set +e
+    wait -n "${PYTHON_PID}" "${TEE_INFERENCE_PID}"
+    service_status=$?
+    set -e
+    [ "${service_status}" -ne 0 ] || service_status=1
+    exit "${service_status}"
 fi
 
 set +e

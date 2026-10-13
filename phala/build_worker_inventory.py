@@ -53,6 +53,7 @@ def build_inventory(
                 "account_address": values[names["account_address"]],
                 "private_key": values[names["private_key"]],
                 "device_id": device_id,
+                **({"app_name": values[prefix + "APP_NAME"]} if values.get(prefix + "APP_NAME") else {}),
             }
         )
     return inventory

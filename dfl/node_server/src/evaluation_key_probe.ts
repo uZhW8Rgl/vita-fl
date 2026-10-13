@@ -3,18 +3,18 @@
  * A substituted image needs its own real quote; approval is checked externally.
  */
 import crypto from "crypto";
-import fs from "fs/promises";
 import http from "http";
 import { pathToFileURL } from "url";
 import { DstackClient } from "@phala/dstack-sdk";
-import { loadParticipantKey } from "./participant_key.js";
+import { loadParticipantKey, type ParticipantKey } from "./participant_key.js";
+
+let instanceKey: Promise<ParticipantKey> | undefined;
 
 export const probeKey = async (
     challenge: string,
     options: {
         env?: NodeJS.ProcessEnv;
-        statePath?: string;
-        deriveKey?: () => Promise<Uint8Array>;
+        initializeKey?: () => Promise<ParticipantKey>;
         info?: () => Promise<{ app_id: string; tcb_info: { app_compose: string } }>;
         quote?: (reportData: Buffer) => Promise<{ quote: string; event_log: string }>;
     } = {},
@@ -26,42 +26,22 @@ export const probeKey = async (
     if (!/^[a-f0-9]{64}$/.test(challenge)) throw new Error("A 32-byte challenge is required.");
     let client: DstackClient | undefined;
     const getClient = () => client ||= new DstackClient("/var/run/dstack.sock");
-    const statePath = options.statePath || env.PARTICIPANT_KEY_STATE_PATH || "/var/lib/vita-fl/participant-rsa.v1.sealed.json";
     const metadata = await (options.info || (() => getClient().info()))();
-    let sealedBefore: Buffer | undefined;
-    try { sealedBefore = await fs.readFile(statePath); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    let derivationReturned = false;
-    let key;
-    let outcome = "KEY_RECOVERED";
-    try {
-        key = await loadParticipantKey({
-            env, statePath,
-            deriveKey: async () => {
-                const raw = await (options.deriveKey || (async () => (await getClient().getKey("vita-fl/participant-rsa-wrap/v1", "aes-256-gcm-sealing")).key))();
-                derivationReturned = true;
-                return raw;
-            },
-        });
-        outcome = sealedBefore ? "KEY_RECOVERED" : "KEY_CREATED";
-    } catch (error) {
-        // An unavailable KMS is an observation, not proof of an access denial.
-        // Unknown filesystem/parser failures are probe errors, not security PASS.
-        if (!derivationReturned) outcome = "KMS_DERIVATION_FAILED";
-        else if (error instanceof Error && error.message.startsWith("Could not authenticate or load the sealed participant key:")) {
-            outcome = "UNSEAL_REJECTED";
-        } else throw error;
-    }
-    const sealed = await fs.readFile(statePath).catch(() => undefined);
+    // One RSA identity per probe process, not per HTTP request. A new process
+    // has no persisted state from which to reconstruct this identity.
+    const key = await (options.initializeKey
+        ? options.initializeKey()
+        : instanceKey ||= loadParticipantKey({env}));
     const claims = {
-        schema_version: 1,
+        schema_version: 3,
         challenge,
         app_id: metadata.app_id,
         app_compose_sha256: crypto.createHash("sha256").update(metadata.tcb_info.app_compose).digest("hex"),
-        state_present_before: Boolean(sealedBefore),
-        state_sha256: sealed ? crypto.createHash("sha256").update(sealed).digest("hex") : null,
-        kms_material_obtained: derivationReturned,
-        key_outcome: outcome,
+        state_present_before: false,
+        state_sha256: null,
+        kms_material_obtained: false,
+        key_outcome: "KEY_HELD_IN_MEMORY",
+        key_lifecycle: "ephemeral-workload-v1",
         rsa_public_key_sha256: key ? crypto.createHash("sha256").update(key.publicKeyDer).digest("hex") : null,
     };
     // Fixed key order, ASCII fields. The driver checks the actual quoted bytes.

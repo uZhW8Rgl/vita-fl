@@ -1,11 +1,10 @@
 services:
   dfl-worker:
     image: ${worker_image}
-    restart: unless-stopped
+    restart: "no"
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
       - /var/run/tappd.sock:/var/run/tappd.sock
-      - participant-key-state:/var/lib/vita-fl
     tmpfs:
       - /run/vita-fl:size=16m,mode=0700
 %{ if inference_enabled ~}
@@ -28,8 +27,7 @@ services:
       ACCOUNT_ADDRESS: "${account_address}"
       DEVICE_ID: "${device_id}"
       PRIVATE_KEY: "$${PRIVATE_KEY}"
-      PARTICIPANT_KEY_PROVIDER: dstack
-      PARTICIPANT_KEY_STATE_PATH: /var/lib/vita-fl/participant-rsa.v1.sealed.json
+      PARTICIPANT_KEY_PROVIDER: ephemeral
       PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH: /run/vita-fl/participant-private.pem
       PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH: /run/vita-fl/participant-public.pem
       REGISTRY_ADDRESS: ""
@@ -83,7 +81,7 @@ services:
       EXPECTED_RUNTIME_RPC_URL: "${rpc_url}"
       TEE_TRANSPORT_MODE: "ratls"
       AGENT_POP_REGISTRY: ${jsonencode(agent_pop_registry)}
-      PKI_STATE_DIR: /var/lib/vita-fl/tls
+      PKI_STATE_DIR: /run/vita-fl/tls
       PKI_CA_URL: "${pki_ca_url}"
       PKI_ROOT_FINGERPRINT: "${pki_root_fingerprint}"
       PKI_SUBJECT: worker-0
@@ -92,7 +90,7 @@ services:
       TEE_MODEL_DIR: /tmp/tee-inference/model
       TEE_JOB_DIR: /tmp/tee-inference/jobs
       CHESTMNIST_TEST_DATA: /dfl/config/chestmnist/test_data/test-data.npz
-      SELLO_SERVICE_KEY_PROVIDER: "dstack"
+      SELLO_SERVICE_KEY_PROVIDER: "ephemeral"
       SELLO_TOKEN_ISSUER_PUBLIC_KEY: "$${SELLO_TOKEN_ISSUER_PUBLIC_KEY}"
       SCITT_URL: "${sello_scitt_url}"
       SCITT_DEVELOPMENT: "1"
@@ -103,6 +101,3 @@ services:
       - /bin/bash
       - -lc
       - exec /dfl/start_node_neural_network.sh
-
-volumes:
-  participant-key-state:

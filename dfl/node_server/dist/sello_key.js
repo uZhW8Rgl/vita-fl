@@ -1,6 +1,5 @@
-import { DstackClient } from "@phala/dstack-sdk";
+import { readRuntimeSigningSeed, SELLO_RUNTIME_KEY } from "./runtime_keys.js";
 import crypto from "crypto";
-const PHALA_SOCKET_PATH = "/var/run/dstack.sock";
 export const SELLO_TEE_KEY_PATH = "vita-fl/sello/tee-inference/v1";
 export const SELLO_TEE_KEY_PURPOSE = "ed25519-cose-sign1";
 export const SELLO_TEE_KEY_DERIVATION_DOMAIN = "MasterThesis.sello.tee-inference.app-bound.v1";
@@ -26,11 +25,6 @@ const localProvider = (env) => async () => {
         throw new Error("An environment-provided Sello key is only allowed with LOCAL_TDX_MOCK=1.");
     }
     return decodeLocalRoot(String(env.SELLO_SERVICE_SIGNING_SEED || ""));
-};
-const dstackProvider = () => async () => {
-    const client = new DstackClient(PHALA_SOCKET_PATH);
-    const response = await client.getKey(SELLO_TEE_KEY_PATH, SELLO_TEE_KEY_PURPOSE);
-    return response.key;
 };
 const derivationContext = (env) => {
     const participant = String(env.ACCOUNT_ADDRESS || "").trim().toLowerCase();
@@ -107,16 +101,16 @@ export const ed25519PublicKeyFromSeed = (seed) => {
 export const loadSelloReceiptPublicKey = async (options = {}) => {
     const env = options.env || process.env;
     const phala = env.DOCKER === "phala";
-    const providerName = String(env.SELLO_SERVICE_KEY_PROVIDER || (phala ? "dstack" : "env")).trim().toLowerCase();
-    if (phala && providerName !== "dstack") {
-        throw new Error("Phala Sello receivers require SELLO_SERVICE_KEY_PROVIDER=dstack.");
+    const providerName = String(env.SELLO_SERVICE_KEY_PROVIDER || (phala ? "ephemeral" : "env")).trim().toLowerCase();
+    if (phala && providerName !== "ephemeral") {
+        throw new Error("Phala Sello receivers require SELLO_SERVICE_KEY_PROVIDER=ephemeral.");
     }
     if (!phala && providerName !== "env") {
         throw new Error("Local Sello receivers only support the env test provider.");
     }
-    const provider = options.deriveKey
-        || (phala ? dstackProvider() : localProvider(env));
-    const seed = deriveSelloSigningSeed(await provider(), env);
+    const seed = phala
+        ? await (options.deriveKey || (() => readRuntimeSigningSeed(SELLO_RUNTIME_KEY)))()
+        : deriveSelloSigningSeed(await (options.deriveKey || localProvider(env))(), env);
     try {
         return ed25519PublicKeyFromSeed(seed);
     }

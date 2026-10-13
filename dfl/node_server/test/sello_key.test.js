@@ -41,6 +41,13 @@ test("Phala cannot fall back to an environment-provisioned Sello key", async () 
                 SELLO_SERVICE_SIGNING_SEED: "11".repeat(32),
             },
         }),
-        /require SELLO_SERVICE_KEY_PROVIDER=dstack/,
+        /require SELLO_SERVICE_KEY_PROVIDER=ephemeral/,
     );
+});
+
+test("Phala registration publishes exactly the shared runtime receipt key", async () => {
+    const seed = new Uint8Array(32).fill(17);
+    const expected = ed25519PublicKeyFromSeed(seed);
+    const observed = await loadSelloReceiptPublicKey({env:{...BASE_ENV, DOCKER:"phala"}, deriveKey:async () => Uint8Array.from(seed)});
+    assert.deepEqual(observed, expected);
 });

@@ -38,7 +38,7 @@ class SelloDstackKeyTests(unittest.TestCase):
             "SELLO_SERVICE_KEY_PROVIDER": "env",
             "LOCAL_TDX_MOCK": "1",
         }
-        with self.assertRaisesRegex(RuntimeError, "require.*dstack"):
+        with self.assertRaisesRegex(RuntimeError, "require.*ephemeral"):
             tee_sello_signing_seed(environment, local_root=bytes(32))
 
     def test_local_root_requires_explicit_mock_mode(self) -> None:

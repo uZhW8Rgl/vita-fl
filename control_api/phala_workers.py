@@ -56,6 +56,7 @@ class WorkerIdentity:
     slot: int
     account_address: str
     private_key: str
+    app_name_override: str = ""
 
     @property
     def key(self) -> str:
@@ -63,7 +64,7 @@ class WorkerIdentity:
 
     @property
     def app_name(self) -> str:
-        return f"master-thesis-dfl-worker-{self.slot}"
+        return self.app_name_override or f"master-thesis-dfl-worker-{self.slot}"
 
     def terraform_value(self) -> dict[str, Any]:
         return {
@@ -332,14 +333,20 @@ def load_worker_inventory(raw: str, *, maximum: int = MAX_WORKERS) -> tuple[Work
             raise WorkerConfigurationError(f"worker{slot} has an invalid account address")
         if not PRIVATE_KEY_RE.fullmatch(private_key):
             raise WorkerConfigurationError(f"worker{slot} has an invalid Ethereum private key")
+        app_name = str(record.get("app_name", ""))
+        if app_name and not re.fullmatch(r"[a-z][a-z0-9-]{4,62}", app_name):
+            raise WorkerConfigurationError("invalid explicit worker application name")
         identities.append(
             WorkerIdentity(
                 slot=slot,
                 account_address=address,
                 private_key=private_key,
+                app_name_override=app_name,
             )
         )
 
+    if len({identity.app_name for identity in identities}) != len(identities):
+        raise WorkerConfigurationError("worker application names must be unique")
     identities.sort(key=lambda identity: identity.slot)
     expected_slots = list(range(len(identities)))
     actual_slots = [identity.slot for identity in identities]

@@ -1,5 +1,4 @@
 import { secp256k1 } from "@noble/curves/secp256k1";
-import { DstackClient } from "@phala/dstack-sdk";
 import crypto from "crypto";
 import {
     AccessListEIP2930Transaction,
@@ -7,17 +6,15 @@ import {
     signTransaction as signTypedTransaction,
 } from "web3-eth-accounts";
 
-const PHALA_SOCKET_PATH = "/var/run/dstack.sock";
-const ACTION_KEY_PATH = "vita-fl/participant-ethereum-action/v1";
 const ACTION_KEY_PURPOSE = "ethereum-secp256k1-action";
 const ACTION_KEY_DERIVATION_DOMAIN =
-    "MasterThesis.participant-ethereum-action.app-bound.v1";
+    "MasterThesis.participant-ethereum-action.ephemeral.v1";
 
 type ActionKeyProvider = () => Promise<Uint8Array>;
 
 export type ParticipantActionSigner = Readonly<{
     address: `0x${string}`;
-    source: "dstack-app-bound" | "local-test-derived";
+    source: "ephemeral-random" | "local-test-derived";
     signTransaction(transaction: Record<string, unknown>): Promise<`0x${string}`>;
     signDigest(digest: `0x${string}`): Promise<`0x${string}`>;
     destroy(): void;
@@ -60,12 +57,6 @@ const localTestProvider = (env: NodeJS.ProcessEnv): ActionKeyProvider => async (
         );
     }
     return Uint8Array.from(Buffer.from(configured.slice(2), "hex"));
-};
-
-const dstackProvider = (): ActionKeyProvider => async () => {
-    const client = new DstackClient(PHALA_SOCKET_PATH);
-    const response = await client.getKey(ACTION_KEY_PATH, ACTION_KEY_PURPOSE);
-    return response.key;
 };
 
 const derivationContext = (env: NodeJS.ProcessEnv) => {
@@ -200,8 +191,8 @@ export const loadParticipantActionSigner = async (
 ): Promise<ParticipantActionSigner> => {
     const env = options.env || process.env;
     const phala = env.DOCKER === "phala";
-    const provider = options.deriveKey || (phala ? dstackProvider() : localTestProvider(env));
-    const source = phala ? "dstack-app-bound" : "local-test-derived";
+    const provider = options.deriveKey || (phala ? async () => crypto.randomBytes(32) : localTestProvider(env));
+    const source = phala ? "ephemeral-random" : "local-test-derived";
     const context = derivationContext(env);
     let destroyed = false;
     const derive = async () => {
@@ -211,13 +202,16 @@ export const loadParticipantActionSigner = async (
         return deriveAppBoundPrivateKey(provider, context);
     };
 
-    const first = normalizePrivateKey(await derive());
+    const material = await derive();
+    const retained = Buffer.from(material);
+    const first = normalizePrivateKey(material);
     const expectedAddress = first.address;
 
     const withPrivateKey = async <T>(
         operation: (privateKey: `0x${string}`) => Promise<T>,
     ): Promise<T> => {
-        const current = normalizePrivateKey(await derive());
+        if (destroyed) throw new Error("Participant action signer has been destroyed.");
+        const current = normalizePrivateKey(Buffer.from(retained));
         if (current.address !== expectedAddress) {
             throw new Error(
                 `Participant action-key address changed from ${expectedAddress} to ${current.address}.`,
@@ -231,7 +225,7 @@ export const loadParticipantActionSigner = async (
         }
     };
 
-    // Drop the only startup-scoped hexadecimal representation immediately.
+    // Keep only the process-scoped byte buffer, never a persisted private key.
     first.privateKey = "0x" as `0x${string}`;
 
     return Object.freeze({
@@ -263,12 +257,12 @@ export const loadParticipantActionSigner = async (
         destroy: () => {
             if (destroyed) return;
             destroyed = true;
+            retained.fill(0);
         },
     });
 };
 
 export const PARTICIPANT_ACTION_KEY_CONTEXT = Object.freeze({
-    path: ACTION_KEY_PATH,
     purpose: ACTION_KEY_PURPOSE,
     derivationDomain: ACTION_KEY_DERIVATION_DOMAIN,
 });

@@ -21,6 +21,9 @@ name = Path(sys.argv[0]).name
 if name == "curl":
     raise SystemExit(0)
 if name == "node":
+    if sys.argv[-1].endswith("runtime_keys.js"):
+        (root / "signing-keys-initialized").touch()
+        raise SystemExit(0)
     (root / "node.json").write_text(json.dumps({"TEE_INFERENCE_ORIGIN": os.environ.get("TEE_INFERENCE_ORIGIN")}))
     Path(os.environ["RSA_PRIVATE_KEY_FILE"]).write_text("fixture-private")
     Path(os.environ["RSA_PUBLIC_KEY_FILE"]).write_text("fixture-public")
@@ -30,6 +33,7 @@ if name == "node":
             raise SystemExit(1)
         time.sleep(0.01)
     time.sleep(0.5)
+    (root / "training-completed").touch()
     raise SystemExit(0)
 if sys.argv[1:] == ["-m", "pki.ratls_runtime", "origin"]:
     (root / "origin-resolved").touch()
@@ -41,6 +45,10 @@ if sys.argv[1:] == ["-"]:
     raise SystemExit(0)
 if sys.argv[1:4] == ["-m", "pki.runtime", "run"]:
     (root / "receiver.json").write_text(json.dumps({"TEE_INFERENCE_ORIGIN": os.environ.get("TEE_INFERENCE_ORIGIN")}))
+    while not (root / "training-completed").exists():
+        time.sleep(0.01)
+    time.sleep(0.3)
+    raise SystemExit(7)
 while True:
     time.sleep(1)
 """
@@ -93,7 +101,7 @@ class RatlsStartupTests(unittest.TestCase):
         for mode in ("ratls", " RaTlS "):
             with self.subTest(mode=mode):
                 result, records, resolved = self.run_worker(mode=mode)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.returncode, 7, result.stderr)
                 self.assertTrue(resolved)
                 self.assertEqual(set(records), {"node", "receiver"})
                 for environment in records.values():
@@ -107,7 +115,7 @@ class RatlsStartupTests(unittest.TestCase):
 
     def test_legacy_mtls_does_not_resolve_a_dstack_origin(self):
         result, records, resolved = self.run_worker(mode="mtls")
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 7, result.stderr)
         self.assertFalse(resolved)
         for environment in records.values():
             self.assertEqual(environment["TEE_INFERENCE_ORIGIN"], "https://legacy.example.test")

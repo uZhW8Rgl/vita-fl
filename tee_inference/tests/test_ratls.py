@@ -32,9 +32,6 @@ class FakeDstack:
 
     def call(self, path, payload):
         self.calls.append(path)
-        if path == "/GetKey":
-            assert payload == {"path": "master-thesis/air-v1", "purpose": "air-ed25519-signing"}
-            return {"key": "2a" * 32}
         if path == "/GetQuote":
             quote = bytearray(self.base_quote)
             quote[568:632] = bytes.fromhex(payload["report_data"])
@@ -47,6 +44,13 @@ class FakeDstack:
                 }
             }
         raise AssertionError(path)
+
+
+@pytest.fixture(autouse=True)
+def runtime_air_seed(monkeypatch):
+    monkeypatch.setattr(
+        "tee_inference.service.attestation.read_runtime_signing_seed", lambda name: bytes.fromhex("2a" * 32)
+    )
 
 
 @pytest.fixture
@@ -73,7 +77,7 @@ def test_session_available_before_model_load_and_binds_real_certificate(manager)
     assert session.evidence == evidence
     assert session.claims["tls_spki_sha256"] == a.tls_spki_sha256(manager.der)
     assert session.claims["air_public_key"] == bytes(SigningKey(bytes.fromhex("2a" * 32)).verify_key)
-    assert manager.dstack.calls == ["/GetKey", "/GetQuote", "/Info"]
+    assert manager.dstack.calls == ["/GetQuote", "/Info"]
 
 
 def test_session_preserves_dstack_quote_with_70_bytes_of_zero_padding(manager):
@@ -171,7 +175,7 @@ def test_server_rejects_session_after_tls_key_rotation(manager):
 def test_server_rejects_malformed_challenges(manager, challenge):
     with pytest.raises(a.AttestationVerificationError, match="challenge"):
         manager.store.create_session(challenge)
-    assert manager.dstack.calls == ["/GetKey"]
+    assert manager.dstack.calls == []
 
 
 def test_server_rejects_wrong_connection_key(manager):
@@ -182,6 +186,9 @@ def test_server_rejects_wrong_connection_key(manager):
 
 @pytest.fixture
 def air_bundle(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "tee_inference.service.attestation.read_runtime_signing_seed", lambda name: bytes.fromhex("2a" * 32)
+    )
     for name, value in CONTRACT_POLICY_ENV.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setenv("TEE_TRANSPORT_MODE", "ratls")

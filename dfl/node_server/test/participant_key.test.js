@@ -12,123 +12,51 @@ import {
 
 const ADDRESS = "0x1234567890abcdef1234567890abcdef12345678";
 
-const dstackOptions = (statePath, keyByte = 0x42, address = ADDRESS) => ({
-    env: {
-        DOCKER: "phala",
-        ACCOUNT_ADDRESS: address,
-    },
-    statePath,
-    deriveKey: async () => Buffer.alloc(32, keyByte),
+const options = {env: {DOCKER: "phala", ACCOUNT_ADDRESS: ADDRESS},
+    deriveKey: async () => { throw new Error("GetKey must never be called"); }};
+
+test("fresh participant initialization cannot decrypt data for the former RSA key", {timeout: 30_000}, async () => {
+    const first = await loadParticipantKey(options);
+    const next = await loadParticipantKey(options);
+    assert.equal(first.source, "ephemeral-random");
+    assert.equal(first.privateKey.asymmetricKeyDetails.modulusLength, 3072);
+    assert.notEqual(first.publicKeyDerHex, next.publicKeyDerHex);
+    const ciphertext = crypto.publicEncrypt({key: first.publicKey,
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256"}, Buffer.from("secret-model-key"));
+    assert.equal(crypto.privateDecrypt({key: first.privateKey,
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256"}, ciphertext).toString(), "secret-model-key");
+    assert.throws(() => crypto.privateDecrypt({key: next.privateKey,
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256"}, ciphertext));
+    const message = Buffer.from("training-evidence");
+    const signature = crypto.sign("RSA-SHA256", message, first.privateKey);
+    assert.equal(crypto.verify("RSA-SHA256", message, first.publicKey, signature), true);
+    assert.equal(crypto.verify("RSA-SHA256", message, next.publicKey, signature), false);
 });
 
-test("dstack participant RSA key is sealed, stable across restart, and fail-closed", {
-    timeout: 30_000,
-}, async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "participant-key-"));
-    const statePath = path.join(tempDir, "state", "participant-rsa.json");
-    const runtimePrivatePath = path.join(tempDir, "run", "participant-private.pem");
-    const runtimePublicPath = path.join(tempDir, "run", "participant-public.pem");
-
+test("legacy persistent state and externally supplied providers cannot enter fresh Phala admission", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "legacy-rsa-"));
     try {
-        const first = await loadParticipantKey(dstackOptions(statePath));
-        assert.equal(first.source, "dstack-sealed");
-        assert.equal(first.privateKey.asymmetricKeyDetails.modulusLength, 3072);
-
-        const sealed = await fs.readFile(statePath, "utf8");
-        assert.doesNotMatch(sealed, /BEGIN (?:RSA )?PRIVATE KEY/);
-        assert.equal((await fs.stat(path.dirname(statePath))).mode & 0o777, 0o700);
-        assert.equal((await fs.stat(statePath)).mode & 0o777, 0o600);
-
-        await materializeParticipantPrivateKey(first, {
-            privateKeyPath: runtimePrivatePath,
-            publicKeyPath: runtimePublicPath,
-        });
-        assert.equal((await fs.stat(path.dirname(runtimePrivatePath))).mode & 0o777, 0o700);
-        assert.equal((await fs.stat(runtimePrivatePath)).mode & 0o777, 0o600);
-        assert.equal((await fs.stat(runtimePublicPath)).mode & 0o777, 0o644);
-        const materializedPrivate = crypto.createPrivateKey(await fs.readFile(runtimePrivatePath));
-        const materializedPublicDer = crypto.createPublicKey(materializedPrivate)
-            .export({ format: "der", type: "spki" });
-        assert.deepEqual(Buffer.from(materializedPublicDer), first.publicKeyDer);
-
-        const restarted = await loadParticipantKey(dstackOptions(statePath));
-        assert.equal(restarted.publicKeyDerHex, first.publicKeyDerHex);
-        const message = Buffer.from("participant-key-restart-test");
-        const signature = crypto.sign("RSA-SHA256", message, restarted.privateKey);
-        assert.equal(crypto.verify("RSA-SHA256", message, first.publicKey, signature), true);
-        const wrapped = crypto.publicEncrypt({
-            key: first.publicKey,
-            padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-            oaepHash: "sha256",
-        }, Buffer.from("round-key"));
-        assert.equal(crypto.privateDecrypt({
-            key: restarted.privateKey,
-            padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-            oaepHash: "sha256",
-        }, wrapped).toString(), "round-key");
-
-        const document = JSON.parse(sealed);
-        const tag = Buffer.from(document.auth_tag_b64, "base64");
-        tag[0] ^= 0x01;
-        document.auth_tag_b64 = tag.toString("base64");
-        const tampered = `${JSON.stringify(document)}\n`;
-        await fs.writeFile(statePath, tampered);
-        await assert.rejects(
-            loadParticipantKey(dstackOptions(statePath)),
-            /Could not authenticate or load the sealed participant key/,
-        );
-        assert.equal(await fs.readFile(statePath, "utf8"), tampered);
-
-        await fs.writeFile(statePath, sealed);
-        await assert.rejects(
-            loadParticipantKey(dstackOptions(statePath, 0x43)),
-            /Could not authenticate or load the sealed participant key/,
-        );
-        await assert.rejects(
-            loadParticipantKey(dstackOptions(
-                statePath,
-                0x42,
-                "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            )),
-            /Could not authenticate or load the sealed participant key/,
-        );
-    } finally {
-        await fs.rm(tempDir, { recursive: true, force: true });
-    }
+        const legacy = path.join(directory, "sealed.json");
+        await fs.writeFile(legacy, "old encrypted state");
+        await assert.rejects(loadParticipantKey({env: {...options.env, PARTICIPANT_KEY_STATE_PATH: legacy}}), /Legacy persistent/);
+        assert.equal(await fs.readFile(legacy, "utf8"), "old encrypted state");
+        for (const provider of ["file", "dstack"]) {
+            await assert.rejects(loadParticipantKey({env: {...options.env, PARTICIPANT_KEY_PROVIDER: provider}}), /ephemeral key provider/);
+        }
+    } finally {await fs.rm(directory, {recursive:true, force:true});}
 });
 
-test("Phala never falls back to legacy RSA environment keys", async () => {
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "participant-key-fail-"));
+test("runtime PEM materialization preserves the generated public identity and restrictive permissions", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "runtime-rsa-"));
     try {
-        await assert.rejects(
-            loadParticipantKey({
-                env: {
-                    DOCKER: "phala",
-                    ACCOUNT_ADDRESS: ADDRESS,
-                    RSA_PRIVATE_KEY: "legacy-private-key-must-not-be-read",
-                    RSA_PUBLIC_KEY: "legacy-public-key-must-not-be-read",
-                },
-                statePath: path.join(tempDir, "sealed.json"),
-                deriveKey: async () => {
-                    throw new Error("simulated dstack outage");
-                },
-            }),
-            /dstack participant-key derivation failed: simulated dstack outage/,
-        );
-        await assert.rejects(
-            loadParticipantKey({
-                env: {
-                    DOCKER: "phala",
-                    ACCOUNT_ADDRESS: ADDRESS,
-                    PARTICIPANT_KEY_PROVIDER: "file",
-                    PARTICIPANT_RSA_PRIVATE_KEY_FILE: "/does/not/matter",
-                },
-            }),
-            /Phala participant keys must use the dstack key provider/,
-        );
-    } finally {
-        await fs.rm(tempDir, { recursive: true, force: true });
-    }
+        const first = await loadParticipantKey(options);
+        const privateKeyPath = path.join(directory, "private.pem");
+        const publicKeyPath = path.join(directory, "public.pem");
+        await materializeParticipantPrivateKey(first, {privateKeyPath, publicKeyPath});
+        assert.equal((await fs.stat(privateKeyPath)).mode & 0o777, 0o600);
+        const loaded = crypto.createPrivateKey(await fs.readFile(privateKeyPath));
+        assert.deepEqual(Buffer.from(crypto.createPublicKey(loaded).export({format:"der", type:"spki"})), first.publicKeyDer);
+    } finally {await fs.rm(directory, {recursive:true, force:true});}
 });
 
 test("local development requires the explicit file provider", async () => {

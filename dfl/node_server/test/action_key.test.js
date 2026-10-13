@@ -29,7 +29,7 @@ const LOCAL_ENV = {
 
 const derive = async () => Uint8Array.from(KEY);
 
-test("dstack-backed action key remains stable across process restarts and signs raw digests", async () => {
+test("injected test entropy produces a stable signer that signs raw digests", async () => {
     const signer = await loadParticipantActionSigner({
         env: PHALA_ENV,
         deriveKey: derive,
@@ -72,7 +72,7 @@ test("dstack-backed action key remains stable across process restarts and signs 
     );
 });
 
-test("a different dstack application key derives a different action address", async () => {
+test("different injected entropy creates different action addresses", async () => {
     const first = await loadParticipantActionSigner({
         env: PHALA_ENV,
         deriveKey: derive,
@@ -127,7 +127,7 @@ test("action signer accepts only fully local contract calls and no value transfe
     );
 });
 
-test("Phala never falls back to an environment action key", async () => {
+test("entropy acquisition failures do not fall back to environment action keys", async () => {
     await assert.rejects(
         loadParticipantActionSigner({
             env: {
@@ -136,10 +136,10 @@ test("Phala never falls back to an environment action key", async () => {
                 LOCAL_ACTION_PRIVATE_KEY: `0x${KEY.toString("hex")}`,
             },
             deriveKey: async () => {
-                throw new Error("dstack unavailable");
+                throw new Error("entropy unavailable");
             },
         }),
-        /dstack unavailable/,
+        /entropy unavailable/,
     );
 });
 
@@ -161,7 +161,7 @@ test("local action key is restricted to mock mode", async () => {
     assert.match(signer.address, /^0x[0-9a-f]{40}$/);
 });
 
-test("destroy disables the reconstructed authority and prevents further signing", async () => {
+test("destroy disables the in-memory authority and prevents further signing", async () => {
     const signer = await loadParticipantActionSigner({
         env: PHALA_ENV,
         deriveKey: derive,
@@ -183,17 +183,27 @@ test("destroy disables the reconstructed authority and prevents further signing"
     );
 });
 
-test("RSA and Ethereum action derivation contexts are distinct", () => {
-    assert.equal(
-        PARTICIPANT_ACTION_KEY_CONTEXT.path,
-        "vita-fl/participant-ethereum-action/v1",
-    );
-    assert.equal(
-        PARTICIPANT_ACTION_KEY_CONTEXT.purpose,
-        "ethereum-secp256k1-action",
-    );
-    assert.equal(
-        PARTICIPANT_ACTION_KEY_CONTEXT.derivationDomain,
-        "MasterThesis.participant-ethereum-action.app-bound.v1",
-    );
+test("action signing uses its own ephemeral purpose and context", () => {
+    assert.equal(PARTICIPANT_ACTION_KEY_CONTEXT.purpose, "ethereum-secp256k1-action");
+    assert.equal(PARTICIPANT_ACTION_KEY_CONTEXT.derivationDomain,
+        "MasterThesis.participant-ethereum-action.ephemeral.v1");
+});
+
+test("real random action keys differ per initialization and remain stable during signing", async () => {
+    const first = await loadParticipantActionSigner({env: PHALA_ENV});
+    const second = await loadParticipantActionSigner({env: PHALA_ENV});
+    assert.equal(first.source, "ephemeral-random");
+    assert.notEqual(first.address, second.address);
+    const digest = `0x${"42".repeat(32)}`;
+    assert.equal(await first.signDigest(digest), await first.signDigest(digest));
+    first.destroy(); second.destroy();
+});
+
+test("action entropy is acquired once per lifetime, never for individual operations", async () => {
+    let calls = 0;
+    const signer = await loadParticipantActionSigner({env:PHALA_ENV, deriveKey:async () => {calls++; return Uint8Array.from(KEY);}});
+    await signer.signDigest(`0x${"42".repeat(32)}`);
+    await signer.signDigest(`0x${"43".repeat(32)}`);
+    assert.equal(calls, 1);
+    signer.destroy();
 });

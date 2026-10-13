@@ -669,14 +669,13 @@ Notes:
 - Worker and smart-contract images contain no private keys. The prototype EVM
   keys remain the unchanged public Anvil fixtures and must be replaced for
   production or real funds.
-- The public Anvil account remains the logical worker identity and funds its
-  action address, but it is not accepted as DFL transaction authority. At each
-  worker-process start, the application combines a domain-separated dstack KMS
-  secret with the logical participant, chain, and registry identities to
-  reconstruct an application-bound secp256k1 action key. Its address is
-  included in REPORTDATA during the first registration. An exact reboot reuses
-  that registration; any mismatching active registration fails closed before
-  quote generation, and the contract independently rejects a second one.
+- The public Anvil account remains the logical participant identity and funds
+  its action address, but is not accepted as DFL transaction authority. Every
+  Phala workload start generates a fresh random secp256k1 action key held only
+  in the Node process. Its public address is quote-bound during fresh enrollment.
+  An existing registration with another key set fails closed; frozen run rosters
+  cannot replace participant keys in place. Restarting a worker requires a new
+  admission/run, not recovery of the preceding participant identity.
 - `worker_image` must stay pinned to a `sha256` digest. Terraform also renders
   training-only and Worker-0-with-inference policy references from
   `dynamic-workers/worker-compose.tftpl`. The contract runtime derives their
@@ -686,19 +685,18 @@ Notes:
 - The Terraform scaffold separates `smart-contracts` and each `dfl-worker`
   into different Phala apps / TEEs. It does not deploy a separate
   `tee-inference` app.
-- Every worker generates a random RSA-3072 key with public exponent 65537
-  inside its TEE. A domain-separated dstack `GetKey` result is expanded with
-  HKDF-SHA-256 and used as an AES-256-GCM wrapping key. Only the sealed PKCS#8
-  document is stored in the `participant-key-state` named volume; the
-  plaintext private and public PEM files exist only below `/run/vita-fl` on
-  tmpfs. A corrupt or undecryptable state fails closed instead of silently
-  rotating the participant identity.
+- Participant RSA keys are generated randomly inside each workload and are
+  not sealed, stored on a persistent volume, or derived from dstack GetKey.
+  Node shares PEM files with the co-located Python services only through
+  `/run/vita-fl`, a private tmpfs. Random Sello and AIR signing seeds are
+  initialized once by the supervisor and shared through the same mount.
+  Startup checks require tmpfs and disabled swap; no private-key backup exists.
 - The participant public key is included in the worker's REPORTDATA-bound
   DCAP registration. This RSA key signs and decrypts model artifacts, and
   Worker 0's co-located inference process uses it to decrypt the model bundle.
   It is distinct from the secp256k1 action key that authorizes Ethereum
-  transactions. The AIR evidence signing key remains a third,
-  domain-separated dstack-derived key.
+  transactions. AIR and Sello use independent random Ed25519 keys,
+  bound through session attestation and receiver enrollment respectively.
 - Worker 0 exposes its attestation-bound TLS proxy on port 8443 from the same `dfl-worker` container and CVM.
   Model retrieval remains tool-triggered: container startup does not fetch or
   load the current model. The agent normally reads Worker 0's authorized,
@@ -707,15 +705,13 @@ Notes:
   match the attestation-bound receiver origin. Tool-triggered model loading uses the same compose-bound GMStorage,
   Registry, RPC endpoint, and chain ID as the worker. A present contract
   manifest is validated, but a missing MFS copy does not disable inference
-  after a valid Worker 0 reboot.
-- Worker containers use `restart: unless-stopped`. After training completes,
-  the supervisor exits once so Docker reboots the container. The rebooted
-  worker derives the same app-bound action key, reuses its existing on-chain
-  registration, and remains idle when the configured rounds are already
-  complete. Worker 0 keeps its co-located TEE-inference service available in
-  that idle process. This avoids both a restart loop and another DCAP
-  registration. The normal completion path never calls `deregisterDevice`;
-  deregistration remains an explicit participant action.
+  during an admitted Worker 0 lifetime.
+- Worker containers use `restart: "no"`. After training completes, Worker 0
+  retains the co-located inference receiver in the same workload lifetime.
+  A child-service failure terminates the workload; no automatic participant
+  reboot or registration reuse is provided. Private runtime files are removed
+  during supervisor cleanup and the tmpfs is discarded when the container stops.
+  The normal training-completion path never calls `deregisterDevice`.
 - `ssh_public_key_path` can still configure the contract runtime and auxiliary
   apps. Official static and dynamically launched worker resources always pass
   an empty SSH-key list and no user-defined pre-launch script.
@@ -982,8 +978,9 @@ The legacy separate ZK receiver configuration uses an operator-generated signing
 seed and the owner's static service registry, but that Phala app is currently
 disabled pending attested participant-key delegation and an authenticated
 network entrypoint. Worker 0 does not receive a TEE-receiver seed. Its
-measured compose fixes `SELLO_SERVICE_KEY_PROVIDER=dstack`, and the receiver derives its
-domain-separated Ed25519 key inside the active dstack CVM. The token-issuer
+measured compose fixes `SELLO_SERVICE_KEY_PROVIDER=ephemeral`. The supervisor
+generates its random Ed25519 seed inside the workload, and Node and Python
+read the same private tmpfs seed for registration and receipt signing. The token-issuer
 public key is the only Sello key material provisioned to Worker 0. The agent
 resolves the TEE receiver key through Worker 0's attested DeviceRegistry
 enrollment rather than through `SELLO_SERVICE_REGISTRY`.
@@ -992,3 +989,21 @@ Each receiver registers its signed, owner-encrypted receipt directly with SCITT
 and releases the tool response only after verifying the inclusion receipt. For
 manual Compose deployments, set `SELLO_SCITT_URL` to the contract-runtime app's
 public `-8000s` TLS-passthrough URL. The managed launcher derives that URL.
+
+## Lifecycle evaluation and volatile participant keys
+
+The October 12 lifecycle campaign is retained in the sibling driver's
+`validation/chapter7-lifecycle-20261012T193410Z/findings.json`. The original
+key-continuity suite is FAIL: a DFL-policy-rejected replacement image recovered
+the dedicated RSA test key from preserved encrypted state in the same app.
+Other deterministic participant-key risks are source findings, not measured
+recoveries. The controlled recovery report retains ERROR from a stale SCITT
+audit key reference; a separate new inference/audit passed.
+
+The subsequent volatile-key revision is locally tested but has no new cloud
+evaluation. Use fresh apps/disks and freshly provisioned image/role-policy pins
+for its next evaluation. Merely stopping an old app does not remove old volumes
+or retroactively protect previously persisted secrets. The participant bootstrap
+wallet and shared infrastructure/owner/log keys have separate lifecycles. The
+existing managed dstack service remains available for attestation; participant
+RSA/action/Sello/AIR secrets no longer depend on its GetKey interface.

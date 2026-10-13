@@ -34,7 +34,7 @@ def receiver_from_environment(service_id: str) -> SelloReceiver:
         if not issuer:
             raise RuntimeError("Sello token issuer key is required but not configured")
         phala = os.environ.get("DOCKER", "").lower() == "phala"
-        provider = os.environ.get("SELLO_SERVICE_KEY_PROVIDER", "dstack" if phala else "env").lower()
+        provider = os.environ.get("SELLO_SERVICE_KEY_PROVIDER", "ephemeral" if phala else "env").lower()
         if provider == "env" and not seed:
             raise RuntimeError("Local Sello receiver key root is required but not configured")
         local_root = _key_bytes(seed, "SELLO_SERVICE_SIGNING_SEED") if provider == "env" else None

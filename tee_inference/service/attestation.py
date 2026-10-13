@@ -11,6 +11,7 @@ from pathlib import Path
 
 from nacl.signing import SigningKey
 
+from agent_receipts.runtime_keys import AIR_RUNTIME_KEY, read_runtime_signing_seed
 from tee_inference.air.v1 import AirClaims, emit_receipt
 from tee_inference.protocol.v1 import decode_manifest, decode_request, decode_response, encode_deterministic
 from transport_security.attestation import SessionBinding, air_report_data, ratls_enabled
@@ -49,12 +50,9 @@ class DstackClient:
 
 
 def derive_air_signing_key(client: DstackClient) -> SigningKey:
-    """One derivation domain shared by session attestation and inference AIR."""
-    key = client.call("/GetKey", {"path": "master-thesis/air-v1", "purpose": "air-ed25519-signing"})
-    seed = bytes.fromhex(str(key["key"]).removeprefix("0x"))
-    if len(seed) < 32:
-        raise RuntimeError("dstack-derived AIR key is shorter than 32 bytes")
-    return SigningKey(seed[:32])
+    """Load the same run-scoped seed for session attestation and AIR receipts."""
+    # The client remains the attestation transport, not a secret-key provider.
+    return SigningKey(read_runtime_signing_seed(AIR_RUNTIME_KEY))
 
 
 class AirEvidenceEmitter:

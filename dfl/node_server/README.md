@@ -68,24 +68,22 @@ separate:
 - `PRIVATE_KEY` is the bootstrap key for that logical account. In the Phala
   prototype it authorizes enrollment of the TEE action address and funds that
   address with Anvil test ETH; it does not authorize DFL state transitions.
-- The worker deterministically derives an application-bound secp256k1 action
-  key from a dstack KMS secret and a domain-separated context containing the
-  logical participant, chain, and Registry identities. Its address is bound
-  into the registration `REPORTDATA`, the exact Compose evidence, and an
-  enrollment authorization signed by the logical participant. Restarting the
-  same measured application derives the same action address and reuses the
-  existing registration. A changed application or derivation context cannot
-  impersonate that registration and must be attested and admitted separately;
-  once a run roster is frozen, its action-key bindings cannot be rotated.
+- Each Phala workload creates a new random secp256k1 action key. Its address
+  is bound into registration REPORTDATA, the exact Compose evidence, and an
+  enrollment authorization signed by the logical participant. The private key
+  remains in process memory and is never reconstructed from dstack material.
+  A new start requires fresh attested admission; an existing registration with
+  other keys fails closed. Frozen run rosters cannot rotate their bindings.
 - `DeviceRegistry`, `AggregatorSelection`, and `GMStorage` resolve transaction
   senders through the registered action-address-to-participant mapping. Worker
   and aggregator operations therefore have to be signed by the action key of a
   currently attested worker.
 
-The action key is derived just in time for signing and is not written to a
-volume, environment variable, log, or Web3 wallet. It is nevertheless exposed
-briefly to the measured application process by the dstack API; this design
-reduces host-side key exposure but is not a non-exportable hardware-key API.
+The action key is retained in a process-scoped byte buffer for signing and
+wiped when the signer is destroyed. It is not written to a volume, environment,
+log, or Web3 wallet. This is application-managed key custody, not a hardware
+non-exportable signing API. Runtime RSA PEM and Sello/AIR seeds are shared only
+through a private tmpfs; workload startup refuses disk storage and active swap.
 
 Each uploaded local model also carries an EIP-712 action-key commitment over
 the round, selected aggregator, complete parent model bundle, plaintext model
@@ -174,8 +172,8 @@ the immutable per-round threshold and absolute deadline.
 - `LOCAL_TDX_MOCK` (local Anvil only; never enable on Phala)
 - the Registry-provisioned worker-image digest and role-policy hash (Phala;
   derived from canonical `app_compose` and enforced on-chain)
-- `PARTICIPANT_KEY_PROVIDER` (`dstack` is mandatory on Phala)
-- `PARTICIPANT_KEY_STATE_PATH` (sealed RSA state; no plaintext private key)
+- `PARTICIPANT_KEY_PROVIDER` (`ephemeral` is mandatory on Phala)
+- `/run/vita-fl` (private tmpfs for run-scoped PEM files and signing seeds; swap disabled)
 - `LOCAL_ACTION_PRIVATE_KEY` (local mock tests only)
 - `ACTION_KEY_MIN_BALANCE_WEI` and `ACTION_KEY_TARGET_BALANCE_WEI` (optional
   Anvil action-address funding thresholds)

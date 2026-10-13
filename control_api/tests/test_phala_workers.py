@@ -94,6 +94,19 @@ def controller(
 
 
 class WorkerInventoryTests(unittest.TestCase):
+    def test_explicit_application_names_isolate_evaluation_workers(self) -> None:
+        payload = json.loads(inventory_json(2))
+        for row in payload:
+            row["app_name"] = f"chapter7-recovery-worker-{row['slot']}"
+        workers = load_worker_inventory(json.dumps(payload))
+        self.assertEqual(workers[0].terraform_value()["app_name"], "chapter7-recovery-worker-0")
+        payload[1]["app_name"] = payload[0]["app_name"]
+        with self.assertRaises(WorkerConfigurationError):
+            load_worker_inventory(json.dumps(payload))
+        payload[1]["app_name"] = "invalid;name"
+        with self.assertRaises(WorkerConfigurationError):
+            load_worker_inventory(json.dumps(payload))
+
     def test_training_optimization_environment_reaches_dynamic_worker_config(self) -> None:
         environment = {
             "DYNAMIC_WORKER_INVENTORY": inventory_json(1),
