@@ -6,9 +6,11 @@ import json
 import os
 import re
 import socket
+import struct
 import urllib.request
 from pathlib import Path
 
+import cbor2
 import uvicorn
 from fastapi import HTTPException, Request
 
@@ -46,6 +48,7 @@ async def receiver_control(request: Request, payload: dict):
         "substituted_artifact",
         "wrong_key_round",
         "log_unavailable",
+        "changed_inference_response",
     }:
         control("/mode", {"mode": operation})
     elif operation != "state":
@@ -73,6 +76,24 @@ class ReceiptFault:
 
     async def __call__(self, scope, receive, send):
         async def outgoing(message):
+            if scope.get("path", "").endswith("/run") and control("/state")["mode"] == "changed_inference_response":
+                if message["type"] == "http.response.start":
+                    message = {
+                        **message,
+                        "headers": [(k, v) for k, v in message.get("headers", []) if k.lower() != b"content-length"],
+                    }
+                elif message["type"] == "http.response.body" and message.get("body"):
+                    bundle = cbor2.loads(message["body"])
+                    response = cbor2.loads(bundle[3])
+                    probabilities = list(struct.unpack("<14d", response[6]))
+                    probabilities[0] = 0.25 if probabilities[0] != 0.25 else 0.75
+                    response[6] = struct.pack("<14d", *probabilities)
+                    response[7] = bytes(int(p >= 0.5) for p in probabilities)
+                    bundle[3] = cbor2.dumps(response, canonical=True)
+                    message = {**message, "body": cbor2.dumps(bundle, canonical=True)}
+                    # Preserve the original AIR and Sello signatures; alter only
+                    # the actual response after native inference and recording.
+                    control("/effect", {"mode": "changed_inference_response"})
             if (
                 message["type"] == "http.response.body"
                 and scope.get("path") == "/v1/models/fetch"

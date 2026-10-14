@@ -69,6 +69,7 @@ class Handler(BaseHTTPRequestHandler):
                 "substituted_artifact",
                 "wrong_key_round",
                 "log_unavailable",
+                "changed_inference_response",
             }
             and set(body) == {"mode"}
         ):
@@ -79,7 +80,11 @@ class Handler(BaseHTTPRequestHandler):
             Path("/etc/hosts").write_text(
                 hosts_original + ("\n127.0.0.1 " + hostname + "\n" if mode == "log_unavailable" else "")
             )
-        elif self.path == "/effect" and body == {"mode": mode} and mode in {"missing_receipt", "log_unavailable"}:
+        elif (
+            self.path == "/effect"
+            and body == {"mode": mode}
+            and mode in {"missing_receipt", "log_unavailable", "changed_inference_response"}
+        ):
             fault_hits += 1
         else:
             self.send_error(400)
