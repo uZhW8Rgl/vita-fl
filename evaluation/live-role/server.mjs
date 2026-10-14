@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import {createRequire} from 'node:module';
+import {submitSigned} from './rpc.mjs';
 const require=createRequire('/dfl/node_server/package.json');
 const {Web3}=await import(require.resolve('web3'));
 const {DstackClient}=await import(require.resolve('@phala/dstack-sdk'));
@@ -42,7 +43,7 @@ async function transact(contract,method){
  const gasPrice=await web3.eth.getGasPrice();
  const raw=await signer.signTransaction({from:signer.address,to,data,chainId,nonce,gas:120000000n,gasPrice,value:0n});
  // Sending raw bytes directly ensures negative cases really reach mining.
- const tx=await web3.provider.request({method:'eth_sendRawTransaction',params:[raw]});
+ const tx=await submitSigned(web3.provider,raw);
  let receipt;
  for(let n=0;n<300;n++){
   receipt=await web3.eth.getTransactionReceipt(tx);
