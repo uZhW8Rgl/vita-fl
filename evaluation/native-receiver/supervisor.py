@@ -7,6 +7,7 @@ path selection, shell execution or secret read endpoint exists.
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -34,7 +35,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         data = json.dumps(
-            {"pid": child.pid if child and child.poll() is None else None, "mode": mode, "fault_hits": fault_hits}
+            {
+                "pid": child.pid if child and child.poll() is None else None,
+                "mode": mode,
+                "fault_hits": fault_hits,
+                "log_dns_blocked": mode == "log_unavailable"
+                and sorted({x[4][0] for x in socket.getaddrinfo(urlsplit(os.environ["SCITT_URL"]).hostname, 443)})
+                == ["127.0.0.1"],
+            }
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -71,7 +79,7 @@ class Handler(BaseHTTPRequestHandler):
             Path("/etc/hosts").write_text(
                 hosts_original + ("\n127.0.0.1 " + hostname + "\n" if mode == "log_unavailable" else "")
             )
-        elif self.path == "/effect" and body == {"mode": "missing_receipt"} and mode == "missing_receipt":
+        elif self.path == "/effect" and body == {"mode": mode} and mode in {"missing_receipt", "log_unavailable"}:
             fault_hits += 1
         else:
             self.send_error(400)

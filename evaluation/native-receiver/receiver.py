@@ -74,6 +74,13 @@ class ReceiptFault:
     async def __call__(self, scope, receive, send):
         async def outgoing(message):
             if (
+                message["type"] == "http.response.body"
+                and scope.get("path") == "/v1/models/fetch"
+                and control("/state")["mode"] == "log_unavailable"
+                and b"receiver receipt could not be committed to SCITT" in message.get("body", b"")
+            ):
+                control("/effect", {"mode": "log_unavailable"})
+            if (
                 message["type"] == "http.response.start"
                 and scope.get("path") == "/v1/jobs"
                 and control("/state")["mode"] == "missing_receipt"
