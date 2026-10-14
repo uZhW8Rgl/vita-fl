@@ -18,7 +18,7 @@ def install(app):
     original = Path("/etc/hosts").read_text()
     state = {"mode": "none"}
 
-    @app.post("/api/evaluation/network/{mode}")
+    @app.post("/api/sessions/evaluation-network/{mode}")
     async def network(mode: str, payload: dict):
         from evaluation_context import enabled
 
