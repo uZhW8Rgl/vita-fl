@@ -11,6 +11,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import HTTPException, Request
+
 from tee_inference.service.app import from_environment
 from tee_inference.service.attestation import DstackClient
 
@@ -77,6 +78,7 @@ class ReceiptFault:
                 and scope.get("path") == "/v1/jobs"
                 and control("/state")["mode"] == "missing_receipt"
             ):
+                control("/effect", {"mode": "missing_receipt"})
                 # Alter the live HTTP response after actual native operation and publication.
                 message = {
                     **message,

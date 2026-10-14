@@ -12,9 +12,9 @@ import sys
 import threading
 import time
 import urllib.request
-from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 stopping = False
 child = None
@@ -71,6 +71,8 @@ class Handler(BaseHTTPRequestHandler):
             Path("/etc/hosts").write_text(
                 hosts_original + ("\n127.0.0.1 " + hostname + "\n" if mode == "log_unavailable" else "")
             )
+        elif self.path == "/effect" and body == {"mode": "missing_receipt"} and mode == "missing_receipt":
+            fault_hits += 1
         else:
             self.send_error(400)
             return
