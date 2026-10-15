@@ -8,16 +8,17 @@ The current prototype combines:
 
 - decentralized CNN training with multiple worker nodes,
 - smart-contract-based coordination and model metadata,
-- immutable per-round aggregation thresholds, deterministic equal-weight
+- fixed per-round collection targets and deadlines, deterministic equal-weight
   federated averaging, and TEE-signed input/output statements with atomic
   model publication,
 - local IPFS/Kubo storage for global model artifacts,
 - TDX/DCAP quote verification through Solidity contracts,
 - RSA signature verification for global model artifacts,
-- EZKL-based zero-knowledge inference for a single dataset image,
+- an optional EZKL-based zero-knowledge inference backend for local experiments,
 - AIR/TDX-bound ChestMNIST inference in a digest-pinned Phala TEE,
 - SCITT-CCF registration and local verification of transparency receipts,
-- and a local LangChain/Ollama agent that orchestrates contract lookup, artifact verification, and proof generation.
+- workload-scoped random participant keys held in memory and private tmpfs,
+- and a LangChain/Ollama agent using MCP tools, authenticated TEE calls, and evidence verification.
 
 
 ## Preview, recreate, or delete
@@ -42,119 +43,94 @@ training progress. After recreation, start training yourself in the UI.
 
 ## Architecture
 
-The diagram below shows the main runtime components and their connections.
+The diagram shows the selected Phala deployment with native TEE inference.
+Worker 0 performs training and serves inference inside the same worker image
+and CVM. Aggregation rotates among admitted workers; the agent invokes bounded
+tools and checks evidence. The optional [ZK backend](zk_inference/README.md)
+is a separate code path and is disabled in this Phala profile.
 
 ### Runtime Component Overview
 
 ```mermaid
 flowchart TB
-  subgraph Compose["Docker Components"]
-    direction TB
+  User["Participating organisation / user"]
+  Ollama["Ollama LLM<br/>Separate Phala CVM"]
+  QuoteAPI["Phala online quote verifier"]
+  Auditor["Independent verifier / authorised owner"]
 
-    subgraph Coordination["Coordination and Storage Layer"]
-      subgraph Anvil["anvil (local Ethereum chain)"]
-        direction LR
-      
-        AggregatorSelection["Aggregator Selection"]
-        DeviceRegistry["Device Registry"]
-        GMStorage["General Model Storage"]
-        AutomataDcapTdxV4Attestation["TDX/DCAP V4 Attestation"]
-      end
-      IPFS["ipfs\nmodel + signature artifacts"]
+  subgraph Runtime["Shared demo runtime - Phala CVM"]
+    UI["Web UI<br/>Training control, chat and evidence views"]
+    Control["Control API<br/>Provisioning and run lifecycle"]
+    Agent["AI agent + MCP tools<br/>Receiver authentication and evidence checks"]
+
+    subgraph Chain["Anvil - demo Ethereum ledger"]
+      Registry["DeviceRegistry<br/>RTMR3 replay, image policy and participant keys"]
+      DCAP["On-chain TDX/DCAP verifier<br/>Quote authentication"]
+      State["GMStorage + AggregatorSelection<br/>AggregationPolicy + MedicalSignerRegistry"]
     end
 
-    subgraph AgentLayer["Agent Layer"]
-      direction LR
-      AgentMain["run_agent.py\nworkflow orchestration"]
-      IPFSBundle["IPFS bundle\nselection + fetch"]
-      Verify["artifact verification\nCID + RSA signature"]
-      MCP["MCP / tool interface"]
-    end
-
-    subgraph Inference["Verifiable Inference Layer"]
-      direction LR
-      ZK["zk-inference\nHTTP service"]
-      Pipeline[".bin -> PyTorch \n -> ONNX -> EZKL"]
-      Artifacts["input.json\nwitness\nproof\nvk"]
-    end
-
-    subgraph Workers["DFL Worker Layer"]
-      direction LR
-      VM0["VM-0"]
-      VM1["VM-1\nselected aggregator"]
-      VM2["VM-..."]
-    end
-
-    subgraph Observability["Observability Layer"]
-      direction LR
-      Stores["Prometheus"]
-      Grafana["Grafana"]
-    end
+    IPFS["Kubo/IPFS<br/>Encrypted model bundles and recipient wrappers"]
+    Log["SCITT / CCF log<br/>Signed statements and inclusion receipts"]
+    Monitoring["Prometheus, Loki, Alloy and Grafana"]
   end
 
+  subgraph Participants["Participants - separate CVMs using the same approved worker image"]
+    subgraph Worker0["Worker 0 CVM - protected model processing"]
+      Train0["Node.js + Python<br/>Local training / rotating aggregation"]
+      Receiver["Native inference receiver<br/>Model preparation, jobs, AIR and Sello"]
+    end
+    OtherWorkers["Workers 1..N - individual CVMs<br/>Local training / rotating aggregation"]
+  end
 
-  GMStorage --> IPFS
-  IPFS --> Pipeline
+  User --> UI
+  UI -->|Training controls| Control
+  UI <-->|Chat and verified results| Agent
+  Agent <-->|Language-model requests| Ollama
+  Control -.->|Provision and manage| Participants
 
-  VM1 <--> AggregatorSelection
+  Train0 -->|Attested registration| Registry
+  OtherWorkers -->|Attested registration| Registry
+  Registry -->|Appraise quote| DCAP
+  Train0 <-->|Signed contributions and publications| State
+  OtherWorkers <-->|Signed contributions and publications| State
+  Train0 <-->|Encrypted local-model transfer| OtherWorkers
+  Train0 <-->|Publish / retrieve encrypted models| IPFS
+  OtherWorkers <-->|Publish / retrieve encrypted models| IPFS
 
-  VM0 --> |"local model"| VM1
-  VM2 --> |"local model"| VM1
+  Agent -->|Resolve admitted receiver| Registry
+  Agent <-->|Attestation-bound TLS, Sello token and PoP| Receiver
+  Agent -->|Fresh quote appraisal| QuoteAPI
+  Receiver -->|Resolve accepted publication| State
+  Receiver -->|Fetch encrypted model; decrypt internally| IPFS
+  Receiver -->|Publish signed AIR / Sello evidence| Log
+  Agent -->|Publish session evidence; verify inclusion| Log
 
-  VM0 --> GMStorage
-  VM2 --> GMStorage
+  State -.->|Accepted history and authority| Auditor
+  Registry -.->|Public key snapshots| Auditor
+  IPFS -.->|Retained encrypted artifacts| Auditor
+  Log -.->|Evidence and receipts| Auditor
+  Auditor -->|Fresh inference quote appraisal| QuoteAPI
+  Participants -.->|Metrics and logs| Monitoring
+  UI -.->|Dashboards| Monitoring
 
-  VM0 --> DeviceRegistry
-  VM1 --> DeviceRegistry
-  VM2 --> DeviceRegistry
-
-  DeviceRegistry <--> AutomataDcapTdxV4Attestation
-
-  IPFSBundle --> Verify
-  AgentMain --> IPFSBundle
-  IPFSBundle <--> GMStorage
-  Verify --> MCP
-  MCP --> ZK
-  MCP --> AgentMain 
-
-  ZK --> Pipeline
-
-  Pipeline --> Artifacts
-
-  Workers --> Stores
-  Stores --> Grafana
-
-  Artifacts --> MCP
+  classDef service fill:#fff5d6,stroke:#9b813c,color:#222;
+  classDef workload fill:#e8f0ff,stroke:#5475a6,color:#222;
+  classDef external fill:#f2f2f2,stroke:#777,color:#222;
+  class UI,Control,Agent,Registry,DCAP,State,IPFS,Log,Monitoring service;
+  class Train0,Receiver,OtherWorkers workload;
+  class User,Ollama,QuoteAPI,Auditor external;
 ```
 
-## Stable UI address through GitHub Pages
+Blue nodes perform protected model processing; yellow nodes provide shared
+runtime services. Solid arrows show runtime interactions, and dashed arrows
+show lifecycle control, external auditing, or observability.
 
-The `Publish Phala UI Redirect` workflow publishes a small redirect at
-`https://uzhw8rgl.github.io/vita-fl/`. It runs after successful Phala image
-publish/deploy workflows and reads the latest successful deployment's public
-UI endpoint from its Actions logs. Deployment completion time determines the
-target, so builds that finish out of order cannot select an older runtime.
-Stale-build skips do not supply a new endpoint. Before publishing, the workflow
-checks `/ui-health`; an unavailable UI leaves the existing Pages deployment in
-place and fails the redirect workflow.
-
-One-time setup, after pushing the redirect workflow to the default branch:
-
-1. Open **Settings → Pages → Build and deployment** and select **GitHub Actions**
-   as the source.
-2. In **Actions → Publish Phala UI Redirect**, choose **Run workflow** to publish
-   the current UI without redeploying Phala. Pushing changes to the redirect
-   builder also starts this workflow.
-3. Use `https://uzhw8rgl.github.io/vita-fl/` as the stable entry point. The browser
-   then switches to the current Phala URL; the existing UI login still applies.
-
-The artifact contains only `index.html`, `endpoint.json`, and `.nojekyll`.
-It contains no deployment configuration, Terraform state, credentials or logs.
-No DuckDNS token or additional cloud server is needed. Redirect code changes
-are outside the Phala image publishers' path filters, so updating this entry
-point does not itself deploy or reset the runtime. GitHub Pages changes can
-take a few minutes to propagate, and a fresh Phala runtime can be unavailable
-during recreation. Local deployments require a separate Pages workflow run;
-this redirect discovers deployments completed through GitHub Actions.
-
-See [GitHub Pages custom workflows](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
+Each worker creates fresh action, RSA, Sello, and AIR keys for its workload
+lifetime. Private participant keys stay in memory or private tmpfs; a new
+workload starts with new keys and needs fresh admission. A frozen run roster
+cannot replace the previous identity; recovery uses surviving admitted workers.
+Inference decrypts models inside Worker 0 and returns predictions and evidence
+to the agent.
+Independent checks use accepted ledger state, authentic policy references,
+retained artifacts and statements; owner-content checks additionally require
+the owner's disclosure capability.

@@ -155,6 +155,38 @@ contract GMStoragePenaltyTest is ActionKeyTest {
         assertTrue(gmStorage.penaltyApplied(1, missingWorker, keccak256(bytes("missed_model_deadline"))));
     }
 
+    function testRepeatedPenaltyDecrementsPositiveScoreOnlyOnce() public {
+        // Two authentic contribution credits make a second decrement observable.
+        _recordSignedModelSubmission(
+            gmStorage, aggregator, aggregator, missingWorker, 1, keccak256("missing-worker-round-one")
+        );
+        finalizeCurrentRound("global-model-round-one", "global-signature-round-one", "global-key-bundle-round-one");
+        assertEq(gmStorage.getContribution(missingWorker), 2);
+
+        selection.setSelectionRound(2);
+        vm.prank(aggregator);
+        gmStorage.openModelSubmissions(2);
+        _recordSignedModelSubmission(
+            gmStorage, aggregator, aggregator, submittingWorker, 2, keccak256("submitting-worker-round-two")
+        );
+        vm.prank(aggregator);
+        gmStorage.closeModelSubmissions(2);
+
+        vm.recordLogs();
+        vm.prank(aggregator);
+        gmStorage.penalizeContribution(2, aggregator, singleTarget(missingWorker), "missed_model_deadline");
+        assertEq(gmStorage.getContribution(missingWorker), 1);
+        assertTrue(gmStorage.penaltyApplied(2, missingWorker, keccak256(bytes("missed_model_deadline"))));
+        assertEq(vm.getRecordedLogs().length, 1);
+
+        vm.recordLogs();
+        vm.prank(aggregator);
+        gmStorage.penalizeContribution(2, aggregator, singleTarget(missingWorker), "missed_model_deadline");
+        assertEq(gmStorage.getContribution(missingWorker), 1);
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertEq(gmStorage.getContribution(submittingWorker), 3);
+    }
+
     function testAggregatorCannotUseArbitraryPenaltyReason() public {
         closeCurrentRound();
         vm.expectRevert(bytes("Invalid worker penalty reason"));

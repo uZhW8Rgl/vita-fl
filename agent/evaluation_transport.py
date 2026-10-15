@@ -103,8 +103,12 @@ def run_case(case, job_id, state):
     session, peer = establish(call)
     if case == "restart_old_session":
         old = state.get("transport_reference")
-        if not old or old[1] == peer:
-            raise ValueError("confirmed receiver key change required")
+        if not old:
+            raise ValueError("pre-restart positive control required")
+        # A native receiver-process restart loses its cache while the same
+        # workload's TLS key remains valid. The external suite must independently
+        # confirm replacement of that process; a whole workload restart instead
+        # loses keys and may fail admission before this endpoint is reachable.
         try:
             from .tee_inference_client import fetch_latest_verified_tee_model_bundle
         except ImportError:
