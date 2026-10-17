@@ -39,7 +39,7 @@ class CombinedWorkerScriptTests(unittest.TestCase):
 
         server = NODE_SERVER_SOURCE.read_text(encoding="utf-8")
         self.assertNotIn("/runtime/ready.json", server)
-        self.assertIn("/runtime/bootstrap-recipients.json", server)
+        self.assertIn("snapshotRegisteredRunRoster", server)
         self.assertIn("waitForRegisteredBootstrapRecipients", server)
 
     def test_round_zero_encrypts_unsigned_initial_model_without_worker_training(self) -> None:
@@ -62,7 +62,8 @@ class CombinedWorkerScriptTests(unittest.TestCase):
         self.assertNotIn("admission_generation_sha256", snapshot)
         self.assertIn("getCommittedRunRosterState", server)
         self.assertIn("frozenRecipientsForCommittedRoster", server)
-        self.assertIn("onchain_roster_digest", server)
+        self.assertIn("snapshotRegisteredRunRoster()", server)
+        self.assertNotIn("validateBootstrapDeclarationAgainstCommittedRoster", server)
         self.assertIn("getCommittedRunRosterState", ipfs)
         self.assertIn("frozenBootstrapRecipients", ipfs)
         self.assertIn("aggregator.round0.bootstrap_recovery", server)

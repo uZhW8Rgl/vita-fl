@@ -1,0 +1,25 @@
+name: vita-fl-own-kms
+services:
+  anvil:
+    # Existing public VITA-FL image, with Foundry 1.8.0; bypass its bootstrap.
+    image: ghcr.io/uzhw8rgl/master-thesis-smart-contracts@sha256:19180092da9e8a7b4783fba589788d1269f2e216e01efb39e8021819901a32ad
+    entrypoint: /root/.foundry/bin/anvil
+    command: ["--host", "0.0.0.0", "--port", "8545", "--chain-id", "31337", "--state", "/state/anvil.json", "--state-interval", "5", "--silent"]
+    ports: ["127.0.0.1:18545:8545"]
+    volumes: ["anvil-state:/state"]
+    stop_grace_period: 15s
+  boot-auth:
+    build:
+      context: ..
+      dockerfile: kms/Dockerfile
+    environment:
+      ETH_RPC_URL: http://anvil:8545
+      KMS_CONTRACT_ADDR: ${KMS_CONTRACT_ADDR:-0x0000000000000000000000000000000000000000}
+      EXPECTED_CHAIN_ID: "31337"
+    ports: ["127.0.0.1:18001:8000"]
+    depends_on: [anvil]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+volumes:
+  anvil-state:

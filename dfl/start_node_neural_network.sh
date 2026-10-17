@@ -25,7 +25,7 @@ cleanup() {
     if [ -n "${RUNTIME_ENV_FILE}" ]; then
         rm -f "${RUNTIME_ENV_FILE}"
     fi
-    rm -f /run/vita-fl/sello-signing.seed /run/vita-fl/air-signing.seed
+    rm -f /run/vita-fl/sello-signing.seed /run/vita-fl/air-signing.seed /run/vita-fl/action-root.seed
     rm -f \
         "${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH:-/run/vita-fl/participant-private.pem}" \
         "${PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH:-/run/vita-fl/participant-public.pem}"
@@ -52,7 +52,7 @@ if [ "${DOCKER:-}" != "phala" ] && [ "${PARTICIPANT_KEY_PROVIDER:-}" = "file" ];
     export PARTICIPANT_RSA_PRIVATE_KEY_FILE=${PARTICIPANT_RSA_PRIVATE_KEY_FILE:-${RSA_PRIVATE_KEY_FILE:-}}
 fi
 rm -f "${PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH}" "${PARTICIPANT_PUBLIC_KEY_RUNTIME_PATH}"
-rm -f /run/vita-fl/sello-signing.seed /run/vita-fl/air-signing.seed
+rm -f /run/vita-fl/sello-signing.seed /run/vita-fl/air-signing.seed /run/vita-fl/action-root.seed
 
 DATASET_NAME=${DATASET_NAME:-mnist}
 BOOTSTRAP_MODEL_SRC=${BOOTSTRAP_MODEL_SRC:-/dfl/initial_gm/${DATASET_NAME}/aggregated.bin}
@@ -351,7 +351,8 @@ fi
 
 # Seeds are generated once for this complete workload, before any public service
 # starts. Co-located processes read the same private tmpfs files. There is no
-# dstack GetKey derivation or persistent backup of participant secrets.
+# persistent backup in ephemeral mode. Explicit kms mode first validates the
+# shared AppAuth binding, then restores only authenticated encrypted state.
 if [ "${DOCKER:-}" = "phala" ]; then
     node /dfl/node_server/dist/runtime_keys.js
 fi

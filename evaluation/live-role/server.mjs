@@ -105,6 +105,7 @@ async function dispatch(p){
    const x=p.commitment;
    return await transact(gm,gm.methods.recordModelSubmission(x.round,x.worker,x.modelHash,x.packageHash,x.parentModelHash,x.workerNonce,x.workerSignature));
   }
+  case 'snapshot':return await transact(registry,registry.methods.snapshotRunRoster());
   case 'open':return await transact(gm,gm.methods.openModelSubmissions(p.round));
   case 'close':return await transact(gm,gm.methods.closeModelSubmissions(p.round));
   case 'select':return await transact(selection,selection.methods.triggerAggregatorSelection());

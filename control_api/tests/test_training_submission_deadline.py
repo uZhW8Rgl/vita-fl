@@ -120,7 +120,6 @@ class TrainingSubmissionDeadlineTests(unittest.IsolatedAsyncioTestCase):
             patch.object(server, "phala_runtime_mode", return_value=True),
             patch.object(server, "phala_worker_controller", return_value=controller),
             patch.object(server, "configure_default_aggregation_policy", return_value={}) as policy,
-            patch.object(server, "commit_run_roster", return_value={}),
             patch.object(server, "publish_bootstrap_recipient_declaration", return_value={}),
             patch.object(server, "reset_runtime_telemetry"),
             patch.object(server, "phala_runtime_status", new=AsyncMock(return_value={})),

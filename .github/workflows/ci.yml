@@ -5,10 +5,12 @@ on:
     branches:
       - main
       - phala_app_key
+      - kms
   pull_request:
     branches:
       - main
       - phala_app_key
+      - kms
   workflow_dispatch:
 
 permissions:
@@ -34,6 +36,9 @@ jobs:
 
       - name: Validate Docker Compose
         run: docker compose --env-file .env.example --env-file .env.phala.anvil.example -f compose.yml config > /tmp/compose.expanded.yml
+
+      - name: Validate optional own-KMS policy stack
+        run: docker compose -f kms/compose.yaml config --quiet
 
       - name: Check for unresolved merge markers
         run: |
@@ -72,10 +77,10 @@ jobs:
           python -m pip install -e dfl/neural_network
 
       - name: Run Ruff lint
-        run: ruff check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security ui_redirect
+        run: ruff check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security ui_redirect kms
 
       - name: Check formatting
-        run: ruff format --check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security ui_redirect
+        run: ruff format --check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security ui_redirect kms
 
       - name: Test stable UI redirect
         run: PYTHONPATH=. python -m unittest ui_redirect.test_pages -v
@@ -123,6 +128,9 @@ jobs:
 
       - name: Run Phala configuration unit tests
         run: PYTHONPATH=. python -m unittest discover -s phala -p 'test_*.py' -v
+
+      - name: Check own-KMS configuration and pinned upstream sources
+        run: python -m pytest -q kms
 
       - name: Run DFL neural-network and provenance tests
         run: PYTHONPATH=. python -m pytest -q dfl/neural_network/tests
@@ -206,7 +214,10 @@ jobs:
       - name: Run tests
         env:
           REQUIRE_ANVIL_TESTS: "1"
-        run: npm test
+        run: |
+          npm test
+          node --test ../../phala/test_kms_provision.mjs
+          node --test ../../kms/*.test.mjs
 
   smart-contracts:
     name: Smart Contracts
@@ -239,6 +250,13 @@ jobs:
 
       - name: Run contract tests
         run: forge test -vvv
+
+      - name: Test BootAuth against the original KMS contracts on Anvil
+        env:
+          REQUIRE_ANVIL_TESTS: "1"
+        run: |
+          npm ci --prefix ../dfl/node_server --ignore-scripts
+          node --test ../kms/anvil.integration.mjs
 
   docker-builds:
     name: Docker Build (${{ matrix.name }})
@@ -275,6 +293,10 @@ jobs:
             context: .
             dockerfile: smart_contracts/Dockerfile
             image: smart-contracts
+          - name: kms-boot-auth
+            context: .
+            dockerfile: kms/Dockerfile
+            image: kms-boot-auth
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

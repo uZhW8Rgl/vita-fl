@@ -93,33 +93,61 @@ path used for later model publications. Round 0 cannot be aborted into a
 replacement-aggregator round; a failed W0 bootstrap therefore remains pending
 until W0 completes it or the run is restarted.
 
-## Exact Run Admission
+## Open Attested Admission and Training Snapshot
 
-Contract deployment leaves worker admission closed. At **Start Training**, the
-Control API uses the `DeviceRegistry` owner key to call `commitRunRoster` once
-with the exact ordered participant addresses; the first address must be the
-already configured bootstrap aggregator W0. The contract stores both the order
-and `keccak256(abi.encode(roster))`. Only those logical participants may then
-submit a DCAP-bound registration. The final required registration sets
-`runRosterFrozen`, after which deregistration, action-key rotation, public-key
-replacement, membership changes and admission-policy changes all fail closed.
+Registration opens once the shared verifier, image digest and role policies are configured.
+There is no owner-selected participant allowlist and no `commitRunRoster(address[])`
+entry point. Only successful quote-bound registration grants authorization; owner
+calls cannot bypass it. The first successful registration locks the admission policy.
 
-The ordered on-chain roster and `runRosterDigest` are the run authority.
-`/runtime/bootstrap-recipients.json` is only a first-start readiness transport:
-W0 compares it with the commitment before creating its protected public-key snapshot,
-then performs restart recovery from the immutable on-chain roster and verifies
-every snapshotted RSA key byte-for-byte against `DeviceRegistry`. Aggregator
-selection and every later global-model encryption consequently use the same
-frozen participant set rather than a mutable off-chain registry view.
+The first successfully registered receipt-serving workload becomes the bootstrap
+participant. Once its configured minimum number of registrations is present, it calls
+`snapshotRunRoster()` without an address argument. This includes **all** successfully
+registered participants at that transaction's block, with the bootstrap participant
+first. The Control API's deployment inventory and MFS marker cannot exclude anyone.
+
+The snapshot fixes the current training's RSA recipients and recovery electorate.
+Registration remains open afterwards (`isAuthorized` and `getAuthorizedDevices`);
+late arrivals cannot modify this already encrypted training's snapshot. Protocol
+operations use `isRunParticipant`/`getRunDevices`. A subsequent training deployment
+can include those arrivals. Dynamic admission to an ongoing encrypted training is
+not implemented by this snapshot mechanism.
+
+## KMS-Gated Stable Keys
+
+`src/kms/WorkerAppAuthFactory.sol` creates an AppAuth contract automatically from
+an exact canonical app_compose preimage that passes the shared registry policy.
+This pre-boot approval does not register a participant. Each operator uses their
+own wallet and Phala account. No operator has a method to broaden their AppAuth's
+Compose allowlist, transfer policy ownership, or upgrade its implementation.
+
+At boot, dstack verifies attestation and consults `WorkerAppAuth.isAppAllowed`.
+The policy checks its own app ID, the original Compose hash, UpToDate TCB status,
+and the still-approved shared image/role policy. The platform KMS additionally
+controls acceptable OS measurements. The contracts target dstack v0.5.9's IAppAuth ABI.
+
+In KMS mode, enrollment also checks the replay-verified `app-id` and `key-provider`
+events. They must identify a factory-created AppAuth for this Compose and the
+shared trusted KMS public identity. An operator-controlled permissive AppAuth or
+another KMS therefore cannot satisfy enrollment. Configure the factory and the
+exact key-provider payload hash **before** the first enrollment with
+`script/ConfigureKms.s.sol`.
+
+The DFL registry and the selected KMS policy must be on the same chain. Hosted
+Phala onchain KMS uses Ethereum/Base; the [own dstack KMS path](../kms/README.md)
+vendors the original contracts and can use Anvil. The existing Anvil/PHALA
+Terraform deployment remains the ephemeral profile;
+it does not obtain this protection by setting an environment flag. See the KMS
+setup in `../phala/README.md` for the separate deployment path and live-validation limits.
 
 ## Logical Participants and TEE Action Keys
 
 The contracts distinguish a logical participant address `W` from an
 application-bound TEE action address `A`. Contribution scores, selection and
 model metadata continue to use `W`; participant protocol transactions must come
-from the currently registered `A`. Restarting the same measured application
-deterministically derives the same action address, while a different measured
-application or derivation context cannot reuse that registration.
+from the currently registered `A`. The ephemeral profile generates fresh action keys per workload. The explicitly
+configured KMS profile restores the same encrypted key bundle after an authorized
+boot and requires a fresh nonce-bound enrollment quote.
 
 During registration, `DeviceRegistry` requires all three statements:
 
@@ -129,10 +157,11 @@ During registration, `DeviceRegistry` requires all three statements:
    Compose hash and that nonce; and
 3. `msg.sender == A`.
 
-A new fully attested registration atomically replaces `A`. The reverse mapping
-for the previous action address is deleted before the new registration becomes
-usable, so the prior process can no longer call worker or aggregator functions.
-Self-deregistration likewise requires the participant's current action address.
+KMS re-enrollment preserves the registered action, RSA and receipt keys, Compose
+identity and Phala app ID, while advancing the registration nonce. It cannot reset
+scores, which remain keyed by logical participant. Changed keys fail closed.
+Members of the current training snapshot cannot deregister or replace keys;
+other admitted participants may deregister using their current action key.
 
 `GMStorage` and `AggregatorSelection` never treat `W` as transaction authority.
 They resolve `msg.sender` through `DeviceRegistry` and retain `W` only as the
@@ -193,7 +222,7 @@ docker compose -f compose.yml up --build --force-recreate
 
 This command brings up the base runtime and completes contract deployment; it
 does not preselect or start worker identities. Continue in the browser UI's
-**Training Setup** tab and use **Start Training** to commit the exact roster and
+**Training Setup** tab and use **Start Training** to launch the configured workers and
 launch the selected workers.
 
 ## RTMR3 Workload Policy

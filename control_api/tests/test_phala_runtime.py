@@ -506,51 +506,8 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertRegex(raw_transaction, r"^0x[a-fA-F0-9]+$")
 
-    def test_exact_existing_run_roster_commit_is_an_idempotent_retry(self) -> None:
-        from eth_utils import keccak
-
-        roster = [
-            "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        ]
-        digest = "0x" + keccak(server._encode_address_array_argument(roster)).hex()
-        owner = "0x" + "aa" * 20
-        existing = {
-            "address": "0x" + "11" * 20,
-            "committed": True,
-            "frozen": False,
-            "digest": digest,
-            "worker_count": 2,
-            "registered_worker_count": 0,
-            "roster": roster,
-        }
-        with (
-            patch.object(
-                server,
-                "verified_setup_contract_env_values",
-                return_value={
-                    "RPC_URL": "http://anvil:8545",
-                    "REGISTRY_ADDRESS": "0x" + "11" * 20,
-                    "ETH_WALLET_PRIVATE_KEY": "0x" + "44" * 32,
-                },
-            ),
-            patch.object(server, "_ethereum_account_address", return_value=owner),
-            patch.object(server, "_ethereum_rpc", return_value="0x"),
-            patch.object(server, "_rpc_address", return_value=owner),
-            patch.object(
-                server,
-                "read_current_aggregator",
-                return_value={"address": roster[0], "vm": "VM-0"},
-            ),
-            patch.object(server, "read_run_roster_state", return_value=existing),
-            patch.object(server, "_sign_ethereum_transaction") as sign_transaction,
-        ):
-            result = server.commit_run_roster(roster)
-
-        self.assertTrue(result["idempotent"])
-        self.assertIsNone(result["transaction_hash"])
-        self.assertEqual(result["roster"], roster)
-        sign_transaction.assert_not_called()
+    def test_control_api_cannot_preselect_on_chain_participants(self) -> None:
+        self.assertFalse(hasattr(server, "commit_run_roster"))
 
     async def test_training_start_preflights_then_configures_policy_before_worker_scale(self) -> None:
         normalized = {
@@ -587,10 +544,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             operation_order.append("select")
             return [worker["account_address"] for worker in workers]
 
-        def commit_roster(_addresses):
-            operation_order.append("commit")
-            return {"transaction_hash": "0x" + "33" * 32}
-
         def scale_workers(*_args):
             operation_order.append("scale")
             return worker_status
@@ -616,7 +569,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=configure_policy,
             ),
             patch.object(server, "phala_worker_controller", return_value=controller),
-            patch.object(server, "commit_run_roster", side_effect=commit_roster),
             patch.object(
                 server,
                 "publish_bootstrap_recipient_declaration",
@@ -653,7 +605,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "select",
                 "reset-telemetry",
                 "policy",
-                "commit",
                 "scale",
                 "publish",
             ],
@@ -682,7 +633,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(server, "write_training_config"),
             patch.object(server, "phala_worker_controller", return_value=controller),
             patch.object(server, "configure_default_aggregation_policy") as configure_policy,
-            patch.object(server, "commit_run_roster") as commit_roster,
             patch.object(
                 server,
                 "current_training_runtime_status",
@@ -696,7 +646,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("at most 0 additional workers", raised.exception.detail)
         controller.selected_account_addresses.assert_not_called()
         configure_policy.assert_not_called()
-        commit_roster.assert_not_called()
         controller.scale.assert_not_called()
 
     async def test_training_start_rejects_preexisting_phala_workers_before_commit(self) -> None:
@@ -720,7 +669,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(server, "write_training_config"),
             patch.object(server, "phala_worker_controller", return_value=controller),
             patch.object(server, "configure_default_aggregation_policy") as configure_policy,
-            patch.object(server, "commit_run_roster") as commit_roster,
             patch.object(
                 server,
                 "current_training_runtime_status",
@@ -733,7 +681,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.status_code, 500)
         self.assertIn("already has deployed workers", raised.exception.detail)
         configure_policy.assert_not_called()
-        commit_roster.assert_not_called()
         controller.scale.assert_not_called()
 
     async def test_bootstrap_start_retry_reuses_only_the_exact_committed_roster(self) -> None:
@@ -761,10 +708,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             operation_order.append("scale") or {"deployed_worker_count": 2, "workers": workers}
         )
 
-        def commit_roster(_addresses):
-            operation_order.append("commit")
-            return {"idempotent": True, "digest": "0x" + "44" * 32}
-
         def publish_recipients(_addresses):
             operation_order.append("publish")
             return {"status": "declared"}
@@ -775,7 +718,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(server, "normalize_training_config", return_value=normalized),
             patch.object(server, "phala_worker_controller", return_value=controller),
             patch.object(server, "configure_default_aggregation_policy") as configure_policy,
-            patch.object(server, "commit_run_roster", side_effect=commit_roster),
             patch.object(
                 server,
                 "publish_bootstrap_recipient_declaration",
@@ -806,7 +748,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await server.start_training(Mock(), normalized)
 
-        self.assertEqual(operation_order, ["preflight", "select", "commit", "scale", "publish"])
+        self.assertEqual(operation_order, ["preflight", "select", "scale", "publish"])
         self.assertTrue(result["resumed_committed_roster"])
         reset_telemetry.assert_not_called()
         configure_policy.assert_not_called()
@@ -901,10 +843,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             operation_order.append("policy")
             return {"transaction_hash": "0x" + "22" * 32}
 
-        def commit_roster(_addresses):
-            operation_order.append("commit")
-            return {"idempotent": False, "digest": "0x" + "44" * 32}
-
         def publish_recipients(_addresses):
             operation_order.append("publish")
             return {"status": "declared"}
@@ -920,7 +858,6 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(server, "reset_services", side_effect=reset_services),
             patch.object(server, "reset_observability_state", new=AsyncMock(return_value=[])),
             patch.object(server, "configure_default_aggregation_policy", side_effect=configure_policy),
-            patch.object(server, "commit_run_roster", side_effect=commit_roster),
             patch.object(server, "use_local_ollama", return_value=False),
             patch.object(server, "run_subprocess", new=AsyncMock(return_value={"returncode": 0})),
             patch.object(server, "wait_for_service_ready", new=AsyncMock(return_value={})),
@@ -929,8 +866,7 @@ class PhalaRuntimeTests(unittest.IsolatedAsyncioTestCase):
             result = await server.start_training_services(config)
 
         self.assertEqual(operation_order[0], "reset:agent,zk-inference,VM-0,VM-1")
-        self.assertLess(operation_order.index("policy"), operation_order.index("commit"))
-        self.assertLess(operation_order.index("commit"), operation_order.index("publish"))
+        self.assertLess(operation_order.index("policy"), operation_order.index("publish"))
         self.assertFalse(result["resumed_committed_roster"])
 
     async def test_generic_worker_scale_cannot_create_a_training_roster(self) -> None:

@@ -26,11 +26,15 @@ contract SelectionDeviceRegistryStub {
         }
     }
 
+    function isRunParticipant(address device) external view returns (bool) { return authorized[device]; }
+
     function isAuthorized(address device) external view returns (bool) {
         return authorized[device];
     }
 
-    function getAuthorizedDevices() external view returns (address[] memory) {
+    function bootstrapParticipant() external pure returns (address) { return address(0); }
+
+    function getRunDevices() external view returns (address[] memory) {
         uint256 count;
         for (uint256 i = 0; i < authorizedDevices.length; i++) {
             if (authorized[authorizedDevices[i]]) {
@@ -169,6 +173,8 @@ contract AggregatorSelectionAccessTest is ActionKeyTest {
         assertEq(selection.lastSelectionRound(), 1);
         assertEq(selection.system_state(), "TRAINING");
         assertTrue(selection.getCurrentAggregator() != address(0));
+        assertTrue(selection.getCurrentAggregator() != aggregator);
+        assertTrue(registry.isAuthorized(selection.getCurrentAggregator()));
     }
 
     function testUnauthorizedCallerCannotTriggerRegularSelection() public {

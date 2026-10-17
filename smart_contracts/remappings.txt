@@ -5,3 +5,4 @@ automata-dcap-v3-attestation/=lib/automata-dcap-v3-attestation/contracts/
 @automata-network/on-chain-pccs/=lib/automata-dcap-v3-attestation/lib/automata-on-chain-pccs/src/
 solady/=lib/automata-dcap-v3-attestation/lib/automata-on-chain-pccs/lib/solady/src/
 p256-verifier/=lib/p256-verifier/src/
+dstack-oz/=vendor/openzeppelin-5.4.0/

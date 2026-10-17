@@ -1,0 +1,59 @@
+{
+  "checked_at": "2026-10-15T08:00:30.630853+00:00",
+  "branch": "kms",
+  "scope": "Local policy/runtime tests; no genuine DCAP boot or secret-release measurement for the own KMS",
+  "checks": {
+    "solidity": {
+      "passed": 167,
+      "failed": 0,
+      "command": "cd smart_contracts && forge test"
+    },
+    "node_runtime": {
+      "passed": 118,
+      "failed": 0,
+      "command": "cd dfl/node_server && npm run build && REQUIRE_ANVIL_TESTS=1 npm test"
+    },
+    "node_auxiliary": {
+      "passed": 8,
+      "failed": 0,
+      "command": "node --test kms/*.test.mjs phala/test_kms_provision.mjs evaluation/live-role/rpc.test.mjs"
+    },
+    "kms_final_integration_and_units": {
+      "passed": 6,
+      "failed": 0,
+      "command": "REQUIRE_ANVIL_TESTS=1 node --test kms/anvil.integration.mjs kms/*.test.mjs phala/test_kms_provision.mjs",
+      "overlaps_auxiliary_tests": true
+    },
+    "python_kms": {
+      "passed": 10,
+      "failed": 0,
+      "command": "python -m pytest -q kms"
+    },
+    "boot_auth_container_build": "passed",
+    "compose_policy_stack_validation": "passed",
+    "rendered_kms_compose_validation": "passed",
+    "real_kms_image_startup_shell_syntax": "passed",
+    "ruff": "passed",
+    "ci_yaml_parse": "passed",
+    "git_diff_check": "passed"
+  },
+  "real_kms": {
+    "image": "dstacktee/dstack-kms@sha256:e959bc5b4c7664d26543801073cc445d806fcea49a240881f707d1998e2d871c",
+    "upstream_commit": "282eeb27d22d8f091ad0fa5a90e638f85cf68751",
+    "bootstrapped": false,
+    "cloud_secret_release_tested": false
+  },
+  "cloud": {
+    "preflight": "phala-preflight-20261015.json",
+    "blocker": "Phala workspace does not permit KMS URL updates (HTTP 403)",
+    "new_cvms_created": 0,
+    "existing_cvms_started": 0,
+    "kms_urls_changed": false
+  },
+  "remaining_live_checks": [
+    "Own KMS bootstrap with genuine attestation and protected local-provider root storage",
+    "Worker provisioning with factory-created app ID and trusted own KMS",
+    "Secret continuity for unchanged workload after restart",
+    "Actual old-key withholding after changed Compose under the same app ID"
+  ]
+}

@@ -1,0 +1,176 @@
+{
+  "checked_at": "2026-10-15T08:44:09.779398+00:00",
+  "operation": "GET /api/v1/kms?page_size=100, all pages",
+  "api_version": "2026-01-21",
+  "pages": 1,
+  "node_count": 40,
+  "onchain_chain_ids": [
+    1,
+    8453
+  ],
+  "sepolia_chain_id": 11155111,
+  "sepolia_present": false,
+  "public_nodes": [
+    {
+      "id": "kms_qXepxPel",
+      "chain_id": null
+    },
+    {
+      "id": "kms_xGjXQyeR",
+      "chain_id": 1
+    },
+    {
+      "id": "kms_E9w02oeb",
+      "chain_id": 1
+    },
+    {
+      "id": "kms_dOwmMZw3",
+      "chain_id": 8453
+    },
+    {
+      "id": "kms_rNKq8Ye4",
+      "chain_id": null
+    },
+    {
+      "id": "kms_xEeQ9rek",
+      "chain_id": null
+    },
+    {
+      "id": "kms_p9wP91jk",
+      "chain_id": null
+    },
+    {
+      "id": "kms_WEKLgYeG",
+      "chain_id": null
+    },
+    {
+      "id": "kms_V2j7gmjm",
+      "chain_id": null
+    },
+    {
+      "id": "kms_pEKByJel",
+      "chain_id": null
+    },
+    {
+      "id": "kms_pVKZ2vKr",
+      "chain_id": 1
+    },
+    {
+      "id": "kms_nBKyzvwl",
+      "chain_id": 1
+    },
+    {
+      "id": "kms_QEKvmzeb",
+      "chain_id": 1
+    },
+    {
+      "id": "kms_JvKkvWe6",
+      "chain_id": 8453
+    },
+    {
+      "id": "kms_azjdXQjv",
+      "chain_id": 1
+    },
+    {
+      "id": "kms_xdengXKY",
+      "chain_id": null
+    },
+    {
+      "id": "kms_3NjJqqwo",
+      "chain_id": 8453
+    },
+    {
+      "id": "kms_r5wVLPed",
+      "chain_id": 8453
+    },
+    {
+      "id": "kms_b3jxmeRx",
+      "chain_id": null
+    },
+    {
+      "id": "kms_zvKGqj8P",
+      "chain_id": null
+    },
+    {
+      "id": "kms_3dw1LKM7",
+      "chain_id": null
+    },
+    {
+      "id": "kms_rMeDXeQ9",
+      "chain_id": null
+    },
+    {
+      "id": "kms_dveOzjgA",
+      "chain_id": null
+    },
+    {
+      "id": "kms_qaj3MKb1",
+      "chain_id": null
+    },
+    {
+      "id": "kms_zmeYBK7N",
+      "chain_id": 8453
+    },
+    {
+      "id": "kms_23e2EjXz",
+      "chain_id": 8453
+    },
+    {
+      "id": "kms_XdwMqwGZ",
+      "chain_id": null
+    },
+    {
+      "id": "kms_qXepPelW",
+      "chain_id": null
+    },
+    {
+      "id": "kms_xGjXyeRg",
+      "chain_id": null
+    },
+    {
+      "id": "kms_dOwmZj3A",
+      "chain_id": null
+    },
+    {
+      "id": "kms_rNKqYK4Z",
+      "chain_id": null
+    },
+    {
+      "id": "kms_WEKLYwGk",
+      "chain_id": 1
+    },
+    {
+      "id": "kms_kpw4DwWL",
+      "chain_id": 8453
+    },
+    {
+      "id": "kms_opjg1KBD",
+      "chain_id": null
+    },
+    {
+      "id": "kms_pEKBJKlD",
+      "chain_id": null
+    },
+    {
+      "id": "kms_WmjbBjM0",
+      "chain_id": 8453
+    },
+    {
+      "id": "kms_QEKvzKbo",
+      "chain_id": null
+    },
+    {
+      "id": "kms_JvKkWK6O",
+      "chain_id": 1
+    },
+    {
+      "id": "kms_azjdQevB",
+      "chain_id": null
+    },
+    {
+      "id": "kms_xdenXwYb",
+      "chain_id": null
+    }
+  ],
+  "scope": "KMS catalog visible to the authenticated workspace; absence is not a statement that dstack cannot support Sepolia."
+}

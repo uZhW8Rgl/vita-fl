@@ -16,7 +16,7 @@ export type ParticipantKey = Readonly<{
     publicKey: KeyObject;
     publicKeyDer: Buffer;
     publicKeyDerHex: `0x${string}`;
-    source: "ephemeral-random" | "local-file";
+    source: "ephemeral-random" | "local-file" | "kms-sealed";
 }>;
 
 export type ParticipantKeyOptions = {
@@ -117,8 +117,13 @@ export const loadParticipantKey = async (
     const phala = env.DOCKER === "phala";
     const configuredProvider = String(env.PARTICIPANT_KEY_PROVIDER || "").trim();
     const provider = configuredProvider || (phala ? "ephemeral" : "");
-    if (phala && provider !== "ephemeral") {
+    if (phala && !["ephemeral", "kms"].includes(provider)) {
         throw new Error("Phala participant keys require the ephemeral key provider.");
+    }
+    if (provider === "kms" && phala) {
+        await requireVolatileDirectory();
+        // Only the guarded supervisor initializes this private tmpfs file.
+        return participantKey(crypto.createPrivateKey(await fs.readFile(PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH)), "kms-sealed", RSA_BITS);
     }
     if (provider === "ephemeral") {
         normalizeAddress(env.ACCOUNT_ADDRESS);

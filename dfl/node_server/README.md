@@ -19,31 +19,12 @@ The actual model training and aggregation implementation lives in `neural_networ
 
 Contract deployment publishes only an unsigned, plaintext initial-model CID
 and the worker-admission marker. Workers can therefore start and register their
-TEE-generated keys without waiting for a pre-encrypted model bundle. The
-Control API transports the exact selected roster to W0, but the immutable
-`DeviceRegistry.runRosterDigest` and ordered committed roster are authoritative.
-Before its first snapshot, W0 checks the MFS declaration against that on-chain
-commitment and waits until every committed worker has registered and the roster
-is frozen. It then reads every registered RSA key twice, rejects a changing
-view, and atomically persists the exact addresses and DER/SPKI keys in its
-protected participant-state directory. The snapshot contains only public keys
-and is bound to the on-chain roster digest and order. A round-0 restart
-validates the snapshot and each stored key byte-for-byte against the
-now-immutable on-chain registration, but
-does not reread MFS. A later mutable MFS marker therefore cannot wedge or
-retarget recovery, while a locally modified key snapshot fails closed.
-Subsequent model publications likewise encrypt for
-the complete frozen committed roster rather than a mutable authorized-device
-enumeration.
-
-Round 0 performs no local training. W0 fetches the deployment-fixed initial
-model CID, encrypts the model once, wraps the round key for every selected
-worker, signs the encrypted bundle with its registered participant key, and
-finalizes through the normal policy-bound aggregation path. Other workers wait
-for round 1 without participating in timeout recovery. The initial plaintext
-has no origin signature; recipients authenticate W0's encrypted bundle before
-decrypting it. Learned global models retain their existing plaintext model
-signatures in addition to the encrypted-bundle signature.
+TEE-generated keys without waiting for a pre-encrypted model bundle. The bootstrap workload waits for a configured minimum number of successful
+registrations, then snapshots **all** registered participants on-chain. No
+participant addresses are preapproved by the Control API and no MFS list controls
+admission. The snapshot fixes the current training's model recipients; later
+successful registrations remain valid system admissions for subsequent training
+deployments. RSA public-key snapshots are checked against that on-chain state.
 
 ## Runtime Role
 
@@ -71,9 +52,12 @@ separate:
 - Each Phala workload creates a new random secp256k1 action key. Its address
   is bound into registration REPORTDATA, the exact Compose evidence, and an
   enrollment authorization signed by the logical participant. The private key
-  remains in process memory and is never reconstructed from dstack material.
-  A new start requires fresh attested admission; an existing registration with
-  other keys fails closed. Frozen run rosters cannot rotate their bindings.
+  remains in process memory. In the explicit KMS profile the action root, RSA
+  key and Sello/AIR seeds are restored from authenticated encrypted state only
+  after validating the shared AppAuth/KMS binding. A new start submits fresh
+  nonce-bound attestation while retaining its logical identity and score.
+  Ephemeral mode retains its fresh-key behavior. Frozen snapshots cannot rotate
+  key bindings.
 - `DeviceRegistry`, `AggregatorSelection`, and `GMStorage` resolve transaction
   senders through the registered action-address-to-participant mapping. Worker
   and aggregator operations therefore have to be signed by the action key of a

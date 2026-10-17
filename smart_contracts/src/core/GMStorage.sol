@@ -4,8 +4,9 @@ pragma solidity ^0.8.19;
 import {StrictECDSA} from "../crypto/StrictECDSA.sol";
 
 interface IDeviceRegistry {
+    function isRunParticipant(address _address) external view returns (bool);
     function isAuthorized(address _address) external view returns (bool);
-    function getAuthorizedDevices() external view returns (address[] memory);
+    function getRunDevices() external view returns (address[] memory);
     function getDevice(address _address) external view returns (bool, string memory, string memory, bytes memory);
     function actionKeys(address participant) external view returns (address);
     function resolveAuthorizedParticipant(address actionKey) external view returns (address participant);
@@ -303,7 +304,7 @@ contract GMStorage {
         address aggregator = _requireActiveAuthorizedAggregator();
         require(expectedRound == round, "Submission round mismatch");
         IDeviceRegistry deviceRegistry = IDeviceRegistry(device_registry_address);
-        require(deviceRegistry.isAuthorized(worker), "Worker is not authorized");
+        require(deviceRegistry.isRunParticipant(worker), "Worker is not authorized");
         require(
             !IAggregatorSelection(aggregator_selection_address).isAggregator(worker),
             "Current aggregator cannot receive worker score"
@@ -612,7 +613,7 @@ contract GMStorage {
         view
         returns (address)
     {
-        address[] memory authorizedDevices = IDeviceRegistry(device_registry_address).getAuthorizedDevices();
+        address[] memory authorizedDevices = IDeviceRegistry(device_registry_address).getRunDevices();
         uint256 totalWeight = 0;
 
         for (uint256 i = 0; i < authorizedDevices.length; i++) {

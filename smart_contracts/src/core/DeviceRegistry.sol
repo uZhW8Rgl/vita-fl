@@ -13,6 +13,11 @@ interface ITdxV4Attestation {
     ) external view returns (bytes memory output);
 }
 
+interface IKmsAppFactory {
+    function registry() external view returns (address);
+    function isApprovedApp(address appId, bytes32 composeHash) external view returns (bool);
+}
+
 contract DeviceRegistry {
     using StrictECDSA for bytes32;
 
@@ -58,6 +63,11 @@ contract DeviceRegistry {
     mapping(address => bool) private knownDevice;
     address[] private deviceAddresses;
     uint256 public number;
+    bool public admissionPolicyLocked;
+    address public bootstrapParticipant;
+    IKmsAppFactory public kmsAppFactory;
+    bytes32 public expectedKeyProviderHash;
+    mapping(address => address) public registeredAppIds;
 
     event DeviceRegistered(address indexed device, uint256 indexed registrationNonce, bytes32 indexed composeHash);
     event DeviceAuthorized(address indexed device);
@@ -85,13 +95,13 @@ contract DeviceRegistry {
     }
 
     function setTdxV4Attestation(address _tdxV4Attestation) public onlyOwner {
-        require(!runRosterCommitted, "run admission policy is immutable");
+        require(!admissionPolicyLocked, "run admission policy is immutable");
         require(_tdxV4Attestation != address(0), "invalid attestation address");
         tdxV4Attestation = ITdxV4Attestation(_tdxV4Attestation);
     }
 
     function setExpectedWorkerImageDigest(bytes32 _expectedWorkerImageDigest) public onlyOwner {
-        require(!runRosterCommitted, "run admission policy is immutable");
+        require(!admissionPolicyLocked, "run admission policy is immutable");
         expectedWorkerImageDigest = _expectedWorkerImageDigest;
         emit ExpectedWorkerImageDigestUpdated(_expectedWorkerImageDigest);
     }
@@ -101,7 +111,7 @@ contract DeviceRegistry {
     ///         worker-specific environment, endpoints and other runtime values remain
     ///         free to vary and are bound separately through REPORTDATA and RTMR3.
     function setWorkerPolicyHashAllowed(bytes32 policyHash, bool allowed) public onlyOwner {
-        require(!runRosterCommitted, "run admission policy is immutable");
+        require(!admissionPolicyLocked, "run admission policy is immutable");
         require(policyHash != bytes32(0), "invalid worker policy hash");
         bool current = allowedWorkerPolicyHashes[policyHash];
         if (current == allowed) return;
@@ -112,26 +122,56 @@ contract DeviceRegistry {
         emit WorkerPolicyHashPermissionUpdated(policyHash, allowed);
     }
 
-    /// @notice Commits the exact, ordered participant set for this deployment.
-    /// @dev This is deliberately a one-time owner action. Registration remains
-    ///      closed until the commitment exists, and only committed participants
-    ///      can subsequently register attested workload/action keys.
-    function commitRunRoster(address[] calldata roster) external onlyOwner {
-        require(!runRosterCommitted, "run roster already committed");
-        require(roster.length > 0, "run roster is empty");
+    /// @notice Fix platform-wide policy, never individual participant addresses.
+    function setKmsAppFactory(address factory, bytes32 keyProviderHash) external onlyOwner {
+        require(!admissionPolicyLocked, "run admission policy is immutable");
+        require(factory.code.length != 0 && keyProviderHash != bytes32(0), "invalid KMS policy");
+        require(IKmsAppFactory(factory).registry() == address(this), "factory belongs to another registry");
+        kmsAppFactory = IKmsAppFactory(factory);
+        expectedKeyProviderHash = keyProviderHash;
+    }
 
-        for (uint256 i = 0; i < roster.length; i++) {
-            address participant = roster[i];
-            require(participant != address(0), "run roster contains zero address");
-            require(!knownDevice[participant], "run member already registered");
-            require(!committedRunMembers[participant], "run roster contains duplicate");
-            committedRunMembers[participant] = true;
-            committedRunRoster.push(participant);
+    /// @notice Pre-boot approval uses the same image/configuration rules as admission.
+    /// @dev Permissionless: this approves a workload, not its DFL membership.
+    function validateKmsCompose(bytes calldata canonicalAppCompose) external view returns (bytes32, bytes32, bytes32) {
+        (bytes32 composeHash, bytes32 imageDigest, bytes32 policyHash) = _workloadIdentity(canonicalAppCompose);
+        require(expectedWorkerImageDigest != bytes32(0) && imageDigest == expectedWorkerImageDigest,
+            "worker image digest mismatch");
+        require(allowedWorkerPolicyHashes[policyHash], "worker policy hash not allowed");
+        return (composeHash, imageDigest, policyHash);
+    }
+
+    /// @notice Snapshot ALL successfully registered participants for model encryption.
+    /// @dev There is no address argument or owner-selected admission list. Later
+    ///      registrations stay open, but cannot rewrite this training's recipient set.
+    function snapshotRunRoster() external {
+        require(!runRosterFrozen, "run roster is immutable");
+        address participant = _participantForCurrentAction(msg.sender);
+        require(participant == bootstrapParticipant, "only bootstrap workload can snapshot");
+        committedRunRoster.push(participant);
+        committedRunMembers[participant] = true;
+        for (uint256 i; i < deviceAddresses.length; i++) {
+            address device = deviceAddresses[i];
+            if (device != participant && isAuthorized(device)) {
+                committedRunRoster.push(device);
+                committedRunMembers[device] = true;
+            }
         }
-
-        runRosterDigest = keccak256(abi.encode(roster));
+        registeredRunMemberCount = committedRunRoster.length;
+        runRosterDigest = keccak256(abi.encode(committedRunRoster));
         runRosterCommitted = true;
-        emit RunRosterCommitted(runRosterDigest, roster.length, roster[0]);
+        runRosterFrozen = true;
+        emit RunRosterCommitted(runRosterDigest, registeredRunMemberCount, participant);
+        emit RunRosterFrozen(runRosterDigest, registeredRunMemberCount);
+    }
+
+    function isRunParticipant(address participant) public view returns (bool) {
+        return isAuthorized(participant) && (!runRosterFrozen || committedRunMembers[participant]);
+    }
+
+    function getRunDevices() external view returns (address[] memory) {
+        if (!runRosterFrozen) return getAuthorizedDevices();
+        return committedRunRoster;
     }
 
     function getRunRoster() external view returns (address[] memory) {
@@ -142,19 +182,8 @@ contract DeviceRegistry {
         return committedRunRoster.length;
     }
 
-    function authorizeAddress(address _address) public onlyOwner {
-        require(!runRosterCommitted, "run roster is immutable");
-        require(knownDevice[_address], "device not registered");
-        devices[_address].authorized = true;
-        emit DeviceAuthorized(_address);
-    }
-
-    function deauthorizeAddress(address _address) public onlyOwner {
-        require(!runRosterCommitted, "run roster is immutable");
-        require(knownDevice[_address], "device not registered");
-        devices[_address].authorized = false;
-        emit DeviceDeauthorized(_address);
-    }
+    function authorizeAddress(address) public pure { revert("attested registration required"); }
+    function deauthorizeAddress(address) public pure { revert("attested registration required"); }
 
     function leaveNetwork() public {
         address participant = _participantForCurrentAction(msg.sender);
@@ -170,8 +199,7 @@ contract DeviceRegistry {
 
     function isAuthorized(address _address) public view returns (bool) {
         if (
-            !runRosterCommitted || !committedRunMembers[_address] || !devices[_address].authorized
-                || expectedWorkerImageDigest == bytes32(0)
+            !devices[_address].authorized || expectedWorkerImageDigest == bytes32(0)
         ) {
             return false;
         }
@@ -199,18 +227,18 @@ contract DeviceRegistry {
             && keccak256(devices[_address].public_key) == keccak256(_public_key);
     }
 
-    function getAuthorizedDevices() external view returns (address[] memory) {
+    function getAuthorizedDevices() public view returns (address[] memory) {
         uint256 count = 0;
-        for (uint256 i = 0; i < committedRunRoster.length; i++) {
-            if (isAuthorized(committedRunRoster[i])) {
+        for (uint256 i = 0; i < deviceAddresses.length; i++) {
+            if (isAuthorized(deviceAddresses[i])) {
                 count++;
             }
         }
 
         address[] memory authorized = new address[](count);
         uint256 index = 0;
-        for (uint256 i = 0; i < committedRunRoster.length; i++) {
-            address device = committedRunRoster[i];
+        for (uint256 i = 0; i < deviceAddresses.length; i++) {
+            address device = deviceAddresses[i];
             if (isAuthorized(device)) {
                 authorized[index] = device;
                 index++;
@@ -238,7 +266,7 @@ contract DeviceRegistry {
         returns (bool authorized, string memory publicIp, bytes32 selloReceiptKey)
     {
         require(runRosterFrozen, "run roster not frozen");
-        require(committedRunRoster.length != 0 && participant == committedRunRoster[0], "not bootstrap worker");
+        require(participant == bootstrapParticipant, "not bootstrap worker");
         require(isAuthorized(participant), "bootstrap worker not authorized");
         selloReceiptKey = selloReceiptKeys[participant];
         require(selloReceiptKey != bytes32(0), "sello receiver key unavailable");
@@ -253,6 +281,7 @@ contract DeviceRegistry {
         require(participant != address(0), "action key not registered");
         require(actionKeyForParticipant[participant] == actionKey, "action key is not current");
         require(isAuthorized(participant), "participant is not authorized");
+        require(isRunParticipant(participant), "participant joined after training snapshot");
     }
 
     function actionKeys(address participant) external view returns (address) {
@@ -303,7 +332,7 @@ contract DeviceRegistry {
         bytes memory participantAuthorization
     ) public {
         require(actionKey == msg.sender, "sender/action key mismatch");
-        require(!knownDevice[_address], "device already registered");
+        _requireStableRegistration(_address, actionKey, _public_key, selloReceiptKey, sha256(canonicalAppCompose));
 
         // Image and role policy are derived from the exact app_compose preimage on-chain.
         // The complete preimage is then hashed independently for REPORTDATA and RTMR3 replay.
@@ -318,7 +347,7 @@ contract DeviceRegistry {
             "invalid participant authorization"
         );
         address assignedParticipant = participantForActionKey[actionKey];
-        require(assignedParticipant == address(0), "action key already assigned");
+        require(assignedParticipant == address(0) || assignedParticipant == _address, "action key already assigned");
         bytes32 binding = _registrationBinding(
             _address,
             actionKey,
@@ -334,6 +363,12 @@ contract DeviceRegistry {
         bytes memory output =
             tdxV4Attestation.verifyAndAttestOnChainWithRtmr3EventLog(quote, rtmr3EventLog, composeHash);
         _requireBoundReportData(output, binding, nonce);
+        if (address(kmsAppFactory) != address(0)) {
+            address appId = _requireKmsBootIdentity(rtmr3EventLog, composeHash);
+            require(registeredAppIds[_address] == address(0) || registeredAppIds[_address] == appId,
+                "participant app identity changed");
+            registeredAppIds[_address] = appId;
+        }
 
         registrationNonces[_address] = nonce + 1;
         registeredComposeHashes[_address] = composeHash;
@@ -362,7 +397,7 @@ contract DeviceRegistry {
         bytes memory canonicalAppCompose
     ) public view returns (bytes memory) {
         require(actionKey != address(0), "invalid action key");
-        require(!knownDevice[_address], "device already registered");
+        _requireStableRegistration(_address, actionKey, _public_key, selloReceiptKey, sha256(canonicalAppCompose));
         (bytes32 composeHash, bytes32 workerImageDigest, bytes32 policyHash) = _workloadIdentity(canonicalAppCompose);
         _requireRegistrationPreparation(_address, _public_key, workerImageDigest, policyHash, selloReceiptKey);
         uint256 nonce = registrationNonces[_address];
@@ -472,23 +507,47 @@ contract DeviceRegistry {
         bytes memory _public_key,
         bytes32 workerImageDigest,
         bytes32 policyHash,
-        bytes32 selloReceiptKey
+        bytes32 /* selloReceiptKey */
     ) internal view {
         require(_address != address(0), "invalid device address");
-        require(runRosterCommitted, "run roster not committed");
-        require(committedRunMembers[_address], "participant not in committed run roster");
-        require(!runRosterFrozen, "run roster registration is closed");
-        if (_address == committedRunRoster[0]) {
-            require(selloReceiptKey != bytes32(0), "bootstrap sello receiver key required");
-        } else {
-            require(selloReceiptKey == bytes32(0), "non-bootstrap sello receiver key forbidden");
-        }
         require(_public_key.length != 0, "public key required");
         require(expectedWorkerImageDigest != bytes32(0), "worker image policy not configured");
         require(workerImageDigest == expectedWorkerImageDigest, "worker image digest mismatch");
         require(allowedWorkerPolicyHashCount != 0, "worker policy set not configured");
         require(allowedWorkerPolicyHashes[policyHash], "worker policy hash not allowed");
         require(address(tdxV4Attestation) != address(0), "tdx attestation not configured");
+    }
+
+    function _requireStableRegistration(address participant, address actionKey, bytes memory publicKey,
+        bytes32 selloKey, bytes32 composeHash) internal view {
+        if (!knownDevice[participant]) return;
+        require(address(kmsAppFactory) != address(0), "device already registered");
+        require(actionKeyForParticipant[participant] == actionKey &&
+            keccak256(devices[participant].public_key) == keccak256(publicKey) &&
+            selloReceiptKeys[participant] == selloKey && registeredComposeHashes[participant] == composeHash,
+            "registered keys or workload changed");
+    }
+
+    function _requireKmsBootIdentity(Rtmr3Event[] calldata events, bytes32 composeHash)
+        internal view returns (address appId)
+    {
+        bool appSeen;
+        bool providerSeen;
+        for (uint256 i; i < events.length; i++) {
+            bytes32 nameHash = keccak256(bytes(events[i].eventName));
+            if (nameHash == keccak256("app-id")) {
+                require(!appSeen && events[i].eventPayload.length == 20, "invalid app-id event");
+                appSeen = true;
+                bytes memory payload = events[i].eventPayload;
+                assembly ("memory-safe") { appId := shr(96, mload(add(payload, 32))) }
+            } else if (nameHash == keccak256("key-provider")) {
+                require(!providerSeen, "duplicate key-provider event");
+                providerSeen = true;
+                require(keccak256(events[i].eventPayload) == expectedKeyProviderHash, "untrusted KMS provider");
+            }
+        }
+        require(appSeen && providerSeen, "KMS boot identity missing");
+        require(kmsAppFactory.isApprovedApp(appId, composeHash), "unapproved KMS app policy");
     }
 
     function _requireBoundReportData(bytes memory reportData, bytes32 binding, uint256 nonce) internal pure {
@@ -511,10 +570,9 @@ contract DeviceRegistry {
     ) internal {
         addKnownDevice(_address);
         devices[_address] = Device(true, _public_ip, _msg_broker_ip, _public_key);
-        registeredRunMemberCount++;
-        if (registeredRunMemberCount == committedRunRoster.length) {
-            runRosterFrozen = true;
-            emit RunRosterFrozen(runRosterDigest, committedRunRoster.length);
+        admissionPolicyLocked = true;
+        if (bootstrapParticipant == address(0) && selloReceiptKeys[_address] != bytes32(0)) {
+            bootstrapParticipant = _address;
         }
     }
 
@@ -526,7 +584,7 @@ contract DeviceRegistry {
     }
 
     function _deregisterDevice(address _address) internal {
-        require(!runRosterFrozen, "run roster is immutable");
+        require(!committedRunMembers[_address], "run roster is immutable");
         require(actionKeyForParticipant[_address] == msg.sender, "only current action key can deregister");
         require(knownDevice[_address], "device not registered");
 
@@ -539,7 +597,7 @@ contract DeviceRegistry {
         delete actionKeyForParticipant[_address];
         delete participantForActionKey[actionKey];
         knownDevice[_address] = false;
-        registeredRunMemberCount--;
+        if (bootstrapParticipant == _address) bootstrapParticipant = address(0);
         _removeDeviceAddress(_address);
 
         emit DeviceDeregistered(_address, registrationNonces[_address]);

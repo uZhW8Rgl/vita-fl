@@ -49,7 +49,7 @@ export const initializeRuntimeSigningKeys = async (directory = RUNTIME_KEY_DIREC
     }
 };
 export const readRuntimeSigningSeed = async (name, directory = RUNTIME_KEY_DIRECTORY) => {
-    if (![SELLO_RUNTIME_KEY, AIR_RUNTIME_KEY].includes(name))
+    if (![SELLO_RUNTIME_KEY, AIR_RUNTIME_KEY, "action-root.seed"].includes(name))
         throw new Error("Unknown runtime signing key.");
     await requireVolatileDirectory(directory);
     const filename = path.join(directory, name);
@@ -65,5 +65,11 @@ export const readRuntimeSigningSeed = async (name, directory = RUNTIME_KEY_DIREC
     return seed;
 };
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    await initializeRuntimeSigningKeys();
+    if (process.env.PARTICIPANT_KEY_PROVIDER === "kms") {
+        const { initializeKmsRuntimeKeys } = await import("./kms_keys.js");
+        await initializeKmsRuntimeKeys();
+    }
+    else {
+        await initializeRuntimeSigningKeys();
+    }
 }

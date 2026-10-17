@@ -145,7 +145,6 @@ AGGREGATION_POLICY_OWNER_SELECTOR = "8da5cb5b"
 AGGREGATION_POLICY_REQUIRED_SUBMISSIONS_SELECTOR = "ea2e7c87"
 AGGREGATION_POLICY_SUBMISSION_WINDOW_SELECTOR = "0dbc13f0"
 DEVICE_REGISTRY_OWNER_SELECTOR = "8da5cb5b"
-RUN_ROSTER_TRANSACTION_TIMEOUT_SECONDS = 60
 
 
 def phala_runtime_mode() -> bool:
@@ -1889,25 +1888,6 @@ def verified_setup_contract_env_values() -> dict[str, str]:
     }
 
 
-def _normalize_run_roster(addresses: list[str]) -> list[str]:
-    if not addresses:
-        raise ValueError("at least one run-roster address is required")
-    normalized = [
-        _checksum_ethereum_address(address, f"run-roster address {index}") for index, address in enumerate(addresses)
-    ]
-    if len({address.lower() for address in normalized}) != len(normalized):
-        raise ValueError("run-roster addresses must be unique")
-    return normalized
-
-
-def _encode_address_array_argument(addresses: list[str]) -> bytes:
-    return (
-        (32).to_bytes(32, byteorder="big")
-        + len(addresses).to_bytes(32, byteorder="big")
-        + b"".join(bytes.fromhex(address.removeprefix("0x")).rjust(32, b"\0") for address in addresses)
-    )
-
-
 def _decode_rpc_address_array(value: Any, name: str) -> list[str]:
     encoded = str(value or "").removeprefix("0x")
     if len(encoded) % 64 != 0 or not encoded:
@@ -1986,134 +1966,6 @@ def read_run_roster_state(env_values: dict[str, str]) -> dict[str, Any]:
         "worker_count": worker_count,
         "registered_worker_count": registered_worker_count,
         "roster": roster,
-    }
-
-
-def commit_run_roster(addresses: list[str]) -> dict[str, Any]:
-    """Commit the exact selected worker identities before any worker starts."""
-    from eth_utils import keccak
-
-    roster = _normalize_run_roster(addresses)
-    runtime_values = verified_setup_contract_env_values()
-    rpc_url = os.environ.get("RPC_URL", "").strip() or runtime_values.get("RPC_URL", "").strip()
-    if not rpc_url:
-        raise RuntimeError("RPC_URL is not configured for DeviceRegistry")
-    registry_address = _checksum_ethereum_address(
-        runtime_values.get("REGISTRY_ADDRESS", "").strip(),
-        "registry_address",
-    )
-    private_key = (
-        os.environ.get("ETH_WALLET_PRIVATE_KEY", "").strip()
-        or runtime_values.get("ETH_WALLET_PRIVATE_KEY", "").strip()
-        or runtime_values.get("W0_PRIVATE_KEY", "").strip()
-    )
-    if not re.fullmatch(r"0x[a-fA-F0-9]{64}", private_key):
-        raise RuntimeError("ETH_WALLET_PRIVATE_KEY is missing or invalid")
-    owner_address = _ethereum_account_address(private_key)
-    contract_owner = _rpc_address(
-        _ethereum_rpc(
-            rpc_url,
-            "eth_call",
-            [
-                {"to": registry_address, "data": f"0x{DEVICE_REGISTRY_OWNER_SELECTOR}"},
-                "latest",
-            ],
-        ),
-        "DeviceRegistry owner",
-    )
-    if contract_owner.lower() != owner_address.lower():
-        raise RuntimeError("ETH_WALLET_PRIVATE_KEY does not belong to the DeviceRegistry owner")
-
-    bootstrap_aggregator = read_current_aggregator({**runtime_values, "RPC_URL": rpc_url}).get("address")
-    if not bootstrap_aggregator or bootstrap_aggregator.lower() != roster[0].lower():
-        raise RuntimeError("the first committed run-roster member must be the on-chain bootstrap aggregator W0")
-
-    encoded_arguments = _encode_address_array_argument(roster)
-    roster_digest = f"0x{keccak(encoded_arguments).hex()}"
-    before = read_run_roster_state({**runtime_values, "RPC_URL": rpc_url})
-    if before["committed"]:
-        if before["digest"] != roster_digest or [address.lower() for address in before["roster"]] != [
-            address.lower() for address in roster
-        ]:
-            raise RuntimeError("DeviceRegistry already contains a different immutable run roster; reset the run first")
-        return {
-            **before,
-            "owner": owner_address,
-            "transaction_hash": None,
-            "block_number": None,
-            "gas_used": 0,
-            "idempotent": True,
-        }
-
-    call_data = f"0x{_ethereum_function_selector('commitRunRoster(address[])')}{encoded_arguments.hex()}"
-    chain_id = _rpc_quantity(_ethereum_rpc(rpc_url, "eth_chainId", []), "chain ID")
-    if phala_runtime_mode():
-        expected_chain_id = str(os.environ.get("DYNAMIC_WORKER_EXPECTED_CHAIN_ID", "")).strip()
-        if not expected_chain_id.isdigit() or chain_id != int(expected_chain_id):
-            raise RuntimeError("live RPC chain ID does not match DYNAMIC_WORKER_EXPECTED_CHAIN_ID")
-    nonce = _rpc_quantity(
-        _ethereum_rpc(rpc_url, "eth_getTransactionCount", [owner_address, "pending"]),
-        "transaction count",
-    )
-    gas_price = _rpc_quantity(_ethereum_rpc(rpc_url, "eth_gasPrice", []), "gas price")
-    transaction_call = {
-        "from": owner_address,
-        "to": registry_address,
-        "data": call_data,
-        "value": "0x0",
-    }
-    estimated_gas = _rpc_quantity(
-        _ethereum_rpc(rpc_url, "eth_estimateGas", [transaction_call]),
-        "gas estimate",
-    )
-    transaction = {
-        "chainId": chain_id,
-        "nonce": nonce,
-        "to": registry_address,
-        "value": 0,
-        "data": call_data,
-        "gas": max(21_000, (estimated_gas * 120 + 99) // 100),
-        "gasPrice": gas_price,
-    }
-    transaction_hash = str(
-        _ethereum_rpc(
-            rpc_url,
-            "eth_sendRawTransaction",
-            [_sign_ethereum_transaction(transaction, private_key)],
-        )
-    )
-    if not re.fullmatch(r"0x[a-fA-F0-9]{64}", transaction_hash):
-        raise RuntimeError("Ethereum RPC returned an invalid transaction hash")
-
-    deadline = time.monotonic() + RUN_ROSTER_TRANSACTION_TIMEOUT_SECONDS
-    receipt: dict[str, Any] | None = None
-    while time.monotonic() < deadline:
-        candidate = _ethereum_rpc(rpc_url, "eth_getTransactionReceipt", [transaction_hash])
-        if candidate is not None:
-            if not isinstance(candidate, dict):
-                raise RuntimeError("Ethereum RPC returned an invalid transaction receipt")
-            receipt = candidate
-            break
-        time.sleep(0.25)
-    if receipt is None:
-        raise RuntimeError("timed out waiting for the run-roster commitment transaction")
-    if _rpc_quantity(receipt.get("status"), "transaction status") != 1:
-        raise RuntimeError("DeviceRegistry run-roster commitment transaction reverted")
-
-    observed = read_run_roster_state({**runtime_values, "RPC_URL": rpc_url})
-    if (
-        not observed["committed"]
-        or observed["digest"] != roster_digest
-        or [address.lower() for address in observed["roster"]] != [address.lower() for address in roster]
-    ):
-        raise RuntimeError("DeviceRegistry state does not match the confirmed run-roster transaction")
-    return {
-        **observed,
-        "owner": owner_address,
-        "transaction_hash": transaction_hash,
-        "block_number": _rpc_quantity(receipt.get("blockNumber"), "block number"),
-        "gas_used": _rpc_quantity(receipt.get("gasUsed"), "gas used"),
-        "idempotent": False,
     }
 
 
@@ -2583,11 +2435,7 @@ def write_runtime_mfs_marker(path: str, value: dict[str, Any]) -> dict[str, Any]
 
 
 def publish_bootstrap_recipient_declaration(addresses: list[str]) -> dict[str, Any]:
-    """Publish the exact training roster consumed by the round-0 worker.
-
-    This MFS document is transport/readiness metadata only. The immutable
-    DeviceRegistry commitment is the participant authority.
-    """
+    """Publish deployment metadata, never an admission or snapshot allowlist."""
     if not addresses:
         raise ValueError("at least one bootstrap recipient address is required")
 
@@ -2600,11 +2448,9 @@ def publish_bootstrap_recipient_declaration(addresses: list[str]) -> dict[str, A
     if len(set(normalized)) != len(normalized):
         raise ValueError("bootstrap recipient addresses must be unique")
 
+    # Deployment metadata never grants or restricts membership. W0 snapshots
+    # all successfully registered participants directly from DeviceRegistry.
     run_roster = read_run_roster_state(runtime_contract_env_values())
-    if not run_roster["committed"]:
-        raise RuntimeError("DeviceRegistry run roster is not committed")
-    if [address.lower() for address in run_roster["roster"]] != normalized:
-        raise RuntimeError("bootstrap declaration does not match the committed DeviceRegistry run roster")
 
     runtime_values = runtime_contract_env_values()
     rpc_url = runtime_values.get("RPC_URL", "").strip()
@@ -3161,10 +3007,7 @@ async def start_training_services(
                 "model_submission_deadline_ms", DEFAULT_MODEL_SUBMISSION_DEADLINE_MS
             ),
         )
-    run_roster_commitment = await asyncio.to_thread(
-        commit_run_roster,
-        selected_addresses,
-    )
+    run_roster_commitment = {"mode": "open-attested-registration", "committed": False}
     worker_environment = os.environ.copy()
     worker_environment["ROUND"] = str(worker_runtime_training_config(config)["rounds"])
 
@@ -3776,7 +3619,7 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                         raise RuntimeError("Phala returned an invalid deployed worker count")
                     if deployed_before_commit != 0:
                         raise RuntimeError(
-                            "Phala already has deployed workers before roster commitment. "
+                            "Phala already has deployed workers before a new training start. "
                             "Reset them before starting a new run."
                         )
                     # Clear the preceding run before any worker can emit signed
@@ -3793,10 +3636,7 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                     )
                 else:
                     aggregation_policy = {"resumed": True, "transaction_hash": None}
-                run_roster_commitment = await asyncio.to_thread(
-                    commit_run_roster,
-                    selected_addresses,
-                )
+                run_roster_commitment = {"mode": "open-attested-registration", "committed": False}
                 if gate.get("active"):
                     await asyncio.to_thread(_evaluation_gate.bind_roster, selected_addresses)
                 worker_status = await asyncio.to_thread(
@@ -3815,9 +3655,7 @@ async def start_training(request: Request, payload: dict[str, Any]) -> dict[str,
                     str(worker.get("account_address", "")).lower() for worker in worker_status["workers"]
                 ]
                 if deployed_addresses != [address.lower() for address in selected_addresses]:
-                    raise RuntimeError(
-                        "Phala returned a different worker identity set than the committed DeviceRegistry run roster"
-                    )
+                    raise RuntimeError("Phala returned a different identity set than the requested deployment")
                 await asyncio.to_thread(
                     publish_bootstrap_recipient_declaration,
                     [worker["account_address"] for worker in worker_status["workers"]],

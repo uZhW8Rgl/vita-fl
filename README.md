@@ -1,6 +1,6 @@
 # Master Thesis Prototype: Trusted DFL and Verifiable Inference
 
-[![CI](https://github.com/uZhW8Rgl/vita-fl/actions/workflows/ci.yml/badge.svg?branch=phala_app_key)](https://github.com/uZhW8Rgl/vita-fl/actions/workflows/ci.yml?query=branch%3Aphala_app_key)
+[![CI](https://github.com/uZhW8Rgl/vita-fl/actions/workflows/ci.yml/badge.svg?branch=kms)](https://github.com/uZhW8Rgl/vita-fl/actions/workflows/ci.yml?query=branch%3Akms)
 
 This repository contains a proof-of-concept implementation for trusted decentralized federated learning (DFL), model provenance, and verifiable single-image inference.
 
@@ -125,10 +125,18 @@ Blue nodes perform protected model processing; yellow nodes provide shared
 runtime services. Solid arrows show runtime interactions, and dashed arrows
 show lifecycle control, external auditing, or observability.
 
-Each worker creates fresh action, RSA, Sello, and AIR keys for its workload
-lifetime. Private participant keys stay in memory or private tmpfs; a new
-workload starts with new keys and needs fresh admission. A frozen run roster
-cannot replace the previous identity; recovery uses surviving admitted workers.
+Membership follows successful attested registration, without preselected
+participant addresses. The bootstrap workload snapshots all registered members
+for the current training; later admissions do not rewrite its encrypted recipients.
+
+The default ephemeral profile creates fresh action, RSA, Sello and AIR keys per
+workload. The explicit onchain-KMS profile restores the same authenticated encrypted
+key bundle after an authorized boot and reattests enrollment without resetting
+contribution scores. Plaintext participant keys remain in memory/private tmpfs.
+The KMS profile is locally tested. Hosted onchain KMS requires Base/Ethereum;
+the [own dstack KMS profile](kms/README.md) uses the original contracts on Anvil.
+The current Phala workspace blocks custom KMS URL updates, so its real key-release
+path is not cloud-validated. See [KMS setup and validation limits](phala/README.md#shared-policy-onchain-kms-branch-kms).
 Inference decrypts models inside Worker 0 and returns predictions and evidence
 to the agent.
 Independent checks use accepted ledger state, authentic policy references,

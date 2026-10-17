@@ -1,0 +1,66 @@
+{
+  "repository": "https://github.com/Dstack-TEE/dstack",
+  "ref": "v0.5.9",
+  "commit": "282eeb27d22d8f091ad0fa5a90e638f85cf68751",
+  "path": "kms/auth-eth/contracts",
+  "openzeppelin": {
+    "contracts": {
+      "url": "https://registry.npmjs.org/@openzeppelin/contracts/-/contracts-5.4.0.tgz",
+      "sha256": "4e4d51f18935b32f0c877bf666ac37f5e5a98e75f03e7a77eb7569f84701f680"
+    },
+    "contracts-upgradeable": {
+      "url": "https://registry.npmjs.org/@openzeppelin/contracts-upgradeable/-/contracts-upgradeable-5.4.0.tgz",
+      "sha256": "6abbcdf5f01e8e374f6d39bed57c89083cb9b806bf21a0820676e3894885b93e"
+    }
+  },
+  "files": {
+    "dstack-v0.5.9/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "dstack-v0.5.9/contracts/DstackApp.sol": "d58f964e1579bc3ca024d6d4b4d2fc04d72ee23a52d7d71199bb62d5e0554c5c",
+    "dstack-v0.5.9/contracts/DstackKms.sol": "bf457f61634a28eaba6eab1699a3c3e7bacea187591d5513c4669b44cbc92310",
+    "dstack-v0.5.9/contracts/IAppAuth.sol": "73e45fd8eefaff13555ff3853b56cfe675ab72143feb032540cc03cead7618c1",
+    "dstack-v0.5.9/contracts/IAppAuthBasicManagement.sol": "aa232155a04c2365013cd127ef12bcdb9a68a5796e7b8d4338ea1e246369f99e",
+    "openzeppelin-5.4.0/contracts/LICENSE": "13cd784a6c31361f0e0c6aa3b410a1cb9a079868b7314c13e3eb8a75351746b9",
+    "openzeppelin-5.4.0/contracts/interfaces/IERC1967.sol": "c4e901318ab6d4963582c62c62ce988a34c68dbae71846b67decacde79e9a317",
+    "openzeppelin-5.4.0/contracts/interfaces/draft-IERC1822.sol": "73653312bc2eda0ec231553a5295242eaef2d4f46a023532d45fe76cbd0f565f",
+    "openzeppelin-5.4.0/contracts/proxy/ERC1967/ERC1967Proxy.sol": "a06fe97082355529c1da9076ea6c4518875ca9fdb1a4fa1e194c35cff21b29a1",
+    "openzeppelin-5.4.0/contracts/proxy/ERC1967/ERC1967Utils.sol": "58c5b19893bf3d7f9e1aa0edc5b908b915eb7af4381800deb425a6e5331f4432",
+    "openzeppelin-5.4.0/contracts/proxy/Proxy.sol": "5f5081378d4bc82b814b0d64990b7f7b9c69697593b73a3341f4a269940ba540",
+    "openzeppelin-5.4.0/contracts/proxy/beacon/IBeacon.sol": "c1c9726bbb0ec4c540c7c98059dcded69a8586b46c168036672381033ee76239",
+    "openzeppelin-5.4.0/contracts/utils/Address.sol": "f1a9255dbc40cf9ae7c786abed3b022691a9d24bca0c7f05dc60e63421d405ab",
+    "openzeppelin-5.4.0/contracts/utils/Errors.sol": "0704b9d6c032cca8512a3bc3f30f49f86f1f03102d2896a3d23e794b82efea66",
+    "openzeppelin-5.4.0/contracts/utils/StorageSlot.sol": "75704538dcb223239280c6726d9a31cf769a7816718517c997fc7d63bdb70778",
+    "openzeppelin-5.4.0/contracts/utils/introspection/IERC165.sol": "9055c2994b37dea1a41b7b7926dcb510f05dbe2540b0aafc5fbee9558fffd0ca",
+    "openzeppelin-5.4.0/contracts-upgradeable/LICENSE": "13cd784a6c31361f0e0c6aa3b410a1cb9a079868b7314c13e3eb8a75351746b9",
+    "openzeppelin-5.4.0/contracts-upgradeable/access/OwnableUpgradeable.sol": "9247b9ad7939d23990dbdc9274917c3762ffb37e5137ef7bbfcc2e2fba1b8dd2",
+    "openzeppelin-5.4.0/contracts-upgradeable/proxy/utils/Initializable.sol": "f527a063813c2bf60c153fb08e38539578935402894fcc36fac42324ca325d3b",
+    "openzeppelin-5.4.0/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol": "b2e8bcd247fa3a7c6a0dc44f3b012385aa91b313e81e65c25757f0077ad57f16",
+    "openzeppelin-5.4.0/contracts-upgradeable/utils/ContextUpgradeable.sol": "a08e16324da33a9d666dc07a22ae58031c242a3869f6808e55b4b82fc70cb209",
+    "openzeppelin-5.4.0/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol": "cc052f5cd3d9f3eab81a40329e40b1f9e5f363b3418d120abc1af60a76298377"
+  },
+  "upstream_files_sha256": {
+    "dstack-v0.5.9/contracts/DstackApp.sol": "fe506a9d13c8d6244adb32ef255f89101b902d4fe1604b424ffc03d848a32007",
+    "dstack-v0.5.9/contracts/DstackKms.sol": "1bbb95df3867a246b8e37757a598f2111e2bbaa0e20398bfc222801d41d6eae8",
+    "dstack-v0.5.9/contracts/IAppAuth.sol": "46ed868b3a9ee63461f1fe593c7383df165c57812329e5d00990b09bed758d64",
+    "dstack-v0.5.9/contracts/IAppAuthBasicManagement.sol": "1d3eaea912642b6957c3090b6c80410ac508aa83b7f8c9cfb6475dcafecc0b02",
+    "openzeppelin-5.4.0/contracts/interfaces/IERC1967.sol": "c4e901318ab6d4963582c62c62ce988a34c68dbae71846b67decacde79e9a317",
+    "openzeppelin-5.4.0/contracts/interfaces/draft-IERC1822.sol": "73653312bc2eda0ec231553a5295242eaef2d4f46a023532d45fe76cbd0f565f",
+    "openzeppelin-5.4.0/contracts/proxy/ERC1967/ERC1967Proxy.sol": "a06fe97082355529c1da9076ea6c4518875ca9fdb1a4fa1e194c35cff21b29a1",
+    "openzeppelin-5.4.0/contracts/proxy/ERC1967/ERC1967Utils.sol": "58c5b19893bf3d7f9e1aa0edc5b908b915eb7af4381800deb425a6e5331f4432",
+    "openzeppelin-5.4.0/contracts/proxy/Proxy.sol": "5f5081378d4bc82b814b0d64990b7f7b9c69697593b73a3341f4a269940ba540",
+    "openzeppelin-5.4.0/contracts/proxy/beacon/IBeacon.sol": "c1c9726bbb0ec4c540c7c98059dcded69a8586b46c168036672381033ee76239",
+    "openzeppelin-5.4.0/contracts/utils/Address.sol": "f1a9255dbc40cf9ae7c786abed3b022691a9d24bca0c7f05dc60e63421d405ab",
+    "openzeppelin-5.4.0/contracts/utils/Errors.sol": "0704b9d6c032cca8512a3bc3f30f49f86f1f03102d2896a3d23e794b82efea66",
+    "openzeppelin-5.4.0/contracts/utils/StorageSlot.sol": "75704538dcb223239280c6726d9a31cf769a7816718517c997fc7d63bdb70778",
+    "openzeppelin-5.4.0/contracts/utils/introspection/IERC165.sol": "9055c2994b37dea1a41b7b7926dcb510f05dbe2540b0aafc5fbee9558fffd0ca",
+    "openzeppelin-5.4.0/contracts-upgradeable/access/OwnableUpgradeable.sol": "9247b9ad7939d23990dbdc9274917c3762ffb37e5137ef7bbfcc2e2fba1b8dd2",
+    "openzeppelin-5.4.0/contracts-upgradeable/proxy/utils/Initializable.sol": "f527a063813c2bf60c153fb08e38539578935402894fcc36fac42324ca325d3b",
+    "openzeppelin-5.4.0/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol": "2d07bcf9728190a5c807cf68defc3f3c52aa098d04770d44af37f30abade38d5",
+    "openzeppelin-5.4.0/contracts-upgradeable/utils/ContextUpgradeable.sol": "a08e16324da33a9d666dc07a22ae58031c242a3869f6808e55b4b82fc70cb209",
+    "openzeppelin-5.4.0/contracts-upgradeable/utils/introspection/ERC165Upgradeable.sol": "d2105a1e3ba533399fb408105267329c2c134fcb18043a9c024d1b6e81982fc9"
+  },
+  "import_namespace_rewrite": {
+    "from": "@openzeppelin/",
+    "to": "dstack-oz/",
+    "purpose": "Keep dstack OpenZeppelin 5.4 imports separate from the existing PCCS dependencies."
+  }
+}

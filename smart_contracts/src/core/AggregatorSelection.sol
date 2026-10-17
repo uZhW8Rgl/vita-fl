@@ -2,8 +2,9 @@
 pragma solidity ^0.8.19;
 
 interface IDeviceRegistry {
+    function bootstrapParticipant() external view returns (address);
     function isAuthorized(address _address) external view returns (bool);
-    function getAuthorizedDevices() external view returns (address[] memory);
+    function getRunDevices() external view returns (address[] memory);
     function getDevice(address _address) external view returns (bool, string memory, string memory, bytes memory);
     function resolveAuthorizedParticipant(address actionKey) external view returns (address participant);
 }
@@ -53,7 +54,7 @@ contract AggregatorSelection {
     }
     string public system_state;
     address public owner;
-    address public current_aggregator;
+    address private storedAggregator;
     string public broker_endpoint;
     uint256 public time_to_aggregate;
     uint256 public time_to_select;
@@ -85,7 +86,7 @@ contract AggregatorSelection {
         require(initialAggregator != address(0), "Initial aggregator is zero");
         owner = msg.sender;
         system_state = "TRAINING";
-        current_aggregator = initialAggregator;
+        storedAggregator = initialAggregator;
         broker_endpoint = "test_endpoint";
         time_to_aggregate = 0;
         time_to_select = 0;
@@ -102,22 +103,31 @@ contract AggregatorSelection {
         IGMStorage gmStorage = IGMStorage(gm_storage_address);
         address aggregator =
             IDeviceRegistry(gmStorage.device_registry_address()).resolveAuthorizedParticipant(msg.sender);
-        require(aggregator == current_aggregator, "Caller is not the current aggregator");
+        require(aggregator == getCurrentAggregator(), "Caller is not the current aggregator");
         require(lastSelectionRound == gmStorage.getRound(), "Aggregator not selected for current round");
         _;
     }
 
     // view functions
     function getSystemState() external view returns (string memory, address, string memory, uint256, uint256) {
-        return (system_state, current_aggregator, broker_endpoint, time_to_aggregate, time_to_select);
+        return (system_state, getCurrentAggregator(), broker_endpoint, time_to_aggregate, time_to_select);
     }
 
-    function getCurrentAggregator() external view returns (address) {
-        return current_aggregator;
+    function getCurrentAggregator() public view returns (address) {
+        if (gm_storage_address != address(0)) {
+            IGMStorage ledger = IGMStorage(gm_storage_address);
+            if (ledger.getRound() == 0 || lastSelectionRound == 0) {
+                address bootstrap = IDeviceRegistry(ledger.device_registry_address()).bootstrapParticipant();
+                if (bootstrap != address(0)) return bootstrap;
+            }
+        }
+        return storedAggregator;
     }
+
+    function current_aggregator() external view returns (address) { return getCurrentAggregator(); }
 
     function isAggregator(address _address) external view returns (bool) {
-        return _address == current_aggregator;
+        return _address == getCurrentAggregator();
     }
 
     function getBrokerEndpoint() external view returns (string memory) {
@@ -139,13 +149,14 @@ contract AggregatorSelection {
                 || stateHash == keccak256(bytes("UPDATING")),
             "invalid system state"
         );
+        storedAggregator = getCurrentAggregator();
         system_state = _state;
     }
 
     function setCurrentAggregator(address _aggregator) external onlyOwner {
         require(gm_storage_address == address(0), "aggregator bootstrap is closed");
         require(_aggregator != address(0), "invalid aggregator");
-        current_aggregator = _aggregator;
+        storedAggregator = _aggregator;
     }
 
     function setBrokerEndpoint(string memory _endpoint) external onlySelectedCurrentAggregator {
@@ -179,13 +190,13 @@ contract AggregatorSelection {
         system_state = "SELECTING";
 
         uint256 randomness = uint256(
-            keccak256(abi.encodePacked(block.prevrandao, block.timestamp, block.number, round, current_aggregator))
+            keccak256(abi.encodePacked(block.prevrandao, block.timestamp, block.number, round, getCurrentAggregator()))
         );
         address selectedAggregator = gm_storage.getWeightedRandomContributor(randomness);
         require(selectedAggregator != address(0), "No authorized aggregator candidates");
 
-        address previousAggregator = current_aggregator;
-        current_aggregator = selectedAggregator;
+        address previousAggregator = getCurrentAggregator();
+        storedAggregator = selectedAggregator;
         lastSelectionRound = round;
         broker_endpoint = "new_endpoint";
         system_state = "TRAINING";
@@ -198,7 +209,7 @@ contract AggregatorSelection {
         IGMStorage gm_storage = IGMStorage(gm_storage_address);
         uint256 round = gm_storage.getRound();
         require(expectedRound == round, "timeout round mismatch");
-        require(expectedAggregator == current_aggregator, "timeout aggregator mismatch");
+        require(expectedAggregator == getCurrentAggregator(), "timeout aggregator mismatch");
         require(lastSelectionRound == round, "aggregator not selected for current round");
         address reportedAggregator = expectedAggregator;
         require(!roundAborted[round], "round already aborted");
@@ -266,7 +277,7 @@ contract AggregatorSelection {
         internal
         returns (uint256)
     {
-        address[] memory authorizedDevices = deviceRegistry.getAuthorizedDevices();
+        address[] memory authorizedDevices = deviceRegistry.getRunDevices();
         uint256 eligibleReporters = 0;
         for (uint256 i = 0; i < authorizedDevices.length; i++) {
             if (authorizedDevices[i] != reportedAggregator) {
@@ -278,7 +289,7 @@ contract AggregatorSelection {
     }
 
     function abortRoundAndSelectNewAggregator(IGMStorage gm_storage, uint256 round, address failedAggregator) internal {
-        require(current_aggregator == failedAggregator, "reported aggregator changed");
+        require(getCurrentAggregator() == failedAggregator, "reported aggregator changed");
         roundAborted[round] = true;
 
         address[] memory penalized = new address[](1);
@@ -304,7 +315,7 @@ contract AggregatorSelection {
         address selectedAggregator = gm_storage.getWeightedRandomContributorExcluding(randomness, failedAggregator);
         require(selectedAggregator != address(0), "No replacement aggregator candidates");
 
-        current_aggregator = selectedAggregator;
+        storedAggregator = selectedAggregator;
         lastSelectionRound = nextRound;
         broker_endpoint = "new_endpoint";
         system_state = "TRAINING";

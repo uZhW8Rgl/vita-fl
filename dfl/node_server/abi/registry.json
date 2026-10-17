@@ -89,6 +89,19 @@
   },
   {
     "type": "function",
+    "name": "admissionPolicyLocked",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "allowedWorkerPolicyHashCount",
     "inputs": [],
     "outputs": [
@@ -137,26 +150,26 @@
     "name": "authorizeAddress",
     "inputs": [
       {
-        "name": "_address",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
-    "name": "commitRunRoster",
-    "inputs": [
+    "name": "bootstrapParticipant",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "roster",
-        "type": "address[]",
-        "internalType": "address[]"
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -182,13 +195,13 @@
     "name": "deauthorizeAddress",
     "inputs": [
       {
-        "name": "_address",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -293,6 +306,19 @@
   },
   {
     "type": "function",
+    "name": "expectedKeyProviderHash",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "expectedWorkerImageDigest",
     "inputs": [],
     "outputs": [
@@ -347,6 +373,19 @@
         "name": "",
         "type": "bytes",
         "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRunDevices",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
       }
     ],
     "stateMutability": "view"
@@ -457,6 +496,38 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isRunParticipant",
+    "inputs": [
+      {
+        "name": "participant",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "kmsAppFactory",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IKmsAppFactory"
       }
     ],
     "stateMutability": "view"
@@ -714,6 +785,25 @@
   },
   {
     "type": "function",
+    "name": "registeredAppIds",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "registeredComposeHashes",
     "inputs": [
       {
@@ -955,6 +1045,24 @@
   },
   {
     "type": "function",
+    "name": "setKmsAppFactory",
+    "inputs": [
+      {
+        "name": "factory",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "keyProviderHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setTdxV4Attestation",
     "inputs": [
       {
@@ -986,6 +1094,13 @@
   },
   {
     "type": "function",
+    "name": "snapshotRunRoster",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "tdxV4Attestation",
     "inputs": [],
     "outputs": [
@@ -993,6 +1108,35 @@
         "name": "",
         "type": "address",
         "internalType": "contract ITdxV4Attestation"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "validateKmsCompose",
+    "inputs": [
+      {
+        "name": "canonicalAppCompose",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"

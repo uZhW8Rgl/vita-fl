@@ -516,11 +516,13 @@ The application bootstrap is separated from deployment:
    `/runtime/admission-ready.json`, then exits successfully;
 2. Start Training validates the measured Registry, AggregatorSelection, and
    GMStorage addresses against the live chain, derives the AggregationPolicy
-   directly from GMStorage, requires an empty worker deployment, and
-   owner-commits the exact ordered roster with W0 first. If the published
+   directly from GMStorage and requires an empty demo worker deployment. It
+   configures the aggregation policy without approving participant addresses. If the published
    manifest is available, it is cross-checked as additional metadata;
-3. only then does it launch those worker TEEs; only committed identities can
-   complete DCAP registration, and the last registration freezes the roster;
+3. it launches the demo worker TEEs. Any independently deployed workload can
+   also complete DCAP registration if its evidence satisfies the shared policy;
+   the bootstrap workload snapshots all registered participants without supplying
+   a selectable address list;
 4. W0 reads the frozen keys from `DeviceRegistry`, encrypts the public,
    unsigned initial model for that fixed roster, and finalizes contract round
    0. The other workers wait for this transition, and federated training starts
@@ -529,8 +531,8 @@ The application bootstrap is separated from deployment:
 This ordering leaves deployment independent of a future worker count and never
 provisions a participant RSA key outside its attested workload. The roster
 marker transports readiness only and is not a security authority: W0 requires
-the exact immutable on-chain roster, its digest and every registered public
-key. On restart, W0 validates its protected public-key snapshot against that frozen
+the complete on-chain snapshot of successful registrations, its digest and every
+registered public key. On restart, W0 validates its protected public-key snapshot against that frozen
 on-chain state without rereading mutable MFS metadata.
 
 Dynamic worker TEEs send operational training events to the Control API over
@@ -595,16 +597,15 @@ chain, deployed bytecode, and the contracts' on-chain links. It reads
 and GMStorage backlink. A readable `/runtime/contracts.json` is cross-checked,
 but losing this mutable hand-off after the deployment container exits cannot
 block setup recovery. The Control API then uses the encrypted Anvil-owner
-`ETH_WALLET_PRIVATE_KEY` against the internal `RPC_URL` to configure the policy
-and commit the exact ordered roster. The early-start contribution target is
+`ETH_WALLET_PRIVATE_KEY` against the internal `RPC_URL` to configure the aggregation
+policy. It does not commit participant addresses. The early-start contribution target is
 selected with **Client Limit**, and **Submission timeout (s)** independently
 sets the collection window. The API stores `model_submission_deadline_ms` in
 `MODEL_SUBMISSION_DEADLINE_MS`; the policy snapshots a window of
 `ceil(MODEL_SUBMISSION_DEADLINE_MS / 1000)` seconds. The selected UI value takes
-precedence over an inherited runtime environment default. Both transactions
-must be mined successfully before any worker is created. If deployment is interrupted
-after commitment, **Resume Start** may reapply only the same saved
-configuration and exact roster; a different roster requires a reset.
+precedence over an inherited runtime environment default. The policy transaction
+must be mined before the demo workers start. A completed training snapshot remains
+immutable; changing training configuration after that point requires a fresh run.
 
 `CLIENT_LIMIT` and `MODEL_SUBMISSION_DEADLINE_MS` are therefore owner-controlled
 contract-runtime/Control-API inputs, not measured Worker-Compose security
@@ -936,8 +937,7 @@ For the Phala layout with one contract-runtime TEE and a configurable number of
 worker TEEs, the sequence is:
 
 1. Deploy the contract-runtime TEE with `anvil`, `ipfs`, and `smart-contracts`.
-2. In Training Setup, commit the exact ordered participant roster and then
-   deploy those worker TEEs, all using the same digest-pinned combined worker
+2. In Training Setup, configure the run and deploy worker TEEs, all using the same digest-pinned combined worker
    image. Worker 0 also exposes TEE inference.
 3. Optional: from a worker deployment, export measured artifacts for local consistency checks:
    - the TDX quote into `data/phala_tdx_quote`
@@ -1057,3 +1057,102 @@ or retroactively protect previously persisted secrets. The participant bootstrap
 wallet and shared infrastructure/owner/log keys have separate lifecycles. The
 existing managed dstack service remains available for attestation; participant
 RSA/action/Sello/AIR secrets no longer depend on its GetKey interface.
+
+
+## Shared-Policy Onchain KMS (branch `kms`)
+
+This profile supports independently operated Phala accounts. A participant's
+wallet may create an AppAuth automatically through the shared factory, but cannot
+relax its policy. Successful live DCAP enrollment alone grants DFL authorization.
+There is no participant-address allowlist.
+
+The current centralized Anvil/`kms=phala` Terraform setup remains the ephemeral
+profile. The separate [own dstack KMS profile](../kms/README.md) runs the original
+KMS contracts on Anvil and supplies BootAuth plus a real KMS CVM manifest. Its
+local contract/HTTP tests pass; the current Phala workspace rejects custom KMS
+URL updates with HTTP 403, so real cloud secret-release tests are blocked.
+
+Phala's hosted onchain KMS uses Ethereum or Base. This implementation
+uses same-chain reads and does not introduce a trusted cross-chain bridge. A live
+onchain-KMS deployment therefore needs the DFL contracts on that governing chain,
+a funded operator wallet, the platform KMS address/public identity obtained from
+Phala, and a node/OS supporting the selected KMS. No public-chain transaction or
+Phala deployment has been performed by the local tests.
+
+Setup sequence:
+
+1. Rebuild the revised worker and contract images. Deploy the revised DFL contracts
+   and configure the reviewed worker image digest
+   and role policies. In the KMS worker Compose, select
+   `PARTICIPANT_KEY_PROVIDER: kms` and `SELLO_SERVICE_KEY_PROVIDER: kms`, explicitly
+   configure `ACTION_KEY_MIN_BALANCE_WEI` and `ACTION_KEY_TARGET_BALANCE_WEI` for
+   the operator's chosen gas budget (KMS mode refuses Anvil funding defaults), retain
+   `/run/vita-fl` as private tmpfs, and mount the named volume
+   `participant-key-state:/var/lib/vita-fl`. Declare that named volume at top level.
+   The changed role configuration must itself be reviewed and approved; setting
+   a provider flag never bypasses the policy parser. Disable SSH and other
+   operator-controlled execution paths as in the existing approved workload.
+2. Set `REGISTRY_ADDRESS`, `KMS_AUTH_CONTRACT`, `KMS_KEY_PROVIDER_HASH` and the
+   registry-owner `ETH_WALLET_PRIVATE_KEY`; run the Foundry
+   `ConfigureKms` script on the governing chain before any enrollment. The hash is
+   keccak256 of the exact OS `key-provider` event payload identifying the trusted
+   KMS, not a hash of an arbitrary operator-provided name. Obtain and independently
+   check this platform trust anchor before configuring it.
+3. Each operator provisions their workload in their own Phala account, selecting
+   the same onchain KMS. Save the provision response and the exact canonical
+   `app-compose.json` bytes. The complete manifest includes platform defaults
+   and any reviewed platform pre-launch script. Use dstack/Phala's canonical
+   serialization, and compare SHA-256 against the returned `compose_hash`.
+4. Run `node phala/register-kms-app.mjs exact-app-compose.json provision.json`
+   with that operator's `KMS_DEPLOYER_PRIVATE_KEY`, `RPC_URL` and
+   `REGISTRY_ADDRESS`. The helper verifies chain/KMS bindings, invokes the shared
+   factory and prints the public Phala commit payload. Complete provision using
+   the Phala SDK's `commitCvmProvision`, adding environment values encrypted for
+   this app's KMS-derived environment public key as documented by Phala.
+5. At boot the KMS checks the immutable AppAuth before provisioning app keys.
+   The supervisor checks the shared registry/factory and measured KMS identity,
+   then uses a dedicated GetKey namespace to authenticate and decrypt
+   `/var/lib/vita-fl/participant-keys.v2.sealed.json`. Only ciphertext persists.
+   Plaintext RSA and signing seeds are materialized in private tmpfs. On a
+   permitted restart, the same keys submit a fresh registration quote/nonce.
+
+The original Compose is immutable for that app. An image or configuration change
+requires a new app; the operator cannot add a replacement hash to recover the old
+secrets. Stable keys also require retaining the encrypted state volume and the
+same app/KMS/context. Missing state for an already registered participant produces
+new keys that enrollment rejects; corrupt or mismatched ciphertext is never
+silently replaced. This design does not revoke secrets already exposed under an
+older permissive policy, and does not prevent Sybil identities or duplicated
+approved replicas. Hardware/OS compromise, rollback, replica exclusivity and
+KMS-root rotation require separate policies.
+
+Local verification covers the IAppAuth decisions, registry enforcement, restart
+key continuity, preserved on-chain contribution score, and tampered-state
+rejection. Hosted Phala acceptance of the custom AppAuth and actual boot-time
+key withholding still need a real Base/Ethereum integration run. In particular,
+the cloud backend may require additional compatibility getters or deployment
+metadata beyond the protocol interface. Treat the profile as locally tested
+integration code until that run succeeds.
+
+Primary references:
+[Phala onchain KMS](https://docs.phala.com/phala-cloud/key-management/understanding-onchain-kms),
+[dstack v0.5.9 KMS dispatch](https://github.com/Dstack-TEE/dstack/blob/v0.5.9/kms/auth-eth/contracts/DstackKms.sol),
+[Phala provision/commit flow](https://docs.phala.com/phala-cloud/references/cloud-js-sdk/commit-cvm-provision).
+
+
+Local checks completed on 2026-10-15:
+
+- `forge test`: 161 passed, including 11 KMS/admission tests and actual ledger
+  score continuity after fresh enrollment.
+- `cd dfl/node_server && npm run build && REQUIRE_ANVIL_TESTS=1 npm test`:
+  118 passed, including key restoration, ciphertext/context tampering, concurrent
+  initialization and explicit public-chain funding limits.
+- `node --test phala/test_kms_provision.mjs evaluation/live-role/rpc.test.mjs`:
+  four passed; `node --test smart_contracts/test/*.test.mjs`: twelve passed.
+- The affected Control API, Python receipt-key, cross-language runtime-key and
+  worker-startup suites: 119 passed (plus 42 subtests).
+- The `vita-fl-td` live-driver unit suite: six passed. Its next live run now
+  snapshots all registrations through the bootstrap action key instead of
+  owner-committing participant addresses.
+
+These are local tests, not additional Phala evaluation measurements.

@@ -1,3 +1,4 @@
+import { readRuntimeSigningSeed } from "./runtime_keys.js";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import crypto from "crypto";
 import {
@@ -14,7 +15,7 @@ type ActionKeyProvider = () => Promise<Uint8Array>;
 
 export type ParticipantActionSigner = Readonly<{
     address: `0x${string}`;
-    source: "ephemeral-random" | "local-test-derived";
+    source: "ephemeral-random" | "local-test-derived" | "kms-sealed";
     signTransaction(transaction: Record<string, unknown>): Promise<`0x${string}`>;
     signDigest(digest: `0x${string}`): Promise<`0x${string}`>;
     destroy(): void;
@@ -191,8 +192,9 @@ export const loadParticipantActionSigner = async (
 ): Promise<ParticipantActionSigner> => {
     const env = options.env || process.env;
     const phala = env.DOCKER === "phala";
-    const provider = options.deriveKey || (phala ? async () => crypto.randomBytes(32) : localTestProvider(env));
-    const source = phala ? "ephemeral-random" : "local-test-derived";
+    const kms = phala && env.PARTICIPANT_KEY_PROVIDER === "kms";
+    const provider = options.deriveKey || (kms ? () => readRuntimeSigningSeed("action-root.seed") : phala ? async () => crypto.randomBytes(32) : localTestProvider(env));
+    const source = kms ? "kms-sealed" : phala ? "ephemeral-random" : "local-test-derived";
     const context = derivationContext(env);
     let destroyed = false;
     const derive = async () => {

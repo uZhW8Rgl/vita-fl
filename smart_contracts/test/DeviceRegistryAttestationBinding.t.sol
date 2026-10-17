@@ -6,6 +6,18 @@ import {DeviceRegistry} from "../src/core/DeviceRegistry.sol";
 import {MockTdxV4Attestation} from "../src/attestation/MockTdxV4Attestation.sol";
 import {Rtmr3Event} from "../src/attestation/Rtmr3Event.sol";
 
+import {AggregatorSelection} from "../src/core/AggregatorSelection.sol";
+import {GMStorage} from "../src/core/GMStorage.sol";
+import {AggregationPolicy} from "../src/core/AggregationPolicy.sol";
+import {WorkerAppAuthFactory} from "../src/kms/WorkerAppAuthFactory.sol";
+import {WorkerAppAuth} from "../src/kms/WorkerAppAuth.sol";
+import {IAppAuth} from "../src/kms/IAppAuth.sol";
+
+contract KmsRegistrationStub {
+    mapping(address => bool) public registeredApps;
+    function registerApp(address appId) external { registeredApps[appId] = true; }
+}
+
 contract MalformedTdxV4Attestation {
     bytes private verifierOutput;
 
@@ -22,26 +34,28 @@ contract MalformedTdxV4Attestation {
     }
 }
 
-contract DeviceRegistryAttestationBindingTest is Test {
-    DeviceRegistry private registry;
-    MockTdxV4Attestation private verifier;
+abstract contract DeviceRegistryAttestationFixture is Test {
 
-    address private worker;
-    uint256 private workerPrivateKey;
-    address private actionKey;
-    address private attacker;
-    uint256 private attackerPrivateKey;
-    bytes private publicKey;
-    bytes32 private imageDigest;
-    bytes private appCompose;
+    bool internal autoSnapshot = true;
+    DeviceRegistry internal registry;
+    MockTdxV4Attestation internal verifier;
 
-    string private constant IMAGE_REPOSITORY = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker";
-    string private constant IMAGE_HEX = "4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553";
-    string private constant PUBLIC_IP = "https://worker.example";
-    string private constant BROKER_IP = "tcp://worker.example:5555";
-    bytes32 private constant SELLO_RECEIPT_KEY = 0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff;
+    address internal worker;
+    uint256 internal workerPrivateKey;
+    address internal actionKey;
+    address internal attacker;
+    uint256 internal attackerPrivateKey;
+    bytes internal publicKey;
+    bytes32 internal imageDigest;
+    bytes internal appCompose;
 
-    function setUp() public {
+    string internal constant IMAGE_REPOSITORY = "ghcr.io/uzhw8rgl/master-thesis-dfl-worker";
+    string internal constant IMAGE_HEX = "4c7c8c396efc41715d27794b831c40f9e02d34bffbfd3cc2586afc6ac448d553";
+    string internal constant PUBLIC_IP = "https://worker.example";
+    string internal constant BROKER_IP = "tcp://worker.example:5555";
+    bytes32 internal constant SELLO_RECEIPT_KEY = 0x00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff;
+
+    function setUp() public virtual {
         (worker, workerPrivateKey) = makeAddrAndKey("worker");
         actionKey = makeAddr("worker-action-key");
         (attacker, attackerPrivateKey) = makeAddrAndKey("attacker");
@@ -56,9 +70,122 @@ contract DeviceRegistryAttestationBindingTest is Test {
         registry.setWorkerPolicyHashAllowed(registry.workerPolicyHash(appCompose), true);
         address[] memory roster = new address[](1);
         roster[0] = worker;
-        registry.commitRunRoster(roster);
     }
 
+    function makeAddrView() internal pure returns (address) { return address(0xA11CE); }
+
+    function _configureKms() internal returns (WorkerAppAuthFactory factory, address appId) {
+        factory = new WorkerAppAuthFactory(address(registry), address(new KmsRegistrationStub()));
+        registry.setKmsAppFactory(address(factory), keccak256(bytes("trusted-kms")));
+        vm.prank(worker);
+        appId = factory.createApp(appCompose, bytes32(0));
+    }
+
+    function _registerKms(address appId, bytes memory provider, bytes memory reportData) internal {
+        _registerKms(appId, provider, reportData, bytes(""));
+    }
+
+    function _registerKms(address appId, bytes memory provider, bytes memory reportData, bytes memory rejection) internal {
+        Rtmr3Event[] memory events = new Rtmr3Event[](3);
+        events[0] = Rtmr3Event(0x08000001, "compose-hash", abi.encodePacked(sha256(appCompose)));
+        events[1] = Rtmr3Event(0x08000001, "app-id", abi.encodePacked(appId));
+        events[2] = Rtmr3Event(0x08000001, "key-provider", provider);
+        bytes memory authorization = _participantAuthorization(registry, appCompose);
+        if (rejection.length != 0) vm.expectRevert(rejection);
+        vm.prank(actionKey);
+        registry.registerDeviceWithAttestedAppCompose(reportData, events, appCompose, worker,
+            actionKey, PUBLIC_IP, BROKER_IP, publicKey, SELLO_RECEIPT_KEY, authorization);
+    }
+
+    function _reportData(DeviceRegistry target, bytes memory compose, bytes memory key)
+        internal
+        view
+        returns (bytes memory)
+    {
+        return target.registrationReportData(worker, actionKey, PUBLIC_IP, BROKER_IP, key, SELLO_RECEIPT_KEY, compose);
+    }
+
+    function _register(DeviceRegistry target, bytes memory quote, bytes memory compose, bytes memory key) internal {
+        _registerFrom(target, quote, compose, key, actionKey);
+    }
+
+    function _registerFrom(
+        DeviceRegistry target,
+        bytes memory quote,
+        bytes memory compose,
+        bytes memory key,
+        address sender
+    ) internal {
+        bytes memory authorization = _participantAuthorization(target, compose);
+        _registerWithAuthorization(target, quote, compose, key, sender, authorization);
+    }
+
+    function _registerWithAuthorization(
+        DeviceRegistry target,
+        bytes memory quote,
+        bytes memory compose,
+        bytes memory key,
+        address sender,
+        bytes memory authorization
+    ) internal {
+        vm.prank(sender);
+        target.registerDeviceWithAttestedAppCompose(
+            quote, _events(), compose, worker, actionKey, PUBLIC_IP, BROKER_IP, key, SELLO_RECEIPT_KEY, authorization
+        );
+        if (autoSnapshot && target.isAuthorized(worker) && !target.runRosterFrozen()) {
+            vm.prank(actionKey);
+            target.snapshotRunRoster();
+        }
+    }
+
+    function _expectRegisterRevert(
+        bytes memory reason,
+        DeviceRegistry target,
+        bytes memory quote,
+        bytes memory compose,
+        bytes memory key,
+        address sender
+    ) internal {
+        bytes memory authorization = _participantAuthorization(target, compose);
+        vm.expectRevert(reason);
+        _registerWithAuthorization(target, quote, compose, key, sender, authorization);
+    }
+
+    function _participantAuthorization(DeviceRegistry target, bytes memory compose) internal returns (bytes memory) {
+        bytes32 digest = target.enrollmentDigest(worker, actionKey, SELLO_RECEIPT_KEY, compose);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(workerPrivateKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _events() internal pure returns (Rtmr3Event[] memory events) {
+        events = new Rtmr3Event[](1);
+        events[0] = Rtmr3Event(0x08000001, "compose-hash", new bytes(32));
+    }
+
+    function _digestPinnedImage(string memory digestHex) internal pure returns (string memory) {
+        return string.concat(IMAGE_REPOSITORY, "@sha256:", digestHex);
+    }
+
+    function _appCompose(string memory name, string memory image, string memory extraLine)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return bytes(
+            string.concat(
+                '{"docker_compose_file":"services:\\n  dfl-worker:\\n    image: ',
+                image,
+                "\\n    environment:\\n      ",
+                extraLine,
+                '","manifest_version":2,"name":"',
+                name,
+                '","runner":"docker-compose"}'
+            )
+        );
+    }
+}
+
+contract DeviceRegistryAttestationBindingTest is DeviceRegistryAttestationFixture {
     function testDerivesImageAndComposeIdentityOnChain() public view {
         (bytes32 composeHash, bytes32 derivedImageDigest) = registry.workloadIdentity(appCompose);
         assertEq(composeHash, sha256(appCompose));
@@ -132,32 +259,12 @@ contract DeviceRegistryAttestationBindingTest is Test {
         registry.getSelloReceiver(attacker);
     }
 
-    function testBootstrapWorkerRequiresSelloReceiptKeyAndOtherWorkersForbidIt() public {
-        DeviceRegistry roleRegistry = new DeviceRegistry(keccak256("role-bound sello deployment"));
-        roleRegistry.setTdxV4Attestation(address(verifier));
-        roleRegistry.setExpectedWorkerImageDigest(imageDigest);
-        roleRegistry.setWorkerPolicyHashAllowed(roleRegistry.workerPolicyHash(appCompose), true);
-        address[] memory roster = new address[](2);
-        roster[0] = worker;
-        roster[1] = attacker;
-        roleRegistry.commitRunRoster(roster);
-
-        vm.expectRevert(bytes("bootstrap sello receiver key required"));
-        roleRegistry.registrationReportData(worker, actionKey, PUBLIC_IP, BROKER_IP, publicKey, bytes32(0), appCompose);
-
-        address attackerActionKey = makeAddr("attacker-action-key");
-        bytes memory trainingOnlyReportData = roleRegistry.registrationReportData(
-            attacker, attackerActionKey, PUBLIC_IP, BROKER_IP, publicKey, bytes32(0), appCompose
-        );
-        assertEq(trainingOnlyReportData.length, 64);
-
-        vm.expectRevert(bytes("non-bootstrap sello receiver key forbidden"));
-        roleRegistry.registrationReportData(
-            attacker, attackerActionKey, PUBLIC_IP, BROKER_IP, publicKey, SELLO_RECEIPT_KEY, appCompose
-        );
+    function testAnyUnselectedParticipantCanPrepareBoundEnrollment() public view {
+        assertEq(registry.registrationReportData(attacker, makeAddrView(), PUBLIC_IP, BROKER_IP,
+            publicKey, bytes32(0), appCompose).length, 64);
     }
-
     function testDeregistrationDeletesSelloReceiptKeyBeforeRosterFreeze() public {
+        autoSnapshot = false;
         DeviceRegistry mutableRegistry = new DeviceRegistry(keccak256("mutable sello deployment"));
         mutableRegistry.setTdxV4Attestation(address(verifier));
         mutableRegistry.setExpectedWorkerImageDigest(imageDigest);
@@ -165,7 +272,6 @@ contract DeviceRegistryAttestationBindingTest is Test {
         address[] memory roster = new address[](2);
         roster[0] = worker;
         roster[1] = attacker;
-        mutableRegistry.commitRunRoster(roster);
 
         bytes memory reportData = _reportData(mutableRegistry, appCompose, publicKey);
         _register(mutableRegistry, reportData, appCompose, publicKey);
@@ -177,46 +283,20 @@ contract DeviceRegistryAttestationBindingTest is Test {
         assertEq(mutableRegistry.selloReceiptKeys(worker), bytes32(0));
     }
 
-    function testRegistrationRequiresOwnerCommittedExactRunRoster() public {
-        DeviceRegistry fresh = new DeviceRegistry(keccak256("fresh deployment"));
-        fresh.setTdxV4Attestation(address(verifier));
-        fresh.setExpectedWorkerImageDigest(imageDigest);
-        fresh.setWorkerPolicyHashAllowed(fresh.workerPolicyHash(appCompose), true);
-
-        vm.expectRevert(bytes("run roster not committed"));
-        _reportData(fresh, appCompose, publicKey);
-
-        address[] memory roster = new address[](1);
-        roster[0] = worker;
-        vm.prank(attacker);
-        vm.expectRevert(bytes("not owner"));
-        fresh.commitRunRoster(roster);
-
-        fresh.commitRunRoster(roster);
-        assertTrue(fresh.runRosterCommitted());
-        assertEq(fresh.runRosterDigest(), keccak256(abi.encode(roster)));
-        assertEq(fresh.getRunRoster(), roster);
-        vm.expectRevert(bytes("run roster already committed"));
-        fresh.commitRunRoster(roster);
+    function testRegistrationNeedsNoOwnerSelectedAddresses() public {
+        assertFalse(registry.runRosterCommitted());
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        _register(registry, reportData, appCompose, publicKey);
+        assertTrue(registry.isAuthorized(worker));
+        assertTrue(registry.admissionPolicyLocked());
     }
 
-    function testRosterCommitRejectsDuplicateAndUnselectedParticipant() public {
-        DeviceRegistry duplicateRegistry = new DeviceRegistry(keccak256("duplicate roster"));
-        address[] memory duplicate = new address[](2);
-        duplicate[0] = worker;
-        duplicate[1] = worker;
-        vm.expectRevert(bytes("run roster contains duplicate"));
-        duplicateRegistry.commitRunRoster(duplicate);
-
-        DeviceRegistry selectedRegistry = new DeviceRegistry(keccak256("selected roster"));
-        selectedRegistry.setTdxV4Attestation(address(verifier));
-        selectedRegistry.setExpectedWorkerImageDigest(imageDigest);
-        selectedRegistry.setWorkerPolicyHashAllowed(selectedRegistry.workerPolicyHash(appCompose), true);
-        address[] memory roster = new address[](1);
-        roster[0] = attacker;
-        selectedRegistry.commitRunRoster(roster);
-        vm.expectRevert(bytes("participant not in committed run roster"));
-        _reportData(selectedRegistry, appCompose, publicKey);
+    function testOwnerCannotPreselectOrBypassAttestation() public {
+        (bool ok,) = address(registry).call(abi.encodeWithSignature("commitRunRoster(address[])", new address[](0)));
+        assertFalse(ok);
+        vm.expectRevert(bytes("attested registration required"));
+        registry.authorizeAddress(attacker);
+        assertFalse(registry.isAuthorized(attacker));
     }
 
     function testVariableEnvironmentValuesDoNotChangeWorkerPolicy() public view {
@@ -301,7 +381,6 @@ contract DeviceRegistryAttestationBindingTest is Test {
         multiPolicyRegistry.setWorkerPolicyHashAllowed(inferencePolicy, true);
         address[] memory roster = new address[](1);
         roster[0] = worker;
-        multiPolicyRegistry.commitRunRoster(roster);
         assertEq(multiPolicyRegistry.allowedWorkerPolicyHashCount(), 2);
 
         bytes memory reportData = _reportData(multiPolicyRegistry, inferenceRole, publicKey);
@@ -312,6 +391,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
     }
 
     function testAdmissionPolicyCannotChangeAfterRosterCommit() public {
+        _register(registry, _reportData(registry, appCompose, publicKey), appCompose, publicKey);
         bytes32 policyHash = registry.workerPolicyHash(appCompose);
         bytes32 nextImageDigest = sha256("next worker image");
         vm.expectRevert(bytes("run admission policy is immutable"));
@@ -329,7 +409,6 @@ contract DeviceRegistryAttestationBindingTest is Test {
         unconfigured.setExpectedWorkerImageDigest(imageDigest);
         address[] memory roster = new address[](1);
         roster[0] = worker;
-        unconfigured.commitRunRoster(roster);
 
         vm.expectRevert(bytes("worker policy set not configured"));
         _reportData(unconfigured, appCompose, publicKey);
@@ -479,7 +558,6 @@ contract DeviceRegistryAttestationBindingTest is Test {
         unconfigured.setTdxV4Attestation(address(verifier));
         address[] memory roster = new address[](1);
         roster[0] = worker;
-        unconfigured.commitRunRoster(roster);
 
         vm.expectRevert(bytes("worker image policy not configured"));
         _reportData(unconfigured, appCompose, publicKey);
@@ -503,7 +581,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
         vm.prank(actionKey);
         registry.deregisterDevice();
         assertTrue(registry.isAuthorized(worker));
-        vm.expectRevert(bytes("run roster is immutable"));
+        vm.expectRevert(bytes("attested registration required"));
         registry.deauthorizeAddress(worker);
         address[] memory authorizedDevices = registry.getAuthorizedDevices();
         assertEq(authorizedDevices.length, 1);
@@ -519,7 +597,6 @@ contract DeviceRegistryAttestationBindingTest is Test {
         malformedRegistry.setWorkerPolicyHashAllowed(malformedRegistry.workerPolicyHash(appCompose), true);
         address[] memory roster = new address[](1);
         roster[0] = worker;
-        malformedRegistry.commitRunRoster(roster);
 
         _expectRegisterRevert(
             bytes("invalid attestation report data"), malformedRegistry, hex"00", appCompose, publicKey, actionKey
@@ -536,7 +613,6 @@ contract DeviceRegistryAttestationBindingTest is Test {
         malformedRegistry.setWorkerPolicyHashAllowed(malformedRegistry.workerPolicyHash(appCompose), true);
         address[] memory roster = new address[](1);
         roster[0] = worker;
-        malformedRegistry.commitRunRoster(roster);
         reportData = _reportData(malformedRegistry, appCompose, publicKey);
 
         _expectRegisterRevert(
@@ -545,6 +621,7 @@ contract DeviceRegistryAttestationBindingTest is Test {
     }
 
     function testVerifierCannotRotateAfterRosterCommit() public {
+        _register(registry, _reportData(registry, appCompose, publicKey), appCompose, publicKey);
         MockTdxV4Attestation replacementVerifier = new MockTdxV4Attestation();
         vm.expectRevert(bytes("run admission policy is immutable"));
         registry.setTdxV4Attestation(address(replacementVerifier));
@@ -664,86 +741,158 @@ contract DeviceRegistryAttestationBindingTest is Test {
         );
     }
 
-    function _reportData(DeviceRegistry target, bytes memory compose, bytes memory key)
-        private
-        view
-        returns (bytes memory)
-    {
-        return target.registrationReportData(worker, actionKey, PUBLIC_IP, BROKER_IP, key, SELLO_RECEIPT_KEY, compose);
+}
+
+contract KmsAdmissionTest is DeviceRegistryAttestationFixture {
+    function testKmsAppIsCreatedAutomaticallyWithoutParticipantAllowlist() public {
+        (WorkerAppAuthFactory factory, address appId) = _configureKms();
+        assertTrue(factory.isApprovedApp(appId, sha256(appCompose)));
+        assertFalse(registry.isAuthorized(worker)); // Pre-boot policy is not membership.
+        _registerKms(appId, bytes("trusted-kms"), _reportData(registry, appCompose, publicKey));
+        assertTrue(registry.isAuthorized(worker));
+        assertEq(registry.registeredAppIds(worker), appId);
     }
 
-    function _register(DeviceRegistry target, bytes memory quote, bytes memory compose, bytes memory key) private {
-        _registerFrom(target, quote, compose, key, actionKey);
+    function testKmsCurrentBootRejectsReplacementEvenForSameAppId() public {
+        (, address appId) = _configureKms();
+        IAppAuth.AppBootInfo memory boot;
+        boot.appId = appId;
+        boot.composeHash = sha256(appCompose);
+        boot.tcbStatus = "UpToDate";
+        (bool allowed,) = WorkerAppAuth(appId).isAppAllowed(boot);
+        assertTrue(allowed);
+        boot.composeHash = sha256("replacement image");
+        (allowed,) = WorkerAppAuth(appId).isAppAllowed(boot);
+        assertFalse(allowed);
+        // Even the app operator cannot expand its release policy.
+        vm.prank(worker);
+        (bool changed,) = appId.call(abi.encodeWithSignature("addComposeHash(bytes32)", boot.composeHash));
+        assertFalse(changed);
     }
 
-    function _registerFrom(
-        DeviceRegistry target,
-        bytes memory quote,
-        bytes memory compose,
-        bytes memory key,
-        address sender
-    ) private {
-        bytes memory authorization = _participantAuthorization(target, compose);
-        _registerWithAuthorization(target, quote, compose, key, sender, authorization);
+    function testKmsRejectsDifferentAppIdentityAndUnacceptableTcb() public {
+        (, address appId) = _configureKms();
+        IAppAuth.AppBootInfo memory boot;
+        boot.appId = attacker;
+        boot.composeHash = sha256(appCompose);
+        boot.tcbStatus = "UpToDate";
+        (bool allowed,) = WorkerAppAuth(appId).isAppAllowed(boot);
+        assertFalse(allowed);
+        boot.appId = appId;
+        boot.tcbStatus = "OutOfDate";
+        (allowed,) = WorkerAppAuth(appId).isAppAllowed(boot);
+        assertFalse(allowed);
     }
 
-    function _registerWithAuthorization(
-        DeviceRegistry target,
-        bytes memory quote,
-        bytes memory compose,
-        bytes memory key,
-        address sender,
-        bytes memory authorization
-    ) private {
-        vm.prank(sender);
-        target.registerDeviceWithAttestedAppCompose(
-            quote, _events(), compose, worker, actionKey, PUBLIC_IP, BROKER_IP, key, SELLO_RECEIPT_KEY, authorization
-        );
+    function testKmsFactoryRejectsWrongImageBeforeKeyProvisioning() public {
+        (WorkerAppAuthFactory factory,) = _configureKms();
+        bytes memory other = _appCompose("replacement", _digestPinnedImage(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), "ROUND: \\\"1\\\"\\n");
+        vm.expectRevert(bytes("worker image digest mismatch"));
+        factory.createApp(other, bytes32(uint256(1)));
     }
 
-    function _expectRegisterRevert(
-        bytes memory reason,
-        DeviceRegistry target,
-        bytes memory quote,
-        bytes memory compose,
-        bytes memory key,
-        address sender
-    ) private {
-        bytes memory authorization = _participantAuthorization(target, compose);
-        vm.expectRevert(reason);
-        _registerWithAuthorization(target, quote, compose, key, sender, authorization);
+    function testKmsEnrollmentRejectsOperatorControlledProvider() public {
+        (, address appId) = _configureKms();
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        _registerKms(appId, bytes("operator-controlled-kms"), reportData, bytes("untrusted KMS provider"));
+        assertFalse(registry.isAuthorized(worker));
     }
 
-    function _participantAuthorization(DeviceRegistry target, bytes memory compose) private returns (bytes memory) {
-        bytes32 digest = target.enrollmentDigest(worker, actionKey, SELLO_RECEIPT_KEY, compose);
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(workerPrivateKey, digest);
-        return abi.encodePacked(r, s, v);
+    function testKmsEnrollmentRejectsUnprotectedAppEvenWithApprovedImage() public {
+        _configureKms();
+        bytes memory reportData = _reportData(registry, appCompose, publicKey);
+        _registerKms(attacker, bytes("trusted-kms"), reportData, bytes("unapproved KMS app policy"));
+        assertFalse(registry.isAuthorized(worker));
     }
 
-    function _events() private pure returns (Rtmr3Event[] memory events) {
-        events = new Rtmr3Event[](1);
-        events[0] = Rtmr3Event(0x08000001, "compose-hash", new bytes(32));
+    function testKmsRestartReattestsSameKeysWithoutChangingLogicalIdentity() public {
+        (, address appId) = _configureKms();
+        bytes memory originalQuote = _reportData(registry, appCompose, publicKey);
+        _registerKms(appId, bytes("trusted-kms"), originalQuote);
+        vm.prank(actionKey);
+        registry.snapshotRunRoster();
+        bytes32 snapshot = registry.runRosterDigest();
+        bytes memory nextQuote = _reportData(registry, appCompose, publicKey);
+        _registerKms(appId, bytes("trusted-kms"), nextQuote);
+        assertEq(registry.registrationNonces(worker), 2);
+        assertEq(registry.actionKeys(worker), actionKey);
+        assertEq(registry.runRosterDigest(), snapshot);
+        assertEq(registry.getAuthorizedDevices().length, 1);
+        _registerKms(appId, bytes("trusted-kms"), originalQuote, bytes("quote report data mismatch"));
     }
 
-    function _digestPinnedImage(string memory digestHex) private pure returns (string memory) {
-        return string.concat(IMAGE_REPOSITORY, "@sha256:", digestHex);
+    function testRegistrationRemainsOpenAfterTrainingSnapshot() public {
+        _register(registry, _reportData(registry, appCompose, publicKey), appCompose, publicKey);
+        bytes32 snapshot = registry.runRosterDigest();
+        worker = attacker;
+        workerPrivateKey = attackerPrivateKey;
+        actionKey = makeAddr("late-workload-action");
+        _register(registry, _reportData(registry, appCompose, publicKey), appCompose, publicKey);
+        assertTrue(registry.isAuthorized(attacker));
+        assertEq(registry.getAuthorizedDevices().length, 2);
+        assertEq(registry.getRunDevices().length, 1);
+        assertEq(registry.runRosterDigest(), snapshot);
+        assertFalse(registry.isRunParticipant(attacker));
     }
 
-    function _appCompose(string memory name, string memory image, string memory extraLine)
-        private
-        pure
-        returns (bytes memory)
-    {
-        return bytes(
-            string.concat(
-                '{"docker_compose_file":"services:\\n  dfl-worker:\\n    image: ',
-                image,
-                "\\n    environment:\\n      ",
-                extraLine,
-                '","manifest_version":2,"name":"',
-                name,
-                '","runner":"docker-compose"}'
-            )
-        );
+    function testSnapshotCannotOmitAnAlreadyRegisteredParticipant() public {
+        autoSnapshot = false;
+        _register(registry, _reportData(registry, appCompose, publicKey), appCompose, publicKey);
+        address firstAction = actionKey;
+        worker = attacker;
+        workerPrivateKey = attackerPrivateKey;
+        actionKey = makeAddr("second-workload-action");
+        _register(registry, _reportData(registry, appCompose, publicKey), appCompose, publicKey);
+        vm.prank(firstAction);
+        registry.snapshotRunRoster();
+        assertEq(registry.getRunRoster().length, 2);
+        assertTrue(registry.committedRunMembers(attacker));
     }
+
+    function testKmsRenewalPreservesEarnedScoreOnTheRealModelLedger() public {
+        uint256 actionPrivate;
+        (actionKey, actionPrivate) = makeAddrAndKey("stable-kms-action");
+        (, address appId) = _configureKms();
+        _registerKms(appId, bytes("trusted-kms"), _reportData(registry, appCompose, publicKey));
+        vm.prank(actionKey);
+        registry.snapshotRunRoster();
+        // Deployment's initial address does not preselect the registered bootstrap role.
+        AggregatorSelection selection = new AggregatorSelection(attacker);
+        GMStorage ledger = new GMStorage(address(registry), address(selection), "initial-cid");
+        selection.setGMStorageAddress(address(ledger));
+        assertEq(selection.getCurrentAggregator(), worker);
+        AggregationPolicy policy = new AggregationPolicy(address(ledger));
+        ledger.setAggregationPolicyAddress(address(policy));
+        policy.configureDefaultPolicy(1, 20);
+        vm.prank(actionKey);
+        ledger.openModelSubmissions(0);
+        vm.prank(actionKey);
+        ledger.closeModelSubmissions(0);
+        (, , , , , uint32 accepted, , bytes32 algorithmHash, , , bytes32 policyHash, bytes32 inputRoot) =
+            policy.getRoundPolicy(0);
+        bytes32 modelHash = keccak256("model");
+        bytes32 bundleHash = keccak256("bundle");
+        bytes32 digest = policy.aggregationStatementDigest(0, worker, inputRoot, accepted,
+            algorithmHash, policyHash, modelHash, bundleHash,
+            keccak256(abi.encode("model-cid", "signature-cid", "bundle-cid")), 0);
+        (uint8 v, bytes32 r, bytes32 sigS) = vm.sign(actionPrivate, digest);
+        vm.prank(actionKey);
+        ledger.finalizeRoundWithAggregation("model-cid", "signature-cid", "bundle-cid",
+            modelHash, bundleHash, abi.encodePacked(r, sigS, v));
+        assertEq(ledger.getContribution(worker), 1);
+        _registerKms(appId, bytes("trusted-kms"), _reportData(registry, appCompose, publicKey));
+        assertEq(ledger.getContribution(worker), 1);
+        assertEq(registry.resolveAuthorizedParticipant(actionKey), worker);
+    }
+
+    function testOperatorFundingAmountsDoNotRequirePerParticipantPolicyApproval() public view {
+        bytes memory first = _appCompose("worker", _digestPinnedImage(IMAGE_HEX),
+            "ACTION_KEY_MIN_BALANCE_WEI: \\\"100\\\"\\n      ACTION_KEY_TARGET_BALANCE_WEI: \\\"200\\\"\\n");
+        bytes memory second = _appCompose("worker", _digestPinnedImage(IMAGE_HEX),
+            "ACTION_KEY_MIN_BALANCE_WEI: \\\"300\\\"\\n      ACTION_KEY_TARGET_BALANCE_WEI: \\\"400\\\"\\n");
+        assertEq(registry.workerPolicyHash(first), registry.workerPolicyHash(second));
+        assertTrue(sha256(first) != sha256(second));
+    }
+
 }

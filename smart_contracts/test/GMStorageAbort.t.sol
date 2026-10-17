@@ -17,11 +17,15 @@ contract AbortDeviceRegistryStub {
         authorized[device] = value;
     }
 
+    function isRunParticipant(address device) external view returns (bool) { return authorized[device]; }
+
     function isAuthorized(address device) external view returns (bool) {
         return authorized[device];
     }
 
-    function getAuthorizedDevices() external view returns (address[] memory) {
+    function bootstrapParticipant() external pure returns (address) { return address(0); }
+
+    function getRunDevices() external view returns (address[] memory) {
         return authorizedDevices;
     }
 

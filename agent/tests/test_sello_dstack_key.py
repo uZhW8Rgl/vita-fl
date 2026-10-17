@@ -41,6 +41,19 @@ class SelloDstackKeyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "require.*ephemeral"):
             tee_sello_signing_seed(environment, local_root=bytes(32))
 
+    def test_kms_mode_reads_only_guarded_runtime_material(self) -> None:
+        seed = bytes(range(32))
+        environment = {
+            **BASE_ENV,
+            "DOCKER": "phala",
+            "PARTICIPANT_KEY_PROVIDER": "kms",
+            "SELLO_SERVICE_KEY_PROVIDER": "kms",
+        }
+        self.assertEqual(tee_sello_signing_seed(environment, runtime_key_reader=lambda _: seed), seed)
+        environment["PARTICIPANT_KEY_PROVIDER"] = "ephemeral"
+        with self.assertRaises(RuntimeError):
+            tee_sello_signing_seed(environment, runtime_key_reader=lambda _: seed)
+
     def test_local_root_requires_explicit_mock_mode(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "LOCAL_TDX_MOCK"):
             tee_sello_signing_seed(BASE_ENV, local_root=bytes(32))

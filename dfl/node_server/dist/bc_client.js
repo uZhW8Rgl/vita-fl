@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { actionFundingConfig } from "./action_funding.js";
 import Web3 from "web3";
 import fs from "fs";
 import 'dotenv/config';
@@ -242,8 +243,7 @@ export const fundParticipantActionKey = async () => {
     if (account.address.toLowerCase() !== logicalAddress) {
         throw new Error(`PRIVATE_KEY account ${account.address} does not match ACCOUNT_ADDRESS ${logicalAddress}`);
     }
-    const minimum = BigInt(process.env.ACTION_KEY_MIN_BALANCE_WEI || "1000000000000000000");
-    const target = BigInt(process.env.ACTION_KEY_TARGET_BALANCE_WEI || "10000000000000000000");
+    const { minimum, target } = actionFundingConfig();
     const balance = BigInt(await web3.eth.getBalance(signer.address));
     if (balance >= minimum)
         return null;
@@ -773,8 +773,17 @@ export const isAuthorized = async (address) => {
 export const getAuthorizedDevices = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
     const contract = new web3.eth.Contract(abi, device_registry_address);
-    const result = await contract.methods.getAuthorizedDevices().call();
-    return Array.from(result || []);
+    return Array.from(await contract.methods.getRunDevices().call() || []);
+};
+export const snapshotRegisteredRunRoster = async () => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    return sendProtocolMethod(contract.methods.snapshotRunRoster(), device_registry_address, { gasBuffer: true });
+};
+export const isRunParticipant = async (address) => {
+    const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    return await contract.methods.isRunParticipant(address).call();
 };
 export const getCommittedRunRosterState = async () => {
     const abi = JSON.parse(fs.readFileSync("./abi/registry.json", "utf-8"));

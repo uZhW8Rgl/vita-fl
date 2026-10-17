@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { snapshotRegisteredRunRoster, isRunParticipant } from "./bc_client.js";
 // code adapted from pinata docs https://docs.pinata.cloud/quickstart/node-js
 import 'dotenv/config';
 import path from 'path';
@@ -1166,15 +1167,6 @@ async function currentCommittedRunRosterContext({ requireFrozen = false } = {}) 
             + `${rosterState.registeredWorkerCount}`,
         );
     }
-    if (
-        Number(process.env.WORKER_COUNT || binding.workerCount)
-        !== binding.workerCount
-    ) {
-        throw new Error(
-            `committed run-roster count ${binding.workerCount} does not match `
-            + 'the selected worker count',
-        );
-    }
     if (!sameAddress(binding.bootstrapWorker, process.env.ACCOUNT_ADDRESS)) {
         throw new Error(
             'round-0 bootstrap must be executed by committed run-roster worker W0',
@@ -1193,58 +1185,6 @@ async function currentCommittedRunRosterContext({ requireFrozen = false } = {}) 
         );
     }
     return { binding, frozen, registeredWorkerCount };
-}
-
-async function validateBootstrapDeclarationAgainstCommittedRoster(
-    binding,
-    timeoutMs = 5_000,
-) {
-    const declaration = await readRuntimeMfsJson(
-        '/runtime/bootstrap-recipients.json',
-        timeoutMs,
-    );
-    const addresses = normalizeBootstrapRecipientAddresses(declaration);
-    if (
-        Number(declaration.worker_count) !== addresses.length
-        || addresses.length !== binding.workerCount
-    ) {
-        throw new Error(
-            `bootstrap recipient count ${addresses.length} does not match `
-            + `the committed run-roster count ${binding.workerCount}`,
-        );
-    }
-    if (
-        !sameAddress(declaration.bootstrap_worker, binding.bootstrapWorker)
-        || !sameAddress(binding.bootstrapWorker, process.env.ACCOUNT_ADDRESS)
-    ) {
-        throw new Error(
-            'bootstrap declaration does not select committed run-roster worker W0',
-        );
-    }
-    if (Number(declaration.chain_id) !== binding.chainId) {
-        throw new Error('bootstrap declaration has the wrong chain id');
-    }
-    if (!sameAddress(declaration.registry_address, binding.registryAddress)) {
-        throw new Error(
-            'bootstrap declaration has the wrong DeviceRegistry address',
-        );
-    }
-    if (
-        normalizeRunRosterDigest(
-            declaration.onchain_roster_digest,
-            'bootstrap declaration on-chain roster digest',
-        ) !== binding.rosterDigest
-    ) {
-        throw new Error(
-            'bootstrap declaration does not match the committed run-roster digest',
-        );
-    }
-    if (JSON.stringify(addresses) !== JSON.stringify(binding.recipientAddresses)) {
-        throw new Error(
-            'bootstrap declaration does not match the exact ordered committed run roster',
-        );
-    }
-    return declaration;
 }
 
 async function readBootstrapRecipientKeys(addresses) {
@@ -1273,11 +1213,16 @@ async function waitForRegisteredBootstrapRecipients() {
         attempt++;
         try {
             const remaining = Math.max(1, deadline - Date.now());
+            const rosterState = await getCommittedRunRosterState();
+            if (!rosterState.frozen) {
+                const admitted = await getAuthorizedDevices();
+                const minimum = Number(process.env.WORKER_COUNT || 1);
+                if (!Number.isSafeInteger(minimum) || minimum < 1) throw new Error("Invalid bootstrap minimum");
+                if (admitted.length < minimum) throw new Error(`Waiting for registrations: ${admitted.length}/${minimum}`);
+                // No address list is supplied. The chain includes EVERY registered participant.
+                await snapshotRegisteredRunRoster();
+            }
             const firstContext = await currentCommittedRunRosterContext();
-            await validateBootstrapDeclarationAgainstCommittedRoster(
-                firstContext.binding,
-                Math.min(5_000, remaining),
-            );
             if (!firstContext.frozen) {
                 throw new Error(
                     `DeviceRegistry run roster registration is incomplete `
@@ -1309,10 +1254,6 @@ async function waitForRegisteredBootstrapRecipients() {
                     'selected worker RSA keys changed while the round-0 roster was frozen',
                 );
             }
-            await validateBootstrapDeclarationAgainstCommittedRoster(
-                finalContext.binding,
-                Math.min(5_000, Math.max(1, deadline - Date.now())),
-            );
             console.log(
                 `All ${firstContext.binding.workerCount} committed workers are registered `
                 + 'and the frozen round-0 RSA-key snapshot is stable.',
@@ -1862,7 +1803,7 @@ const stateMachine = async () => {
             ? ownTeeInferenceEndpoint(liveIdentity.appId)
             : process.env.PUBLIC_IP || "";
         const brokerIp = process.env.MSG_BROKER_IP || "";
-        if (await hasCurrentDeviceRegistration(
+        if (process.env.PARTICIPANT_KEY_PROVIDER !== "kms" && await hasCurrentDeviceRegistration(
             publicIp,
             brokerIp,
             publicKey,
@@ -1916,6 +1857,11 @@ const stateMachine = async () => {
         await new Promise<void>(() => {
             setInterval(() => {}, 60 * 60 * 1000);
         });
+    }
+    if (!await isRunParticipant(process.env.ACCOUNT_ADDRESS)) {
+        console.log("Attested registration accepted; this workload joined after the current training snapshot.");
+        await runtimeEvent("training.admitted_after_snapshot", { role: "worker" });
+        await new Promise<void>(() => { setInterval(() => {}, 60 * 60 * 1000); });
     }
     while (Number(await getCompletedRoundCount()) < targetRound()) {
         let state = await getCurrentState();

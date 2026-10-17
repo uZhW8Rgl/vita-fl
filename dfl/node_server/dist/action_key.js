@@ -1,3 +1,4 @@
+import { readRuntimeSigningSeed } from "./runtime_keys.js";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import crypto from "crypto";
 import { AccessListEIP2930Transaction, privateKeyToAccount, signTransaction as signTypedTransaction, } from "web3-eth-accounts";
@@ -138,8 +139,9 @@ export const signRawDigest = (digest, privateKey) => signatureHex(digest, privat
 export const loadParticipantActionSigner = async (options = {}) => {
     const env = options.env || process.env;
     const phala = env.DOCKER === "phala";
-    const provider = options.deriveKey || (phala ? async () => crypto.randomBytes(32) : localTestProvider(env));
-    const source = phala ? "ephemeral-random" : "local-test-derived";
+    const kms = phala && env.PARTICIPANT_KEY_PROVIDER === "kms";
+    const provider = options.deriveKey || (kms ? () => readRuntimeSigningSeed("action-root.seed") : phala ? async () => crypto.randomBytes(32) : localTestProvider(env));
+    const source = kms ? "kms-sealed" : phala ? "ephemeral-random" : "local-test-derived";
     const context = derivationContext(env);
     let destroyed = false;
     const derive = async () => {
