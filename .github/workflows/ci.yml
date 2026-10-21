@@ -132,6 +132,15 @@ jobs:
       - name: Run Phala configuration unit tests
         run: PYTHONPATH=. python -m unittest discover -s phala -p 'test_*.py' -v
 
+      - name: Set up Node for broker parser interoperability
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Prepare production broker parser for Python interoperability tests
+        run: npm ci --ignore-scripts && npm run build
+        working-directory: dfl/node_server
+
       - name: Check own-KMS configuration and pinned upstream sources
         run: python -m pytest -q kms key_service
 

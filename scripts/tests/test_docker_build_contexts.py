@@ -23,6 +23,15 @@ from scripts.prepare_tee_build_context import prepare_context
 
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILES = sorted(ROOT.glob("*/Dockerfile"))
+# forge build precedes image publication; checkout itself excludes out/.
+# These probes test Docker's ignore/COPY rules, not Solidity compilation (which
+# the publication job exercises with the actual artifact and Anvil admission).
+GENERATED_COPY_INPUTS = {
+    (
+        "key_service/Dockerfile",
+        "smart_contracts/out/AttestedKeyAdmission.sol/AttestedKeyAdmission.json",
+    ): "smart_contracts/src/keys/AttestedKeyAdmission.sol",
+}
 
 
 def local_copy_sources(dockerfile: Path) -> list[str]:
@@ -103,6 +112,11 @@ class DockerContextTests(unittest.TestCase):
             sources = local_copy_sources(dockerfile)
             for source in () if real_staged_tee else sources:
                 matches = list(source_context(dockerfile).glob(source))
+                if not matches:
+                    generated_from = GENERATED_COPY_INPUTS.get((str(dockerfile.relative_to(ROOT)), source))
+                    if generated_from:
+                        self.assertTrue((ROOT / generated_from).is_file(), "Missing generated-artifact source")
+                        matches = [source_context(dockerfile) / source]
                 self.assertTrue(matches, f"Missing checkout COPY input for {dockerfile}: {source}")
                 for actual in matches:
                     relative = actual.relative_to(source_context(dockerfile))
