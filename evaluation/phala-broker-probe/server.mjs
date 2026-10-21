@@ -72,7 +72,8 @@ async function inspect(challenge,claimedComposeHash) {
         runtime_keys_present:present.every(Boolean),runtime_keys_absent:present.every(v=>!v)};
     const claims_json=JSON.stringify(claims);
     const evidence=await client.getQuote(crypto.createHash('sha512').update('VITA-FL:broker-evaluation:v1\0').update(claims_json).digest());
-    return {claims,claims_json,quote:evidence.quote,event_log:evidence.event_log,app_compose:info.tcb_info.app_compose};
+    return {claims,claims_json,quote:evidence.quote,event_log:evidence.event_log,
+        vm_config:evidence.vm_config,app_compose:info.tcb_info.app_compose};
 }
 const server=http.createServer(async(req,res)=>{
     const send=(s,v)=>res.writeHead(s,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify(v));
