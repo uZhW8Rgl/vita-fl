@@ -31,11 +31,11 @@ contract AttestedKeyAdmissionTest is Test {
         registry.setExpectedWorkerImageDigest(bytes32(uint256(0x1111111111111111111111111111111111111111111111111111111111111111)));
         registry.setWorkerPolicyHashAllowed(registry.workerPolicyHash(appCompose),true);
         admission=new AttestedKeyAdmission(address(registry),keccak256("service"));
-        registry.setKeyAdmissionPolicy(address(admission));admission.authorise(participant,appId,sha256(appCompose));
+        registry.setKeyAdmissionPolicy(address(admission));
         identity=AttestedKeyAdmission.Identity(address(789),new bytes(400),keccak256("sello"),keccak256("air"));
     }
     function request(bool restoring,uint256 nonce) internal view returns(AttestedKeyAdmission.Request memory){
-        return AttestedKeyAdmission.Request(participant,appId,sha256(appCompose),bytes32(nonce),keccak256("recipient"),uint64(block.timestamp+120),restoring);
+        return AttestedKeyAdmission.Request(participant,appId,sha256(appCompose),bytes32(nonce),keccak256("recipient"),uint64(block.timestamp+120),restoring,keccak256("service instance"),keccak256("service public key"));
     }
     function events() internal view returns(Rtmr3Event[] memory out){
         out=new Rtmr3Event[](2);out[0]=Rtmr3Event(0x08000001,"app-id",abi.encodePacked(appId));
@@ -85,6 +85,19 @@ contract AttestedKeyAdmissionTest is Test {
     function testQuoteCannotBeReusedForDifferentChallenge() public {
         AttestedKeyAdmission.Request memory old=request(false,1);bytes memory report=admission.reportData(old,identity);
         AttestedKeyAdmission.Request memory req=request(false,2);bytes memory sig=signature(req);Rtmr3Event[] memory log=events();
+        vm.expectRevert("quote report data mismatch");admission.admit(req,identity,sig,report,log,appCompose);
+    }
+    function testUnlistedParticipantNeedsNoAdministratorGrant() public {
+        participantKey=987654;participant=vm.addr(participantKey);appId=address(987);
+        assertTrue(admission.isAllowed(participant,appId,sha256(appCompose)));
+        admit(request(false,1));
+        (bytes32 hash,bool revoked)=admission.grants(participant,appId);
+        assertEq(hash,sha256(appCompose));assertFalse(revoked);
+    }
+    function testWorkerQuoteCannotBeMovedToAnotherServiceSigner() public {
+        AttestedKeyAdmission.Request memory req=request(false,1);bytes memory report=admission.reportData(req,identity);
+        req.servicePublicKey=keccak256("substituted service key");
+        bytes memory sig=signature(req);Rtmr3Event[] memory log=events();
         vm.expectRevert("quote report data mismatch");admission.admit(req,identity,sig,report,log,appCompose);
     }
 }

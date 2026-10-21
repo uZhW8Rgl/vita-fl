@@ -1,102 +1,139 @@
 # Independent attested key service (Anvil development profile)
 
-This optional `PARTICIPANT_KEY_PROVIDER=broker` path restores the participant's
-RSA, action, Sello and AIR keys across worker executions of the **same authorised
-manifest**, while the same key-service process stays alive. A different container image changes that manifest's measured hash
-and cannot obtain the key that protects its predecessor's state. The existing
-default ephemeral profile and the older `kms/` experiment remain separate.
+The optional `PARTICIPANT_KEY_PROVIDER=broker` profile restores the participant's
+random RSA, action, Sello and AIR keys across approved worker starts. Worker
+ciphertext survives on its volume; service roots remain in RAM for the current
+development/test setup. The service and Anvil intentionally start fresh after a
+restart. This reset is a test configuration, not a requirement for production
+key management. Persistent service-root custody is not implemented here.
 
-This service does not call dstack `GetKey`, replace Phala's KMS URLs, submit
-Ethereum mainnet transactions or require a bridge. Phala's managed provisioning
-still starts the CVM; our independently administered service makes the
-application's secret-release decision after boot.
+## Current protocol: onchain-v3
 
-## Current protocol: one on-chain appraisal and one random root per worker
+The worker first authenticates the service, then submits its own attested
+admission. No preselected participants or administrator-issued per-worker grants
+are required. Anyone may register by satisfying the common workload policy and
+participant-authorisation checks. The first successful admission records the
+participant/app/manifest and public identity; restoration cannot replace them.
+Registry registration remains the decision granting DFL membership.
 
-The Phala runtime image starts `runtime.mjs` / `chain_server.mjs` (`onchain-v2`).
-It does **not** call the Phala online quote-verification API. `AttestedKeyAdmission`
-asks the existing DeviceRegistry's real DCAP verifier to appraise the quote on
-Anvil, including approved OS measurements and replayed RTMR3. Anvil and its
-administrator remain trusted development infrastructure; no mainnet is involved.
+1. The service generates an ephemeral Ed25519 signing key and instance ID.
+   Before creating any worker-root store or listening, it quotes the signer,
+   policy hash, instance and contract context and positively appraises its own
+   evidence against independently supplied runtime references. Missing/malformed
+   policy, failed quote authentication, a debug guest, changed runtime or an
+   unavailable verifier stops startup. There is no production verification bypass.
+2. The worker sends a fresh random challenge to `/v3/attestation`. The service's
+   fresh quote binds that challenge, the signing key and instance, the exact
+   runtime Compose/app ID, trust-policy hash, chain, registry, admission contract
+   and its code hash. Evidence expires after at most 120 seconds.
+3. The worker verifies the proof signature, expected context, platform references,
+   RTMR3 replay, measured manifest and pinned service image using the existing
+   fail-closed Phala HTTPS quote appraiser. The complete co-located runtime must
+   use digest-pinned images. The worker checks the contract code against its RPC.
+4. All `/v3/challenge` and `/v3/release` responses, including refusals, are signed
+   by the attested key over the exact payload, HTTP status, operation, request
+   nonce and service instance. Substitution, changed status, cross-request replay
+   and responses from another service instance fail authentication. HTTPS remains
+   enabled; message signatures bind the application endpoint beyond a gateway.
+5. The worker creates its four random keys only on first initialisation. Its
+   public identity, participant credential, fresh release recipient and current
+   service signer/instance are bound to one worker quote. Restoration uses the
+   recorded public identity and does not need an unavailable old action secret.
+6. `AttestedKeyAdmission.admit` verifies the participant signature, common image
+   and role policy, actual app ID, exact manifest, quote and release context.
+   The worker's DCAP appraisal runs once on Anvil. The service does not estimate
+   gas or pre-execute quote verification. Registry registration reuses this
+   admission without a second worker-quote appraisal.
+7. Before root creation/use the service requires a valid self-appraisal again.
+   A positive self-appraisal is cached for at most 60 seconds; expiry requires a
+   fresh positive appraisal. The first worker admission creates an independent
+   random root; restoration requires the existing in-memory root. HKDF binds its
+   wrapping key to chain, policy, service, registry, participant, app and Compose.
+8. The wrapping key is encrypted to the quoted X25519 worker recipient. The worker
+   verifies the signed response, decrypts or creates its AES-GCM bundle, compares
+   all four public identities with admission, and creates private runtime files
+   only in `/run/vita-fl` tmpfs. The root itself is never sent to the worker.
 
-1. On first initialization the approved worker generates its four random private
-   keys. Their public counterparts are included in a fresh challenge, together
-   with participant, app ID, exact manifest hash, registry, chain, service,
-   expiry and an ephemeral X25519 recipient. For restoration the public identity
-   comes from the already admitted on-chain record instead.
-2. The bootstrap participant credential signs that request. One fresh TDX quote
-   binds the public identity and release recipient to the measured workload.
-   Restoring workers do not need their unavailable action private key for this.
-3. The service relays `admit` with a fixed gas limit; it does not pre-execute DCAP
-   through `estimateGas` or `debugVerify`. The contract checks the immutable
-   manifest grant, participant signature, nonce/expiry, app ID, full manifest,
-   role policy and real DCAP evidence. It stores the public identity and permit.
-4. Only after a confirmed permit does the service generate an **independent
-   random 32-byte root for this participant/app**. `worker_roots.mjs` keeps it
-   exclusively in process memory. Restoration uses that same in-memory root. No global secret derives worker roots.
-5. HKDF derives a wrapping key from that worker root and `(chain, policy, service,
-   registry, participant, appId, composeHash)`. Challenge and transport recipient
-   are excluded so a new invocation recovers the same wrapping key. The root
-   remains in the service; the wrapping key is X25519/HKDF/AES-GCM encrypted to
-   the quoted ephemeral recipient.
-6. The worker seals or restores its four-key bundle in `/var/lib/vita-fl` and
-   materialises the private files only in `/run/vita-fl` tmpfs. It checks that
-   all four restored public keys equal the admitted identity.
-7. `registerDeviceWithKeyAdmission` consumes that recorded admission and the
-   participant's delegation. **There is no second quote appraisal.** Each later
-   key restoration still requires its own fresh quote and one new admission.
+A lost service root or worker bundle fails restoration instead of creating a
+replacement identity. Initial admission followed by a crash before the first
+bundle write still needs an explicitly fresh identity; no automatic repair is
+claimed. This prototype does not erase plaintext previously disclosed by approved
+code. Its service self-check gates current RAM-root use; it does not implement an
+external protection boundary for future persistent root restoration.
 
-An unapproved replacement image is denied even when it retains the app ID and
-can read the old ciphertext. Its manifest hash is also part of the wrapping-key
-context. Changing an image does not automatically update a grant. Missing roots or corrupt or insecurely permissioned bundle state fail closed. In particular,
-losing the sealed bundle does not create replacement keys under an admitted
-identity. A crash between initial admission and the first durable bundle write
-requires explicit recovery with a fresh identity; this prototype has no automatic
-repair for that enrollment window. Service restarts intentionally lose all worker roots. An admitted worker then
-cannot decrypt its previous bundle; the service refuses restoration instead of
-creating a replacement root. Anvil is also ephemeral; a runtime restart requires
-a new contract deployment, grants and worker enrollment. Revocation prevents future
-releases but cannot erase material previously released to an approved worker.
+Worker admission's on-chain DCAP check and the service's self/client quote
+appraisals have different subjects. RA-TLS and AIR checks elsewhere keep their
+own purposes. Adding service authentication does not add another worker DCAP
+verification during registration.
 
-## Runtime deployment and trust boundary
+## Independent service references and deployment
 
-`render_runtime.py` overlays the existing contract-runtime manifest with an
-unprivileged, read-only serving container without a state volume. The serving
-process receives neither the wallet private key nor the Cloud API key.
-`DeployAttestedKeyAdmission.s.sol` runs inside the existing Foundry starter when
-`KEY_SERVICE_ENABLED=1`. No Node administrator deployment or additional
-bootstrap wrapper is used. The overlay preserves the base Anvil and IPFS
-configuration and introduces no persistence for either.
+`render_runtime.py` adds the unprivileged, read-only service to the existing
+contract-runtime, with read-only access to `/var/run/dstack.sock`. It adds no root
+or Anvil-state volume. The ordinary Foundry starter deploys the admission contract
+when `KEY_SERVICE_ENABLED=1`; the service receives no administrator wallet or
+Cloud API credential. All co-located images must be reviewed and digest pinned.
 
-Build the images using workflow **Publish Dedicated Evaluation Probes**, branch
-`kms`, input `profile=runtime-v2`. The output supplies four immutable references
-(worker, replacement test variant, service and contracts). The probe is not the
-default command; a dedicated probe manifest explicitly invokes
-`/evaluation/phala-broker-probe/server.mjs` on the digest-pinned worker image.
-Render the overlay with `python -m key_service.render_runtime BASE OUTPUT
---images IMAGES.json --platform-policy POLICY.json`. The images JSON contains
-`service`, `worker`, `contracts`; the policy is the independently verified TDX OS
-reference from the evaluation artifacts. Apply it only to the explicitly selected
-contract-runtime CVM, retaining the complete base manifest for review/rollback.
-After a new Terraform render, review and reapply this optional overlay.
+Supply public service trust references as `KEY_SERVICE_TRUST_POLICY`. Its JSON
+contains `version`, runtime `appId`, exact `composeHash`, `serviceImage`, HTTPS
+`origin`, and independently accepted `platformMeasurements` (MRTD/RTMR0--2).
+It lists service software, not permitted workers. An initial reference is never
+accepted merely because the contacted service supplied it.
 
-Worker roots are never written to files, volumes, images, worker environments
-or Anvil. They exist only in the serving process's RAM and are discarded on
-restart. Hosting the service in a TEE does not by itself protect against a
-malicious administrator controlling the **service's own** image or execution. This prototype therefore trusts the contract-runtime
-administrator and its Docker control plane. It protects against replacement of
-a worker image, not compromise of that central runtime. RPC/admin access must
-stay restricted; the public RPC proxy permits signed transactions but rejects
-unlocked-account and Anvil administration methods. The service uses private
-Anvil RPC internally. Public client access uses HTTPS with normal certificate
-validation, optionally a pinned CA.
+Use the exact canonical manifest and Compose hash independently returned during
+provisioning, before starting the service. Example:
 
-The approved worker must keep keys private and restrict the attestation socket.
-Review the whole manifest, including commands, mounts and environment
-permissions. Arbitrary code injection into an approved workload remains outside
-this prototype's guarantee. The default worker profile remains ephemeral until
-explicitly configured with `PARTICIPANT_KEY_PROVIDER=broker`; no old identity is
-automatically migrated.
+```sh
+python -m key_service.render_service_policy canonical-runtime.json service-policy.json \
+  --app-id 0xRUNTIME_APP_ID --origin https://keys.example \
+  --platform-policy runtime-platform-policy.json --expected-compose-hash COMPOSE_HASH
+```
+
+Supply the resulting policy separately through the encrypted runtime environment;
+rendered Compose contains only `${KEY_SERVICE_TRUST_POLICY}`. Embedding its own
+expected Compose hash literally into that manifest would create a hash cycle.
+The policy hash is itself bound in every service quote. Workers receive the same
+independently approved public policy in their measured configuration:
+
+```sh
+python -m key_service.render_worker base-worker.json broker-worker.json \
+  --origin https://keys.example --policy 0xADMISSION_CONTRACT \
+  --service-id SERVICE_ID --service-trust-policy service-policy.json
+```
+
+The worker policy binds this value like the other fixed security settings;
+participant-specific identities remain variable. Service and worker use distinct
+platform references because their OS images can differ. Do not copy the worker
+OS policy as the runtime reference without checking it.
+
+The service's own measurements cover its complete CVM configuration. Co-located
+Anvil and other services remain in the trusted runtime; the implementation does
+not add an independent ledger, hardware isolation between containers or a KMS
+self-governance contract. Restricted RPC and policy administration remain trusted.
+The existing platform still provisions CVMs; this service neither replaces
+Phala's KMS nor needs a mainnet bridge.
+
+## Verification and version boundaries
+
+```sh
+python -m pytest -q key_service
+node --test key_service/*.test.mjs
+forge test --root smart_contracts --match-contract AttestedKeyAdmissionTest
+node --test key_service/admission.integration.mjs
+```
+
+The local integration uses actual Anvil transactions, HTTP, signatures and sealed
+bundles, with explicitly labelled synthetic quote fixtures. It checks enrolment
+without a prior grant, single worker appraisal, service-response authentication,
+restoration and denial after service-root loss. These fixtures do not establish
+successful hardware attestation of the new service-authentication path.
+
+The prior **onchain-v2** cloud campaign passed 39 assertions at `cfc8d563` through
+SMEW → SMA → vita-fl-td. The older **online-v1** campaign passed 38 assertions.
+Their retained evidence does not validate onchain-v3. New deployments need the v3
+images, updated contracts and independent service references. No silent downgrade
+or automatic migration of old participant bundles is supported. The historical
+source/images and validation directories preserve reproduction of those runs.
 
 ## Historical online-v1 profile
 
@@ -148,7 +185,7 @@ HTTPS origin, service ID, policy address, registry, root and persisted chain.
 The HTTPS terminator remains trusted for service authentication; the broker
 itself is not remotely attested by this prototype.
 
-## Worker configuration and grant
+## Historical online-v1 worker configuration and grant
 
 Use a worker image containing the new TypeScript build. Configure
 `DOCKER=phala`, `EXPECTED_CHAIN_ID=31337`, `PARTICIPANT_KEY_PROVIDER=broker`,
@@ -174,7 +211,7 @@ The admin command requires `KEY_SERVICE_RPC_URL`, `KEY_SERVICE_POLICY`,
 `KEY_SERVICE_POLICY_CODE_HASH`, and `KEY_POLICY_ADMIN_PRIVATE_KEY`. All writes
 are restricted to chain 31337. Keep administrator credentials out of worker envs.
 
-## Verification and cloud experiment
+## Historical online-v1 verification and cloud experiment
 
 ```sh
 python3 -m pytest -q key_service

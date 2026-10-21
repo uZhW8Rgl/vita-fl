@@ -5,8 +5,9 @@
 This repository contains a proof-of-concept implementation for trusted decentralized federated learning (DFL), model provenance, and verifiable single-image inference.
 
 The `kms` branch also provides an opt-in [independent attested key service](key_service/README.md).
-It restores the four participant keys only after fresh quote verification and
-an exact workload grant on local Anvil, without a mainnet bridge or custom Phala KMS URL.
+It authenticates the key service and its responses, then restores the four participant keys
+after fresh worker admission on Anvil. Participation follows the common workload policy
+and registration without per-worker preapproval. No mainnet bridge or custom Phala KMS URL is needed.
 
 The current prototype combines:
 

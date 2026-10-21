@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 import {initializeAttestedRuntimeKeys, obtainApplicationKey, BROKER_STATE_PATH} from '../../dfl/node_server/dist/attested_keys.js';
 import {RUNTIME_KEY_DIRECTORY, requireVolatileDirectory} from '../../dfl/node_server/dist/runtime_keys.js';
 import {ed25519PublicKeyFromSeed} from '../../dfl/node_server/dist/sello_key.js';
-import {initialiseOnchainKeys} from '../../dfl/node_server/dist/key_admission.js';
+import {initialiseOnchainKeys,getVerifiedKeyServiceProof} from '../../dfl/node_server/dist/key_admission.js';
 import {loadParticipantActionSigner} from '../../dfl/node_server/dist/action_key.js';
 const require=createRequire(new URL('../../dfl/node_server/package.json',import.meta.url));
 const {DstackClient}=await import(require.resolve('@phala/dstack-sdk'));
@@ -74,6 +74,7 @@ async function inspect(challenge,claimedComposeHash) {
         key_release_denied:denied,denial_http_status:status,fingerprints,key_possession_verified:possession,
         prior_ciphertext_decryptable:decryptable,sealed_state_sha256:sealed?hash(sealed):null,
         runtime_keys_present:present.every(Boolean),runtime_keys_absent:present.every(v=>!v)};
+    if(process.env.KEY_SERVICE_PROTOCOL==='onchain-v3')claims.service_attestation=getVerifiedKeyServiceProof();
     const claims_json=JSON.stringify(claims);
     const evidence=await client.getQuote(crypto.createHash('sha512').update('VITA-FL:broker-evaluation:v1\0').update(claims_json).digest());
     return {claims,claims_json,quote:evidence.quote,event_log:evidence.event_log,app_compose:info.tcb_info.app_compose};

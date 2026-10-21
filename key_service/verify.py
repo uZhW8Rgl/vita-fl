@@ -57,7 +57,7 @@ def report_data(claims):
     return hashlib.sha512(DOMAIN + value).digest()
 
 
-def deployment_bindings(quote, event_log, app_compose):
+def deployment_bindings(quote, event_log, app_compose, *, single_image=True):
     fields = parse_tdx_quote(quote)
     events = json.loads(event_log, object_pairs_hook=unique_json)
     if not isinstance(events, list) or not 1 <= len(events) <= 512:
@@ -96,8 +96,12 @@ def deployment_bindings(quote, event_log, app_compose):
     if not isinstance(compose, str):
         raise ValueError("Compose manifest required")
     images = re.findall(r"(?m)^\s*image:\s*[\"\']?([^\s\"\'#]+)[\"\']?\s*$", compose)
-    if len(images) != 1 or not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", images[0]):
-        raise ValueError("one digest-pinned workload image required")
+    if (
+        not images
+        or (single_image and len(images) != 1)
+        or any(not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", image) for image in images)
+    ):
+        raise ValueError("digest-pinned workload images required")
     return {"appId": "0x" + measured["app-id"].hex(), "composeHash": measured["compose-hash"].hex()}
 
 

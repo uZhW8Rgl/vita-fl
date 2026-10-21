@@ -1,12 +1,12 @@
-/** Protocol v2: a single on-chain DCAP appraisal; no online quote-verification fallback. */
+/** Protocol v3: attested service, signed responses, one on-chain worker appraisal. */
 import http from 'node:http';
 import crypto from 'node:crypto';
 import {createRequire} from 'node:module';
 import {createPolicy} from './service.mjs';
 import {KEY_ADMISSION_ABI} from '../dfl/node_server/dist/key_admission_abi.js';
 import {canonicalClaims,encryptApplicationKey} from '../dfl/node_server/dist/attested_key_protocol.js';
+import {hex32} from '../dfl/node_server/dist/service_attestation.js';
 const {Web3}=createRequire(new URL('../dfl/node_server/package.json',import.meta.url))('web3');
-const hex32=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
 export const normalIdentity=x=>({actionKey:String(x.actionKey).toLowerCase(),rsaPublicKey:String(x.rsaPublicKey).toLowerCase(),
     selloKey:String(x.selloKey).toLowerCase(),airKey:String(x.airKey).toLowerCase()});
 export function validateIdentity(x){
@@ -43,7 +43,8 @@ export async function createAdmissionBackend(settings){
         const identity=restoring?stored:proposal;validateIdentity(identity);
         const request={participant:claims.participant,appId:claims.appId,composeHash:'0x'+claims.composeHash,
             challenge:'0x'+claims.challenge,recipientPublicKey:'0x'+claims.recipientPublicKey,
-            expiresAt:String(Math.floor(Date.now()/1000)+180),restoring};
+            expiresAt:String(Math.floor(Date.now()/1000)+180),restoring,
+            ...Object.fromEntries(Object.entries(settings.serviceBinding()).map(([k,v])=>[k,'0x'+v]))};
         const reportData=await contract.methods.reportData(request,identity).call();
         const digest=await contract.methods.authorisationDigest(request,identity).call();
         return {request,identity,reportData,digest};
@@ -61,21 +62,37 @@ export async function createAdmissionBackend(settings){
         await health();return await contract.methods.releaseAuthorised(item.request,item.identity).call()===true;
     }};
 }
-export function createAdmissionServer({workerRoots,backend,serviceId,now=Date.now}){
+export function createAdmissionServer({workerRoots,backend,serviceId,serviceIdentity,now=Date.now}){
+    if(!serviceIdentity)throw new Error('An attested service identity is required');
     const pending=new Map();let active=0,completed=0;
     const server=http.createServer(async(req,res)=>{
-        const send=(status,value)=>res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify(value));
+        let requestId;
+        const send=(status,value)=>{
+            const body=requestId?serviceIdentity.sign(req.url,requestId,status,value):value;
+            res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify(body));
+        };
         if(req.method==='GET'&&(req.url==='/health'||req.url==='/v2/config')){
-            try{await backend.health();send(200,{status:'ok',protocol:'onchain-v2',chainId:'31337',policy:backend.policy,
+            try{await serviceIdentity.ensureAuthorised();await backend.health();send(200,{status:'ok',protocol:'onchain-v3',chainId:'31337',policy:backend.policy,
                 registry:backend.registry,serviceId,codeHash:backend.codeHash,rootMode:'per-worker-memory-v1',completedAdmissions:completed});}catch{send(503,{error:'Admission chain unavailable'});}return;
         }
-        if(req.method!=='POST'||!['/v2/challenge','/v2/release'].includes(req.url)){send(404,{});return;}
+        if(req.method!=='POST'||!['/v3/attestation','/v3/challenge','/v3/release'].includes(req.url)){send(404,{});return;}
         try{
             if(!/^application\/json(?:;|$)/i.test(req.headers['content-type']||''))throw new Error();
             let size=0;const chunks=[];for await(const c of req){size+=c.length;if(size>524288)throw new Error();chunks.push(c);}
-            const value=JSON.parse(Buffer.concat(chunks).toString());
+            const input=JSON.parse(Buffer.concat(chunks).toString());
+            if(req.url==='/v3/attestation'){
+                if(Object.keys(input).join()!=='nonce'||!hex32(input.nonce))throw new Error();
+                requestId=input.nonce;
+                send(200,await serviceIdentity.attest(input.nonce));return;
+            }
+            if(Object.keys(input).sort().join()!==['requestId','serviceInstanceId','servicePublicKey','payload'].sort().join()||!hex32(input.requestId))throw new Error();
+            requestId=input.requestId;
+            const binding=serviceIdentity.binding();
+            if(input.serviceInstanceId!==binding.serviceInstanceId||input.servicePublicKey!==binding.servicePublicKey)throw new Error();
+            await serviceIdentity.ensureAuthorised();
+            const value=input.payload;
             for(const [k,v] of pending)if(v.expires<=now())pending.delete(k);
-            if(req.url==='/v2/challenge'){
+            if(req.url==='/v3/challenge'){
                 if(Object.keys(value).sort().join()!==['participant','appId','composeHash','registry','recipientPublicKey','identity'].sort().join()||pending.size>=256)throw new Error();
                 const {identity,...context}=value;
                 const claims={...context,version:1,challenge:crypto.randomBytes(32).toString('hex'),chainId:'31337',policy:backend.policy,serviceId};
@@ -93,6 +110,7 @@ export function createAdmissionServer({workerRoots,backend,serviceId,now=Date.no
             try{
                 await backend.admit(item,value.signature,value.evidence);
                 if(item.expires<=now()||!await backend.permitted(item))throw new Error();
+                await serviceIdentity.ensureAuthorised();
                 // Each first admission creates its own random root, only after
                 // the fresh quote and policy have been accepted on-chain.
                 const key=await workerRoots.applicationKey(item.claims,{restoring:item.request.restoring});

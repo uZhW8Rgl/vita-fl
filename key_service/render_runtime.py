@@ -51,7 +51,12 @@ def render(app, *, service_image, worker_image, contracts_image, measurements):
         "read_only": True,
         "cap_drop": ["ALL"],
         "security_opt": ["no-new-privileges:true"],
-        "environment": {"KEY_SERVICE_RPC_URL": "http://anvil:8545", "KEY_SERVICE_REGISTRY": registry},
+        "environment": {
+            "KEY_SERVICE_RPC_URL": "http://anvil:8545",
+            "KEY_SERVICE_REGISTRY": registry,
+            "KEY_SERVICE_TRUST_POLICY": "${KEY_SERVICE_TRUST_POLICY}",
+        },
+        "volumes": ["/var/run/dstack.sock:/var/run/dstack.sock:ro"],
         "user": "10001:10001",
         "restart": "unless-stopped",
         "depends_on": {"smart-contracts": {"condition": "service_completed_successfully"}},
@@ -68,6 +73,9 @@ def render(app, *, service_image, worker_image, contracts_image, measurements):
             "retries": 12,
         },
     }
+    # The independently reviewed public policy is supplied separately. Putting
+    # its own expected Compose hash into measured Compose creates a hash cycle.
+    result["allowed_envs"] = list(dict.fromkeys([*result.get("allowed_envs", []), "KEY_SERVICE_TRUST_POLICY"]))
     result["docker_compose_file"] = yaml.safe_dump(spec, sort_keys=False)
     return result
 

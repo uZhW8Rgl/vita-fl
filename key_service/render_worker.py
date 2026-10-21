@@ -10,13 +10,15 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from key_service.verify_service import validate_policy
+
 
 class IndentedSafeDumper(yaml.SafeDumper):
     def increase_indent(self, flow=False, indentless=False):
         return super().increase_indent(flow, False)
 
 
-def render(manifest, *, origin, policy, service_id):
+def render(manifest, *, origin, policy, service_id, service_trust_policy=None):
     url = urlsplit(origin)
     if (
         url.scheme != "https"
@@ -30,6 +32,9 @@ def render(manifest, *, origin, policy, service_id):
         raise ValueError("HTTPS key-service origin required")
     if not re.fullmatch(r"0x[0-9a-fA-F]{40}", policy) or not re.fullmatch(r"[0-9a-f]{64}", service_id):
         raise ValueError("explicit service identity and policy required")
+    validate_policy(service_trust_policy)
+    if service_trust_policy["origin"] != origin.rstrip("/"):
+        raise ValueError("service trust policy origin mismatch")
     app = json.loads(manifest)
     compose = yaml.safe_load(app["docker_compose_file"])
     if not isinstance(compose.get("services"), dict) or set(compose["services"]) != {"dfl-worker"}:
@@ -47,6 +52,8 @@ def render(manifest, *, origin, policy, service_id):
             "KEY_SERVICE_URL": origin.rstrip("/"),
             "KEY_SERVICE_POLICY": policy.lower(),
             "KEY_SERVICE_ID": service_id,
+            "KEY_SERVICE_PROTOCOL": "onchain-v3",
+            "KEY_SERVICE_TRUST_POLICY": json.dumps(service_trust_policy, sort_keys=True, separators=(",", ":")),
         }
     )
     mounts = worker.setdefault("volumes", [])
@@ -71,9 +78,16 @@ def main():
     parser.add_argument("--origin", required=True)
     parser.add_argument("--policy", required=True)
     parser.add_argument("--service-id", required=True)
+    parser.add_argument("--service-trust-policy", required=True)
     args = parser.parse_args()
     with open(args.input, encoding="utf-8") as source:
-        result = render(source.read(), origin=args.origin, policy=args.policy, service_id=args.service_id)
+        result = render(
+            source.read(),
+            origin=args.origin,
+            policy=args.policy,
+            service_id=args.service_id,
+            service_trust_policy=json.loads(open(args.service_trust_policy).read()),
+        )
     with open(args.output, "x", encoding="utf-8") as target:
         target.write(result)
 

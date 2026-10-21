@@ -36,8 +36,14 @@ def test_runtime_overlay_keeps_admin_credentials_out_of_serving_process():
     rendered = render(app, service_image=image, worker_image=image, contracts_image=image, measurements=[])
     services = yaml.safe_load(rendered["docker_compose_file"])["services"]
     assert services["key-service"]["user"] == "10001:10001"
-    assert set(services["key-service"]["environment"]) == {"KEY_SERVICE_RPC_URL", "KEY_SERVICE_REGISTRY"}
-    assert "volumes" not in services["key-service"]
+    assert set(services["key-service"]["environment"]) == {
+        "KEY_SERVICE_RPC_URL",
+        "KEY_SERVICE_REGISTRY",
+        "KEY_SERVICE_TRUST_POLICY",
+    }
+    assert services["key-service"]["volumes"] == ["/var/run/dstack.sock:/var/run/dstack.sock:ro"]
+    assert services["key-service"]["environment"]["KEY_SERVICE_TRUST_POLICY"] == "${KEY_SERVICE_TRUST_POLICY}"
+    assert rendered["allowed_envs"] == ["KEY_SERVICE_TRUST_POLICY"]
     assert services["key-service"]["read_only"]
     assert "key-service-init" not in services
     assert services["smart-contracts"]["environment"]["KEY_SERVICE_ENABLED"] == "1"

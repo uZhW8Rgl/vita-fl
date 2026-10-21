@@ -3,6 +3,8 @@ FROM ${WORKER_BASE}
 COPY dfl/node_server/dist /dfl/node_server/dist
 COPY dfl/node_server/abi /dfl/node_server/abi
 COPY agent_receipts /agent_receipts
+COPY key_service /key_service
+COPY transport_security /transport_security
 COPY dfl/start_node_neural_network.sh /dfl/start_node_neural_network.sh
 COPY evaluation/phala-broker-probe /evaluation/phala-broker-probe
 ARG VARIANT=original

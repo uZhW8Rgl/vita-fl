@@ -1,4 +1,4 @@
-/** Signed, explicitly pinned Anvil grant for the dedicated runtime-v2 cloud probe. */
+/** Evaluation-only common role-policy setup. Never preauthorises a participant. */
 import fs from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {KEY_ADMISSION_ABI} from '../dfl/node_server/dist/key_admission_abi.js';
@@ -21,10 +21,11 @@ const registry=new web3.eth.Contract(abi,settings.registry),bytes='0x'+Buffer.fr
 const workload=await registry.methods.workloadIdentity(bytes).call();
 if(workload.workerImageDigest!==await registry.methods.expectedWorkerImageDigest().call())throw new Error('Probe image differs from the approved worker image');
 const rolePolicy=await registry.methods.workerPolicyHash(bytes).call();
+let receipt;
 if(!await registry.methods.allowedWorkerPolicyHashes(rolePolicy).call()){
-    await registry.methods.setWorkerPolicyHashAllowed(rolePolicy,true).send({from:admin.address,gas:'300000'});
+    receipt=await registry.methods.setWorkerPolicyHashAllowed(rolePolicy,true).send({from:admin.address,gas:'300000'});
 }
 // Full validation enforces the currently expected immutable image digest too.
 await registry.methods.validateKmsCompose(bytes).call();
-const receipt=await policy.methods.authorise(participant,appId,'0x'+composeHash).send({from:admin.address,gas:'300000'});
-console.log(JSON.stringify({transactionHash:receipt.transactionHash,rolePolicy,composeHash,participant,appId}));
+console.log(JSON.stringify({transactionHash:receipt?.transactionHash||null,rolePolicy,composeHash,
+    participantPreauthorisation:false}));

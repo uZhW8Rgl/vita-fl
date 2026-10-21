@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import {AttestedKeyPolicy} from "./AttestedKeyPolicy.sol";
 import {StrictECDSA} from "../crypto/StrictECDSA.sol";
 import {Rtmr3Event} from "../attestation/Rtmr3Event.sol";
 
@@ -16,23 +15,46 @@ interface IAdmissionVerifier {
 
 /// @notice One DCAP appraisal authorises public identity and one recipient-bound key release.
 /// @dev Anvil/registry/policy administrator are trusted. This stores no private keys.
-contract AttestedKeyAdmission is AttestedKeyPolicy {
+contract AttestedKeyAdmission {
     using StrictECDSA for bytes32;
+    address public immutable administrator;
+    address public immutable registry;
     bytes32 public immutable serviceId;
-    bytes32 public constant DOMAIN = keccak256("VITA-FL.attested-key-admission.v2");
+    bytes32 public constant DOMAIN = keccak256("VITA-FL.attested-key-admission.v3");
+    struct Grant { bytes32 composeHash; bool revoked; }
+    mapping(address => mapping(address => Grant)) public grants;
     struct Identity { address actionKey; bytes rsaPublicKey; bytes32 selloKey; bytes32 airKey; }
     struct Request {
         address participant; address appId; bytes32 composeHash; bytes32 challenge;
         bytes32 recipientPublicKey; uint64 expiresAt; bool restoring;
+        bytes32 serviceInstanceId; bytes32 servicePublicKey;
     }
     struct Permit { bytes32 binding; uint64 expiresAt; }
     mapping(address => mapping(address => Identity)) private identities;
     mapping(bytes32 => Permit) public permits;
     event IdentityAdmitted(address indexed participant, address indexed appId, bytes32 identityHash);
     event ReleaseAuthorised(bytes32 indexed challenge, address indexed participant, bytes32 binding);
+    event Authorised(address indexed participant, address indexed appId, bytes32 composeHash);
+    event Revoked(address indexed participant, address indexed appId);
 
-    constructor(address registryAddress, bytes32 id) AttestedKeyPolicy(registryAddress) {
-        require(id != bytes32(0), "service id required"); serviceId = id;
+    constructor(address registryAddress, bytes32 id) {
+        require(block.chainid == 31337, "Anvil chain required");
+        require(registryAddress != address(0) && id != bytes32(0), "service identity required");
+        administrator = msg.sender; registry = registryAddress; serviceId = id;
+    }
+    // Anyone may enrol through the common workload checks and participant
+    // authorisation. The first genuine admission binds the identity/manifest;
+    // no administrator-selected participant list or per-worker grant is used.
+    function isAllowed(address participant, address appId, bytes32 composeHash) external view returns (bool) {
+        Grant memory grant = grants[participant][appId];
+        return participant != address(0) && appId != address(0) && composeHash != bytes32(0) && !grant.revoked &&
+            (grant.composeHash == bytes32(0) || grant.composeHash == composeHash);
+    }
+    function revoke(address participant, address appId) external {
+        require(msg.sender == administrator, "administrator required");
+        require(grants[participant][appId].composeHash != bytes32(0), "unknown admission");
+        grants[participant][appId].revoked = true;
+        emit Revoked(participant, appId);
     }
     function identityFor(address participant, address appId) external view returns (Identity memory) {
         return identities[participant][appId];
@@ -51,6 +73,7 @@ contract AttestedKeyAdmission is AttestedKeyPolicy {
         bytes calldata quote, Rtmr3Event[] calldata events, bytes calldata appCompose) external {
         require(request.expiresAt > block.timestamp && request.expiresAt <= block.timestamp + 300, "release expired");
         require(request.challenge != bytes32(0) && request.recipientPublicKey != bytes32(0), "empty release context");
+        require(request.serviceInstanceId != bytes32(0) && request.servicePublicKey != bytes32(0), "empty service binding");
         require(permits[request.challenge].binding == bytes32(0), "challenge already used");
         require(this.isAllowed(request.participant, request.appId, request.composeHash), "workload policy rejected");
         require(identity.actionKey != address(0) && identity.rsaPublicKey.length >= 384 &&
@@ -78,7 +101,9 @@ contract AttestedKeyAdmission is AttestedKeyPolicy {
         require(keccak256(report) == keccak256(reportData(request, identity)), "quote report data mismatch");
         // No secret release or identity write is possible before the one real DCAP appraisal above.
         if (!request.restoring) {
+            grants[request.participant][request.appId] = Grant(request.composeHash, false);
             identities[request.participant][request.appId] = identity;
+            emit Authorised(request.participant, request.appId, request.composeHash);
             emit IdentityAdmitted(request.participant, request.appId, identityHash(identity));
         }
         permits[request.challenge] = Permit(digest, request.expiresAt);

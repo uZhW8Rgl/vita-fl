@@ -12,6 +12,8 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {createRequire} from 'node:module';
 import {createAdmissionBackend,createAdmissionServer} from './chain_server.mjs';
 import {createMemoryWorkerRoots} from './worker_roots.mjs';
+import {createServiceIdentity} from './service_identity.mjs';
+import {verifyServiceResponse,serviceReportData,validateServiceClaims} from '../dfl/node_server/dist/service_attestation.js';
 import {rawPublicKey,decryptApplicationKey} from '../dfl/node_server/dist/attested_key_protocol.js';
 import {generateBundle,loadOrCreateKmsBundle} from '../dfl/node_server/dist/kms_keys.js';
 import {publicIdentity} from '../dfl/node_server/dist/key_admission.js';
@@ -42,36 +44,49 @@ test('one on-chain appraisal admits random identities, then restores their seale
     const composeHash=crypto.createHash('sha256').update(manifest).digest('hex');
     await registry.methods.setExpectedWorkerImageDigest('0x'+'11'.repeat(32)).send({from:admin,gas:'300000'});
     await registry.methods.setWorkerPolicyHashAllowed(await registry.methods.workerPolicyHash('0x'+Buffer.from(manifest).toString('hex')).call(),true).send({from:admin,gas:'300000'});
-    await contract.methods.authorise(account.address,appId,'0x'+composeHash).send({from:admin,gas:'300000'});
+    assert.equal((await contract.methods.grants(account.address,appId).call()).composeHash,'0x'+'00'.repeat(32),'No participant is pre-authorised');
     const settings={rpcUrl,registry:registry.options.address.toLowerCase(),policy:contract.options.address.toLowerCase(),serviceId,chainId:'31337',
         codeHash:web3.utils.keccak256(await web3.eth.getCode(contract.options.address))};
     const dir=await fs.mkdtemp(path.join(os.tmpdir(),'admission-integration-'));
     t.after(()=>fs.rm(dir,{recursive:true,force:true}));
-    let server,workerRoots;
+    const servicePolicy={version:1,appId:'0x'+'aa'.repeat(20),composeHash:'bb'.repeat(32),
+        serviceImage:'example/service@sha256:'+'cc'.repeat(32),origin:'https://keys.example',
+        platformMeasurements:[Object.fromEntries(['mrtd','rtmr0','rtmr1','rtmr2'].map(k=>[k,'dd'.repeat(48)]))]};
+    let server,workerRoots,serviceIdentity;
     const start=async()=>{
+        serviceIdentity=createServiceIdentity({scope:Object.fromEntries(['chainId','registry','policy','serviceId','codeHash'].map(k=>[k,settings[k]])),
+            policy:servicePolicy,evidence:async report=>({quote:report.toString('hex'),eventLog:'[]',appCompose:'synthetic service fixture'}),
+            appraise:async(claims,evidence)=>assert.equal(evidence.quote,serviceReportData(claims).toString('hex'))});
+        await serviceIdentity.ensureAuthorised();
         workerRoots=createMemoryWorkerRoots(settings);
-        server=createAdmissionServer({workerRoots,backend:await createAdmissionBackend(settings),serviceId});
+        server=createAdmissionServer({workerRoots,backend:await createAdmissionBackend({...settings,serviceBinding:()=>serviceIdentity.binding()}),serviceId,serviceIdentity});
         await new Promise(r=>server.listen(0,'127.0.0.1',r));
     };
-    const stop=async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));workerRoots.destroy();};
+    const stop=async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));workerRoots.destroy();serviceIdentity.destroy();};
     await start();t.after(stop);
     t.diagnostic('Contracts deployed, service started with pinned policy.');
     const post=async(endpoint,value)=>{
-        const r=await fetch('http://127.0.0.1:'+server.address().port+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(value)});
-        return {status:r.status,body:await r.json()};
+        const requestId=crypto.randomBytes(32).toString('hex'),binding=serviceIdentity.binding();
+        const input=endpoint==='/v3/attestation'?{nonce:requestId}:{...binding,requestId,payload:value};
+        const r=await fetch('http://127.0.0.1:'+server.address().port+endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});
+        const envelope=await r.json();
+        try{return {status:r.status,body:verifyServiceResponse(envelope,{...binding,operation:endpoint,requestId},r.status)};}
+        catch(error){if(error.statusCode===403)return {status:403,body:envelope.payload};throw error;}
     };
+    const proof=await post('/v3/attestation');assert.equal(proof.status,200);
+    validateServiceClaims(proof.body.claims,servicePolicy,proof.body.claims.nonce,Object.fromEntries(['chainId','registry','policy','serviceId','codeHash'].map(k=>[k,settings[k]])));
     const bundle=await generateBundle(),env={ACCOUNT_ADDRESS:account.address,EXPECTED_CHAIN_ID:'31337',REGISTRY_ADDRESS:settings.registry,PARTICIPANT_KEY_PROVIDER:'broker'};
     const identity=await publicIdentity(bundle,env);
     t.diagnostic('Random four-key identity generated.');
     const challenge=async(proposal=identity,hash=composeHash)=>{
         const pair=crypto.generateKeyPairSync('x25519');
-        const r=await post('/v2/challenge',{participant:account.address.toLowerCase(),appId,composeHash:hash,registry:settings.registry,
+        const r=await post('/v3/challenge',{participant:account.address.toLowerCase(),appId,composeHash:hash,registry:settings.registry,
             recipientPublicKey:rawPublicKey(pair.publicKey),identity:proposal});
         return {...r,pair};
     };
     const release=async(q,valid=true)=>{
         const quote=Buffer.alloc(637);quote[0]=valid?0x42:0x43;Buffer.from(q.body.reportData.slice(2),'hex').copy(quote,568);
-        return post('/v2/release',{challenge:q.body.claims.challenge,signature:account.sign(q.body.digest).signature,
+        return post('/v3/release',{challenge:q.body.claims.challenge,signature:account.sign(q.body.digest).signature,
             evidence:{quote:quote.toString('hex'),appCompose:manifest,eventLog:JSON.stringify([{imr:3,event_type:0x08000001,event:'app-id',event_payload:appId.slice(2)}])}});
     };
     // Invalid evidence must never create a worker root or a public identity.
@@ -80,7 +95,8 @@ test('one on-chain appraisal admits random identities, then restores their seale
     t.diagnostic('Invalid evidence rejected without creating a root.');
     const first=await challenge();assert.equal(first.status,200);
     const admitted=await release(first);assert.equal(admitted.status,200);
-    t.diagnostic('Initial identity admitted, application key released.');
+    assert.equal((await contract.methods.grants(account.address,appId).call()).composeHash,'0x'+composeHash);
+    t.diagnostic('Unlisted participant admitted through common workload policy; no administrative grant.');
     const key=decryptApplicationKey(admitted.body,first.body.claims,first.pair.privateKey);
     const context={participant:account.address.toLowerCase(),appId,composeHash:'0x'+composeHash,registry:settings.registry,chainId:'31337'};
     const original=await loadOrCreateKmsBundle(path.join(dir,'sealed.json'),key,context,async()=>bundle);key.fill(0);

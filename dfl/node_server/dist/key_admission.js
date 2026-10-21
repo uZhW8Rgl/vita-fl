@@ -10,7 +10,44 @@ import { generateBundle, loadOrCreateKmsBundle } from './kms_keys.js';
 import { loadParticipantActionSigner } from './action_key.js';
 import { ed25519PublicKeyFromSeed } from './sello_key.js';
 import { requireVolatileDirectory, RUNTIME_KEY_DIRECTORY } from './runtime_keys.js';
-import { BROKER_STATE_PATH, keyServiceRequest, serviceOrigin } from './attested_keys.js';
+import { BROKER_STATE_PATH, keyServiceHttpRequest, serviceOrigin } from './attested_keys.js';
+import { validateServiceTrustPolicy, validateServiceClaims, verifyServiceResponse, appraiseServiceEvidence } from './service_attestation.js';
+let verifiedServiceProof;
+/** Public diagnostic evidence only; never includes credentials or private keys. */
+export const getVerifiedKeyServiceProof = () => verifiedServiceProof ? structuredClone(verifiedServiceProof) : null;
+/** Authenticate the service before disclosing a participant-authorised quote. */
+export async function authenticatedService(env = process.env) {
+    const trust = validateServiceTrustPolicy(JSON.parse(env.KEY_SERVICE_TRUST_POLICY || 'null'));
+    const origin = serviceOrigin(env.KEY_SERVICE_URL || '');
+    if (trust.origin !== origin)
+        throw new Error('Service origin differs from independent policy');
+    const ca = env.KEY_SERVICE_CA_FILE ? await fs.readFile(env.KEY_SERVICE_CA_FILE, 'utf8') : undefined;
+    const nonce = crypto.randomBytes(32).toString('hex');
+    const result = await keyServiceHttpRequest(origin + '/v3/attestation', { nonce }, ca);
+    const binding = { serviceInstanceId: result.body?.serviceInstanceId, servicePublicKey: result.body?.servicePublicKey };
+    const proof = verifyServiceResponse(result.body, { ...binding, operation: '/v3/attestation', requestId: nonce }, result.status);
+    const scope = { chainId: '31337', registry: String(env.REGISTRY_ADDRESS || env.EXPECTED_DEVICE_REGISTRY_ADDRESS || '').toLowerCase(),
+        policy: String(env.KEY_SERVICE_POLICY || '').toLowerCase(), serviceId: env.KEY_SERVICE_ID };
+    validateServiceClaims(proof.claims, trust, nonce, scope);
+    if (proof.claims.serviceInstanceId !== binding.serviceInstanceId || proof.claims.servicePublicKey !== binding.servicePublicKey)
+        throw new Error('Attested service signer mismatch');
+    await appraiseServiceEvidence(proof.claims, proof.evidence, trust);
+    const rpc = new Web3(env.RPC_URL);
+    if (await rpc.eth.getChainId() !== 31337n || rpc.utils.keccak256(await rpc.eth.getCode(scope.policy)) !== proof.claims.codeHash)
+        throw new Error('Attested service contract code mismatch');
+    verifiedServiceProof = { nonce, envelope: result.body };
+    const claims = proof.claims;
+    return { binding, async request(operation, payload) {
+            if (Math.floor(Date.now() / 1000) >= claims.expiresAt)
+                throw new Error('Service attestation expired; start a fresh admission');
+            const requestId = crypto.randomBytes(32).toString('hex');
+            const response = await keyServiceHttpRequest(origin + operation, { ...binding, requestId, payload }, ca);
+            if (Math.floor(Date.now() / 1000) >= claims.expiresAt)
+                throw new Error('Service attestation expired during request');
+            // A refusal is trusted as such only after checking its signature too.
+            return verifyServiceResponse(response.body, { ...binding, operation, requestId }, response.status);
+        } };
+}
 export const publicIdentity = async (bundle, env) => {
     const signer = await loadParticipantActionSigner({ env, deriveKey: async () => Buffer.from(bundle.action, 'hex') });
     try {
@@ -52,9 +89,9 @@ export async function initialiseOnchainKeys(env = process.env, testClaims = {}) 
     // Generate before the quote, but never silently replace an already admitted identity.
     const proposed = restoring ? null : await generateBundle();
     const identity = proposed ? await identityForBundle(proposed, env) : null;
-    const pair = crypto.generateKeyPairSync('x25519'), origin = serviceOrigin(env.KEY_SERVICE_URL || '');
-    const ca = env.KEY_SERVICE_CA_FILE ? await fs.readFile(env.KEY_SERVICE_CA_FILE, 'utf8') : undefined;
-    const response = await keyServiceRequest(origin + '/v2/challenge', { ...context, recipientPublicKey: rawPublicKey(pair.publicKey), identity }, ca);
+    const pair = crypto.generateKeyPairSync('x25519');
+    const service = await authenticatedService(env);
+    const response = await service.request('/v3/challenge', { ...context, recipientPublicKey: rawPublicKey(pair.publicKey), identity });
     const claims = response.claims;
     canonicalClaims(claims);
     for (const k of ['participant', 'appId', 'composeHash', 'registry'])
@@ -71,14 +108,15 @@ export async function initialiseOnchainKeys(env = process.env, testClaims = {}) 
     const report = String(await contract.methods.reportData(response.request, response.identity).call());
     const digest = String(await contract.methods.authorisationDigest(response.request, response.identity).call());
     const req = response.request;
-    if (req.participant !== claims.participant || req.appId !== claims.appId || req.composeHash !== '0x' + claims.composeHash || req.challenge !== '0x' + claims.challenge || req.recipientPublicKey !== '0x' + claims.recipientPublicKey || report !== response.reportData || digest !== response.digest)
+    if (req.participant !== claims.participant || req.appId !== claims.appId || req.composeHash !== '0x' + claims.composeHash || req.challenge !== '0x' + claims.challenge || req.recipientPublicKey !== '0x' + claims.recipientPublicKey ||
+        req.serviceInstanceId !== '0x' + service.binding.serviceInstanceId || req.servicePublicKey !== '0x' + service.binding.servicePublicKey || report !== response.reportData || digest !== response.digest)
         throw new Error('On-chain challenge mismatch');
     const account = web3.eth.accounts.privateKeyToAccount(env.PRIVATE_KEY || '');
     if (account.address.toLowerCase() !== context.participant)
         throw new Error('Participant credential mismatch');
     const quote = await client.getQuote(Buffer.from(report.slice(2), 'hex'));
-    const envelope = await keyServiceRequest(origin + '/v2/release', { challenge: claims.challenge, signature: account.sign(digest).signature,
-        evidence: { quote: quote.quote.replace(/^0x/, ''), eventLog: typeof quote.event_log === 'string' ? quote.event_log : JSON.stringify(quote.event_log), appCompose: info.tcb_info.app_compose } }, ca);
+    const envelope = await service.request('/v3/release', { challenge: claims.challenge, signature: account.sign(digest).signature,
+        evidence: { quote: quote.quote.replace(/^0x/, ''), eventLog: typeof quote.event_log === 'string' ? quote.event_log : JSON.stringify(quote.event_log), appCompose: info.tcb_info.app_compose } });
     const root = decryptApplicationKey(envelope, claims, pair.privateKey), created = [];
     try {
         const bundle = await loadOrCreateKmsBundle(BROKER_STATE_PATH, root, { ...context, composeHash: '0x' + context.composeHash, chainId: '31337' }, async () => { if (!proposed)

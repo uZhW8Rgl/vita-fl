@@ -16,24 +16,29 @@ export const serviceOrigin = (value: string): string => {
     if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new Error("KEY_SERVICE_URL must be an HTTPS origin");
     return url.origin;
 };
-export const keyServiceRequest = async (url: string, payload: unknown, ca?: string): Promise<any> => {
+export const keyServiceHttpRequest = async (url: string, payload: unknown, ca?: string): Promise<{status:number;body:any}> => {
     const body = Buffer.from(JSON.stringify(payload));
     return new Promise((resolve,reject) => {
         const request = https.request(url, {method:"POST",rejectUnauthorized:true,ca,
             headers:{"Content-Type":"application/json","Content-Length":body.length},timeout:240000}, response => {
             const chunks: Buffer[] = [];let count = 0;
-            response.on("data", (chunk: Buffer) => {count += chunk.length;if(count > 65536) response.destroy(new Error("Key service response too large"));else chunks.push(chunk);});
+            response.on("data", (chunk: Buffer) => {count += chunk.length;if(count > 1048576) response.destroy(new Error("Key service response too large"));else chunks.push(chunk);});
             response.on("error",reject);
             response.on("end",()=>{
                 try {
-                    if (response.statusCode !== 200 || !/^application\/json(?:;|$)/i.test(String(response.headers["content-type"]))) throw Object.assign(new Error("Key service rejected request"),{statusCode:response.statusCode});
-                    resolve(JSON.parse(Buffer.concat(chunks).toString()));
+                    if (!/^application\/json(?:;|$)/i.test(String(response.headers["content-type"]))) throw new Error("Invalid key service response");
+                    resolve({status:response.statusCode||0,body:JSON.parse(Buffer.concat(chunks).toString())});
                 } catch(error) {reject(error);}
             });
         });
         request.on("timeout",()=>request.destroy(new Error("Key service deadline exceeded")));
         request.on("error",reject);request.end(body);
     });
+};
+export const keyServiceRequest = async (url:string,payload:unknown,ca?:string):Promise<any> => {
+    const result=await keyServiceHttpRequest(url,payload,ca);
+    if(result.status!==200)throw Object.assign(new Error('Key service rejected request'),{statusCode:result.status});
+    return result.body;
 };
 export const obtainApplicationKey = async (context: ReleaseContext, env: NodeJS.ProcessEnv = process.env,
     dependencies?: {request?: typeof keyServiceRequest; quote?: (report: Buffer) => Promise<any>}) => {
@@ -67,6 +72,8 @@ export const obtainApplicationKey = async (context: ReleaseContext, env: NodeJS.
 };
 
 export const initializeAttestedRuntimeKeys = async (env = process.env) => {
+    if(env.KEY_SERVICE_PROTOCOL && !['onchain-v3','online-v1'].includes(env.KEY_SERVICE_PROTOCOL))
+        throw new Error('Unsupported historical key-service protocol; no attestation downgrade');
     if(env.KEY_SERVICE_PROTOCOL !== 'online-v1') return (await import('./key_admission.js')).initialiseOnchainKeys(env);
     if (env.DOCKER !== "phala" || env.PARTICIPANT_KEY_PROVIDER !== "broker") throw new Error("Explicit Phala broker profile required");
     await requireVolatileDirectory();

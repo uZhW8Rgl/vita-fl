@@ -268,7 +268,8 @@ jobs:
           REQUIRE_ANVIL_TESTS: "1"
         run: |
           npm ci --prefix ../dfl/node_server --ignore-scripts
-          node --test ../kms/anvil.integration.mjs ../key_service/anvil.integration.mjs
+          npm run build --prefix ../dfl/node_server
+          node --test ../kms/anvil.integration.mjs ../key_service/anvil.integration.mjs ../key_service/admission.integration.mjs
 
   docker-builds:
     name: Docker Build (${{ matrix.name }})
