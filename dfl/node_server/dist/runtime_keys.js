@@ -65,7 +65,11 @@ export const readRuntimeSigningSeed = async (name, directory = RUNTIME_KEY_DIREC
     return seed;
 };
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    if (process.env.PARTICIPANT_KEY_PROVIDER === "kms") {
+    if (process.env.PARTICIPANT_KEY_PROVIDER === "broker") {
+        const { initializeAttestedRuntimeKeys } = await import("./attested_keys.js");
+        await initializeAttestedRuntimeKeys();
+    }
+    else if (process.env.PARTICIPANT_KEY_PROVIDER === "kms") {
         const { initializeKmsRuntimeKeys } = await import("./kms_keys.js");
         await initializeKmsRuntimeKeys();
     }

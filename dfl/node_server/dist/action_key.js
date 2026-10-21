@@ -139,9 +139,9 @@ export const signRawDigest = (digest, privateKey) => signatureHex(digest, privat
 export const loadParticipantActionSigner = async (options = {}) => {
     const env = options.env || process.env;
     const phala = env.DOCKER === "phala";
-    const kms = phala && env.PARTICIPANT_KEY_PROVIDER === "kms";
+    const kms = phala && ["kms", "broker"].includes(env.PARTICIPANT_KEY_PROVIDER || "");
     const provider = options.deriveKey || (kms ? () => readRuntimeSigningSeed("action-root.seed") : phala ? async () => crypto.randomBytes(32) : localTestProvider(env));
-    const source = kms ? "kms-sealed" : phala ? "ephemeral-random" : "local-test-derived";
+    const source = kms ? (env.PARTICIPANT_KEY_PROVIDER === "broker" ? "broker-sealed" : "kms-sealed") : phala ? "ephemeral-random" : "local-test-derived";
     const context = derivationContext(env);
     let destroyed = false;
     const derive = async () => {

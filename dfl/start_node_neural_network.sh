@@ -352,7 +352,8 @@ fi
 # Seeds are generated once for this complete workload, before any public service
 # starts. Co-located processes read the same private tmpfs files. There is no
 # persistent backup in ephemeral mode. Explicit kms mode first validates the
-# shared AppAuth binding, then restores only authenticated encrypted state.
+# shared AppAuth binding. Broker mode instead obtains a recipient-encrypted key
+# from the independent attestation-checking service governed by Anvil.
 if [ "${DOCKER:-}" = "phala" ]; then
     node /dfl/node_server/dist/runtime_keys.js
 fi

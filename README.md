@@ -4,6 +4,10 @@
 
 This repository contains a proof-of-concept implementation for trusted decentralized federated learning (DFL), model provenance, and verifiable single-image inference.
 
+The `kms` branch also provides an opt-in [independent attested key service](key_service/README.md).
+It restores the four participant keys only after fresh quote verification and
+an exact workload grant on local Anvil, without a mainnet bridge or custom Phala KMS URL.
+
 The current prototype combines:
 
 - decentralized CNN training with multiple worker nodes,

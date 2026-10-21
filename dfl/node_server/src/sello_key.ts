@@ -139,7 +139,7 @@ export const loadSelloReceiptPublicKey = async (
     const providerName = String(
         env.SELLO_SERVICE_KEY_PROVIDER || (phala ? "ephemeral" : "env"),
     ).trim().toLowerCase();
-    if (phala && providerName !== (env.PARTICIPANT_KEY_PROVIDER === "kms" ? "kms" : "ephemeral")) {
+    if (phala && providerName !== (["kms", "broker"].includes(env.PARTICIPANT_KEY_PROVIDER || "") ? env.PARTICIPANT_KEY_PROVIDER : "ephemeral")) {
         throw new Error("Phala Sello receivers require SELLO_SERVICE_KEY_PROVIDER=ephemeral.");
     }
     if (!phala && providerName !== "env") {

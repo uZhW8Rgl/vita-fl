@@ -40,6 +40,9 @@ jobs:
       - name: Validate optional own-KMS policy stack
         run: docker compose -f kms/compose.yaml config --quiet
 
+      - name: Validate independent attested-key stack
+        run: docker compose -f key_service/compose.yaml config --quiet
+
       - name: Check for unresolved merge markers
         run: |
           if grep -RInE '^(<<<<<<<|=======|>>>>>>>)' \
@@ -77,10 +80,10 @@ jobs:
           python -m pip install -e dfl/neural_network
 
       - name: Run Ruff lint
-        run: ruff check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security ui_redirect kms
+        run: ruff check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security ui_redirect kms key_service
 
       - name: Check formatting
-        run: ruff format --check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security ui_redirect kms
+        run: ruff format --check agent control_api zk_inference dfl/neural_network phala/*.py transparency_log pki transport_security ui_redirect kms key_service
 
       - name: Test stable UI redirect
         run: PYTHONPATH=. python -m unittest ui_redirect.test_pages -v
@@ -130,7 +133,7 @@ jobs:
         run: PYTHONPATH=. python -m unittest discover -s phala -p 'test_*.py' -v
 
       - name: Check own-KMS configuration and pinned upstream sources
-        run: python -m pytest -q kms
+        run: python -m pytest -q kms key_service
 
       - name: Run DFL neural-network and provenance tests
         run: PYTHONPATH=. python -m pytest -q dfl/neural_network/tests
@@ -217,7 +220,7 @@ jobs:
         run: |
           npm test
           node --test ../../phala/test_kms_provision.mjs
-          node --test ../../kms/*.test.mjs
+          node --test ../../kms/*.test.mjs ../../key_service/*.test.mjs
 
   smart-contracts:
     name: Smart Contracts
@@ -256,7 +259,7 @@ jobs:
           REQUIRE_ANVIL_TESTS: "1"
         run: |
           npm ci --prefix ../dfl/node_server --ignore-scripts
-          node --test ../kms/anvil.integration.mjs
+          node --test ../kms/anvil.integration.mjs ../key_service/anvil.integration.mjs
 
   docker-builds:
     name: Docker Build (${{ matrix.name }})

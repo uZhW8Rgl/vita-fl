@@ -78,13 +78,13 @@ export const loadParticipantKey = async (options = {}) => {
     const phala = env.DOCKER === "phala";
     const configuredProvider = String(env.PARTICIPANT_KEY_PROVIDER || "").trim();
     const provider = configuredProvider || (phala ? "ephemeral" : "");
-    if (phala && !["ephemeral", "kms"].includes(provider)) {
+    if (phala && !["ephemeral", "kms", "broker"].includes(provider)) {
         throw new Error("Phala participant keys require the ephemeral key provider.");
     }
-    if (provider === "kms" && phala) {
+    if (["kms", "broker"].includes(provider) && phala) {
         await requireVolatileDirectory();
         // Only the guarded supervisor initializes this private tmpfs file.
-        return participantKey(crypto.createPrivateKey(await fs.readFile(PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH)), "kms-sealed", RSA_BITS);
+        return participantKey(crypto.createPrivateKey(await fs.readFile(PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH)), provider === "broker" ? "broker-sealed" : "kms-sealed", RSA_BITS);
     }
     if (provider === "ephemeral") {
         normalizeAddress(env.ACCOUNT_ADDRESS);

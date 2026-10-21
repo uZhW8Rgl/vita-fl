@@ -53,3 +53,6 @@ tee_inference/out/
 ollama-data/
 data/evaluation/*.csv
 data/evaluation/*.jsonl
+
+# Independent key service root and local development chain state
+/key_service/private/
