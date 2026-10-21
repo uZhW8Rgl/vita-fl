@@ -1256,6 +1256,13 @@ if [ "$IPFS_PROVIDER" = "kubo" ] && [ -n "${INITIAL_GM_CID:-}" ]; then
         "${KUBO_API_URL}/api/v0/files/cp?arg=/ipfs/${INITIAL_GM_CID}&arg=/start&parents=true"
 fi
 
+# Optional key admission uses the same Foundry bootstrap and owner credentials.
+# Anvil and the key service intentionally retain no state across restarts.
+if [ "${KEY_SERVICE_ENABLED:-0}" = "1" ]; then
+    forge script script/DeployAttestedKeyAdmission.s.sol:DeployAttestedKeyAdmission \
+        --rpc-url "$rpc_url" --broadcast
+fi
+
 # Publish the deployment hand-off only after the contracts, DCAP verifier and
 # workload policy are configured. Registration remains closed until the Control
 # API owner-commits the exact Start Training roster.

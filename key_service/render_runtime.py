@@ -14,13 +14,11 @@ from pathlib import Path
 import yaml
 
 
-def render(app, *, service_image, worker_image, contracts_image, measurements, state_prefix="key"):
+def render(app, *, service_image, worker_image, contracts_image, measurements):
     for image in (service_image, worker_image, contracts_image):
         if not re.fullmatch(r"ghcr\.io/uzhw8rgl/master-thesis-dfl-worker@sha256:[a-f0-9]{64}", image):
             raise ValueError("Explicit reviewed image digests required")
     result = copy.deepcopy(app)
-    if not re.fullmatch(r"[a-z][a-z0-9-]{0,50}", state_prefix):
-        raise ValueError("Explicit safe state-volume prefix required")
     spec = yaml.safe_load(result["docker_compose_file"])
     services = spec["services"]
     if {"key-service-init", "key-service"} & services.keys():
@@ -30,59 +28,13 @@ def render(app, *, service_image, worker_image, contracts_image, measurements, s
         raise ValueError("Pinned runtime registry required")
     if services["smart-contracts"]["environment"].get("ETH_WALLET_PRIVATE_KEY") != "${ETH_WALLET_PRIVATE_KEY}":
         raise ValueError("Only encrypted environment placeholders may be rendered")
-    volumes = spec.setdefault("volumes", {})
-    state_volumes = {
-        name: state_prefix + "-" + name for name in ("service-state", "anvil-state", "contract-bootstrap", "ipfs-state")
-    }
-    for name in state_volumes.values():
-        if name in volumes:
-            raise ValueError("Existing persistence configuration requires review")
-        volumes[name] = None
-    anvil = services["anvil"]
-    if anvil.get("volumes") or "--state" in anvil["command"]:
-        raise ValueError("Existing Anvil persistence requires review")
-    anvil["command"] += ["--state", "/state/anvil.json", "--state-interval", "5"]
-    anvil["volumes"] = [state_volumes["anvil-state"] + ":/state"]
-    anvil["stop_grace_period"] = "30s"
-    # The upstream image runs as foundry:1000. Fresh Docker volumes are root
-    # owned; without this initialization Anvil can run while every dump fails.
-    services["anvil-state-init"] = {
-        "image": contracts_image,
-        "user": "0:0",
-        "read_only": True,
-        "cap_drop": ["ALL"],
-        "cap_add": ["CHOWN", "FOWNER", "DAC_OVERRIDE"],
-        "security_opt": ["no-new-privileges:true"],
-        "restart": "no",
-        "volumes": [state_volumes["anvil-state"] + ":/state"],
-        "entrypoint": ["python3", "-c"],
-        "command": ["import os; os.chmod('/state',0o700); os.chown('/state',1000,1000)"],
-    }
-    anvil["depends_on"] = {"anvil-state-init": {"condition": "service_completed_successfully"}}
-    anvil["entrypoint"] = [
-        "sh",
-        "-ec",
-        'test -w /state || { echo "Anvil persistence directory is not writable" >&2; exit 1; }; exec anvil "$$@"',
-        "--",
-    ]
-    services["ipfs"].pop("tmpfs", None)
-    services["ipfs"]["volumes"] = [state_volumes["ipfs-state"] + ":/data/ipfs"]
     contracts = services["smart-contracts"]
     contracts["image"] = contracts_image
     services["rpc-proxy"]["image"] = contracts_image
     contracts["environment"].update(
         EXPECTED_WORKER_IMAGE=worker_image,
         TDX_REFERENCE_QUOTE_PATH="../data/dstack-0.5.12-reference-tdx-quote",
-        KEY_SERVICE_REGISTRY=registry,
-    )
-    contracts.setdefault("volumes", []).append(state_volumes["contract-bootstrap"] + ":/bootstrap")
-    if (
-        len(contracts["command"]) != 3
-        or "exec bash /dfl/smart_contracts/starter_docker.sh" not in contracts["command"][2]
-    ):
-        raise ValueError("Unexpected runtime bootstrap command")
-    contracts["command"][2] = contracts["command"][2].replace(
-        "exec bash /dfl/smart_contracts/starter_docker.sh", "exec python3 /dfl/key_service/runtime_bootstrap.py"
+        KEY_SERVICE_ENABLED="1",
     )
     for service in services.values():
         env = service.get("environment", {})
@@ -94,29 +46,15 @@ def render(app, *, service_image, worker_image, contracts_image, measurements, s
                 env[name] = "dstack-0.5.12"
         if "RATLS_ALLOWED_PLATFORM_MEASUREMENTS" in env:
             env["RATLS_ALLOWED_PLATFORM_MEASUREMENTS"] = json.dumps(measurements, separators=(",", ":"))
-    common = {
+    services["key-service"] = {
         "image": service_image,
         "read_only": True,
         "cap_drop": ["ALL"],
         "security_opt": ["no-new-privileges:true"],
-        "environment": {"KEY_SERVICE_RPC_URL": "http://anvil:8545", "KEY_SERVICE_STATE_DIRECTORY": "/state"},
-        "volumes": [state_volumes["service-state"] + ":/state"],
-    }
-    init = copy.deepcopy(common)
-    init.update(
-        user="0:0",
-        cap_add=["CHOWN", "DAC_OVERRIDE"],
-        restart="no",
-        command=["node", "key_service/runtime.mjs", "init"],
-        depends_on={"smart-contracts": {"condition": "service_completed_successfully"}},
-    )
-    init["environment"].update(KEY_SERVICE_REGISTRY=registry, ETH_WALLET_PRIVATE_KEY="${ETH_WALLET_PRIVATE_KEY}")
-    services["key-service-init"] = init
-    services["key-service"] = {
-        **common,
+        "environment": {"KEY_SERVICE_RPC_URL": "http://anvil:8545", "KEY_SERVICE_REGISTRY": registry},
         "user": "10001:10001",
         "restart": "unless-stopped",
-        "depends_on": {"key-service-init": {"condition": "service_completed_successfully"}},
+        "depends_on": {"smart-contracts": {"condition": "service_completed_successfully"}},
         "ports": ["19002:8000"],
         "healthcheck": {
             "test": [
@@ -140,11 +78,6 @@ def main():
     parser.add_argument("output")
     parser.add_argument("--images", required=True, help="JSON: service, worker, contracts, immutable references")
     parser.add_argument("--platform-policy", required=True)
-    parser.add_argument(
-        "--state-prefix",
-        default="key",
-        help="Keep stable; changing it explicitly creates isolated fresh lab state and leaves old volumes intact",
-    )
     args = parser.parse_args()
     images = json.loads(Path(args.images).read_text())
     policy = json.loads(Path(args.platform_policy).read_text())
@@ -154,7 +87,6 @@ def main():
         worker_image=images["worker"],
         contracts_image=images["contracts"],
         measurements=policy["allowed_platform_measurements"],
-        state_prefix=args.state_prefix,
     )
     with Path(args.output).open("x") as target:
         json.dump(output, target, indent=2)

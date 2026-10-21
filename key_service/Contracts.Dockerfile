@@ -5,4 +5,3 @@ COPY smart_contracts/script /dfl/smart_contracts/script
 COPY smart_contracts/out /dfl/smart_contracts/out
 COPY smart_contracts/starter_docker.sh /dfl/smart_contracts/starter_docker.sh
 COPY data/dstack-0.5.12-reference-tdx-quote /dfl/data/dstack-0.5.12-reference-tdx-quote
-COPY key_service/runtime_bootstrap.py /dfl/key_service/runtime_bootstrap.py

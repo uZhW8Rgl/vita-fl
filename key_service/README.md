@@ -1,8 +1,8 @@
 # Independent attested key service (Anvil development profile)
 
 This optional `PARTICIPANT_KEY_PROVIDER=broker` path restores the participant's
-RSA, action, Sello and AIR keys across executions of the **same authorised
-manifest**. A different container image changes that manifest's measured hash
+RSA, action, Sello and AIR keys across worker executions of the **same authorised
+manifest**, while the same key-service process stays alive. A different container image changes that manifest's measured hash
 and cannot obtain the key that protects its predecessor's state. The existing
 default ephemeral profile and the older `kms/` experiment remain separate.
 
@@ -32,9 +32,8 @@ administrator remain trusted development infrastructure; no mainnet is involved.
    manifest grant, participant signature, nonce/expiry, app ID, full manifest,
    role policy and real DCAP evidence. It stores the public identity and permit.
 4. Only after a confirmed permit does the service generate an **independent
-   random 32-byte root for this participant/app**. `worker_roots.mjs` persists it
-   atomically under `/state/workers`, with private owner-only permissions.
-   Restoration loads that same root. No global secret derives worker roots.
+   random 32-byte root for this participant/app**. `worker_roots.mjs` keeps it
+   exclusively in process memory. Restoration uses that same in-memory root. No global secret derives worker roots.
 5. HKDF derives a wrapping key from that worker root and `(chain, policy, service,
    registry, participant, appId, composeHash)`. Challenge and transport recipient
    are excluded so a new invocation recovers the same wrapping key. The root
@@ -49,23 +48,25 @@ administrator remain trusted development infrastructure; no mainnet is involved.
 
 An unapproved replacement image is denied even when it retains the app ID and
 can read the old ciphertext. Its manifest hash is also part of the wrapping-key
-context. Changing an image does not automatically update a grant. Missing,
-corrupt or insecurely permissioned root/bundle state fails closed. In particular,
+context. Changing an image does not automatically update a grant. Missing roots or corrupt or insecurely permissioned bundle state fail closed. In particular,
 losing the sealed bundle does not create replacement keys under an admitted
 identity. A crash between initial admission and the first durable bundle write
 requires explicit recovery with a fresh identity; this prototype has no automatic
-repair for that enrollment window. Keep backups of **both** service roots and
-worker ciphertext, together with the Anvil state. Revocation prevents future
+repair for that enrollment window. Service restarts intentionally lose all worker roots. An admitted worker then
+cannot decrypt its previous bundle; the service refuses restoration instead of
+creating a replacement root. Anvil is also ephemeral; a runtime restart requires
+a new contract deployment, grants and worker enrollment. Revocation prevents future
 releases but cannot erase material previously released to an approved worker.
 
 ## Runtime deployment and trust boundary
 
 `render_runtime.py` overlays the existing contract-runtime manifest with an
-init-only administrator container and an unprivileged serving container. The
-serving process receives neither the wallet private key nor the Cloud API key.
-The overlay also persists Anvil, IPFS and bootstrap metadata. `runtime_bootstrap.py`
-checks existing contract code on restart and retains the deployed registry;
-it refuses to redeploy silently after state loss or configuration drift.
+unprivileged, read-only serving container without a state volume. The serving
+process receives neither the wallet private key nor the Cloud API key.
+`DeployAttestedKeyAdmission.s.sol` runs inside the existing Foundry starter when
+`KEY_SERVICE_ENABLED=1`. No Node administrator deployment or additional
+bootstrap wrapper is used. The overlay preserves the base Anvil and IPFS
+configuration and introduces no persistence for either.
 
 Build the images using workflow **Publish Dedicated Evaluation Probes**, branch
 `kms`, input `profile=runtime-v2`. The output supplies four immutable references
@@ -79,10 +80,10 @@ reference from the evaluation artifacts. Apply it only to the explicitly selecte
 contract-runtime CVM, retaining the complete base manifest for review/rollback.
 After a new Terraform render, review and reapply this optional overlay.
 
-The persistent service roots live on the trusted runtime's data volume, never
-in images, worker environments or Anvil. Hosting the service in a TEE does not
-by itself prevent an administrator from replacing the **service's own** image
-and reading its volume. This prototype therefore trusts the contract-runtime
+Worker roots are never written to files, volumes, images, worker environments
+or Anvil. They exist only in the serving process's RAM and are discarded on
+restart. Hosting the service in a TEE does not by itself protect against a
+malicious administrator controlling the **service's own** image or execution. This prototype therefore trusts the contract-runtime
 administrator and its Docker control plane. It protects against replacement of
 a worker image, not compromise of that central runtime. RPC/admin access must
 stay restricted; the public RPC proxy permits signed transactions but rejects

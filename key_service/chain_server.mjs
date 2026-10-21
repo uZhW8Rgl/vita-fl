@@ -67,7 +67,7 @@ export function createAdmissionServer({workerRoots,backend,serviceId,now=Date.no
         const send=(status,value)=>res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify(value));
         if(req.method==='GET'&&(req.url==='/health'||req.url==='/v2/config')){
             try{await backend.health();send(200,{status:'ok',protocol:'onchain-v2',chainId:'31337',policy:backend.policy,
-                registry:backend.registry,serviceId,codeHash:backend.codeHash,rootMode:'per-worker-random-v1',completedAdmissions:completed});}catch{send(503,{error:'Admission chain unavailable'});}return;
+                registry:backend.registry,serviceId,codeHash:backend.codeHash,rootMode:'per-worker-memory-v1',completedAdmissions:completed});}catch{send(503,{error:'Admission chain unavailable'});}return;
         }
         if(req.method!=='POST'||!['/v2/challenge','/v2/release'].includes(req.url)){send(404,{});return;}
         try{

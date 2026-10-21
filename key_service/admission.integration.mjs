@@ -1,4 +1,4 @@
-/** Actual Anvil/HTTP/storage/crypto; quote verifier is a labelled synthetic fixture. */
+/** Actual Anvil/HTTP/memory-root/crypto; quote verifier is a labelled synthetic fixture. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -11,7 +11,7 @@ import {spawn} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {createRequire} from 'node:module';
 import {createAdmissionBackend,createAdmissionServer} from './chain_server.mjs';
-import {initialiseWorkerRoots,openWorkerRoots} from './worker_roots.mjs';
+import {createMemoryWorkerRoots} from './worker_roots.mjs';
 import {rawPublicKey,decryptApplicationKey} from '../dfl/node_server/dist/attested_key_protocol.js';
 import {generateBundle,loadOrCreateKmsBundle} from '../dfl/node_server/dist/kms_keys.js';
 import {publicIdentity} from '../dfl/node_server/dist/key_admission.js';
@@ -45,14 +45,15 @@ test('one on-chain appraisal admits random identities, then restores their seale
     await contract.methods.authorise(account.address,appId,'0x'+composeHash).send({from:admin,gas:'300000'});
     const settings={rpcUrl,registry:registry.options.address.toLowerCase(),policy:contract.options.address.toLowerCase(),serviceId,chainId:'31337',
         codeHash:web3.utils.keccak256(await web3.eth.getCode(contract.options.address))};
-    const dir=await fs.mkdtemp(path.join(os.tmpdir(),'admission-integration-')),roots=path.join(dir,'workers');
-    t.after(()=>fs.rm(dir,{recursive:true,force:true}));await initialiseWorkerRoots(roots,settings);
-    let server;
+    const dir=await fs.mkdtemp(path.join(os.tmpdir(),'admission-integration-'));
+    t.after(()=>fs.rm(dir,{recursive:true,force:true}));
+    let server,workerRoots;
     const start=async()=>{
-        server=createAdmissionServer({workerRoots:await openWorkerRoots(roots,settings),backend:await createAdmissionBackend(settings),serviceId});
+        workerRoots=createMemoryWorkerRoots(settings);
+        server=createAdmissionServer({workerRoots,backend:await createAdmissionBackend(settings),serviceId});
         await new Promise(r=>server.listen(0,'127.0.0.1',r));
     };
-    const stop=async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));};
+    const stop=async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));workerRoots.destroy();};
     await start();t.after(stop);
     t.diagnostic('Contracts deployed, service started with pinned policy.');
     const post=async(endpoint,value)=>{
@@ -75,7 +76,7 @@ test('one on-chain appraisal admits random identities, then restores their seale
     };
     // Invalid evidence must never create a worker root or a public identity.
     assert.equal((await release(await challenge(),false)).status,403);
-    assert.deepEqual(await fs.readdir(roots),['scope.json']);
+    assert.equal(workerRoots.size,0);
     t.diagnostic('Invalid evidence rejected without creating a root.');
     const first=await challenge();assert.equal(first.status,200);
     const admitted=await release(first);assert.equal(admitted.status,200);
@@ -86,12 +87,19 @@ test('one on-chain appraisal admits random identities, then restores their seale
     assert.equal((await release(first)).status,403,'a challenge is one-use');
     assert.equal((await challenge(identity)).status,403,'an admitted identity cannot be replaced');
     assert.equal((await challenge(null,'ff'.repeat(32))).status,403,'image substitution is rejected');
-    await stop();await start();
+    // Simulate a worker restart: a fresh recipient, while the service stays alive.
     const restored=await challenge(null);assert.equal(restored.status,200);assert.deepEqual(restored.body.identity,identity);
     const r=await release(restored);assert.equal(r.status,200);
     const nextKey=decryptApplicationKey(r.body,restored.body.claims,restored.pair.privateKey);
     assert.deepEqual(await loadOrCreateKmsBundle(path.join(dir,'sealed.json'),nextKey,context),original);nextKey.fill(0);
-    t.diagnostic('Service restart restored exactly the original four keys.');
+    t.diagnostic('A fresh worker session restored exactly the original four keys.');
+    // Losing the service process destroys its roots even though Anvil still
+    // holds the admitted identity. A fresh valid quote must not create a substitute.
+    await stop();await start();
+    const afterServiceRestart=await challenge(null);assert.equal(afterServiceRestart.status,200);
+    assert.equal((await release(afterServiceRestart)).status,403);
+    assert.equal(workerRoots.size,0);
+    t.diagnostic('Service restart lost roots; restoration denied without replacement.');
     // Registration consumes the recorded admission; a verifier that now always
     // rejects cannot affect it. The random action key is used only after restoration.
     await verifier.methods.disable().send({from:admin,gas:'100000'});
