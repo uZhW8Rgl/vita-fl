@@ -62,7 +62,7 @@ def render(app, *, service_image, worker_image, contracts_image, measurements, s
     anvil["entrypoint"] = [
         "sh",
         "-ec",
-        'test -w /state || { echo "Anvil persistence directory is not writable" >&2; exit 1; }; exec anvil "$@"',
+        'test -w /state || { echo "Anvil persistence directory is not writable" >&2; exit 1; }; exec anvil "$$@"',
         "--",
     ]
     services["ipfs"].pop("tmpfs", None)
