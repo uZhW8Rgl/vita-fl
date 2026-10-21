@@ -100,6 +100,10 @@ WORKDIR /app
 COPY tee_inference ./tee_inference
 COPY agent_receipts ./agent_receipts
 COPY transport_security ./transport_security
+COPY key_service /key_service
+COPY transport_security /transport_security
+RUN python3 -m pip install --no-cache-dir -r /key_service/requirements.txt && \
+    PYTHONPATH=/ python3 -c "import key_service.verify_service"
 COPY pki ./pki
 COPY --from=step-cli /usr/local/bin/step /usr/local/bin/step
 COPY agent/blockchain_source.py agent/ipfs_bundle.py ./agent/
