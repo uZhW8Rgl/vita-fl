@@ -44,6 +44,9 @@ def test_runtime_overlay_keeps_admin_credentials_out_of_serving_process():
     assert services["key-service-init"]["environment"]["ETH_WALLET_PRIVATE_KEY"] == "${ETH_WALLET_PRIVATE_KEY}"
     assert services["control-api"]["environment"]["PHALA_CLOUD_API_KEY"] == "${PHALA_CLOUD_API_KEY}"
     assert "--state" in services["anvil"]["command"]
+    assert services["anvil"]["depends_on"]["anvil-state-init"]["condition"] == "service_completed_successfully"
+    assert "test -w /state" in services["anvil"]["entrypoint"][2]
+    assert "1000,1000" in services["anvil-state-init"]["command"][0]
     assert "tmpfs" not in services["ipfs"]
     assert "key-service" not in yaml.safe_load(app["docker_compose_file"])["services"]
     with pytest.raises(ValueError, match="already applied"):
