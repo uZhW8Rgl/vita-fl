@@ -63,7 +63,7 @@ def render(app, *, service_image, worker_image, contracts_image, measurements):
         for name in ("DYNAMIC_WORKER_IMAGE",):
             if name in env:
                 env[name] = worker_image
-        for name in ("DYNAMIC_WORKER_OS_IMAGE",):
+        for name in ("DYNAMIC_WORKER_OS_IMAGE", "PHALA_OS_IMAGE"):
             if name in env:
                 env[name] = "dstack-0.5.12"
         if "RATLS_ALLOWED_PLATFORM_MEASUREMENTS" in env:

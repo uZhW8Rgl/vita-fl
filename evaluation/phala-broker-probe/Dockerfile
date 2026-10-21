@@ -3,6 +3,7 @@ FROM ${WORKER_BASE}
 COPY dfl/node_server/dist /dfl/node_server/dist
 COPY evaluation/phala-broker-probe /evaluation/phala-broker-probe
 ARG VARIANT=original
+ENV KEY_SERVICE_PROTOCOL=online-v1
 RUN printf '%s\n' "${VARIANT}" > /evaluation/phala-broker-probe/variant
 EXPOSE 8001
 HEALTHCHECK --interval=10s --timeout=3s CMD curl -fsS http://127.0.0.1:8001/health || exit 1
