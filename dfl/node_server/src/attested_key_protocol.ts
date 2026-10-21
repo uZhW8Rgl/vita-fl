@@ -27,7 +27,7 @@ export const importRecipient = (raw: string) => {
 export const rawPublicKey = (key: crypto.KeyObject): string => (key.export({format: "der", type: "spki"}) as Buffer).subarray(-32).toString("hex");
 export const deriveApplicationKey = (root: Uint8Array, claims: ReleaseClaims): Buffer => {
     canonicalClaims(claims);
-    if (root.length !== 32) throw new Error("A 32-byte service root is required");
+    if (root.length !== 32) throw new Error("A 32-byte root is required");
     // Challenge and ephemeral recipient deliberately excluded: restarts restore one identity.
     const context = Buffer.from(JSON.stringify(["VITA-FL/application-key/v1", claims.chainId, claims.policy,
         claims.serviceId, claims.registry, claims.participant, claims.appId, claims.composeHash]));

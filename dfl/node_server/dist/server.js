@@ -4,7 +4,7 @@ import { snapshotRegisteredRunRoster, isRunParticipant } from "./bc_client.js";
 import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getCommittedRunRosterState, getDevicePublicKey, getDeviceActionKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, isGlobalModelPublished, isRoundCompleted, isRoundAborted, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
+import { getActiveModelBundle, getCurrentGM, getCurrentGMSignature, getCurrentGMKeyBundle, getCurrentState, getAggregatorEndpoint, setAggregatorEndpoint, setCurrentState, getTopContributor, triggerAggregatorSelection, reportAggregatorTimeout, getRound, getCompletedRoundCount, getLastSelectionRound, isAuthorized, isDeviceRegistrationCurrent, getCommittedRunRosterState, getDevicePublicKey, getDeviceActionKey, getDeviceRegistrationReportData, getBlockchainChainId, getMedicalSignerSnapshot, registerDeviceWithKeyAdmission, registerDeviceWithTeeQuoteAndRtmr3Events, createModelSubmissionCommitment, recordModelSubmission, openModelSubmissions, closeModelSubmissions, getRoundAggregationPolicy, hasSubmittedModel, getModelSubmissionHash, isGlobalModelPublished, isRoundCompleted, isRoundAborted, configureParticipantActionSigner, fundParticipantActionKey } from "./bc_client.js";
 import { getCurrentModel, getFileFromIPFS, updateGM } from "./ipfs.js";
 import { canCloseRoundInputs, deriveTimingConfig, nextAggregatorTimeoutTracker, requireClosedRoundInputs, selectionGapRecoveryNeeded, shouldDeferAggregatorTimeout, validateTimingConfig, waitForRoundInputs } from "./state_timing.js";
 import { loadParticipantKey, materializeParticipantPrivateKey, PARTICIPANT_PRIVATE_KEY_RUNTIME_PATH, } from "./participant_key.js";
@@ -1515,6 +1515,10 @@ const stateMachine = async () => {
         if (process.env.PARTICIPANT_KEY_PROVIDER !== "kms" && await hasCurrentDeviceRegistration(publicIp, brokerIp, publicKey, selloReceiptKey, liveIdentity.canonicalAppCompose)) {
             console.log('Device already has a bound registration for the current RSA key; reusing it.');
         }
+        else if (process.env.PARTICIPANT_KEY_PROVIDER === "broker" && process.env.KEY_SERVICE_PROTOCOL !== "online-v1") {
+            await registerDeviceWithKeyAdmission("0x" + liveIdentity.appId.replace(/^(0x|app_)/, ""), liveIdentity.canonicalAppCompose, process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey, selloReceiptKey);
+            console.log("Worker identity registered from the already verified on-chain key admission.");
+        }
         else {
             console.log("Fetching TDX Quote ...");
             const { quoteHex, rtmr3EventLog, canonicalAppCompose } = await fetchLivePhalaQuote(async (identity) => getDeviceRegistrationReportData(process.env.ACCOUNT_ADDRESS, activeParticipantActionSigner.address, publicIp, brokerIp, publicKey, selloReceiptKey, identity.canonicalAppCompose));
@@ -2364,7 +2368,7 @@ async function runService() {
             logicalParticipant: process.env.ACCOUNT_ADDRESS,
         });
         await fundParticipantActionKey();
-        if (teeInferenceEnabled()) {
+        if (teeInferenceEnabled() || process.env.PARTICIPANT_KEY_PROVIDER === "broker") {
             activeSelloReceiptPublicKey = await loadSelloReceiptPublicKey();
             console.log("TEE Sello receipt key initialized and will be bound by DCAP admission.", {
                 publicKeySha256: crypto

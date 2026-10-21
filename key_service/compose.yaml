@@ -12,6 +12,9 @@ services:
       context: ..
       dockerfile: key_service/Dockerfile
     user: "${KEY_SERVICE_UID:-10001}:${KEY_SERVICE_GID:-10001}"
+    # Explicit historical online-v1 entry point. The Phala runtime overlay uses
+    # runtime.mjs and independent per-worker roots instead.
+    command: ["node", "key_service/service.mjs"]
     environment:
       KEY_SERVICE_RPC_URL: http://anvil:8545
       KEY_SERVICE_POLICY: ${KEY_SERVICE_POLICY:-}

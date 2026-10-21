@@ -12,7 +12,8 @@ RUN cd dfl/node_server && npm run build && npm prune --omit=dev
 COPY key_service/requirements.txt ./key_service/
 RUN pip install --no-cache-dir -r key_service/requirements.txt
 COPY key_service ./key_service
+COPY smart_contracts/out/AttestedKeyAdmission.sol/AttestedKeyAdmission.json ./key_service/artifacts/AttestedKeyAdmission.json
 COPY transport_security ./transport_security
 ENV PYTHONPATH=/app KEY_SERVICE_HOST=0.0.0.0 KEY_SERVICE_PORT=8000
 USER 10001:10001
-CMD ["node", "key_service/service.mjs"]
+CMD ["node", "key_service/runtime.mjs"]

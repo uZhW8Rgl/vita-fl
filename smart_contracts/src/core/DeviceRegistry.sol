@@ -18,6 +18,12 @@ interface IKmsAppFactory {
     function isApprovedApp(address appId, bytes32 composeHash) external view returns (bool);
 }
 
+interface IKeyAdmissionPolicy {
+    function registry() external view returns (address);
+    function isIdentityAdmitted(address participant, address appId, bytes32 composeHash,
+        address actionKey, bytes calldata rsaPublicKey, bytes32 selloKey) external view returns (bool);
+}
+
 contract DeviceRegistry {
     using StrictECDSA for bytes32;
 
@@ -68,6 +74,7 @@ contract DeviceRegistry {
     IKmsAppFactory public kmsAppFactory;
     bytes32 public expectedKeyProviderHash;
     mapping(address => address) public registeredAppIds;
+    IKeyAdmissionPolicy public keyAdmissionPolicy;
 
     event DeviceRegistered(address indexed device, uint256 indexed registrationNonce, bytes32 indexed composeHash);
     event DeviceAuthorized(address indexed device);
@@ -98,6 +105,43 @@ contract DeviceRegistry {
         require(!admissionPolicyLocked, "run admission policy is immutable");
         require(_tdxV4Attestation != address(0), "invalid attestation address");
         tdxV4Attestation = ITdxV4Attestation(_tdxV4Attestation);
+    }
+
+    function setKeyAdmissionPolicy(address policy) external onlyOwner {
+        require(!admissionPolicyLocked && address(keyAdmissionPolicy) == address(0), "key admission policy is immutable");
+        require(policy.code.length != 0 && IKeyAdmissionPolicy(policy).registry() == address(this), "invalid key admission policy");
+        keyAdmissionPolicy = IKeyAdmissionPolicy(policy);
+    }
+
+    /// @notice Consume the identity already DCAP-appraised by the pinned admission contract.
+    /// No second quote or second DCAP verification; the worker proves action-key possession here.
+    function registerDeviceWithKeyAdmission(address appId, bytes calldata canonicalAppCompose,
+        address participant, address actionKey, string calldata publicIp, string calldata brokerIp,
+        bytes calldata rsaPublicKey, bytes32 selloKey, bytes calldata participantAuthorization) external {
+        require(msg.sender == actionKey, "sender/action key mismatch");
+        require(!knownDevice[participant], "device already registered");
+        require(address(keyAdmissionPolicy) != address(0), "key admission not configured");
+        (bytes32 composeHash, bytes32 imageDigest, bytes32 policyHash) = _workloadIdentity(canonicalAppCompose);
+        _requireRegistrationPreparation(participant, rsaPublicKey, imageDigest, policyHash, selloKey);
+        require(keyAdmissionPolicy.isIdentityAdmitted(participant, appId, composeHash, actionKey, rsaPublicKey, selloKey),
+            "identity not admitted");
+        uint256 nonce = registrationNonces[participant];
+        require(_enrollmentDigest(participant, actionKey, composeHash, selloKey, nonce)
+            .recover(participantAuthorization) == participant, "invalid participant authorization");
+        require(participantForActionKey[actionKey] == address(0), "action key already assigned");
+        registrationNonces[participant] = nonce + 1;
+        registeredComposeHashes[participant] = composeHash;
+        registeredImageDigests[participant] = imageDigest;
+        registeredWorkerPolicyHashes[participant] = policyHash;
+        registeredAppIds[participant] = appId;
+        selloReceiptKeys[participant] = selloKey;
+        actionKeyForParticipant[participant] = actionKey;
+        participantForActionKey[actionKey] = participant;
+        _registerVerifiedDevice(participant, publicIp, brokerIp, rsaPublicKey);
+        emit DeviceRegistered(participant, nonce, composeHash);
+        emit DeviceWorkerPolicyRegistered(participant, policyHash);
+        emit DeviceActionKeyRegistered(participant, actionKey);
+        emit DeviceSelloReceiptKeyRegistered(participant, selloKey);
     }
 
     function setExpectedWorkerImageDigest(bytes32 _expectedWorkerImageDigest) public onlyOwner {

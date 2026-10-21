@@ -19,7 +19,7 @@ export const keyServiceRequest = async (url, payload, ca) => {
     const body = Buffer.from(JSON.stringify(payload));
     return new Promise((resolve, reject) => {
         const request = https.request(url, { method: "POST", rejectUnauthorized: true, ca,
-            headers: { "Content-Type": "application/json", "Content-Length": body.length }, timeout: 40000 }, response => {
+            headers: { "Content-Type": "application/json", "Content-Length": body.length }, timeout: 240000 }, response => {
             const chunks = [];
             let count = 0;
             response.on("data", (chunk) => { count += chunk.length; if (count > 65536)
@@ -78,6 +78,8 @@ export const obtainApplicationKey = async (context, env = process.env, dependenc
     return decryptApplicationKey(envelope, claims, pair.privateKey);
 };
 export const initializeAttestedRuntimeKeys = async (env = process.env) => {
+    if (env.KEY_SERVICE_PROTOCOL !== 'online-v1')
+        return (await import('./key_admission.js')).initialiseOnchainKeys(env);
     if (env.DOCKER !== "phala" || env.PARTICIPANT_KEY_PROVIDER !== "broker")
         throw new Error("Explicit Phala broker profile required");
     await requireVolatileDirectory();

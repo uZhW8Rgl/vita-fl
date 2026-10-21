@@ -20,7 +20,7 @@ export const keyServiceRequest = async (url: string, payload: unknown, ca?: stri
     const body = Buffer.from(JSON.stringify(payload));
     return new Promise((resolve,reject) => {
         const request = https.request(url, {method:"POST",rejectUnauthorized:true,ca,
-            headers:{"Content-Type":"application/json","Content-Length":body.length},timeout:40000}, response => {
+            headers:{"Content-Type":"application/json","Content-Length":body.length},timeout:240000}, response => {
             const chunks: Buffer[] = [];let count = 0;
             response.on("data", (chunk: Buffer) => {count += chunk.length;if(count > 65536) response.destroy(new Error("Key service response too large"));else chunks.push(chunk);});
             response.on("error",reject);
@@ -67,6 +67,7 @@ export const obtainApplicationKey = async (context: ReleaseContext, env: NodeJS.
 };
 
 export const initializeAttestedRuntimeKeys = async (env = process.env) => {
+    if(env.KEY_SERVICE_PROTOCOL !== 'online-v1') return (await import('./key_admission.js')).initialiseOnchainKeys(env);
     if (env.DOCKER !== "phala" || env.PARTICIPANT_KEY_PROVIDER !== "broker") throw new Error("Explicit Phala broker profile required");
     await requireVolatileDirectory();
     const client = new DstackClient("/var/run/dstack.sock");

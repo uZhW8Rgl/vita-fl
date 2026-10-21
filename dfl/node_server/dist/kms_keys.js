@@ -58,7 +58,7 @@ export const unsealKeyBundle = (sealed, root, context) => {
         plaintext?.fill(0);
     }
 };
-const generateBundle = async () => {
+export const generateBundle = async () => {
     const { privateKey } = await new Promise((resolve, reject) => {
         crypto.generateKeyPair("rsa", { modulusLength: 3072 }, (error, _publicKey, privateKey) => error ? reject(error) : resolve({ privateKey }));
     });

@@ -905,6 +905,15 @@ export const getDeviceRegistrationReportData = async (address, actionKey, public
     }
     return reportData;
 };
+export const registerDeviceWithKeyAdmission = async (appId, canonicalAppCompose, participant, actionKey, publicIp, brokerIp, publicKey, selloKey) => {
+    const abi = JSON.parse(fs.readFileSync('./abi/registry.json', 'utf-8'));
+    const contract = new web3.eth.Contract(abi, device_registry_address);
+    const account = bootstrapAccount();
+    if (account.address.toLowerCase() !== String(participant).toLowerCase())
+        throw new Error('Participant credential mismatch');
+    const digest = await contract.methods.enrollmentDigest(participant, actionKey, selloKey, canonicalAppCompose).call();
+    return sendProtocolMethod(contract.methods.registerDeviceWithKeyAdmission(appId, canonicalAppCompose, participant, actionKey, publicIp, brokerIp, publicKey, selloKey, signRawDigest(digest, bootstrapPrivateKey)), device_registry_address, { errorLabel: 'Broker identity registration failed' });
+};
 export const registerDeviceWithTeeQuoteAndRtmr3Events = async (quoteHex, rtmr3EventLog, canonicalAppCompose, address, actionKey, publicIp, brokerIp, publicKeyBytesHex, selloReceiptKey) => {
     if (!device_registry_address) {
         throw new Error("REGISTRY_ADDRESS is required for TDX device registration");

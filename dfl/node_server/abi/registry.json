@@ -1399,5 +1399,84 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "function",
+    "name": "keyAdmissionPolicy",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IKeyAdmissionPolicy"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registerDeviceWithKeyAdmission",
+    "inputs": [
+      {
+        "name": "appId",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "canonicalAppCompose",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "participant",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "actionKey",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "publicIp",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "brokerIp",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "rsaPublicKey",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "selloKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "participantAuthorization",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setKeyAdmissionPolicy",
+    "inputs": [
+      {
+        "name": "policy",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   }
 ]

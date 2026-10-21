@@ -17,7 +17,7 @@ export const ACTION_RUNTIME_KEY = "action-root.seed";
 export type KmsKeyContext = {
     appId: string; composeHash: string; participant: string; registry: string; chainId: string;
 };
-type Bundle = { rsa: string; action: string; sello: string; air: string };
+export type Bundle = { rsa: string; action: string; sello: string; air: string };
 type SealedBundle = { version: number; context: KmsKeyContext; iv: string; tag: string; ciphertext: string };
 
 const binding = (context: KmsKeyContext) => Buffer.from(JSON.stringify({
@@ -58,7 +58,7 @@ export const unsealKeyBundle = (sealed: SealedBundle, root: Uint8Array, context:
     } finally { key.fill(0); plaintext?.fill(0); }
 };
 
-const generateBundle = async (): Promise<Bundle> => {
+export const generateBundle = async (): Promise<Bundle> => {
     const { privateKey } = await new Promise<{privateKey: crypto.KeyObject}>((resolve, reject) => {
         crypto.generateKeyPair("rsa", {modulusLength: 3072}, (error, _publicKey, privateKey) => error ? reject(error) : resolve({privateKey}));
     });

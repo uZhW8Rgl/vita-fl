@@ -6,6 +6,12 @@ on:
     branches: [phala_app_key]
     paths: ["evaluation/phala-key-probe/**", ".github/workflows/publish-evaluation-probes.yml"]
   workflow_dispatch:
+    inputs:
+      profile:
+        description: "Historical two probes or single-appraisal runtime images"
+        default: broker-v1
+        type: choice
+        options: [broker-v1, runtime-v2]
 permissions:
   contents: read
   packages: write
@@ -43,7 +49,7 @@ jobs:
       - name: Record immutable image reference
         run: echo "PROBE_IMAGE_${{ matrix.variant }}=ghcr.io/uzhw8rgl/master-thesis-dfl-worker@${{ steps.build.outputs.digest }}"
   publish-broker:
-    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'kms'
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'kms' && inputs.profile != 'runtime-v2'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -73,3 +79,51 @@ jobs:
           tags: ghcr.io/uzhw8rgl/master-thesis-dfl-worker:broker-key-${{ matrix.variant }}-${{ github.sha }}
       - name: Record immutable image reference
         run: echo "BROKER_IMAGE_${{ matrix.variant }}=ghcr.io/uzhw8rgl/master-thesis-dfl-worker@${{ steps.build.outputs.digest }}"
+  publish-runtime:
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'kms' && inputs.profile == 'runtime-v2'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - variant: worker
+            dockerfile: key_service/Worker.Dockerfile
+            marker: original
+          - variant: replacement
+            dockerfile: key_service/Worker.Dockerfile
+            marker: replacement
+          - variant: service
+            dockerfile: key_service/Dockerfile
+            marker: unused
+          - variant: contracts
+            dockerfile: key_service/Contracts.Dockerfile
+            marker: unused
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.3.1
+      - run: npm ci && npm run build
+        working-directory: dfl/node_server
+      - run: forge build
+        working-directory: smart_contracts
+      - run: node --test key_service/worker_roots.test.mjs key_service/admission.integration.mjs
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          build-args: VARIANT=${{ matrix.marker }}
+          tags: ghcr.io/uzhw8rgl/master-thesis-dfl-worker:key-runtime-${{ matrix.variant }}-${{ github.sha }}
+      - name: Record immutable image reference
+        run: echo "KEY_RUNTIME_${{ matrix.variant }}=ghcr.io/uzhw8rgl/master-thesis-dfl-worker@${{ steps.build.outputs.digest }}"

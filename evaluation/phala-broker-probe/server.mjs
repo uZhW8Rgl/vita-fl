@@ -7,6 +7,8 @@ import {createRequire} from 'node:module';
 import {initializeAttestedRuntimeKeys, obtainApplicationKey, BROKER_STATE_PATH} from '../../dfl/node_server/dist/attested_keys.js';
 import {RUNTIME_KEY_DIRECTORY, requireVolatileDirectory} from '../../dfl/node_server/dist/runtime_keys.js';
 import {ed25519PublicKeyFromSeed} from '../../dfl/node_server/dist/sello_key.js';
+import {initialiseOnchainKeys} from '../../dfl/node_server/dist/key_admission.js';
+import {loadParticipantActionSigner} from '../../dfl/node_server/dist/action_key.js';
 const require=createRequire(new URL('../../dfl/node_server/package.json',import.meta.url));
 const {DstackClient}=await import(require.resolve('@phala/dstack-sdk'));
 const {Web3}=require('web3');
@@ -29,8 +31,9 @@ async function inspect(challenge,claimedComposeHash) {
     let denied=false,status=null,fingerprints=null,possession=false,decryptable=false;
     try {
         if(claimedComposeHash) {
-            const root=await obtainApplicationKey({...context,composeHash:claimedComposeHash});
-            root.fill(0);
+            if(process.env.KEY_SERVICE_PROTOCOL==='online-v1'){
+                const root=await obtainApplicationKey({...context,composeHash:claimedComposeHash});root.fill(0);
+            }else await initialiseOnchainKeys(process.env,{claimedComposeHash});
             throw new Error('Unexpected release to forged deployment context');
         }
         if(!initialized){await initializeAttestedRuntimeKeys();initialized=true;}
@@ -38,7 +41,7 @@ async function inspect(challenge,claimedComposeHash) {
         const rsa=crypto.createPrivateKey(privateRsa);privateRsa.fill(0);
         const pub=crypto.createPublicKey(rsa).export({format:'pem',type:'spki'});
         const actionSeed=await fs.readFile(path.join(RUNTIME_KEY_DIRECTORY,'action-root.seed'));
-        const action=new Web3().eth.accounts.privateKeyToAccount('0x'+actionSeed.toString('hex'));actionSeed.fill(0);
+        const action=await loadParticipantActionSigner({deriveKey:async()=>Buffer.from(actionSeed)});actionSeed.fill(0);
         const eds={},signatures=[];
         for(const name of ['sello','air']) {
             const seed=await fs.readFile(path.join(RUNTIME_KEY_DIRECTORY, name+'-signing.seed'));
@@ -48,10 +51,11 @@ async function inspect(challenge,claimedComposeHash) {
                 signatures.push(crypto.verify(null,Buffer.from(challenge),crypto.createPublicKey(key),crypto.sign(null,Buffer.from(challenge),key)));
             } finally {seed.fill(0);}
         }
-        const signature=action.sign(challenge).signature;
-        possession=signatures.every(Boolean)&&new Web3().eth.accounts.recover(challenge,signature).toLowerCase()===action.address.toLowerCase()
+        const actionDigest=new Web3().utils.keccak256(challenge),signature=await action.signDigest(actionDigest);
+        possession=signatures.every(Boolean)&&new Web3().eth.accounts.recover(actionDigest,signature,true).toLowerCase()===action.address.toLowerCase()
             &&crypto.verify('sha256',Buffer.from(challenge),pub,crypto.sign('sha256',Buffer.from(challenge),rsa));
         fingerprints={rsa:hash(pub),action:hash(action.address.toLowerCase()),...eds};
+        action.destroy();
         const filename='/var/lib/vita-fl/prior-rsa-envelope.bin';
         const surrogate=crypto.randomBytes(32);
         try {await fs.writeFile(filename,crypto.publicEncrypt({key:pub,oaepHash:'sha256'},surrogate),{flag:'wx',mode:0o600}).catch(e=>{if(e.code!=='EEXIST')throw e;});}
