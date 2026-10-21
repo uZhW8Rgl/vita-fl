@@ -11,6 +11,11 @@ from urllib.parse import urlsplit
 import yaml
 
 
+class IndentedSafeDumper(yaml.SafeDumper):
+    def increase_indent(self, flow=False, indentless=False):
+        return super().increase_indent(flow, False)
+
+
 def render(manifest, *, origin, policy, service_id):
     url = urlsplit(origin)
     if (
@@ -27,9 +32,9 @@ def render(manifest, *, origin, policy, service_id):
         raise ValueError("explicit service identity and policy required")
     app = json.loads(manifest)
     compose = yaml.safe_load(app["docker_compose_file"])
-    if not isinstance(compose.get("services"), dict) or len(compose["services"]) != 1:
-        raise ValueError("one reviewed worker service required")
-    worker = next(iter(compose["services"].values()))
+    if not isinstance(compose.get("services"), dict) or set(compose["services"]) != {"dfl-worker"}:
+        raise ValueError("one reviewed dfl-worker service required")
+    worker = compose["services"]["dfl-worker"]
     if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", worker.get("image", "")):
         raise ValueError("immutable worker image required")
     env = worker.get("environment")
@@ -47,9 +52,15 @@ def render(manifest, *, origin, policy, service_id):
     mounts = worker.setdefault("volumes", [])
     if not isinstance(mounts, list) or any("/var/lib/vita-fl" in str(item) for item in mounts):
         raise ValueError("review existing participant-state mounts before conversion")
-    mounts.append("participant-keys:/var/lib/vita-fl")
-    compose.setdefault("volumes", {})["participant-keys"] = {}
-    app["docker_compose_file"] = yaml.safe_dump(compose, sort_keys=False)
+    volumes = compose.setdefault("volumes", {})
+    if set(volumes) - {"participant-key-state"} or volumes.get("participant-key-state") not in ({}, None):
+        raise ValueError("review existing top-level volume definitions")
+    mounts.append("participant-key-state:/var/lib/vita-fl")
+    volumes["participant-key-state"] = None
+    # Keep the exact YAML subset understood by Node and Solidity admission parsers.
+    app["docker_compose_file"] = yaml.dump(compose, Dumper=IndentedSafeDumper, sort_keys=False).replace(
+        "  participant-key-state: null", "  participant-key-state:"
+    )
     return json.dumps(app, separators=(",", ":"))
 
 

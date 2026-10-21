@@ -61,11 +61,16 @@ def tee_sello_signing_seed(
     env = os.environ if environment is None else environment
     phala = str(env.get("DOCKER", "")).lower() == "phala"
     provider = str(env.get("SELLO_SERVICE_KEY_PROVIDER") or ("ephemeral" if phala else "env")).lower()
-    if phala and provider != ("kms" if env.get("PARTICIPANT_KEY_PROVIDER") == "kms" else "ephemeral"):
-        raise RuntimeError("Phala Sello receivers require SELLO_SERVICE_KEY_PROVIDER=ephemeral")
+    participant_provider = str(env.get("PARTICIPANT_KEY_PROVIDER", "ephemeral")).lower()
+    expected_provider = participant_provider if participant_provider in ("kms", "broker") else "ephemeral"
+    if phala and provider != expected_provider:
+        raise RuntimeError(
+            f"Phala Sello receivers require SELLO_SERVICE_KEY_PROVIDER={expected_provider}; "
+            "it must match the participant key provider"
+        )
     if not phala and provider != "env":
         raise RuntimeError("Local Sello receivers only support the env test provider")
-    if provider in ("ephemeral", "kms"):
+    if provider in ("ephemeral", "kms", "broker"):
         return runtime_key_reader(SELLO_RUNTIME_KEY)
     else:
         if str(env.get("LOCAL_TDX_MOCK", "")) != "1":

@@ -59,7 +59,8 @@ permanent. There is deliberately no automatic image-upgrade migration. A later
 upgrade requires a separately reviewed migration design. Deleting the sealed
 bundle creates a new identity on the next authorised initialization; old
 identities cannot be recovered from the service root alone. The prototype does
-not prevent rollback to an older authenticated sealed bundle.
+not prevent rollback to an older authenticated sealed bundle. Revocation denies
+subsequent releases; it cannot erase keys already released to an authorised TEE.
 
 ## Local setup
 
@@ -100,6 +101,8 @@ Terminate HTTPS in front of the service for cloud access. A temporary
 can be used for evaluation; expose only the service API. The application key
 remains recipient encrypted even at that proxy. Stable deployments need stable
 HTTPS origin, service ID, policy address, registry, root and persisted chain.
+The HTTPS terminator remains trusted for service authentication; the broker
+itself is not remotely attested by this prototype.
 
 ## Worker configuration and grant
 
@@ -146,3 +149,15 @@ through SMA/SMEW with real Phala quotes and an actual same-app image replacement
 An HTTP outage or failed quote verification is inconclusive, never a successful
 negative key-release result. Cloud results belong in the driver's validation
 artifacts; they must not be conflated with revision `0a9fc985` of the thesis.
+
+The real Phala campaign on **2026-10-21** passed **38 assertions** through
+SMEW → SMA → `vita-fl-td`: original initialization, process restart, CVM restart,
+same-app image replacement, a replacement claiming the original Compose hash,
+and return to the original image. Both replacement requests received HTTP 403
+while the original sealed file remained readable and unchanged. Returning to
+the original image restored the same four identities and decrypted the retained
+RSA ciphertext. The full evidence is in the sibling driver's
+`validation/chapter7-attested-key-service-20261021/` directory, including genuine
+quotes, independent OS-reference appraisal, SMA/SMEW reports and cleanup proof.
+This establishes the tested key path, not a complete training/inference run or
+protection from compromise of the trusted broker host.
