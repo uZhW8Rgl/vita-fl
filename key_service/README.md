@@ -128,12 +128,29 @@ without a prior grant, single worker appraisal, service-response authentication,
 restoration and denial after service-root loss. These fixtures do not establish
 successful hardware attestation of the new service-authentication path.
 
-The prior **onchain-v2** cloud campaign passed 39 assertions at `cfc8d563` through
-SMEW → SMA → vita-fl-td. The older **online-v1** campaign passed 38 assertions.
-Their retained evidence does not validate onchain-v3. New deployments need the v3
-images, updated contracts and independent service references. No silent downgrade
-or automatic migration of old participant bundles is supported. The historical
-source/images and validation directories preserve reproduction of those runs.
+The **onchain-v3** Phala campaign passed **45/45 assertions** through
+SMEW → SMA → vita-fl-td (probe image source `959cbeea`, driver `41e943a`). It checks
+initial four-key admission, process and CVM restart, refusal after image replacement
+and a forged Compose claim, and restoration of the original four keys after the
+original image returns. Each of the six cases includes independent service-quote
+appraisal. Six additional checks against a fresh genuine service proof reject
+nonce replay, altered payload/status/operation, a different expected manifest,
+and an attacker-signed attempt to rebind the genuine quote to another signer.
+
+Evidence is retained locally in
+`vita-fl-td/validation/chapter7-attested-service-20261021/`; the successful measured
+run is `smew-run-02`. The first worker run is retained as an inconclusive error:
+its image lacked PyYAML and completed no assertions. Both the probe and regular
+worker Dockerfiles now install the appraiser dependencies and check its import
+during the build. The deployment driver also preserves the measured `allowed_envs`
+ordering when updating Phala's encrypted environment. The cleanup record confirms
+test-worker deletion and runtime shutdown.
+
+The prior **onchain-v2** campaign passed 39 assertions at `cfc8d563`; the older
+**online-v1** campaign passed 38. Their retained evidence describes those historical
+protocols. New deployments need the v3 images, updated contracts and independent
+service references. No silent downgrade or automatic migration of old participant
+bundles is supported. Archived source/images preserve the historical runs.
 
 ## Historical online-v1 profile
 
