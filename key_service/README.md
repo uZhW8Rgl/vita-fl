@@ -195,6 +195,16 @@ An HTTP outage or failed quote verification is inconclusive, never a successful
 negative key-release result. Cloud results belong in the driver's validation
 artifacts; they must not be conflated with revision `0a9fc985` of the thesis.
 
+The current **memory-only onchain-v2** deployment uses revision `cfc8d563` and
+[image publication 39615569211](https://github.com/uZhW8Rgl/vita-fl/actions/runs/39615569211).
+The full CI passed at the same revision. The real Phala campaign passed **39/39
+assertions** through SMEW → SMA → vita-fl-td. Its local Anvil integration explicitly
+checks that a service restart denies restoration instead of creating replacement
+roots. The dedicated cloud evidence and final cleanup record belong in the
+sibling driver's `validation/chapter7-onchain-key-service-20261021-final/`
+directory. The runtime is stopped after the experiment and the dedicated worker
+is deleted; restarting it starts with empty RAM roots and ephemeral Anvil state.
+
 The **historical online-v1** Phala campaign on **2026-10-21** passed **38 assertions** through
 SMEW → SMA → `vita-fl-td`: original initialization, process restart, CVM restart,
 same-app image replacement, a replacement claiming the original Compose hash,
