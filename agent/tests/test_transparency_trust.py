@@ -220,6 +220,7 @@ def test_sdk_transport_disables_proxies_redirects_and_has_bounded_timeout(monkey
     original_session.close.assert_called_once()
     assert sdk.session is strict_session
     import ssl
+
     options = http_constructor.call_args.kwargs
     assert options["base_url"] == "https://scitt.example"
     assert isinstance(options["verify"], ssl.SSLContext)
