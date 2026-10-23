@@ -19,17 +19,58 @@ docker compose -f transparency_log/compose.yml logs -f transparency-log
 ```
 
 The raw SCITT Registration API is then available at
-`https://localhost:8000`. It uses a service-generated development certificate,
-so local diagnostic requests need `curl --insecure`:
+`https://localhost:8000`. CCF creates a service certificate that clients must
+explicitly trust; an unverified TLS connection is no longer accepted. For a
+local diagnostic request, copy only the public certificate and verify the peer:
 
 ```bash
-curl --fail --silent --insecure https://localhost:8000/node/network | jq
+docker compose -f transparency_log/compose.yml cp transparency-log:/run/scitt-trust/service-cert.pem ./scitt-service-cert.pem
+curl --fail --silent --cacert ./scitt-service-cert.pem https://localhost:8000/node/network | jq
 ```
 
 The first start creates the CCF member identity, recovery key, service trust
 store, ledger, and snapshots in the `scitt-data` volume. Later starts use CCF
 recovery rather than creating a new log. Do not delete this volume if receipts
 must remain retrievable.
+
+## TLS authentication
+
+Agent, receiver publication, receipt readback, and public trust-anchor export
+use certificate-chain, validity, and hostname verification. `SCITT_DEVELOPMENT`
+defaults to `0`; attempting to enable unverified TLS fails rather than falling
+back. Receipt metadata cannot select the TLS policy or an unconfigured log.
+
+The local agent reads `SCITT_CA_CERT=/run/scitt-trust/service-cert.pem` from a
+read-only public-certificate volume. It never mounts the log's private data.
+CCF bootstrap and health checks also verify TLS using certificates emitted by
+the local CCF process, including during the transition to the open service.
+
+For separate Phala receivers, the measured `SCITT_URL` fixes the runtime's
+`https://APP_ID-8000s.GATEWAY` origin. The public hostname is included in the
+CCF node certificate. `SCITT_GATEWAY_CA_BOOTSTRAP=auto` recognises that managed
+Phala hostname and retrieves its public service
+certificate from `https://APP_ID-8002.GATEWAY/service-cert.pem` using ordinary,
+verified Web-PKI HTTPS. Port 8002 serves only that public certificate, and the
+gateway authenticates its distribution. The subsequent SCITT connection uses
+TLS passthrough on port 8000 and trusts only the supplied CCF certificate.
+Bootstrap rejects redirects, oversized certificates, and failed TLS checks.
+This authenticates distribution through the configured platform gateway; it
+does not remotely attest the log process or remove trust in the gateway.
+
+`SCITT_CA_URL` may instead name an explicitly configured HTTPS origin serving
+`/service-cert.pem`. For an independently operated log with a publicly trusted
+certificate, leave both bootstrap settings and `SCITT_CA_CERT` unset. For a
+private CA outside the managed Phala deployment, supply `SCITT_CA_CERT` securely.
+The automatic mode uses the ordinary public CA store for other log hostnames;
+setting the bootstrap mode to `1` requires a managed Phala log origin.
+Client certificates and roots must cover the chosen hostname and be current.
+Deployments must renew and redistribute expired identities; checks never fall
+back to insecure mode. A fresh disposable runtime automatically creates and
+distributes a fresh certificate; this does not require persistent test state.
+
+After changing this code, rebuild the log, agent, receiver and dynamic-worker
+control images before deploying; an existing digest-pinned image does not
+acquire these changes.
 
 ## Prototype security boundary
 

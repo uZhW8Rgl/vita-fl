@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import http.server
 import json
 import os
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 CONSTITUTION_NAMES = ("validate.js", "apply.js", "resolve.js", "actions.js", "scitt.js")
 
@@ -74,6 +77,7 @@ def build_config(data_dir: Path, host: str, port: int, recover: bool) -> dict[st
                 }
             },
         },
+        "output_files": {"node_certificate_file": str(data_dir / "node_cert.pem")},
         "node_certificate": {
             "subject_alt_names": [
                 "iPAddress:0.0.0.0",
@@ -84,6 +88,20 @@ def build_config(data_dir: Path, host: str, port: int, recover: bool) -> dict[st
         },
         "logging": {"format": "Json", "host_level": "Info"},
     }
+    public_url = os.environ.get("SCITT_PUBLIC_URL", "")
+    if public_url:
+        parsed = urlsplit(public_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("SCITT_PUBLIC_URL must be an HTTPS origin")
+        config["node_certificate"]["subject_alt_names"].append(f"dNSName:{parsed.hostname}")
     if recover:
         config["command"] = {
             "type": "Recover",
@@ -114,18 +132,31 @@ def build_config(data_dir: Path, host: str, port: int, recover: bool) -> dict[st
     return config
 
 
-def _wait_until_reachable(url: str, process: subprocess.Popen[bytes], timeout: int = 90) -> None:
+def _bootstrap_ca(data_dir: Path) -> Path:
+    # Both identities are written by our own cchost child, not downloaded over
+    # an unauthenticated connection. CCF changes from the initial self-signed
+    # node certificate to the service-endorsed certificate during opening.
+    certificates = [data_dir / "node_cert.pem", data_dir / "service_cert.pem"]
+    pem = "\n".join(path.read_text(encoding="ascii") for path in certificates if path.is_file())
+    if not pem:
+        raise FileNotFoundError("CCF has not written its local certificates yet")
+    target = data_dir / "bootstrap-ca.pem"
+    _atomic_write(target, pem)
+    return target
+
+
+def _wait_until_reachable(url: str, process: subprocess.Popen[bytes], data_dir: Path, timeout: int = 90) -> None:
     import ssl
 
-    context = ssl._create_unverified_context()  # noqa: SLF001 - virtual-mode self-signed service
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise RuntimeError(f"cchost exited during startup with status {process.returncode}")
         try:
+            context = ssl.create_default_context(cafile=str(_bootstrap_ca(data_dir)))
             with urllib.request.urlopen(f"{url}/node/network", context=context, timeout=2):
                 return
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError, FileNotFoundError):
             time.sleep(1)
     raise RuntimeError("SCITT-CCF did not become reachable before the startup deadline")
 
@@ -138,7 +169,38 @@ def _client(data_dir: Path, url: str):
         (data_dir / "member0_cert.pem").read_text(encoding="utf-8"),
         (data_dir / "member0_privk.pem").read_text(encoding="utf-8"),
     )
-    return Client(url, development=True, member_auth=auth)
+    return Client(url, development=False, cacert=str(_bootstrap_ca(data_dir)), member_auth=auth)
+
+
+def _publish_tls_identity(data_dir: Path) -> http.server.ThreadingHTTPServer:
+    """Expose only the public CA; Phala authenticates this port with Web PKI."""
+    public_dir = Path(os.environ.get("SCITT_TRUST_DIR", "/run/scitt-trust"))
+    public_dir.mkdir(parents=True, exist_ok=True)
+    certificate = (data_dir / "service_cert.pem").read_text(encoding="ascii")
+    _atomic_write(public_dir / "service-cert.pem", certificate)
+
+    class CertificateHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path != "/service-cert.pem":
+                self.send_error(404)
+                return
+            raw = (public_dir / "service-cert.pem").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-pem-file")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(
+        ("0.0.0.0", int(os.environ.get("SCITT_CERT_PORT", "8002"))), CertificateHandler
+    )
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
 
 
 def _write_trust_store(data_dir: Path, client: Any) -> None:
@@ -221,8 +283,9 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     url = f"https://127.0.0.1:{port}"
+    certificate_server = None
     try:
-        _wait_until_reachable(url, process)
+        _wait_until_reachable(url, process, data_dir)
         if initialized:
             _recover_service(data_dir, url)
             print("Recovered persistent SCITT-CCF transparency service", flush=True)
@@ -230,6 +293,7 @@ def main() -> None:
             _configure_new_service(data_dir, url)
             _atomic_write(data_dir / "initialized", "scitt-ccf-ledger 0.18.1\n")
             print("Initialized persistent SCITT-CCF transparency service", flush=True)
+        certificate_server = _publish_tls_identity(data_dir)
         raise SystemExit(process.wait())
     except BaseException:
         if process.poll() is None:
@@ -239,6 +303,10 @@ def main() -> None:
             except subprocess.TimeoutExpired:
                 process.kill()
         raise
+    finally:
+        if certificate_server is not None:
+            certificate_server.shutdown()
+            certificate_server.server_close()
 
 
 if __name__ == "__main__":

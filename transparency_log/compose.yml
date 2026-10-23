@@ -13,6 +13,8 @@ services:
       - "8000:8000"
     volumes:
       - scitt-data:/data
+      - scitt-trust:/run/scitt-trust
 
 volumes:
+  scitt-trust:
   scitt-data:

@@ -28,7 +28,8 @@ services:
       SELLO_SERVICE_SIGNING_SEED: "$${SELLO_SERVICE_SIGNING_SEED}"
       SELLO_TOKEN_ISSUER_PUBLIC_KEY: "$${SELLO_TOKEN_ISSUER_PUBLIC_KEY}"
       SCITT_URL: "${sello_scitt_url}"
-      SCITT_DEVELOPMENT: "1"
+      SCITT_DEVELOPMENT: "0"
+      SCITT_GATEWAY_CA_BOOTSTRAP: "auto"
       SCITT_SIGNER_DIR: /tmp/zk-inference-scitt-signer
       SELLO_PUBLICATION_DIR: /tmp/zk-inference-sello-publications
     healthcheck:

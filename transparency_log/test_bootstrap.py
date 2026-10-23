@@ -35,6 +35,21 @@ class BootstrapConfigTests(unittest.TestCase):
             "/data/previous_service_cert.pem",
         )
 
+    def test_public_tls_hostname_is_included_without_removing_internal_names(self) -> None:
+        with patch.dict("os.environ", {"SCITT_PUBLIC_URL": "https://runtime-8000s.dstack-test.phala.network"}):
+            config = build_config(Path("/data"), "0.0.0.0", 8000, True)
+        names = config["node_certificate"]["subject_alt_names"]
+        self.assertIn("dNSName:runtime-8000s.dstack-test.phala.network", names)
+        self.assertIn("dNSName:transparency-log", names)
+        self.assertIn("iPAddress:127.0.0.1", names)
+        self.assertEqual(config["output_files"]["node_certificate_file"], "/data/node_cert.pem")
+
+    def test_invalid_public_origin_is_rejected(self) -> None:
+        for url in ("http://runtime.example", "https://user:password@runtime.example", "https://runtime.example/path"):
+            with self.subTest(url=url), patch.dict("os.environ", {"SCITT_PUBLIC_URL": url}):
+                with self.assertRaisesRegex(ValueError, "HTTPS origin"):
+                    build_config(Path("/data"), "0.0.0.0", 8000, True)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -298,6 +298,7 @@ services:
       - "127.0.0.1:${SCITT_HOST_PORT:-8000}:8000"
     volumes:
       - scitt-data:/data
+      - scitt-trust:/run/scitt-trust
 
   agent:
     build:
@@ -354,7 +355,8 @@ services:
       PKI_SUBJECT: ${PKI_AGENT_SUBJECT:-master-thesis-agent}
       PKI_ENROLLMENT_TOKEN: ${PKI_AGENT_ENROLLMENT_TOKEN:-}
       SCITT_URL: https://transparency-log:8000
-      SCITT_DEVELOPMENT: "1"
+      SCITT_DEVELOPMENT: "0"
+      SCITT_CA_CERT: /run/scitt-trust/service-cert.pem
       SCITT_SIGNER_DIR: /app/agent/state/scitt
       SCITT_TRANSPARENT_STATEMENT_PATH: /app/tee_inference/out/latest-transparent-statement.cose
       TEE_INFERENCE_EVIDENCE_PATH: /app/tee_inference/out/latest-evidence.cbor
@@ -387,6 +389,7 @@ services:
       - ./data/rsa_keys:/dfl/keys:ro
       - ./tee_inference/out:/app/tee_inference/out
       - agent-scitt-state:/app/agent/state/scitt
+      - scitt-trust:/run/scitt-trust:ro
       - agent-tls-state:/var/lib/vita-fl-agent-tls
 
   control-api:
@@ -542,6 +545,7 @@ services:
       RSA_PUBLIC_KEY_FILE: /dfl/keys/public_key_5.pem
 
 volumes:
+  scitt-trust:
   agent-scitt-state:
   agent-tls-state:
   scitt-data:

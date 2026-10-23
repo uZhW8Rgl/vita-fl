@@ -16,7 +16,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import cbor2
-import httpx
 
 MAX_KEYSET_BYTES = 64 * 1024
 MAX_KEYS = 32
@@ -29,20 +28,9 @@ class TrustAnchorError(RuntimeError):
 
 
 def _client(url: str, development: bool) -> Any:
-    from pyscitt.client import Client
+    from agent_receipts.scitt_tls import create_client
 
-    client = Client(url, development=development)
-    # The SDK normally inherits ambient proxies and follows redirects. This
-    # public, fixed-path export must stay at the operator-configured origin.
-    client.session.close()
-    client.session = httpx.Client(
-        base_url=url,
-        verify=not development,
-        trust_env=False,
-        follow_redirects=False,
-        timeout=REQUEST_TIMEOUT_SECONDS,
-        params={"api-version": client.api_version} if client.api_version else None,
-    )
+    client = create_client(url, development=development)
     return client
 
 
@@ -66,7 +54,7 @@ def _configuration() -> tuple[str, bool]:
         valid = False
     if not valid:
         raise TrustAnchorError("SCITT trust anchors unavailable")
-    development = os.environ.get("SCITT_DEVELOPMENT", "1").lower() in {"1", "true", "yes"}
+    development = os.environ.get("SCITT_DEVELOPMENT", "0").lower() in {"1", "true", "yes"}
     return url, development
 
 

@@ -1024,6 +1024,21 @@ The trailing `s` selects dstack-gateway TLS passthrough, so Worker 0 connects
 directly to SCITT-CCF's own TLS listener without an HTTP proxy. The launcher
 derives the managed runtime's SCITT endpoint on deployment.
 
+SCITT clients now verify the certificate chain, validity and hostname;
+`SCITT_DEVELOPMENT=1` is rejected. The log includes its configured public
+`-8000s` hostname in the CCF node certificate. The co-located agent reads the
+public service certificate through a read-only `scitt-trust` volume. Separate
+receivers retrieve only that certificate from the same configured runtime's
+`https://APP_ID-8002.GATEWAY/service-cert.pem`, with ordinary Web-PKI validation
+at the Phala gateway, then verify the direct SCITT TLS connection against it.
+The certificate endpoint exposes no ledger state, member credentials or keys.
+Gateway authentication is the trust basis for this distribution, not log
+attestation. Log identity and TLS mode cannot be selected by receipt metadata.
+Fresh disposable runtimes generate fresh certificates and distribute them
+again, without requiring persistent Anvil or worker state. Rebuild the log,
+agent, receiver and dynamic-worker control images and update their deployment digests to deploy the
+change; the launcher continues to derive the managed `-8000s` URL.
+
 The legacy separate ZK receiver configuration uses an operator-generated signing
 seed and the owner's static service registry, but that Phala app is currently
 disabled pending attested participant-key delegation and an authenticated

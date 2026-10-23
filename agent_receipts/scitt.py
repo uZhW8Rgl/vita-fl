@@ -11,6 +11,8 @@ from typing import Any
 
 import cbor2
 
+from .scitt_tls import configured_log_origins, create_client, https_origin
+
 SCITT_CONTENT_TYPE = "application/vnd.master-thesis.tee-inference-evidence+cbor"
 SCITT_ZK_CONTENT_TYPE = "application/vnd.master-thesis.zk-inference-proof+cbor"
 SCITT_TOOL_RECEIPT_CONTENT_TYPE = "application/vnd.master-thesis.agent-tool-receipt+cbor"
@@ -91,10 +93,9 @@ def _sign_evidence(evidence: bytes, signer: Any, content_type: str) -> bytes:
 
 
 def _submit_and_verify(url: str, development: bool, signed_statement: bytes):
-    from pyscitt.client import Client
     from pyscitt.verify import StaticTrustStore, verify_transparent_statement
 
-    client = Client(url, development=development)
+    client = create_client(url, development=development)
     try:
         submission = client.submit_signed_statement_and_wait(signed_statement)
         trust_store = StaticTrustStore(cose_keys=client.get_scitt_keys())
@@ -126,7 +127,9 @@ def register_verified_evidence(
     if not service_url.startswith("https://"):
         raise ScittRegistrationError("SCITT_URL must use HTTPS")
     if development is None:
-        development = os.environ.get("SCITT_DEVELOPMENT", "1").lower() in {"1", "true", "yes"}
+        development = os.environ.get("SCITT_DEVELOPMENT", "0").lower() in {"1", "true", "yes"}
+    if development:
+        raise ScittRegistrationError("Unverified SCITT TLS is disabled")
     signer_path = signer_dir or os.environ.get("SCITT_SIGNER_DIR", "/tmp/scitt-signer")
     try:
         signer = _load_or_create_signer(Path(signer_path), identity)
@@ -176,7 +179,6 @@ def verify_publication_bundle(evidence: bytes, bundle: bytes) -> dict[str, Any]:
     """Verify that the exact evidence was included before the receiver released output."""
 
     from pyscitt import crypto
-    from pyscitt.client import Client
     from pyscitt.verify import StaticTrustStore, verify_transparent_statement
 
     try:
@@ -184,7 +186,8 @@ def verify_publication_bundle(evidence: bytes, bundle: bytes) -> dict[str, Any]:
         if cbor2.dumps(decoded, canonical=True) != bundle or not isinstance(decoded, dict) or set(decoded) != {1, 2, 3}:
             raise ValueError("invalid canonical publication bundle")
         signed_statement, transparent_statement, metadata = decoded[1], decoded[2], decoded[3]
-        if not isinstance(signed_statement, bytes) or not isinstance(transparent_statement, bytes) or not isinstance(metadata, dict):
+        if (not isinstance(signed_statement, bytes) or not isinstance(transparent_statement, bytes)
+                or not isinstance(metadata, dict)):
             raise ValueError("invalid publication bundle fields")
         _headers, signed_payload = crypto.parse_cose_sign1(signed_statement)
         if signed_payload != evidence:
@@ -192,7 +195,12 @@ def verify_publication_bundle(evidence: bytes, bundle: bytes) -> dict[str, Any]:
         service_url = metadata.get("service_url", "")
         if not isinstance(service_url, str) or not service_url.startswith("https://"):
             raise ValueError("invalid SCITT service URL")
-        client = Client(service_url, development=bool(metadata.get("development_tls")))
+        service_url = https_origin(service_url)
+        if service_url not in configured_log_origins():
+            raise ValueError("receipt selects an unconfigured SCITT service")
+        # Metadata describes an archived operation; it cannot weaken local TLS
+        # policy. Even older development-mode records require authenticated TLS.
+        client = create_client(service_url)
         try:
             trust_store = StaticTrustStore(cose_keys=client.get_scitt_keys())
             details = verify_transparent_statement(transparent_statement, trust_store, signed_statement)

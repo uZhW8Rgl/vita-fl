@@ -61,8 +61,8 @@ ENV SCITT_DATA_DIR=/data \
     PYTHONUNBUFFERED=1
 
 VOLUME ["/data"]
-EXPOSE 8000
+EXPOSE 8000 8002
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \
-  CMD curl --fail --silent --insecure https://127.0.0.1:8000/node/network >/dev/null || exit 1
+  CMD test -s /run/scitt-trust/service-cert.pem && curl --fail --silent --cacert /run/scitt-trust/service-cert.pem https://127.0.0.1:8000/node/network >/dev/null || exit 1
 
 ENTRYPOINT ["tini", "--", "python3", "/opt/master-thesis-transparency-log/bootstrap.py"]

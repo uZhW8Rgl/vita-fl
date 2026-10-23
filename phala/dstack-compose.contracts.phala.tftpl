@@ -235,15 +235,19 @@ ${dynamic_worker_inventory_environment}
     restart: unless-stopped
     ports:
       - "8000:8000"
+      - "8002:8002"
     environment:
       SCITT_DATA_DIR: /data
       SCITT_HOST: 0.0.0.0
       SCITT_PORT: "8000"
+      SCITT_PUBLIC_URL: "${sello_scitt_url}"
       PYTHONUNBUFFERED: "1"
+    volumes:
+      - scitt-trust:/run/scitt-trust
     tmpfs:
       - /data:size=512m,mode=0700
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--insecure", "https://127.0.0.1:8000/node/network"]
+      test: ["CMD-SHELL", "test -s /run/scitt-trust/service-cert.pem && curl --fail --silent --cacert /run/scitt-trust/service-cert.pem https://127.0.0.1:8000/node/network"]
       interval: 10s
       timeout: 5s
       start_period: 30s
@@ -292,7 +296,8 @@ ${dynamic_worker_inventory_environment}
       EXPECTED_RUNTIME_RPC_URL: "${expected_runtime_rpc_url}"
       TEE_INFERENCE_EVIDENCE_PATH: /tmp/tee-inference/latest-evidence.cbor
       SCITT_URL: https://transparency-log:8000
-      SCITT_DEVELOPMENT: "1"
+      SCITT_DEVELOPMENT: "0"
+      SCITT_CA_CERT: /run/scitt-trust/service-cert.pem
       SCITT_SIGNER_DIR: /tmp/agent-scitt
       SCITT_TRANSPARENT_STATEMENT_PATH: /tmp/tee-inference/latest-transparent-statement.cose
       TRANSPARENCY_INDEX_PATH: /tmp/transparency-log/records.jsonl
@@ -330,6 +335,7 @@ ${dynamic_worker_inventory_environment}
       - --skip-calibration
     volumes:
       - agent-tls-state:/var/lib/vita-fl-agent-tls
+      - scitt-trust:/run/scitt-trust:ro
     tmpfs:
       - /tmp:size=1024m,mode=1777
     healthcheck:
@@ -478,6 +484,9 @@ ${dynamic_worker_inventory_environment}
 %{ endif ~}
 
 volumes:
+%{ if enable_agent ~}
+  scitt-trust:
+%{ endif ~}
 %{ if enable_ui && ui_domain != "" ~}
   ui-ingress-certificates:
   ui-ingress-evidence:

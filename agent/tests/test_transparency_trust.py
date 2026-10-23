@@ -18,6 +18,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from agent import transparency_trust as trust
+from agent_receipts import scitt_tls
 
 
 @pytest.fixture(autouse=True)
@@ -195,7 +196,7 @@ def test_defaults_match_scitt_publisher(provider, monkeypatch):
     monkeypatch.delenv("SCITT_DEVELOPMENT")
     result = trust.fetch_scitt_trust_anchors()
     assert result["service_url"] == "https://127.0.0.1:8000"
-    assert provider.clients[0][:2] == ("https://127.0.0.1:8000", True)
+    assert provider.clients[0][:2] == ("https://127.0.0.1:8000", False)
 
 
 @pytest.mark.parametrize("development", [False, True])
@@ -208,19 +209,26 @@ def test_sdk_transport_disables_proxies_redirects_and_has_bounded_timeout(monkey
     monkeypatch.setattr(pyscitt.client, "Client", sdk_constructor)
     strict_session = Mock()
     http_constructor = Mock(return_value=strict_session)
-    monkeypatch.setattr(trust.httpx, "Client", http_constructor)
+    monkeypatch.setattr(scitt_tls.httpx, "Client", http_constructor)
+    if development:
+        with pytest.raises(ValueError, match="Unverified SCITT TLS"):
+            trust._client("https://scitt.example", development)
+        sdk_constructor.assert_not_called()
+        return
     assert trust._client("https://scitt.example", development) is sdk
-    sdk_constructor.assert_called_once_with("https://scitt.example", development=development)
+    sdk_constructor.assert_called_once_with("https://scitt.example", development=False)
     original_session.close.assert_called_once()
     assert sdk.session is strict_session
-    assert http_constructor.call_args.kwargs == {
-        "base_url": "https://scitt.example",
-        "verify": not development,
-        "trust_env": False,
-        "follow_redirects": False,
-        "timeout": 10.0,
-        "params": {"api-version": "2024-01"},
-    }
+    import ssl
+    options = http_constructor.call_args.kwargs
+    assert options["base_url"] == "https://scitt.example"
+    assert isinstance(options["verify"], ssl.SSLContext)
+    assert options["verify"].verify_mode == ssl.CERT_REQUIRED
+    assert options["verify"].check_hostname
+    assert options["trust_env"] is False
+    assert options["follow_redirects"] is False
+    assert options["timeout"] == 30
+    assert options["params"] == {"api-version": "2024-01"}
 
 
 @pytest.fixture
